@@ -54,7 +54,7 @@ REGISTRY = [
     {"id": "adaptive_trend_pullback", "name": "Adaptive MTF Trend Pullback",
      "version": builtin_strategy_version("adaptive_trend_pullback"), "kind": "builtin",
      "timeframes": ["5m"],
-     "description": "4H regime + 1H trend + 15M pullback + 5M confirmation"},
+     "description": "5m entry + native 1h regime gate + native 4h bias + 15m pullback context"},
     {"id": "custom", "name": "Custom Strategy", "version": "1.0", "kind": "custom_user",
      "timeframes": [], "description": "User-built rule strategy"},
 ]
@@ -192,6 +192,10 @@ def make_replay_strategy(strategy: str, symbol: str, timeframe: str, custom_spec
     if desc["kind"] == "builtin":
         from services.strategy_factory import make_builtin_strategy
         strat = make_builtin_strategy(desc["key"], symbol)
+        # Characterization replay preserves old research fixtures explicitly;
+        # the REAL_PAPER factory never enables these legacy clocks.
+        if hasattr(strat, "allow_legacy_htf_resample"):
+            strat.allow_legacy_htf_resample = True
     else:
         from strategies.custom_adapter import CustomStrategyAdapter
         spec = {**desc["spec"], "quality_filter": False, "mtf_filter": False}

@@ -40,7 +40,7 @@ def test_htf_vote_honest_without_history():
 def _signals(mode: str, seed: int = 2050):
     """Run the brain over a seeded scenario; classify each emitted signal by
     whether it agreed with the (off-mode) HTF read at that moment."""
-    strat = DecisionBrain("TEST", htf_mode=mode)
+    strat = DecisionBrain("TEST", htf_mode=mode, allow_legacy_htf_resample=True)
     counter = agree = 0
     for bar in generate_bars(n=1200, timeframe="5m", drift_per_bar=0.0003,
                              vol_per_bar=0.010, seed=seed):
@@ -74,7 +74,7 @@ def test_incomplete_epoch_bucket_does_not_repaint_closed_htf_vote():
 
 # --------------------------------------------------------- honest reporting
 def test_snapshot_and_checklist_carry_the_htf_read():
-    strat = DecisionBrain("TEST", htf_mode="damp")
+    strat = DecisionBrain("TEST", htf_mode="damp", allow_legacy_htf_resample=True)
     sigs = []
     for bar in generate_bars(n=1200, timeframe="5m", drift_per_bar=0.0008,
                              vol_per_bar=0.006, seed=7):
@@ -84,12 +84,12 @@ def test_snapshot_and_checklist_carry_the_htf_read():
     assert sigs, "expected at least one signal in a strong uptrend"
     s = sigs[-1]
     assert s.snapshot["htf_trend"] in ("up", "down")
-    item = next(c for c in s.checklist if c["name"].startswith("True HTF trend"))
+    item = next(c for c in s.checklist if c["name"].startswith("Native HTF trend"))
     assert item["status"] in ("Passed", "Failed", "Neutral")
 
 
 def test_htf_off_reports_not_checked():
-    strat = DecisionBrain("TEST", htf_mode="off")
+    strat = DecisionBrain("TEST", htf_mode="off", allow_legacy_htf_resample=True)
     sigs = []
     for bar in generate_bars(n=1200, timeframe="5m", drift_per_bar=0.0008,
                              vol_per_bar=0.006, seed=7):
@@ -97,6 +97,6 @@ def test_htf_off_reports_not_checked():
         if s is not None:
             sigs.append(s)
     assert sigs
-    item = next(c for c in sigs[-1].checklist if c["name"].startswith("True HTF trend"))
+    item = next(c for c in sigs[-1].checklist if c["name"].startswith("Native HTF trend"))
     assert item["status"] == "Not checked"
     assert sigs[-1].snapshot["htf_trend"] is None

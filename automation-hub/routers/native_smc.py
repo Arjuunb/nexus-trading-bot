@@ -479,10 +479,16 @@ def live_chart(symbol: str = "BTCUSDT", timeframe: str = "5m", venue: str = "bin
                model_id: str = "SMC_M1_SWEEP_REVERSAL"):
     """Read-only live-exchange visualisation; never a trading data path."""
     try:
+        runtime = _smc_runtime().smc_runtime
+        session = _smc_runtime().smc_paper.session() or {}
+        evidence = (runtime.last_mtf_evidence
+                    if session.get("symbol") == symbol.upper() and
+                    session.get("timeframe") == timeframe else {})
         state = live_visual_state(symbol, timeframe, venue, limit=window, visible=visible,
-                                  model_id=model_id)
+                                  model_id=model_id, mtf_evidence=evidence,
+                                  mtf_context=(runtime.last_mtf_context if evidence else None))
         if venue == "binance_usdm":
-            state, _ = _smc_runtime().smc_runtime.reconcile_visual(
+            state, _ = runtime.reconcile_visual(
                 state, symbol=symbol, timeframe=timeframe)
         else:
             state.setdefault("live_display", {}).update({

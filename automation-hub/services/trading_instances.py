@@ -2533,10 +2533,18 @@ class TradingInstanceManager:
         effective_exchange = ("binance_usdm" if self.market_hub is not None and inst.mode == "trading" else
                               inst.exchange if inst.exchange != "inherit"
                               else (os.environ.get("HUB_EXCHANGE", "binance").strip() or "binance"))
+        from services.mtf_policy import display_contract
+        try:
+            instance_mtf_policy = ((engine or {}).get("mtf_policy") or
+                                   display_contract(inst.timeframe))
+        except ValueError as exc:
+            instance_mtf_policy = {
+                "entry_timeframe": inst.timeframe, "label": str(exc), "evidence": {}}
         return {**inst.to_dict(), "effective_exchange": effective_exchange,
                 "effective_instrument_type": ("perpetual" if effective_exchange == "binance_usdm"
                                               else inst.instrument_type),
                 "state": state, "engine": engine,
+                "mtf_policy": instance_mtf_policy,
                 "configuration": configuration, "execution": execution,
                 "risk": risk, "market_data": market, "current_position": current_position,
                 "simulation_session": {

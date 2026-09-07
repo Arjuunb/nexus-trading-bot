@@ -10,7 +10,8 @@ from typing import Mapping
 @dataclass(frozen=True)
 class AdaptiveTrendPullbackConfig:
     version: str = "1.0.0"
-    regime_timeframe: str = "4h"
+    # For a 5m entry the shared MTF policy makes 1h the gate and 4h bias-only.
+    regime_timeframe: str = "1h"
     trend_timeframe: str = "1h"
     pullback_timeframe: str = "15m"
     entry_timeframe: str = "5m"

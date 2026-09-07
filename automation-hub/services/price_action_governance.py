@@ -25,7 +25,7 @@ STRATEGY_VERSION = "1.1.0"
 ALLOWED_CANDIDATE_RULES = {
     "first_touch_only", "zone_expiry_bars", "trigger_filter",
     "confusion_candles", "entry_model", "stop_model",
-    "zone_timeframe_scope", "higher_timeframe_minutes",
+    "zone_timeframe_scope",
 }
 LEARNING_CLASSES = {
     "STRATEGY_LOSS", "EXECUTION_LOSS", "RULE_VIOLATION",
@@ -48,7 +48,7 @@ class PersistenceBlocked(RuntimeError):
 def _validate_rule_value(rule_key: str, value: object) -> None:
     if rule_key == "first_touch_only" and not isinstance(value, bool):
         raise ValueError("first_touch_only must be boolean")
-    if rule_key in {"zone_expiry_bars", "higher_timeframe_minutes"} and (
+    if rule_key == "zone_expiry_bars" and (
             not isinstance(value, int) or isinstance(value, bool) or value <= 0):
         raise ValueError(f"{rule_key} must be a positive integer")
     if rule_key == "confusion_candles" and (
@@ -195,6 +195,8 @@ class PriceActionJournalStore:
     @staticmethod
     def _record(*, visual_state: dict, session: dict, paper_state: dict,
                 feed_status: dict, setup: dict, partition_label: str) -> dict:
+        from services.mtf_policy import material_evidence
+
         setup_id = str(setup["id"])
         proposals = [row for row in visual_state.get("proposals", [])
                      if row.get("setup_id") == setup_id]
@@ -290,6 +292,7 @@ class PriceActionJournalStore:
             "trigger_event_id": setup.get("trigger_event_id"),
             "context_snapshot": frozen_context,
             "pattern_metadata": setup.get("pattern_metadata") or [],
+            "mtf_evidence": material_evidence(visual_state.get("mtf_evidence")),
             "proposal": ({
                 "id": proposal.get("id"), "entry": proposal.get("entry"),
                 "stop": proposal.get("stop"), "target": proposal.get("target"),
@@ -344,6 +347,7 @@ class PriceActionJournalStore:
                 "zone_age": frozen_context.get("zone_age"),
                 "touch_count": (zone or {}).get("touch_count"),
                 "higher_timeframe_context": (zone or {}).get("timeframe_scope"),
+                "mtf_evidence": material_evidence(visual_state.get("mtf_evidence")),
                 "market_regime": frozen_context.get(
                     "structure_state", visual_state.get("snapshot", {}).get("structure_bias", "neutral")),
                 "data_health_state": frozen_context.get(

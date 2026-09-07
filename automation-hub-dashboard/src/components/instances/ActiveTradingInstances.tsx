@@ -18,6 +18,7 @@ type Instance = {
   last_blocker?: string;
   last_error?: string; current_position?: Position | null; metrics: Metrics;
   engine?: { last_heartbeat?: string | null; lifecycle_state?: string } | null;
+  mtf_policy?: { label?: string } | null;
 };
 type InstanceSnapshot = {
   instances: Instance[]; active_slots: number; max_active_slots: number;
@@ -60,7 +61,7 @@ function InstanceCard({ instance, onPause }: { instance: Instance; onPause: (id:
         <div><b>{instance.symbol}</b><span>{instance.strategy_label} · {instance.strategy_version}</span></div>
         <Badge text={status} tone={status === "ERROR" ? "red" : status === "RUNNING_ARMED" ? "green" : "amber"} />
       </div>
-      <div className="instance-summary-meta">{instance.timeframe} · Risk {(instance.risk_per_trade_pct * 100).toFixed(2)}% · {instance.mode}</div>
+      <div className="instance-summary-meta">{instance.mtf_policy?.label ?? `Entry ${instance.timeframe} · native HTF loading`} · Risk {(instance.risk_per_trade_pct * 100).toFixed(2)}% · {instance.mode}</div>
       <div className="instance-summary-stats">
         <div><span>P&amp;L</span><b className={pnl >= 0 ? "pos" : "neg"}>{money(pnl)}</b></div>
         <div><span>Win rate</span><b>{instance.metrics?.win_rate ?? 0}%</b></div>

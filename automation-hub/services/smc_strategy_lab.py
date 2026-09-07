@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
+from bot.types import Bar
 from data.market_data_v2 import TF_MS, normalize_symbol
 from execution.paper_broker_v2 import OPEN_STATUSES, PaperBrokerV2
 from services.lab_lifecycle import (
@@ -259,6 +260,7 @@ class SMCPaperAccount:
         missing = list(evaluation.get("missing_conditions") or [])
         payload = {
             "source_evaluation": evaluation,
+            "mtf_evidence": evaluation.get("mtf_evidence") or {},
             "feed_state": (feed_status or {}).get("state"),
             "feed_reason": (feed_status or {}).get("health_reason"),
             "saved_configuration": {
@@ -1301,6 +1303,7 @@ class SMCPaperAccount:
                 "signal_timestamp": proposal.get("signal_timestamp"),
                 "created_at": candidate["created_at"], "updated_at": candidate["updated_at"],
                 "native_object_ids": evaluation.get("native_object_ids", []),
+                "mtf_evidence": evaluation.get("mtf_evidence") or {},
                 "ordered_conditions": evaluation.get("ordered_condition_results", []),
                 "missing_conditions": evaluation.get("missing_conditions", []),
                 "trade_plan": evaluation.get("trade_plan"), "proposal_id": candidate["proposal_id"],
@@ -1357,6 +1360,7 @@ class SMCStrategyLabRuntime:
     def __init__(self, market, account: SMCPaperAccount, *, poll_seconds: float = 5.0,
                  autostart: bool = True, market_hub=None):
         self.market, self.account = market, account
+        self.market_hub = market_hub
         self.poll_seconds = max(1.0, float(poll_seconds))
         self._stop = threading.Event()
         self._tick_lock = threading.Lock()
@@ -1370,6 +1374,8 @@ class SMCStrategyLabRuntime:
             "last_successful_event": None,
         }
         self.stream = None
+        self.last_mtf_evidence: dict = {}
+        self.last_mtf_context: dict[str, list[Bar]] = {}
         if market_hub is not None:
             self.stream = market_hub.subscription(
                 "SMC_LAB",
@@ -1390,6 +1396,26 @@ class SMCStrategyLabRuntime:
         if autostart:
             self._thread = threading.Thread(target=self._run, name="smc-paper-runtime", daemon=True)
             self._thread.start()
+
+    def _native_mtf_evidence(self, symbol: str, timeframe: str,
+                             decision_time: datetime) -> dict:
+        from services.mtf_policy import evidence_at, native_timeframes
+        context: dict[str, list[Bar]] = {}
+        if self.market_hub is not None and self.stream is not None:
+            fallback = lambda sym, tf, limit, **_kwargs: self.market.public_usdm_window(
+                sym, tf, limit=limit)
+            fetcher = self.stream.make_fetcher(fallback)
+            for htf in native_timeframes(timeframe):
+                result = fetcher(symbol, htf, 500)
+                context[htf] = list(result[0] if isinstance(result, tuple) else result)
+        else:
+            for htf in native_timeframes(timeframe):
+                context[htf] = list(self.market.public_usdm_window(symbol, htf, limit=500))
+        self.last_mtf_context = {tf: list(rows) for tf, rows in context.items()}
+        evidence = evidence_at(symbol, timeframe, context, decision_time)
+        if evidence.get("primary") is None:
+            raise RuntimeError("SMC primary native HTF candle is unavailable")
+        return evidence
 
     def _on_quote(self, quote: dict) -> None:
         current = self.account.session()
@@ -1506,6 +1532,7 @@ class SMCStrategyLabRuntime:
             if not current:
                 raise ValueError("no active SMC paper session")
             from services.native_smc_live_visual import live_visual_state
+            from services.mtf_policy import candle_close
             if self.stream is not None:
                 identity = (normalize_symbol(current["symbol"]), current["timeframe"])
                 if self._stream_identity != identity or not self.stream.running:
@@ -1513,6 +1540,14 @@ class SMCStrategyLabRuntime:
                         raise RuntimeError("SMC market-data hub subscription failed to start")
                     self._stream_identity = identity
                 hub_snapshot = self.stream.snapshot()
+                decision_rows = list(hub_snapshot.get("closed_bars") or [])
+                if not decision_rows:
+                    raise RuntimeError("SMC decision stream has no closed candle")
+                mtf_evidence = self._native_mtf_evidence(
+                    current["symbol"], current["timeframe"],
+                    candle_close(decision_rows[-1], current["timeframe"]),
+                )
+                self.last_mtf_evidence = dict(mtf_evidence)
 
                 def shared_fetcher(_symbol, _timeframe, _venue, limit, **_kwargs):
                     rows = list(hub_snapshot.get("closed_bars") or [])
@@ -1525,11 +1560,31 @@ class SMCStrategyLabRuntime:
                     current["symbol"], current["timeframe"], "binance_usdm",
                     limit=800, visible=400, now=datetime.now(timezone.utc),
                     fetcher=shared_fetcher, model_id=current["model_id"],
+                    mtf_evidence=mtf_evidence,
+                    mtf_context=self.last_mtf_context,
                 )
             else:
+                loader = getattr(self.market, "public_usdm_window", None)
+                if callable(loader):
+                    decision_rows = loader(
+                        current["symbol"], current["timeframe"], limit=800)
+                    if not decision_rows:
+                        raise RuntimeError("SMC decision feed has no candle")
+                    mtf_evidence = self._native_mtf_evidence(
+                        current["symbol"], current["timeframe"],
+                        candle_close(decision_rows[-1], current["timeframe"]),
+                    )
+                else:
+                    # Injectable deterministic tests may replace the complete
+                    # visual state without owning a market-data service. The
+                    # production app always has public_usdm_window.
+                    mtf_evidence = {}
+                self.last_mtf_evidence = dict(mtf_evidence)
                 visual = live_visual_state(
                     current["symbol"], current["timeframe"], "binance_usdm",
                     limit=800, visible=400, model_id=current["model_id"],
+                    mtf_evidence=mtf_evidence,
+                    mtf_context=self.last_mtf_context if mtf_evidence else None,
                 )
             rules = self.market.usdm_contract_rules(current["symbol"])
             visual, quote = self.reconcile_visual(
@@ -1563,6 +1618,7 @@ class SMCStrategyLabRuntime:
 
     def bot_status(self) -> dict:
         """One factual, scope-labelled control-plane view for the dashboard."""
+        from services.mtf_policy import display_contract
         paper = self.account.state()
         session = paper.get("session") or {}
         connection = dict(self.last_market_health)
@@ -1604,6 +1660,8 @@ class SMCStrategyLabRuntime:
             "BLOCKED" if not session or blockers else
             "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
         )
+        mtf_policy = (display_contract(session["timeframe"], self.last_mtf_evidence)
+                      if session.get("timeframe") else None)
         return {
             "lab": "SMC", "account_scope": paper["account_scope"],
             "scope_label": "SMC Strategy Lab session · isolated paper ledger",
@@ -1611,6 +1669,7 @@ class SMCStrategyLabRuntime:
             "strategy": {"id": STRATEGY_ID, "model_id": session.get("model_id"),
                          "version": STRATEGY_VERSION},
             "symbol": session.get("symbol"), "timeframe": session.get("timeframe"),
+            "mtf_policy": mtf_policy,
             "mode": session.get("operating_mode"),
             "session_state": operator_state,
             "execution_armed": execution_armed,

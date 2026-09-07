@@ -90,7 +90,7 @@ class BrainVerdict:
 
 # ----------------------------------------------------------------- HTF helper
 def aggregate_htf(bars: Sequence[Bar], factor: int) -> list[Bar]:
-    """Aggregate base-timeframe bars into higher-timeframe candles.
+    """Legacy research helper; never used by REAL_PAPER votes.
 
     Groups are aligned to the END of the series so the latest HTF candle always
     closes on the latest base bar — a real multi-timeframe view, no lookahead.
@@ -112,9 +112,20 @@ def aggregate_htf(bars: Sequence[Bar], factor: int) -> list[Bar]:
     return out
 
 
-def htf_bias(bars: Sequence[Bar], cfg: BrainConfig) -> tuple[str, float]:
-    """Higher-timeframe trend direction and strength (0..1 efficiency ratio)."""
-    htf = aggregate_htf(bars, cfg.htf_factor)
+def htf_bias(bars: Sequence[Bar], cfg: BrainConfig, *,
+             native_bars: Sequence[Bar] | None = None,
+             allow_legacy_resample: bool = False) -> tuple[str, float]:
+    """Higher-timeframe trend from an independently sourced native series.
+
+    ``allow_legacy_resample`` is an explicit test/research escape hatch. The
+    REAL_PAPER path never enables it and therefore cannot derive HTF from LTF.
+    """
+    if native_bars is not None:
+        htf = list(native_bars)
+    elif allow_legacy_resample:
+        htf = aggregate_htf(bars, cfg.htf_factor)
+    else:
+        return "neutral", 0.0
     closes = [b.close for b in htf]
     if len(closes) < cfg.htf_slow + 1:
         return "neutral", 0.0
@@ -139,7 +150,10 @@ class TradeBrain:
 
     def evaluate(self, bars: Sequence[Bar], i: int, *, side: str,
                  entry: float, stop: float, target: float,
-                 reversal: bool = False, recent_losses: int = 0) -> BrainVerdict:
+                 reversal: bool = False, recent_losses: int = 0,
+                 native_htf_bars: Sequence[Bar] | None = None,
+                 require_native_htf: bool = False,
+                 allow_legacy_htf_resample: bool = True) -> BrainVerdict:
         cfg = self.cfg
         window = list(bars[:i + 1])
         closes = [b.close for b in window]
@@ -149,12 +163,18 @@ class TradeBrain:
         setup_type = "reversal" if reversal else "trend"
 
         regime = self.detector.detect(window)
-        bias, strength = htf_bias(window, cfg)
+        bias, strength = htf_bias(
+            window, cfg, native_bars=native_htf_bars,
+            allow_legacy_resample=(allow_legacy_htf_resample and not require_native_htf),
+        )
 
         comp: dict = {}
         passed: list = []
         failed: list = []
         blocks: list = []
+
+        if require_native_htf and not native_htf_bars:
+            blocks.append("native primary HTF context unavailable")
 
         # ---- hard blocks (capital protection / nonsensical setups) ----
         if rr < cfg.min_rr:

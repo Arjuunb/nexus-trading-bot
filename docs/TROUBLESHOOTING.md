@@ -43,9 +43,10 @@ without counting it, then waits for the **next close**. So `bars 0` for up to
 - Banner: *"Running — data feed connected, waiting for the first candle"*.
 - `GET /engine/diagnostics` → `status: "waiting_first_candle"`,
   `feed_status: "connected"` (or `waiting-for-candle`).
-- **Quick testing mode:** set `HUB_AUTO_TIMEFRAME=5m` or `15m` and redeploy —
-  first bars within minutes. Return to `4h` (the walk-forward-validated config)
-  for the real validation run.
+- Choose the intended entry timeframe explicitly. For example, a `5m` entry
+  worker waits for 5m closes while consuming native closed `1h` as its HTF gate
+  and native closed `4h` as bias. The dashboard must show that full mapping;
+  `4h` is not a hidden validated entry timeframe for a `5m` instance.
 
 ### 3. The host was asleep (free tiers)
 

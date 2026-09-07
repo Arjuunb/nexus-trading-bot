@@ -183,12 +183,36 @@ class SMCMarketStructureEngine:
         self.protected_swing_high: PivotPoint | None = None; self.protected_swing_low: PivotPoint | None = None
         self.protected_internal_high: PivotPoint | None = None; self.protected_internal_low: PivotPoint | None = None
         self.htf_closed: list[Bar] = []; self._htf_bucket: list[Bar] = []; self._htf_key = None
+        self._native_mtf_context: dict[str, list[Bar]] = {}
+        self._native_mtf_enabled = False
         self.setups: dict[str, SMCSetup] = {}; self.transitions: list[SetupTransition] = []; self.proposals: dict[str, ProposedTrade] = {}
         self._ready_for_plan: list[SMCSetup] = []
         self.latest_snapshot: SMCMarketSnapshot | None = None
         # Historical snapshots are immutable inspection evidence. They are not
         # read by any entry, risk, or execution decision.
         self.snapshots: dict[datetime, SMCMarketSnapshot] = {}
+
+    def set_native_mtf_context(self, context: dict[str, list[Bar]]) -> None:
+        """Attach provider-native HTF candles before decision-bar ingestion.
+
+        This is the production path. The legacy internal bucket remains only
+        for frozen historical tests that do not own a market-data hub.
+        """
+        from services.mtf_policy import native_timeframes
+
+        required = native_timeframes(self.config.timeframe)
+        self._native_mtf_context = {tf: list(context.get(tf, ())) for tf in required}
+        self._native_mtf_enabled = True
+
+    def _native_evidence(self) -> dict:
+        if not self._native_mtf_enabled or not self.bars:
+            return {}
+        from services.mtf_policy import candle_close, evidence_at
+
+        return evidence_at(
+            self.config.symbol, self.config.timeframe, self._native_mtf_context,
+            candle_close(self.bars[-1], self.config.timeframe),
+        )
 
     def process_closed_bar(self, bar: Bar) -> SMCMarketSnapshot:
         if bar.timestamp in self.processed:
@@ -226,6 +250,8 @@ class SMCMarketStructureEngine:
         return [self.process_closed_bar(row) for row in valid_closed_bars(bars, timeframe_seconds, now=now)]
 
     def _advance_htf(self, bar: Bar) -> None:
+        if self._native_mtf_enabled:
+            return
         minutes = self.config.htf_minutes; key = int(bar.timestamp.timestamp() // (minutes * 60))
         if self._htf_key is None: self._htf_key = key
         if key != self._htf_key:
@@ -236,6 +262,9 @@ class SMCMarketStructureEngine:
         self._htf_bucket.append(bar)
 
     def _htf_bias(self) -> int:
+        if self._native_mtf_enabled:
+            named = ((self._native_evidence().get("primary") or {}).get("htf_bias"))
+            return 1 if named == "BULLISH" else -1 if named == "BEARISH" else 0
         # Current forming HTF bucket is excluded: equivalent to completed-candle context.
         if len(self.htf_closed) < 51: return 0
         closes = [row.close for row in self.htf_closed]
@@ -243,6 +272,17 @@ class SMCMarketStructureEngine:
 
     def _htf_ema(self) -> float | None:
         """Return an EMA built only from completed higher-timeframe bars."""
+        if self._native_mtf_enabled and self.bars:
+            from services.mtf_policy import candle_close, closed_native_bars, policy_for
+
+            primary, _secondary = policy_for(self.config.timeframe)
+            rows = closed_native_bars(
+                self._native_mtf_context.get(primary, ()), primary,
+                candle_close(self.bars[-1], self.config.timeframe),
+            )
+            if len(rows) < 51:
+                return None
+            return float(ema([row.close for row in rows], 50)[-1])
         if len(self.htf_closed) < 51:
             return None
         return float(ema([row.close for row in self.htf_closed], 50)[-1])
@@ -381,9 +421,14 @@ class SMCMarketStructureEngine:
         active_setup = next((x for x in self.setups.values() if x.phase not in (SetupPhase.INVALIDATED, SetupPhase.EXPIRED, SetupPhase.ENTRY_READY)), None)
         ident = _stable_id("snapshot", self.config.symbol, self.config.timeframe, bar.timestamp, json.dumps(ids))
         latest_sweep = sweep.id if sweep else None
+        native_primary = (self._native_evidence().get("primary") or {})
+        native_close = native_primary.get("htf_close_timestamp")
+        htf_completed_at = (datetime.fromisoformat(native_close)
+                            if native_close else
+                            self.htf_closed[-1].timestamp if self.htf_closed else None)
         return SMCMarketSnapshot(
             ident, self.config.symbol, self.config.timeframe, bar.timestamp, bar.timestamp,
-            self._htf_bias(), self._htf_ema(), self.htf_closed[-1].timestamp if self.htf_closed else None,
+            self._htf_bias(), self._htf_ema(), htf_completed_at,
             self.swing_bias, self.internal_bias, dealing, self._session_name(bar), action,
             active_setup.id if active_setup else None,
             active_setup.phase.value if active_setup else None,

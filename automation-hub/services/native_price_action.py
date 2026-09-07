@@ -72,7 +72,6 @@ class PriceActionConfig:
     first_touch_only: bool = False
     trigger_filter: str = "generic_rejection"
     zone_timeframe_scope: str = "same_timeframe"
-    higher_timeframe_minutes: int = 240
     execution_allowed: bool = False
 
 
@@ -315,8 +314,16 @@ class NativePriceActionEngine:
         self._last_low: ConfirmedSwing | None = None
         self._breakouts: dict[str, PriceActionEvent] = {}
         self._htf_engine: NativePriceActionEngine | None = None
-        self._htf_bucket: list[Bar] = []
-        self._htf_bucket_key: int | None = None
+        self._native_mtf_context: dict[str, list[Bar]] = {}
+        self._mtf_evidence: dict = {}
+        self._htf_processed: set[datetime] = set()
+
+    def set_native_mtf_context(self, context: dict[str, list[Bar]]) -> None:
+        """Supply provider-native policy candles; no LTF aggregation is allowed."""
+        from services.mtf_policy import native_timeframes
+        expected = native_timeframes(self.config.timeframe)
+        self._native_mtf_context = {timeframe: list(context.get(timeframe, ()))
+                                    for timeframe in expected}
 
     def process_closed_bar(self, bar: Bar, *,
                            market_data_health: str = "HISTORICAL_RECONCILED") -> PriceActionSnapshot:
@@ -407,34 +414,36 @@ class NativePriceActionEngine:
             self._upsert_zone(swing, candidate, "support")
 
     def _advance_higher_timeframe(self, bar: Bar) -> None:
+        from services.mtf_policy import (
+            candle_close, closed_native_bars, evidence_at, policy_for,
+        )
+        decision_time = candle_close(bar, self.config.timeframe)
+        self._mtf_evidence = evidence_at(
+            self.config.symbol, self.config.timeframe,
+            self._native_mtf_context, decision_time,
+        )
         if self.config.zone_timeframe_scope != "higher_timeframe":
             return
-        seconds = self.config.higher_timeframe_minutes * 60
-        label = next((name for name, value in TF_SECONDS.items() if value == seconds), None)
-        if label is None:
-            raise ValueError("higher timeframe must map to a supported standardized interval")
-        key = int(bar.timestamp.timestamp() // seconds)
-        if self._htf_bucket_key is None:
-            self._htf_bucket_key = key
-        if key != self._htf_bucket_key and self._htf_bucket:
-            rows = self._htf_bucket
-            complete = Bar(rows[0].timestamp, rows[0].open, max(row.high for row in rows),
-                           min(row.low for row in rows), rows[-1].close,
-                           sum(row.volume for row in rows))
-            if self._htf_engine is None:
-                self._htf_engine = NativePriceActionEngine(replace(
-                    self.config, symbol=self.config.symbol, timeframe=label,
-                    zone_timeframe_scope="same_timeframe"))
+        label, _secondary = policy_for(self.config.timeframe)
+        rows = closed_native_bars(
+            self._native_mtf_context.get(label, ()), label, decision_time,
+        )
+        if not rows:
+            return
+        if self._htf_engine is None:
+            self._htf_engine = NativePriceActionEngine(replace(
+                self.config, symbol=self.config.symbol, timeframe=label,
+                zone_timeframe_scope="same_timeframe"))
+        for complete in rows:
+            if complete.timestamp in self._htf_processed:
+                continue
             self._htf_engine.process_closed_bar(complete)
-            for source in self._htf_engine.zones.values():
-                existing = self.zones.get(source.id)
-                if existing is None:
-                    payload = asdict(source)
-                    payload["timeframe_scope"] = f"higher_timeframe:{label}"
-                    self.zones[source.id] = PriceZone(**payload)
-            self._htf_bucket = []
-            self._htf_bucket_key = key
-        self._htf_bucket.append(bar)
+            self._htf_processed.add(complete.timestamp)
+        for source in self._htf_engine.zones.values():
+            if source.id not in self.zones:
+                payload = asdict(source)
+                payload["timeframe_scope"] = f"higher_timeframe:{label}"
+                self.zones[source.id] = PriceZone(**payload)
 
     def _upsert_zone(self, swing: ConfirmedSwing, source: Bar, role: Literal["support", "resistance"]) -> None:
         if self.config.zone_timeframe_scope == "higher_timeframe":
@@ -1044,6 +1053,7 @@ class NativePriceActionEngine:
                 setup.phase = terminal
 
     def visual_state(self, *, candle_at: datetime | None = None, candle_window: int = 500) -> dict:
+        from services.mtf_policy import display_contract
         snapshot = self.latest_snapshot if candle_at is None else self.snapshots.get(candle_at)
         if snapshot is None and candle_at is not None:
             eligible = [stamp for stamp in self.snapshots if stamp <= candle_at]
@@ -1094,6 +1104,8 @@ class NativePriceActionEngine:
             "volume_signal_input": False,
             "symbol": self.config.symbol,
             "timeframe": self.config.timeframe,
+            "mtf_evidence": dict(self._mtf_evidence),
+            "mtf_policy": display_contract(self.config.timeframe, self._mtf_evidence),
             # Proposal expiry is expressed in the engine's absolute bar-index
             # coordinate system.  Keep that coordinate independent of the
             # bounded candle slice returned for rendering.

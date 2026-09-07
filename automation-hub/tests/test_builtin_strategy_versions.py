@@ -37,7 +37,8 @@ def _fingerprint(strategy) -> tuple[int, str]:
 
 def test_decision_brain_v1_0_0_causal_signal_baseline():
     version = BUILTIN_STRATEGY_VERSIONS["brain"]
-    count, digest = _fingerprint(DecisionBrain("BTCUSDT"))
+    count, digest = _fingerprint(DecisionBrain(
+        "BTCUSDT", allow_legacy_htf_resample=True))
     assert version.version == "1.0.0"
     assert (count, digest) == (version.fixture_signal_count, version.fixture_signal_sha256)
 

@@ -45,7 +45,7 @@ def _clip(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
 
 
 def _htf_trend_vote(bars: Sequence[Bar], mult: int) -> Optional[float]:
-    """Closed higher-timeframe trend on UTC epoch-aligned buckets.
+    """Legacy test-only LTF aggregation path.
 
     Buckets are left-closed/right-open and incomplete buckets are excluded.
     Appending another base candle therefore cannot repaint a previously closed
@@ -89,6 +89,18 @@ def _htf_trend_vote(bars: Sequence[Bar], mult: int) -> Optional[float]:
     return 1.0 if hf > hs else -1.0
 
 
+def _native_htf_trend_vote(bars: Sequence[Bar]) -> Optional[float]:
+    """Trend vote from provider-native candles selected by the MTF policy."""
+    closes = [float(bar.close) for bar in bars]
+    if len(closes) < 24:
+        return None
+    fast = ema(closes, 10)[-1]
+    slow = ema(closes, 21)[-1]
+    if fast == slow:
+        return None
+    return 1.0 if fast > slow else -1.0
+
+
 class DecisionBrain(HubStrategy):
     name = "brain"
     label = "Decision Brain"
@@ -102,7 +114,8 @@ class DecisionBrain(HubStrategy):
                  conviction_threshold: float = 0.56, max_history: int = 600,
                  er_mode: str = "off", volume_conf: bool = False,
                  htf_mode: str = "damp", htf_mult: int = 12,
-                 htf_damp: float = 0.55, **params):
+                 htf_damp: float = 0.55,
+                 allow_legacy_htf_resample: bool = False, **params):
         params.setdefault("rr_target", 3.0)  # validated reward:risk (out-of-sample sweep)
         super().__init__(symbol, fast=fast, slow=slow, trend=trend,
                          rsi_period=rsi_period, conviction_threshold=conviction_threshold,
@@ -114,9 +127,10 @@ class DecisionBrain(HubStrategy):
         # volume_conf: volume-surge conviction multiplier in [0.9, 1.1]
         self.er_mode = er_mode
         self.volume_conf = bool(volume_conf)
-        # Multi-timeframe confirmation: aggregate closed bars ``htf_mult``:1 on
-        # UTC epoch boundaries and damp conviction ×``htf_damp`` when HTF trend
-        # disagrees with the trade direction. Measured on the seeded synthetic
+        # Production confirmation consumes the provider-native primary HTF
+        # selected by services.mtf_policy. ``htf_mult`` is retained only for
+        # explicit legacy research tests. Damp conviction ×``htf_damp`` when
+        # the native primary trend disagrees. Measured on the seeded synthetic
         # regime grid (drift × vol × seeds, pessimistic fills, tune + holdout)
         # before defaulting ON:
         #     tune:    off +211.1R (559 trades) -> damp +240.1R (494)
@@ -127,6 +141,7 @@ class DecisionBrain(HubStrategy):
         self.htf_mode = htf_mode
         self.htf_mult = int(htf_mult)
         self.htf_damp = float(htf_damp)
+        self.allow_legacy_htf_resample = bool(allow_legacy_htf_resample)
 
     def generate(self, bar: Bar) -> Optional[Signal]:
         p = self.params
@@ -188,10 +203,22 @@ class DecisionBrain(HubStrategy):
 
         side = 1.0 if score > 0 else -1.0
 
-        # True multi-timeframe confirmation: when the aggregated HTF trend
+        # True multi-timeframe confirmation: production consumes only the
+        # provider-native primary HTF chosen by services.mtf_policy. The old
+        # relative ``htf_mult`` path exists solely for explicit legacy tests.
         # disagrees with the trade direction, damp conviction so only
         # exceptionally strong counter-HTF setups survive the threshold.
-        v_htf = _htf_trend_vote(self.bars, self.htf_mult) if self.htf_mode != "off" else None
+        primary = (self._native_mtf_evidence.get("primary") or {})
+        primary_tf = primary.get("htf_timeframe")
+        native_rows = self._native_mtf_context.get(primary_tf, ()) if primary_tf else ()
+        if self.htf_mode == "off":
+            v_htf = None
+        elif native_rows:
+            v_htf = _native_htf_trend_vote(native_rows)
+        elif self.allow_legacy_htf_resample:
+            v_htf = _htf_trend_vote(self.bars, self.htf_mult)
+        else:
+            v_htf = None
         if v_htf is not None and v_htf * side < 0:
             conviction *= self.htf_damp
 
@@ -228,6 +255,7 @@ class DecisionBrain(HubStrategy):
                 "volume": round(self.bars[-1].volume, 2), "avg_volume_20": round(avg_vol, 2),
                 "volatility": getattr(regime, "volatility", None),
                 "htf_trend": ("up" if v_htf == 1.0 else "down" if v_htf == -1.0 else None),
+                "mtf_evidence": dict(self._native_mtf_evidence),
             }
             sd = 1.0 if score > 0 else -1.0
             def _st(agree, weak=False):
@@ -250,12 +278,12 @@ class DecisionBrain(HubStrategy):
                 {"name": "Efficiency ratio",
                  "status": ("Passed" if self.er_mode != "off" else "Not checked"),
                  "detail": "Kaufman ER" if self.er_mode != "off" else "not part of this config"},
-                {"name": f"True HTF trend ({self.htf_mult}:1 aggregate)",
+                {"name": f"Native HTF trend ({primary_tf or 'unavailable'})",
                  "status": ("Not checked" if self.htf_mode == "off"
                             else "Neutral" if v_htf is None
                             else _st(v_htf * sd > 0)),
                  "detail": ("not part of this config" if self.htf_mode == "off"
-                            else "insufficient history" if v_htf is None
+                            else "native closed-candle context unavailable" if v_htf is None
                             else f"HTF {'up' if v_htf > 0 else 'down'} vs "
                                  f"{'long' if sd > 0 else 'short'}"
                                  + ("" if v_htf * sd > 0 else f" — conviction ×{self.htf_damp}"))},

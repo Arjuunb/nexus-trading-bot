@@ -10,9 +10,8 @@ Mirrors the core of the Pine v6 strategy's entry logic on a single bar stream:
             + (optional) bullish rejection candle
     short = the mirror image
 
-Higher-timeframe bias is derived by aggregating the same series to a higher
-timeframe (no repaint, no lookahead) and comparing fast/slow EMAs — the same
-approach the TradeBrain uses. Stop = signal-bar extreme ± ATR; target = R:R.
+Higher-timeframe bias comes from the provider-native primary HTF selected by
+the shared MTF policy. Stop = signal-bar extreme ± ATR; target = R:R.
 
 Pure/stdlib; no indicators beyond the engine's own ``atr``/``ema``.
 """
@@ -35,7 +34,8 @@ class SMCStrategy(HubStrategy):
     def __init__(self, symbol: str, *, pivot_len: int = 5, sweep_lookback: int = 10,
                  choch_lookback: int = 8, fvg_lookback: int = 5, use_rejection: bool = False,
                  wick_mult: float = 2.0, warmup: int = 120, atr_period: int = 14,
-                 atr_mult: float = 1.5, rr_target: float = 2.5, **params):
+                 atr_mult: float = 1.5, rr_target: float = 2.5,
+                 allow_legacy_htf_resample: bool = False, **params):
         super().__init__(symbol, atr_period=atr_period, atr_mult=atr_mult, rr_target=rr_target,
                          pivot_len=pivot_len, sweep_lookback=sweep_lookback,
                          choch_lookback=choch_lookback, fvg_lookback=fvg_lookback,
@@ -54,6 +54,7 @@ class SMCStrategy(HubStrategy):
         self._last_bull_fvg = _NEG
         self._last_bear_fvg = _NEG
         self._cfg = None  # lazy BrainConfig for HTF bias
+        self.allow_legacy_htf_resample = bool(allow_legacy_htf_resample)
 
     def generate(self, bar: Bar) -> Optional[Signal]:
         from strategies.brain import BrainConfig, htf_bias
@@ -70,7 +71,13 @@ class SMCStrategy(HubStrategy):
         self._update_sweep(bars, bar, i, p["sweep_lookback"])
         self._update_fvg(bars, i)
 
-        bias_name, strength = htf_bias(bars, self._cfg)
+        primary = self._native_mtf_evidence.get("primary") or {}
+        primary_tf = primary.get("htf_timeframe")
+        native_rows = self._native_mtf_context.get(primary_tf, ()) if primary_tf else ()
+        bias_name, strength = htf_bias(
+            bars, self._cfg, native_bars=native_rows if native_rows else None,
+            allow_legacy_resample=self.allow_legacy_htf_resample,
+        )
         htf = 1 if bias_name == "bullish" else -1 if bias_name == "bearish" else 0
 
         bull_pin, bear_pin = self._rejection(bar, p["wick_mult"])
@@ -101,6 +108,7 @@ class SMCStrategy(HubStrategy):
                          entry=bar.close, stop_loss=stop, take_profit=bar.close + risk * p["rr_target"],
                          reason=f"SMC long — sweep+CHoCH+FVG, HTF {bias_name}")
             sig.confidence = self._confidence(strength)
+            sig.snapshot = {"mtf_evidence": dict(self._native_mtf_evidence)}
             return sig
 
         if short_ok:
@@ -112,6 +120,7 @@ class SMCStrategy(HubStrategy):
                          entry=bar.close, stop_loss=stop, take_profit=bar.close - risk * p["rr_target"],
                          reason=f"SMC short — sweep+CHoCH+FVG, HTF {bias_name}")
             sig.confidence = self._confidence(strength)
+            sig.snapshot = {"mtf_evidence": dict(self._native_mtf_evidence)}
             return sig
         return None
 

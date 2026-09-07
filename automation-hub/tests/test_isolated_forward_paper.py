@@ -64,6 +64,25 @@ def _broker(path, account_type):
     )
 
 
+def test_native_mtf_fetches_keep_primary_and_parallel_channels_attached():
+    hub = _hub()
+    subscription = hub.subscription("INSTANCE:one")
+    assert subscription.start("BTCUSDT", "5m")
+    sample = Bar(datetime(2026, 9, 7, 8, tzinfo=timezone.utc), 100, 101, 99, 100, 1)
+    fetch = subscription.make_fetcher(
+        lambda _symbol, _timeframe, _limit, **_kwargs: [sample])
+
+    assert fetch("BTCUSDT", "1h", 50) == [sample]
+    assert fetch("BTCUSDT", "4h", 50) == [sample]
+    assert (subscription.symbol, subscription.timeframe) == ("BTCUSDT", "5m")
+    assert set(hub._channels) == {
+        ("BTCUSDT", "5m"), ("BTCUSDT", "1h"), ("BTCUSDT", "4h"),
+    }
+
+    subscription.stop()
+    assert hub._channels == {}
+
+
 def test_same_closed_candle_and_next_quote_create_three_isolated_positions(tmp_path):
     hub = _hub()
     pa = _broker(tmp_path / "pa.db", "PA_LAB")

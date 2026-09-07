@@ -1,10 +1,12 @@
 {
   "baseline_commit": "5b351e9",
-  "purpose": "Prove the PA/SMC research upgrade did not alter PR #6 real-paper strategy behavior.",
+  "purpose": "Freeze PR #6 real-paper behavior plus the approved native-MTF source-only delta; alpha rules and fill timing remain unchanged.",
+  "approved_delta": "Replace synthesized HTF clocks with services/mtf_policy.py native-candle evidence only.",
   "sha256": {
-    "services/price_action_lab.py": "ead7d27ec5af4de2468043a35a658177d109cef3773e545e584638d27737af75",
-    "services/smc_strategy_lab.py": "e31cd8eeca4616c8519075b19908908be2c1ba4b152b935412d6dcf4bc0e6596",
-    "services/native_price_action.py": "9f67b877d943d831a8e234c5f09be955f9a917d2b4e0b7a5a19457a4422e2259",
-    "services/native_smc.py": "741d8018cf53de53ed84a4cedd5513748e16a1b33e70e2058ccc28ebdbe3a389"
+    "services/mtf_policy.py": "f54da90f2643152f9e9864f42ea77e9fc920c4b75aba19e3190fc3e86ac199a0",
+    "services/price_action_lab.py": "516e4db4e1c92c28bc4e1dd5efa687a1e73482a775c04634795357c3881ca3e6",
+    "services/smc_strategy_lab.py": "ef3958beca3e2e18ddc45ed2c8d52170c38eece086dba9000b80752833c5552c",
+    "services/native_price_action.py": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",
+    "services/native_smc.py": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
   }
 }

@@ -30,8 +30,9 @@ The losers share concrete, fixable causes:
    user's entry tree. The engine already has `RegimeDetector` (efficiency ratio
    + ATR%) and `RegimeGate`, but the simulator never calls them, so trend
    setups fire in chop and counter-trend setups fire against a strong trend.
-2. **No higher-timeframe confirmation.** Entries are single-timeframe. A 1h/5m
-   long can be taken straight into a falling higher-timeframe trend.
+2. **Historical finding: no higher-timeframe confirmation.** REAL_PAPER now
+   consumes the shared provider-native primary HTF gate; legacy aggregation is
+   available only behind an explicit research/test flag.
 3. **No trade-quality scoring.** Every matched signal is taken regardless of
    location, RR realism, volatility, momentum or stop safety. There is no
    "is this setup actually good?" filter.
@@ -50,7 +51,7 @@ bars (no lookahead). So realism is **not** the problem — decision quality is.
 ## The fix (this PR) — brain first, UI second
 
 - `strategies/brain.py` — a pure, testable **TradeBrain**: regime fit,
-  higher-timeframe alignment (real HTF aggregation of the same series),
+  higher-timeframe alignment (native provider candles in REAL_PAPER),
   market structure, volatility band, volume, momentum, RR quality, distance to
   support/resistance, stop safety, and a losing-streak penalty → a **0–100
   trade-quality score** plus hard blocks, each with a reason.

@@ -8,7 +8,7 @@ reuse the engine's bar-feeding contract (``on_bar`` -> ``generate``). Adds:
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Mapping, Optional, Sequence
 
 from bot.data.indicators import atr
 from bot.strategies.base import Strategy
@@ -23,6 +23,20 @@ class HubStrategy(Strategy):
                  rr_target: float = 2.0, **params):
         super().__init__(symbol, atr_period=atr_period, atr_mult=atr_mult,
                          rr_target=rr_target, **params)
+        self._native_mtf_context: dict[str, list[Bar]] = {}
+        self._native_mtf_evidence: dict = {}
+
+    def set_native_mtf_context(
+        self, context: Mapping[str, Sequence[Bar]], evidence: Mapping,
+    ) -> None:
+        """Attach independently sourced native HTF candles to one decision.
+
+        The forward engine has already removed forming candles at the exact
+        decision boundary. Strategies must consume this context as-is and must
+        never manufacture replacement HTF candles from their entry stream.
+        """
+        self._native_mtf_context = {key: list(rows) for key, rows in context.items()}
+        self._native_mtf_evidence = dict(evidence)
 
     def _bracket(self, entry: float, direction: SignalType) -> Optional[tuple[float, float, float]]:
         """Return (stop, take_profit, risk) using ATR, or None if not enough data."""

@@ -350,10 +350,12 @@ def test_strategy_versions_hashes_blockers_and_defaults_are_explicit():
     assert SMCPaperConfig().operating_mode == "signals_only"
 
 
-def test_pr6_real_paper_strategy_sources_are_byte_for_byte_unchanged():
+def test_pr6_real_paper_sources_match_the_declared_native_mtf_delta():
     root = Path(__file__).parents[1]
     manifest = json.loads((root / "data/pr6_real_paper_freeze.json").read_text())
     assert manifest["baseline_commit"] == "5b351e9"
+    assert manifest["approved_delta"] == (
+        "Replace synthesized HTF clocks with services/mtf_policy.py native-candle evidence only.")
     for relative, expected in manifest["sha256"].items():
         assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == expected
 

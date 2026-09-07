@@ -207,6 +207,7 @@ class AutoStrategyEngine:
         # The engine filters each series again at every decision timestamp, so
         # recovery cannot leak a newer 1H/4H close into an older 5M decision.
         self._multi_timeframe_context: dict[str, dict[str, list]] = {}
+        self._mtf_evidence: dict[str, dict] = {}
         self.stats_missed_entries = 0
         # Shadow A/B: an optional services.shadow.ShadowRun fed the SAME bars
         # the live strategy trades — a candidate audition with zero capital.
@@ -383,6 +384,7 @@ class AutoStrategyEngine:
         return ("failed" if err else "waiting-for-candle"), err
 
     def status(self) -> dict:
+        from services.mtf_policy import display_contract
         feed, feed_err = self.feed_status()
         ws_feed = getattr(self, "ws_feed", None)
         uptime_s = None
@@ -394,6 +396,13 @@ class AutoStrategyEngine:
                 # A malformed legacy timestamp is telemetry damage, not a
                 # reason to stop an otherwise healthy trading worker.
                 uptime_s = None
+        displayed_symbol = self.current_symbol or (self.symbols[0] if self.symbols else "")
+        current_evidence = self._mtf_evidence.get(displayed_symbol, {})
+        try:
+            mtf_policy = display_contract(self.timeframe, current_evidence)
+        except ValueError as exc:
+            mtf_policy = {"entry_timeframe": self.timeframe, "label": str(exc),
+                          "evidence": current_evidence}
         return {
             "running": self.running,
             "symbols": self.symbols,
@@ -401,6 +410,7 @@ class AutoStrategyEngine:
             "auto_symbols": self.auto_symbols,
             "manual_symbol": self.manual_symbol,
             "timeframe": self.timeframe,
+            "mtf_policy": mtf_policy,
             "interval": self.interval,
             "mode": "live" if self.live else "replay",
             "strategy": self.strategy_label,
@@ -675,12 +685,13 @@ class AutoStrategyEngine:
             self._require_continuity(warm[-required_warmup:], self.timeframe)
             self.bootstrap_status = "warming_indicators"
             self._transition("warming", f"Loading {required_warmup} completed candles into strategy")
+            self._refresh_multi_timeframe_context(sym, strat, entry_bars=closed)
             if self._is_multi_timeframe_strategy(strat):
-                self._refresh_multi_timeframe_context(sym, strat, entry_bars=closed)
                 self._apply_multi_timeframe_context(strat, closed[-1].timestamp)
             else:
                 for b in warm[-required_warmup:]:
                     strat.bars.append(b)
+                self._apply_multi_timeframe_context(strat, closed[-1].timestamp)
             strategies[sym] = strat
             self.warmup_bars = len(strat.bars)
             if persisted is None:
@@ -736,7 +747,7 @@ class AutoStrategyEngine:
                             f"{sym} missing candle after {last_ts[sym].isoformat()}; "
                             "entering REST cursor recovery before any decision")
                     self._require_continuity(unseen, self.timeframe)
-                if self._is_multi_timeframe_strategy(strategies[sym]) and has_new_candle:
+                if has_new_candle:
                     self._refresh_multi_timeframe_context(sym, strategies[sym], entry_bars=closed)
                 if unseen:
                     last_ts[sym] = self._ingest(
@@ -761,8 +772,7 @@ class AutoStrategyEngine:
                 if gap_s > expected * 1.5:
                     self.missing_candles += max(0, int(gap_s // expected) - 1)
             if last_ts is None or b.timestamp > last_ts:
-                if self._is_multi_timeframe_strategy(strat):
-                    self._apply_multi_timeframe_context(strat, b.timestamp)
+                self._apply_multi_timeframe_context(strat, b.timestamp)
                 with self._cycle_lock:
                     self._process_bar(sym, b, strat)
                 self.stats["bars"] += 1
@@ -785,12 +795,20 @@ class AutoStrategyEngine:
         final candle is conservatively removed on every timeframe because it
         may still be forming.
         """
-        required = tuple(getattr(strategy, "required_timeframes", ()))
+        from services.mtf_policy import native_timeframes, policy_for
+        try:
+            policy_required = native_timeframes(self.timeframe)
+            primary_tf, secondary_tf = policy_for(self.timeframe)
+        except ValueError as exc:
+            raise EngineFeedError(str(exc)) from exc
+        strategy_required = tuple(getattr(strategy, "required_timeframes", ()))
+        required = tuple(dict.fromkeys((*policy_required, *strategy_required)))
         decision_tf = str(getattr(strategy, "decision_timeframe", self.timeframe))
-        if self.timeframe != decision_tf:
+        if strategy_required and self.timeframe != decision_tf:
             raise EngineFeedError(
                 f"{getattr(strategy, 'label', 'Multi-timeframe strategy')} requires "
                 f"a {decision_tf} Trading Instance decision timeframe")
+        policy_for(self.timeframe)  # explicit fail-closed validation
         minimums = getattr(getattr(strategy, "config", None), "minimum_bars", {})
         context: dict[str, list] = {decision_tf: list(entry_bars)}
         previous_context = self._multi_timeframe_context.get(symbol, {})
@@ -801,7 +819,15 @@ class AutoStrategyEngine:
         for timeframe in required:
             if timeframe == decision_tf:
                 continue
-            required_bars = int(minimums.get(timeframe, 70))
+            # A policy secondary is context only. Failure to load it must be
+            # visible as missing bias, but it must not silently become another
+            # entry gate. A strategy that explicitly declares the same clock
+            # in required_timeframes still makes it mandatory.
+            mandatory = timeframe == primary_tf or timeframe in strategy_required
+            # Primary/secondary bias needs at least the two native candles
+            # required to identify direction. Strategy-owned MTF indicators
+            # may require a larger independent history.
+            required_bars = int(minimums.get(timeframe, 2))
             limit = max(2, required_bars * 2, required_bars + 50)
             duration = _TF_SECONDS.get(timeframe)
             cached = list(previous_context.get(timeframe, ()))
@@ -810,19 +836,34 @@ class AutoStrategyEngine:
             if cached and decision_close is not None and next_close is not None and decision_close < next_close:
                 closed, source = cached, "live (cached closed context)"
             else:
-                bars, source = self._forward_fetch_for_timeframe(symbol, timeframe, limit)
+                try:
+                    bars, source = self._forward_fetch_for_timeframe(symbol, timeframe, limit)
+                except (EngineFeedError, RuntimeError):
+                    if mandatory:
+                        raise
+                    context[timeframe] = []
+                    sources.append(f"{timeframe}:unavailable optional bias")
+                    continue
                 if not str(source or "").startswith("live"):
                     raise EngineFeedError(f"{symbol} {timeframe} live context unavailable")
                 closed = self._closed_bars(bars, timeframe)
-            if len(closed) < int(minimums.get(timeframe, 1)):
-                raise EngineFeedError(
-                    f"{symbol} {timeframe} returned {len(closed)} completed candles; "
-                    f"requires {minimums.get(timeframe)}")
+            if len(closed) < required_bars:
+                if mandatory:
+                    raise EngineFeedError(
+                        f"{symbol} {timeframe} returned {len(closed)} completed candles; "
+                        f"requires {required_bars}")
+                context[timeframe] = []
+                sources.append(f"{timeframe}:insufficient optional bias")
+                continue
             age = ((datetime.now(timezone.utc) - closed[-1].timestamp).total_seconds()
                    - (duration or 0))
             if duration is None or max(0.0, age) > duration * 1.5:
-                raise EngineFeedError(
-                    f"{symbol} {timeframe} context stale: age={max(0.0, age):.0f}s")
+                if mandatory:
+                    raise EngineFeedError(
+                        f"{symbol} {timeframe} context stale: age={max(0.0, age):.0f}s")
+                context[timeframe] = []
+                sources.append(f"{timeframe}:stale optional bias")
+                continue
             context[timeframe] = closed
             sources.append(f"{timeframe}:{source}")
         self._multi_timeframe_context[symbol] = context
@@ -838,10 +879,18 @@ class AutoStrategyEngine:
 
     def _apply_multi_timeframe_context(self, strategy, decision_timestamp) -> None:
         from bot.data.resample import TF_SECONDS
-        required = tuple(getattr(strategy, "required_timeframes", ()))
+        from services.mtf_policy import evidence_at, native_timeframes
+        policy_required = native_timeframes(self.timeframe)
+        strategy_required = tuple(getattr(strategy, "required_timeframes", ()))
+        required = tuple(dict.fromkeys((*policy_required, *strategy_required)))
         decision_tf = str(getattr(strategy, "decision_timeframe", self.timeframe))
-        decision_close = decision_timestamp + timedelta(seconds=TF_SECONDS[decision_tf])
-        source = self._multi_timeframe_context.get(strategy.symbol, {})
+        # The decision bar timestamp is its open. Every strategy votes at that
+        # bar's close, never at its open.
+        decision_close = decision_timestamp + timedelta(seconds=TF_SECONDS[self.timeframe])
+        symbol = getattr(strategy, "symbol", None)
+        if not symbol:
+            return
+        source = self._multi_timeframe_context.get(symbol, {})
         causal: dict[str, list] = {}
         for timeframe in required:
             duration = TF_SECONDS.get(timeframe)
@@ -849,7 +898,19 @@ class AutoStrategyEngine:
                 raise EngineFeedError(f"Unsupported strategy context timeframe {timeframe}")
             causal[timeframe] = [bar for bar in source.get(timeframe, ())
                                  if bar.timestamp + timedelta(seconds=duration) <= decision_close]
-        strategy.set_timeframe_context(causal)
+        evidence = evidence_at(
+            symbol, self.timeframe, causal, decision_close,
+        )
+        if evidence.get("primary") is None:
+            raise EngineFeedError(
+                f"{strategy.symbol} {self.timeframe} primary native HTF has no candle "
+                f"closed by {decision_close.isoformat()}")
+        self._mtf_evidence[symbol] = evidence
+        setter = getattr(strategy, "set_native_mtf_context", None)
+        if callable(setter):
+            setter({tf: causal.get(tf, []) for tf in policy_required}, evidence)
+        if self._is_multi_timeframe_strategy(strategy):
+            strategy.set_timeframe_context(causal)
 
     def _forward_fetch(self, symbol: str, limit: int):
         """Call a strict forward fetcher; historical sources are rejected."""
@@ -1206,6 +1267,9 @@ class AutoStrategyEngine:
                     "strategy_version": self.strategy_version or "",
                     "decision_identity": decision_identity,
                 })
+                from services.mtf_policy import material_evidence
+                report["mtf_evidence"] = material_evidence(
+                    getattr(strategy, "_native_mtf_evidence", {}) or {})
                 self.reports.record(report)
             except Exception as e:  # noqa: BLE001 — never block the engine
                 print(f"[explain] cycle report failed for {sym}: {type(e).__name__}: {e}")
@@ -1576,7 +1640,11 @@ class AutoStrategyEngine:
                 bars, len(bars) - 1,
                 side="long" if signal.type == SignalType.LONG else "short",
                 entry=signal.entry, stop=signal.stop_loss,
-                target=signal.take_profit, recent_losses=recent_losses)
+                target=signal.take_profit, recent_losses=recent_losses,
+                native_htf_bars=(getattr(strategy, "_native_mtf_context", {}) or {}).get(
+                    ((getattr(strategy, "_native_mtf_evidence", {}) or {}).get("primary") or {}).get(
+                        "htf_timeframe"), ()),
+                require_native_htf=self.live)
         decision = None
         decision_id = None
         if pos is None:                      # entries only; flips/closes pass through

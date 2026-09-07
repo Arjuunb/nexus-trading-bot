@@ -759,6 +759,8 @@ class PriceActionPaperAccount:
     def record_evaluation(self, visual_state: dict, candle: Bar,
                           feed_status: dict) -> dict:
         """Persist exactly one saved-strategy decision for a confirmed candle."""
+        from services.mtf_policy import material_evidence
+
         current = self.session()
         config = self._execution_config()
         candle_time = candle.timestamp.isoformat()
@@ -791,6 +793,7 @@ class PriceActionPaperAccount:
         payload = {
             "closed_candle": _candle(candle), "trace": selected,
             "proposal_ids": [row.get("id") for row in proposals],
+            "mtf_evidence": material_evidence(visual_state.get("mtf_evidence")),
             "feed_state": feed_status.get("state"),
             "feed_reason": feed_status.get("health_reason"),
             "saved_execution_config": asdict(config),
@@ -1681,6 +1684,7 @@ class PriceActionLabRuntime:
         self.engine: NativePriceActionEngine | None = None
         self.identity: tuple[str, str] | None = None
         self.config_signature = ""
+        self.market_hub = market_hub
         self._shadow_runs: dict[str, dict] = {}
         self.stream = (
             market_hub.subscription(
@@ -1720,10 +1724,27 @@ class PriceActionLabRuntime:
                 # the worker was down. Rebuild the core from its reconciled
                 # REST bootstrap, but do not execute historical proposals.
                 self.engine = NativePriceActionEngine(config)
+                self.engine.set_native_mtf_context(self._native_context(*identity))
                 self.engine.ingest_closed_bars(
                     self.stream.snapshot()["closed_bars"],
                     market_data_health="LIVE_BOOTSTRAP_RECONCILED",
                 )
+
+    def _native_context(self, symbol: str, timeframe: str) -> dict[str, list[Bar]]:
+        """Load the shared policy's independent native Binance candles."""
+        from services.mtf_policy import native_timeframes
+        context: dict[str, list[Bar]] = {}
+        if self.market_hub is not None:
+            fallback = lambda sym, tf, limit, **_kwargs: self.market.public_usdm_window(
+                sym, tf, limit=limit)
+            fetcher = self.stream.make_fetcher(fallback)
+            for htf in native_timeframes(timeframe):
+                result = fetcher(symbol, htf, 500)
+                context[htf] = list(result[0] if isinstance(result, tuple) else result)
+        else:
+            for htf in native_timeframes(timeframe):
+                context[htf] = list(self.market.public_usdm_window(symbol, htf, limit=500))
+        return context
 
     def _maintain_live_session(self) -> dict:
         """Keep the saved LIVE_PAPER session running without any browser client."""
@@ -1800,12 +1821,23 @@ class PriceActionLabRuntime:
                 return
             status = self.stream.status()
             try:
+                from services.mtf_policy import candle_close, evidence_at
+                native_context = self._native_context(*self.identity)
+                evidence = evidence_at(
+                    self.identity[0], self.identity[1], native_context,
+                    candle_close(bar, self.identity[1]),
+                )
+                if evidence.get("primary") is None:
+                    raise RuntimeError(
+                        "Price Action primary native HTF candle is unavailable")
+                self.engine.set_native_mtf_context(native_context)
                 self.engine.process_closed_bar(bar, market_data_health=status["state"])
             except ValueError:
                 # A REST reconciliation can deliver an older missing bar. Rebuild
                 # from the stream's now-contiguous history to preserve chronology.
                 rows = self.stream.snapshot()["closed_bars"]
                 self.engine = NativePriceActionEngine(self._engine_config(*self.identity))
+                self.engine.set_native_mtf_context(self._native_context(*self.identity))
                 self.engine.ingest_closed_bars(rows, market_data_health=status["state"])
             state = self.engine.visual_state(candle_window=1500)
             self._advance_shadows(bar)
@@ -1976,6 +2008,7 @@ class PriceActionLabRuntime:
 
     def bot_status(self) -> dict:
         """One factual, scope-labelled control-plane view for the dashboard."""
+        from services.mtf_policy import display_contract
         paper = self.account.state()
         session = paper.get("session") or {}
         connection = self.stream.status()
@@ -2019,6 +2052,9 @@ class PriceActionLabRuntime:
             "BLOCKED" if not session or blockers else
             "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
         )
+        mtf_evidence = dict(self.engine._mtf_evidence) if self.engine is not None else {}
+        mtf_policy = (display_contract(session["timeframe"], mtf_evidence)
+                      if session.get("timeframe") else None)
         return {
             "lab": "PRICE_ACTION", "account_scope": paper["account_scope"],
             "scope_label": "Price Action session · isolated paper ledger",
@@ -2026,6 +2062,7 @@ class PriceActionLabRuntime:
             "strategy": {"id": config.get("strategy_id"),
                          "version": PRICE_ACTION_STRATEGY_VERSION},
             "symbol": session.get("symbol"), "timeframe": session.get("timeframe"),
+            "mtf_policy": mtf_policy,
             "mode": session.get("operating_mode"), "saved_configuration": config,
             "session_state": operator_state,
             "execution_armed": execution_armed,

@@ -93,8 +93,13 @@ class CustomStrategyAdapter(HubStrategy):
 
         # ---- trade-quality brain gate (same logic as simulation) ----
         if self.brain is not None:
+            primary = self._native_mtf_evidence.get("primary") or {}
+            primary_tf = primary.get("htf_timeframe")
             v = self.brain.evaluate(self.bars, i, side=side, entry=entry, stop=stop,
-                                    target=take, reversal=self._reversal)
+                                    target=take, reversal=self._reversal,
+                                    native_htf_bars=self._native_mtf_context.get(primary_tf, ()),
+                                    require_native_htf=True,
+                                    allow_legacy_htf_resample=False)
             if not v.allowed or v.score < self.min_score:
                 if self.on_block:
                     self.on_block({
@@ -109,9 +114,21 @@ class CustomStrategyAdapter(HubStrategy):
 
         # ---- multi-timeframe gate (never trade against the higher-timeframe trend) ----
         if self._mtf_filter and not self._reversal:
-            from services.mtf_engine import htf_consensus, trends_from_stream
-            trends = trends_from_stream(self.bars, self.spec.get("timeframe", "4h"))
-            mtf = htf_consensus(trends, 1 if side == "long" else -1)
+            from services.mtf_engine import htf_consensus
+            primary = self._native_mtf_evidence.get("primary") or {}
+            label = primary.get("htf_timeframe")
+            bias = primary.get("htf_bias")
+            if not label or bias not in {"BULLISH", "BEARISH", "NEUTRAL"}:
+                if self.on_block:
+                    self.on_block({
+                        "symbol": self.symbol, "side": side, "score": confidence * 100,
+                        "regime": "—", "htf_bias": "unavailable",
+                        "reason": "native primary HTF context unavailable",
+                        "timestamp": bar.timestamp.isoformat(),
+                    })
+                return None
+            trends = {label: bias.title()}
+            mtf = htf_consensus(trends, 1 if side == "long" else -1, tfs=(label,))
             if not mtf["allowed"]:
                 if self.on_block:
                     self.on_block({
@@ -126,4 +143,5 @@ class CustomStrategyAdapter(HubStrategy):
         sig = Signal(timestamp=bar.timestamp, symbol=self.symbol, type=direction,
                      entry=entry, stop_loss=stop, take_profit=take, reason=reason)
         sig.confidence = confidence
+        sig.snapshot = {"mtf_evidence": dict(self._native_mtf_evidence)}
         return sig
