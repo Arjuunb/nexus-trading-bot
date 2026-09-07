@@ -10,22 +10,17 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Callable
 
 from bot.types import Bar
 from data.market_data_v2 import TF_MS, normalize_symbol
+from services.mtf_policy import canonical_candle_id
 from services.price_action_stream import PriceActionPublicStream
 
 
 def candle_id(symbol: str, timeframe: str, bar: Bar) -> str:
-    stamp = bar.timestamp
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return (
-        f"BINANCE_USDM:{normalize_symbol(symbol)}:{timeframe}:"
-        f"{int(stamp.timestamp() * 1000)}"
-    )
+    return canonical_candle_id(symbol, timeframe, bar)
 
 
 @dataclass
@@ -187,6 +182,10 @@ class ForwardPaperSubscription:
         self.consumer = _Consumer(consumer_id=consumer_id, **sinks)
         self.symbol = ""
         self.timeframe = ""
+        # Context fetches need concurrent native channels (for example 5m,
+        # 1h, and 4h).  They must not retune the primary subscription by
+        # repeatedly detaching it from one channel and attaching it to another.
+        self._native_fetch_subscriptions: dict[tuple[str, str], ForwardPaperSubscription] = {}
 
     @property
     def consumer_id(self) -> str:
@@ -199,6 +198,10 @@ class ForwardPaperSubscription:
         return started
 
     def stop(self) -> None:
+        children = list(self._native_fetch_subscriptions.values())
+        self._native_fetch_subscriptions.clear()
+        for child in children:
+            child.stop()
         self.hub._detach(self.consumer_id, stop_empty=True)
 
     @property
@@ -240,12 +243,20 @@ class ForwardPaperSubscription:
     def make_fetcher(self, fallback: Callable | None = None):
         def fetch(symbol: str, timeframe: str, limit: int, **_kwargs):
             requested = (normalize_symbol(symbol), timeframe)
-            if requested != (self.symbol, self.timeframe) or not self.running:
-                if not self.start(*requested):
+            if requested == (self.symbol, self.timeframe) and self.running:
+                source = self
+            else:
+                source = self._native_fetch_subscriptions.get(requested)
+                if source is None:
+                    source = self.hub.subscription(
+                        f"{self.consumer_id}:native:{requested[0]}:{requested[1]}"
+                    )
+                    self._native_fetch_subscriptions[requested] = source
+                if not source.running and not source.start(*requested):
                     raise RuntimeError(
                         f"Binance USD-M hub could not start {requested[0]} {requested[1]}"
                     )
-            bars = self.snapshot()["closed_bars"]
+            bars = source.snapshot()["closed_bars"]
             if not bars:
                 if fallback is not None:
                     return fallback(symbol, timeframe, limit, **_kwargs)

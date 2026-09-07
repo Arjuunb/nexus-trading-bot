@@ -859,7 +859,7 @@ _STRATEGY_CATALOG = [
     {"key": "adaptive_trend_pullback", "label": "Adaptive MTF Trend Pullback",
      "version": builtin_strategy_version("adaptive_trend_pullback"),
      "supported_timeframes": ["5m"],
-     "desc": "4H regime + 1H trend + 15M pullback location + 5M confirmed entry"},
+     "desc": "5m entry + native 1h regime gate + native 4h bias + 15m pullback context"},
 ]
 
 # Reconcile the engine label with a persisted strategy choice: the overrides

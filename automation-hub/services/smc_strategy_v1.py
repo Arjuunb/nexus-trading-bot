@@ -174,15 +174,25 @@ def _snapshot_at(engine: SMCMarketStructureEngine, candle_at: datetime | None):
     return engine.snapshots[max(eligible)] if eligible else None
 
 
-def _context_conditions(snapshot, direction: str | None) -> tuple[list[dict], list[str]]:
-    bias = snapshot.htf_bias if snapshot else 0
+def _context_conditions(snapshot, direction: str | None,
+                        mtf_evidence: dict | None = None) -> tuple[list[dict], list[str]]:
+    primary = ((mtf_evidence or {}).get("primary") or {})
+    named_bias = primary.get("htf_bias")
+    # Historical/frozen unit callers may not own the live hub. Preserve their
+    # native SMC snapshot behavior; the paper runtime always supplies the
+    # shared policy evidence and never takes this fallback.
+    bias = (1 if named_bias == "BULLISH" else -1 if named_bias == "BEARISH"
+            else snapshot.htf_bias if snapshot and mtf_evidence is None else 0)
+    display_bias = named_bias or ({1: "BULLISH", -1: "BEARISH"}.get(bias, "NEUTRAL"))
     area = snapshot.dealing_range.area if snapshot else "unknown"
     bias_ok = direction is not None and ((direction == "bullish" and bias > 0) or (direction == "bearish" and bias < 0))
     area_ok = direction is not None and ((direction == "bullish" and area == "discount") or
                                          (direction == "bearish" and area == "premium"))
     rows = [
         {"key": "htf_context", "label": "Completed HTF direction", "status": "PASS" if bias_ok else "MISSING",
-         "detail": f"native HTF bias is {bias}", "object_id": snapshot.id if snapshot else None},
+         "detail": (f"native {primary.get('htf_timeframe', 'HTF')} bias is "
+                    f"{display_bias}"),
+         "object_id": primary.get("htf_candle_id") or (snapshot.id if snapshot else None)},
         {"key": "location", "label": "Premium / discount location", "status": "PASS" if area_ok else "MISSING",
          "detail": f"native dealing-range area is {area}", "object_id": snapshot.id if snapshot else None},
     ]
@@ -191,7 +201,7 @@ def _context_conditions(snapshot, direction: str | None) -> tuple[list[dict], li
 
 
 def evaluate(engine: SMCMarketStructureEngine, model_id: str = "SMC_M1_SWEEP_REVERSAL",
-             *, candle_at=None) -> dict:
+             *, candle_at=None, mtf_evidence: dict | None = None) -> dict:
     model = next((row for row in ENTRY_MODELS if row.id == model_id), None)
     if model is None:
         raise ValueError("unknown SMC source strategy model")
@@ -200,6 +210,7 @@ def evaluate(engine: SMCMarketStructureEngine, model_id: str = "SMC_M1_SWEEP_REV
     base = {"strategy_id": STRATEGY_ID, "version": STRATEGY_VERSION,
             "model": asdict(model), "paper_only": True, "execution_allowed": False,
             "real_execution_allowed": False, "evaluated_at": evaluated_at,
+            "mtf_evidence": dict(mtf_evidence or {}),
             "data_identity": {"symbol": engine.config.symbol, "timeframe": engine.config.timeframe,
                               "selected_candle": selected_at}}
     if not engine.bars:
@@ -221,7 +232,8 @@ def evaluate(engine: SMCMarketStructureEngine, model_id: str = "SMC_M1_SWEEP_REV
     proposal = asdict(selected_trace.proposal) if selected_trace else None
     trace = selected_trace or next((row.selected_trace for row in evaluations if row.selected_trace), None)
     direction = proposal.get("direction") if proposal else (trace.direction if trace else None)
-    context, context_missing = _context_conditions(_snapshot_at(engine, candle_at), direction)
+    context, context_missing = _context_conditions(
+        _snapshot_at(engine, candle_at), direction, mtf_evidence)
     trace_conditions = [asdict(row) for row in trace.conditions] if trace else []
     ordered_conditions = [*context, *trace_conditions]
     trace_missing = list(trace.missing_conditions) if trace else []

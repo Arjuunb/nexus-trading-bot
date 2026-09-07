@@ -136,7 +136,9 @@ def instance_options():
     carrying its own list, so an installed strategy/version or supported market
     cannot silently diverge from what the worker can create.
     """
-    from data.historical import SYMBOLS, TIMEFRAMES
+    from data.historical import SYMBOLS
+    from services.mtf_policy import ENTRY_HTF
+    timeframes = list(ENTRY_HTF)
     versions_by_strategy: dict[str, list[str]] = {}
     version_store = getattr(_wa, "version_store", None)
     if version_store is not None:
@@ -151,11 +153,11 @@ def instance_options():
         builtin = str(row.get("version") or "unversioned")
         strategies.append({"key": key, "label": row["label"],
                            "versions": list(dict.fromkeys([builtin, *versions_by_strategy.get(key, [])])),
-                           "supported_timeframes": row.get("supported_timeframes", list(TIMEFRAMES))})
+                           "supported_timeframes": row.get("supported_timeframes", timeframes)})
     manager = _manager()
     defaults = manager.instance_defaults
     return {
-        "symbols": list(SYMBOLS), "timeframes": list(TIMEFRAMES),
+        "symbols": list(SYMBOLS), "timeframes": timeframes,
         "strategies": strategies,
         # Execution choices are server-owned and persisted per instance. New
         # instances default to realistic costs; existing PerfectFill rows remain
@@ -214,17 +216,19 @@ def list_instances():
 @router.post("/instances/platform")
 def configure_platform(body: PlatformConfig, x_webhook_secret: Optional[str] = Header(default=None)):
     _wa._check_secret(x_webhook_secret)
-    from data.historical import SYMBOLS, TIMEFRAMES
+    from data.historical import SYMBOLS
+    from services.mtf_policy import ENTRY_HTF
+    timeframes = tuple(ENTRY_HTF)
     current = _manager().instance_defaults
     supplied = body.model_dump(exclude_none=True)
     default_keys = {key: value for key, value in supplied.items() if key.startswith("default_")}
     candidate = {**current, **default_keys}
     if candidate["default_symbol"].upper() not in SYMBOLS:
         _field_error("default_symbol", f"Unsupported pair '{candidate['default_symbol'].upper()}'")
-    if candidate["default_timeframe"] not in TIMEFRAMES:
+    if candidate["default_timeframe"] not in timeframes:
         _field_error("default_timeframe", f"Unsupported timeframe '{candidate['default_timeframe']}'")
     strategy = _catalog(candidate["default_strategy"])
-    if candidate["default_timeframe"] not in strategy.get("supported_timeframes", TIMEFRAMES):
+    if candidate["default_timeframe"] not in strategy.get("supported_timeframes", timeframes):
         _field_error("default_timeframe", f"{strategy['label']} does not support {candidate['default_timeframe']}")
     if candidate["default_entry_mode"] not in ("limit", "market"):
         _field_error("default_entry_mode", "Entry mode must be limit or market")
@@ -283,12 +287,14 @@ def create_instance(body: InstanceCreate, x_webhook_secret: Optional[str] = Head
     entry_mode = body.entry_mode or defaults["default_entry_mode"]
     fill_model = body.fill_model or defaults["default_fill_model"]
     strategy = _catalog(strategy_key)
-    from data.historical import SYMBOLS, TIMEFRAMES
+    from data.historical import SYMBOLS
+    from services.mtf_policy import ENTRY_HTF
+    timeframes = tuple(ENTRY_HTF)
     if symbol not in SYMBOLS:
         _field_error("symbol", f"Unsupported pair '{symbol}'", 400)
-    if timeframe not in TIMEFRAMES:
+    if timeframe not in timeframes:
         _field_error("timeframe", f"Unsupported timeframe '{timeframe}'", 400)
-    if timeframe not in strategy.get("supported_timeframes", TIMEFRAMES):
+    if timeframe not in strategy.get("supported_timeframes", timeframes):
         raise HTTPException(400, f"{strategy['label']} requires a 5m Trading Instance decision timeframe")
     if float(risk_per_trade_pct) > manager.max_instance_risk_per_trade_pct:
         _field_error("risk_per_trade_pct",
@@ -353,10 +359,11 @@ def update_instance(instance_id: str, body: InstanceUpdate,
                 and body.risk_per_trade_pct > _manager().max_instance_risk_per_trade_pct):
             _field_error("risk_per_trade_pct",
                          f"Risk exceeds the platform ceiling of {_manager().max_instance_risk_per_trade_pct}")
-        from data.historical import TIMEFRAMES
+        from services.mtf_policy import ENTRY_HTF
+        timeframes = tuple(ENTRY_HTF)
         strategy = _catalog(body.strategy) if body.strategy is not None else None
         if body.timeframe is not None:
-            if body.timeframe not in TIMEFRAMES:
+            if body.timeframe not in timeframes:
                 raise HTTPException(400, f"Unsupported timeframe '{body.timeframe}'")
         if strategy is not None and body.strategy_version is not None:
             valid_versions = next((row["versions"] for row in instance_options()["strategies"]
@@ -366,7 +373,7 @@ def update_instance(instance_id: str, body: InstanceUpdate,
         current = _manager().status(instance_id)
         effective_strategy = strategy or _catalog(current["strategy_key"])
         effective_timeframe = body.timeframe or current["timeframe"]
-        if effective_timeframe not in effective_strategy.get("supported_timeframes", list(TIMEFRAMES)):
+        if effective_timeframe not in effective_strategy.get("supported_timeframes", list(timeframes)):
             raise HTTPException(400, f"{effective_strategy['label']} requires a 5m Trading Instance decision timeframe")
         inst = _manager().update_configuration(
             instance_id, capital_allocation=body.capital_allocation,

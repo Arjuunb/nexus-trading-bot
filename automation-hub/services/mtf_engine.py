@@ -206,7 +206,8 @@ def _trend_array(closes, fast=5, slow=12):
     return [1 if ef[k] > es[k] else -1 if ef[k] < es[k] else 0 for k in range(len(closes))]
 
 
-def make_trend_lookup(bars, exec_tf: str, htf_list):
+def make_trend_lookup(bars, exec_tf: str, htf_list, *,
+                      native_context=None, allow_legacy_resample: bool = False):
     """Precompute higher-timeframe trends so each execution bar can read its
     'last closed higher-tf candle' trend in O(1). Causal (no lookahead).
 
@@ -215,7 +216,12 @@ def make_trend_lookup(bars, exec_tf: str, htf_list):
     """
     em = _TF_MIN.get(exec_tf)
     series: dict = {}
-    if em:
+    if native_context:
+        for tf in htf_list:
+            rows = list(native_context.get(tf, ()))
+            if rows:
+                series[tf] = (_trend_array([bar.close for bar in rows]), 1)
+    elif em and allow_legacy_resample:
         for tf in htf_list:
             hm = _TF_MIN.get(tf)
             if not hm or hm <= em:
@@ -234,13 +240,13 @@ def make_trend_lookup(bars, exec_tf: str, htf_list):
     return lookup
 
 
-def trends_from_stream(bars, exec_tf: str) -> dict:
+def trends_from_stream(bars, exec_tf: str, *, allow_legacy_resample: bool = False) -> dict:
     """Derive {4H/Daily/Weekly: Bullish/Bearish/Neutral/n/a} from a single
     execution-timeframe bar stream by resampling upward. Used by the live/paper
     adapter so paper trading applies the same higher-timeframe gate as replay."""
     em = _TF_MIN.get(exec_tf)
     out: dict = {}
-    if not em:
+    if not em or not allow_legacy_resample:
         return out
     for tf in ("4h", "1d", "1w"):
         hm = _TF_MIN[tf]

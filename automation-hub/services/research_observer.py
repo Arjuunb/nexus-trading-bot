@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from bot.data.indicators import atr
 from bot.types import Bar
 from services.forward_paper_hub import ForwardPaperMarketDataHub, candle_id
+from services.mtf_policy import policy_for
 from services.native_price_action import NativePriceActionEngine, PriceActionConfig
 from services.native_smc import SMCConfig, SMCMarketStructureEngine
 from services.research_context import CausalHTFContext, NamedLiquidityBook, session_tag, stable_hash
@@ -31,6 +32,9 @@ class ResearchObservationRuntime:
         self.symbol = symbol.upper().replace("/", "")
         self.timeframe = timeframe
         self.research_config = dict(research_config or {})
+        self.primary_htf, self.secondary_htf = policy_for(self.timeframe)
+        if (self.primary_htf, self.secondary_htf) != ("1h", "4h"):
+            raise ValueError("shadow research currently accepts the native 5m -> 1h/4h policy only")
         self.htf = CausalHTFContext()
         self.liquidity = NamedLiquidityBook(
             swing_left=int(self.research_config.get("swing_left", 3)),
@@ -41,6 +45,8 @@ class ResearchObservationRuntime:
             symbol=self.symbol, timeframe=self.timeframe, execution_allowed=False))
         self.smc = SMCMarketStructureEngine(SMCConfig(
             symbol=self.symbol, timeframe=self.timeframe, execution_allowed=False))
+        self._native_mtf_context: dict[str, list[Bar]] = {
+            self.primary_htf: [], self.secondary_htf: []}
         self.variants = ShadowVariantRunner(store, research_config={
             **self.research_config, "liquidity_config_hash": self.liquidity.config_hash,
         })
@@ -56,17 +62,18 @@ class ResearchObservationRuntime:
                 bar_sink=self._on_closed_bar, quote_sink=self._on_quote,
                 event_sink=self._on_event),
             market_hub.subscription(
-                f"research:{self.symbol}:{self.timeframe}:1h",
-                bar_sink=lambda bar: self._on_htf("1h", bar)),
+                f"research:{self.symbol}:{self.timeframe}:{self.primary_htf}",
+                bar_sink=lambda bar: self._on_htf(self.primary_htf, bar)),
             market_hub.subscription(
-                f"research:{self.symbol}:{self.timeframe}:4h",
-                bar_sink=lambda bar: self._on_htf("4h", bar)),
+                f"research:{self.symbol}:{self.timeframe}:{self.secondary_htf}",
+                bar_sink=lambda bar: self._on_htf(self.secondary_htf, bar)),
         ]
 
     def start(self) -> bool:
+        # Warm native HTF clocks before any decision callback can run.
+        htf_started = self._subscriptions[1].start(self.symbol, self.primary_htf)
+        htf4_started = self._subscriptions[2].start(self.symbol, self.secondary_htf)
         started = self._subscriptions[0].start(self.symbol, self.timeframe)
-        htf_started = self._subscriptions[1].start(self.symbol, "1h")
-        htf4_started = self._subscriptions[2].start(self.symbol, "4h")
         ready = bool(started and htf_started and htf4_started)
         if not ready:
             self.stop()
@@ -96,6 +103,12 @@ class ResearchObservationRuntime:
         try:
             self.htf.ingest(self.symbol, timeframe, bar,
                             candle_id(self.symbol, timeframe, bar))
+            rows = self._native_mtf_context[timeframe]
+            if not any(existing.timestamp == bar.timestamp for existing in rows):
+                rows.append(bar)
+                rows.sort(key=lambda item: item.timestamp)
+            self.pa.set_native_mtf_context(self._native_mtf_context)
+            self.smc.set_native_mtf_context(self._native_mtf_context)
         except Exception as exc:  # research must not interrupt the shared feed
             with self._lock:
                 self._last_error = f"HTF observation failed closed: {exc}"
@@ -117,10 +130,10 @@ class ResearchObservationRuntime:
         if direction is None and proposal is not None:
             direction = proposal.direction
         htf = self.htf.at(self.symbol, decision_time)
-        preferred_htf = htf.get("4h") or htf.get("1h")
+        preferred_htf = htf.get(self.primary_htf)
         htf_aligned = bool(direction and preferred_htf and (
-            (direction == "bullish" and preferred_htf["bias"] == "BULLISH") or
-            (direction == "bearish" and preferred_htf["bias"] == "BEARISH")
+            (direction == "bullish" and preferred_htf["htf_bias"] == "BULLISH") or
+            (direction == "bearish" and preferred_htf["htf_bias"] == "BEARISH")
         ))
         relevant_liquidity = [row for row in liquidity if (
             row["side"] == ("LOW" if direction == "bullish" else "HIGH")
@@ -205,7 +218,13 @@ class ResearchObservationRuntime:
             "choch": any(row.event_type == "CHOCH" for row in closed_structure),
             "bos": any(row.event_type == "BOS" for row in closed_structure),
             "session": session_tag(bar.timestamp),
-            "htf": htf, "htf_aligned": htf_aligned,
+            "htf": htf,
+            "mtf_evidence": {
+                "entry_timeframe": self.timeframe,
+                "primary": htf.get(self.primary_htf),
+                "secondary": htf.get(self.secondary_htf),
+            },
+            "htf_aligned": htf_aligned,
             "full_smc_ready": bool(smc_snapshot.proposal_ids),
             "smc_missing_condition": smc_snapshot.next_required_event,
             "pa_sr_rejection": sr is not None,

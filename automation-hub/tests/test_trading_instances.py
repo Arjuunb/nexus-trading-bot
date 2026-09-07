@@ -201,6 +201,7 @@ def test_instance_status_exposes_only_its_scoped_last_decision_and_real_aggregat
     assert status["last_decision"]["final_state"] == "QUALIFIED"
     assert status["ui_status"] == "BLOCKED"
     assert status["worker_counts"] == {"signals": 0, "accepted": 0, "rejections": 0}
+    assert status["mtf_policy"]["label"] == "Entry 5m · HTF 1h waiting · Bias 4h waiting"
     assert status["strategy_identity"]["configured_id"] == "brain"
     assert status["configuration"]["capital_allocation"] == 1_000
     assert status["execution"]["current_equity"] == 1_000

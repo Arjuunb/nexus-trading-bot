@@ -28,9 +28,11 @@ Sessions use `Europe/London`: Asia 00:00–07:00, London 07:00–13:00,
 London/New York overlap 13:00–16:00, New York 16:00–21:00, otherwise out of
 session. UK daylight saving is applied by `zoneinfo`.
 
-HTF context accepts only closed Binance USD-M `1h` and `4h` candles. At a
-decision time T, the selected HTF `close_timestamp` must be less than or equal
-to T. Decision bars are never grouped or sampled to manufacture HTF candles.
+HTF context follows the shared native map in `docs/NATIVE_MTF_POLICY.md`.
+For a `5m` decision it records both closed Binance USD-M `1h` primary-gate and
+`4h` secondary-bias candles. At decision time T, each selected HTF
+`close_timestamp` must be less than or equal to T. Decision bars are never
+grouped or sampled to manufacture HTF candles.
 
 ## Costs and validation
 

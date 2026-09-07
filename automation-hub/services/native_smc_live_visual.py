@@ -63,7 +63,7 @@ class _LiveVisualFeed:
     last_fetch_monotonic: float
 
 
-_LIVE_FEEDS: dict[tuple[str, str, str], _LiveVisualFeed] = {}
+_LIVE_FEEDS: dict[tuple[str, str, str, bool], _LiveVisualFeed] = {}
 _LIVE_FEEDS_LOCK = RLock()
 _LIVE_REFRESH_SECONDS = 2.5
 
@@ -261,7 +261,8 @@ def _candle_payload(bar: Bar | None) -> dict | None:
 
 
 def _new_feed(symbol: str, timeframe: str, venue: str, limit: int, now: datetime,
-              fetcher: Callable[[str, str, str, int], list[Bar]]) -> _LiveVisualFeed:
+              fetcher: Callable[[str, str, str, int], list[Bar]],
+              mtf_context: dict[str, list[Bar]] | None = None) -> _LiveVisualFeed:
     raw = fetcher(symbol, timeframe, venue, max(200, min(int(limit), 1_000)))
     closed = valid_closed_bars(raw, TF_SECONDS[timeframe], now=now)
     if len(closed) < 200:
@@ -269,6 +270,8 @@ def _new_feed(symbol: str, timeframe: str, venue: str, limit: int, now: datetime
             f"{LIVE_VENUES[venue]['label']} returned only {len(closed)} valid closed candles; need at least 200"
         )
     engine = SMCMarketStructureEngine(SMCConfig(symbol=symbol, timeframe=timeframe))
+    if mtf_context is not None:
+        engine.set_native_mtf_context(mtf_context)
     engine.ingest_authoritative_closed_bars(closed, timeframe_seconds=TF_SECONDS[timeframe], now=now)
     forming = _forming_candle(raw, TF_SECONDS[timeframe], now)
     price = _display_price(forming, closed)
@@ -287,13 +290,16 @@ def _new_feed(symbol: str, timeframe: str, venue: str, limit: int, now: datetime
 
 
 def _refresh_feed(feed: _LiveVisualFeed, symbol: str, timeframe: str, venue: str,
-                  now: datetime, fetcher: Callable[[str, str, str, int], list[Bar]]) -> None:
+                  now: datetime, fetcher: Callable[[str, str, str, int], list[Bar]],
+                  mtf_context: dict[str, list[Bar]] | None = None) -> None:
     """Advance an existing feed with a tiny provider window.
 
     ``process_closed_bar`` is idempotent, so overlap is intentional: the last
     few provider candles protect against a boundary arriving just as it closes.
     """
     raw = fetcher(symbol, timeframe, venue, 6)
+    if mtf_context is not None:
+        feed.engine.set_native_mtf_context(mtf_context)
     closed = valid_closed_bars(raw, TF_SECONDS[timeframe], now=now)
     feed.engine.ingest_authoritative_closed_bars(closed, timeframe_seconds=TF_SECONDS[timeframe], now=now)
     feed.loaded_closed_candles = len(feed.engine.bars)
@@ -310,7 +316,9 @@ def _refresh_feed(feed: _LiveVisualFeed, symbol: str, timeframe: str, venue: str
 def live_visual_state(symbol: str = "BTCUSDT", timeframe: str = "5m", venue: str = "binance_usdm", *,
                       limit: int = 800, visible: int = 240, now: datetime | None = None,
                       fetcher: Callable[[str, str, str, int], list[Bar]] = fetch_venue_ohlcv,
-                      model_id: str = "SMC_M1_SWEEP_REVERSAL") -> dict:
+                      model_id: str = "SMC_M1_SWEEP_REVERSAL",
+                      mtf_evidence: dict | None = None,
+                      mtf_context: dict[str, list[Bar]] | None = None) -> dict:
     """Return a real-time display state while isolating native SMC to closed bars.
 
     Production calls share a small in-memory feed and poll it at most once per
@@ -322,18 +330,23 @@ def live_visual_state(symbol: str = "BTCUSDT", timeframe: str = "5m", venue: str
         raise ValueError("visible must be between 20 and 1000")
     supplied_clock_or_fetcher = now is not None or fetcher is not fetch_venue_ohlcv
     observed_at = now or datetime.now(timezone.utc)
-    key = (symbol, timeframe, venue)
+    # Native-context and legacy research displays may never share an engine:
+    # one has an authoritative HTF clock and the other intentionally does not.
+    key = (symbol, timeframe, venue, mtf_context is not None)
 
     if supplied_clock_or_fetcher:
-        feed = _new_feed(symbol, timeframe, venue, limit, observed_at, fetcher)
+        feed = _new_feed(symbol, timeframe, venue, limit, observed_at, fetcher, mtf_context)
     else:
         with _LIVE_FEEDS_LOCK:
             feed = _LIVE_FEEDS.get(key)
             if feed is None:
-                feed = _new_feed(symbol, timeframe, venue, limit, observed_at, fetcher)
+                feed = _new_feed(symbol, timeframe, venue, limit, observed_at, fetcher, mtf_context)
                 _LIVE_FEEDS[key] = feed
-            elif monotonic() - feed.last_fetch_monotonic >= _LIVE_REFRESH_SECONDS:
-                _refresh_feed(feed, symbol, timeframe, venue, observed_at, fetcher)
+            else:
+                if mtf_context is not None:
+                    feed.engine.set_native_mtf_context(mtf_context)
+                if monotonic() - feed.last_fetch_monotonic >= _LIVE_REFRESH_SECONDS:
+                    _refresh_feed(feed, symbol, timeframe, venue, observed_at, fetcher, mtf_context)
 
     state = feed.engine.visual_state(candle_window=min(int(visible), len(feed.engine.bars)))
     # The ladder is a read-only projection of the same closed-bar native
@@ -341,7 +354,11 @@ def live_visual_state(symbol: str = "BTCUSDT", timeframe: str = "5m", venue: str
     from services.smc_strategy_ladder import evaluate_ladder
     from services.smc_strategy_v1 import evaluate as evaluate_source_strategy
     state["strategy_ladder"] = evaluate_ladder(feed.engine)
-    state["source_strategy"] = evaluate_source_strategy(feed.engine, model_id)
+    state["source_strategy"] = evaluate_source_strategy(
+        feed.engine, model_id, mtf_evidence=mtf_evidence)
+    state["mtf_evidence"] = dict(mtf_evidence or {})
+    from services.mtf_policy import display_contract
+    state["mtf_policy"] = display_contract(timeframe, mtf_evidence)
     forming = _candle_payload(feed.forming_candle)
     candle_closes_at = (
         (feed.forming_candle.timestamp + timedelta(seconds=TF_SECONDS[timeframe])).isoformat()

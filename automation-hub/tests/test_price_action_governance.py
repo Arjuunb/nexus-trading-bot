@@ -97,6 +97,34 @@ def test_capture_material_projection_deduplicates_refresh_and_transient_state(tm
     assert payload["identity"]["dataset_fingerprint"].startswith("decision-evidence-")
 
 
+def test_native_mtf_identity_is_immutable_material_journal_evidence(tmp_path):
+    store = PriceActionJournalStore(tmp_path / "mtf.db")
+    state, session, paper, feed, partition = evidence(
+        status="WATCHING_LOCATION", net_r=None)
+    state["trades"] = []
+    state["mtf_evidence"] = {
+        "entry_timeframe": "5m",
+        "primary": {
+            "htf_timeframe": "1h", "htf_candle_id": "one-hour-12",
+            "htf_close_timestamp": "2026-08-24T12:00:00+00:00",
+            "htf_bias": "BULLISH", "heartbeat": "ignore-me",
+        },
+        "secondary": {
+            "htf_timeframe": "4h", "htf_candle_id": "four-hour-12",
+            "htf_close_timestamp": "2026-08-24T12:00:00+00:00",
+            "htf_bias": "BEARISH",
+        },
+    }
+    journal_id = store.capture(
+        visual_state=state, session=session, paper_state=paper,
+        feed_status=feed, partition_label=partition)[0]
+
+    saved = store.get(journal_id)["latest"]["market_context"]["mtf_evidence"]
+    assert saved["primary"]["htf_candle_id"] == "one-hour-12"
+    assert saved["secondary"]["htf_candle_id"] == "four-hour-12"
+    assert "heartbeat" not in saved["primary"]
+
+
 def test_legacy_full_payload_hash_does_not_force_migration_revision(tmp_path):
     store = PriceActionJournalStore(tmp_path / "legacy-hash.db")
     journal_id = capture(store)

@@ -79,15 +79,13 @@ def test_risk_manager_limits_apply_to_builtin_and_custom():
         )
 
 
-def test_macro_confirmation_drive_the_mtf_gate():
+def test_macro_confirmation_without_native_history_cannot_invent_an_mtf_gate():
     plain = run_simulation("EMA 8/30", "BTCUSDT", "5m", tuning={"min_score": 50}, bars=3000)
     gated = run_simulation("EMA 8/30", "BTCUSDT", "5m", tuning={"min_score": 50}, bars=3000,
                            macro="4h", confirmation="15m")
     assert plain["mtf_gate"] == []                       # no gate when not requested
-    assert set(gated["mtf_gate"]) <= {"15m", "4h"} and gated["mtf_gate"]
-    # the gate actually fired (blocked some setups) and changed the outcome
-    assert gated["results"].get("blocked_count", 0) > 0
-    assert gated["results"]["net_r"] != plain["results"]["net_r"]
+    assert gated["mtf_gate"] == []
+    assert gated["results"]["net_r"] == plain["results"]["net_r"]
 
 
 def test_underperforming_fires_on_weak_stats():

@@ -1,4 +1,4 @@
-"""4H regime classification. No entry logic belongs in this module."""
+"""Primary-HTF regime classification. No entry logic belongs in this module."""
 from __future__ import annotations
 
 from bot.data.indicators import atr
@@ -17,7 +17,7 @@ class MarketRegimeEngine:
         cfg = self.config
         if len(bars) < cfg.minimum_bars[cfg.regime_timeframe]:
             return RegimeAssessment(MarketRegime.UNCERTAIN, 0, 0, 0, 0, 0,
-                                    failed=("insufficient completed 4H candles",))
+                                    failed=(f"insufficient completed {cfg.regime_timeframe} candles",))
         read = ema_read(bars, cfg.fast_ema, cfg.slow_ema)
         current_atr = atr(bars, cfg.atr_period)
         current_adx = adx(bars, cfg.adx_period)

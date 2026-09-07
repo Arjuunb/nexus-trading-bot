@@ -27,6 +27,7 @@ from typing import Iterable
 from zoneinfo import ZoneInfo
 
 from bot.types import Bar
+from services.mtf_policy import evidence_for
 
 
 LONDON = ZoneInfo("Europe/London")
@@ -85,11 +86,11 @@ class LiquidityReference:
 @dataclass(frozen=True)
 class HTFEvidence:
     htf_timeframe: str
-    candle_id: str
-    bias: str
+    htf_candle_id: str
+    htf_bias: str
+    htf_close_timestamp: str
     structure: str
-    open_timestamp: str
-    close_timestamp: str
+    htf_open_timestamp: str
     source: str = "Binance USD-M public closed candle"
 
 
@@ -122,24 +123,36 @@ class CausalHTFContext:
         result: dict[str, dict | None] = {}
         normalized = symbol.upper().replace("/", "")
         for timeframe in HTF_SECONDS:
-            eligible = [row for row in self._rows.get((normalized, timeframe), [])
-                        if row[0] <= decision]
-            if not eligible:
+            stored = self._rows.get((normalized, timeframe), [])
+            eligible = [item for item in stored if item[0] <= decision]
+            row = evidence_for(
+                normalized, timeframe, [item[1] for item in stored], decision_time,
+            )
+            if row is None or not eligible:
                 result[timeframe] = None
                 continue
-            closed, bar, ident = eligible[-1]
-            previous = eligible[-2][1] if len(eligible) > 1 else None
-            if previous is None or bar.close == previous.close:
-                bias, structure = "NEUTRAL", "UNCHANGED_CLOSE"
-            elif bar.close > previous.close:
-                bias, structure = "BULLISH", "HIGHER_CLOSE"
-            else:
-                bias, structure = "BEARISH", "LOWER_CLOSE"
-            result[timeframe] = asdict(HTFEvidence(
-                htf_timeframe=timeframe, candle_id=ident, bias=bias,
-                structure=structure, open_timestamp=utc(bar.timestamp).isoformat(),
-                close_timestamp=closed.isoformat(),
+            structure = {"BULLISH": "HIGHER_CLOSE", "BEARISH": "LOWER_CLOSE"}.get(
+                row["htf_bias"], "UNCHANGED_CLOSE")
+            payload = asdict(HTFEvidence(
+                htf_timeframe=timeframe,
+                # Research ingestion may carry a venue event identifier. Keep
+                # that authoritative identity while sharing selection/bias
+                # semantics with the production MTF policy.
+                htf_candle_id=eligible[-1][2],
+                htf_bias=row["htf_bias"],
+                htf_close_timestamp=row["htf_close_timestamp"],
+                structure=structure,
+                htf_open_timestamp=row["htf_open_timestamp"],
             ))
+            # Compatibility aliases for existing frozen shadow datasets. New
+            # consumers persist the explicit htf_* contract above.
+            payload.update({
+                "candle_id": payload["htf_candle_id"],
+                "bias": payload["htf_bias"],
+                "open_timestamp": payload["htf_open_timestamp"],
+                "close_timestamp": payload["htf_close_timestamp"],
+            })
+            result[timeframe] = payload
         return result
 
 

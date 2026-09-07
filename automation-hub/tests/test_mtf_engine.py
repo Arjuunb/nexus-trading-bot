@@ -125,22 +125,26 @@ def test_mtf_endpoint(client):
 def test_trends_from_stream_resamples_higher_tfs():
     from services.mtf_engine import trends_from_stream
     bars = _up(n=700)
-    t = trends_from_stream(bars, "15m")
+    t = trends_from_stream(bars, "15m", allow_legacy_resample=True)
     assert "4H" in t and "Daily" in t and "Weekly" in t
     assert t["4H"] == "Bullish"                      # clean uptrend resampled to 4H
-    assert "4H" not in trends_from_stream(bars, "4h")  # exec >= tf is excluded
+    assert "4H" not in trends_from_stream(bars, "4h", allow_legacy_resample=True)  # exec >= tf is excluded
 
 
 def test_adapter_blocks_counter_higher_timeframe():
     from strategies.custom_adapter import CustomStrategyAdapter
+    from services.mtf_policy import evidence_at
     spec = {"name": "X", "symbol": "BTCUSDT", "timeframe": "15m", "side": "long",
             "entry": {"op": "AND", "rules": [{"type": "rsi", "op": "below", "value": 100}]},
             "stop": {"type": "atr", "mult": 1.5, "period": 14},
             "target": {"type": "rr", "rr": 2.0}, "quality_filter": False, "mtf_filter": True}
     blocks = []
     ad = CustomStrategyAdapter("BTCUSDT", spec, on_block=blocks.append)
+    native = {"1h": _down(n=400), "4h": _down(n=100)}
     sig = None
     for b in _down(n=400):                            # longs into a downtrend
+        decision = b.timestamp + timedelta(minutes=15)
+        ad.set_native_mtf_context(native, evidence_at("BTCUSDT", "15m", native, decision))
         sig = ad.on_bar(b) or sig
     assert sig is None                                # HTF bearish -> gate blocks the long
     assert blocks and any("oppose" in x["reason"] or "conflict" in x["reason"].lower() for x in blocks)
@@ -149,7 +153,7 @@ def test_adapter_blocks_counter_higher_timeframe():
 def test_make_trend_lookup_is_causal():
     from services.mtf_engine import make_trend_lookup, htf_consensus
     bars = _up(n=800)
-    lk = make_trend_lookup(bars, "15m", ["4h", "1d"])   # 4H factor 16, 1d factor 96
+    lk = make_trend_lookup(bars, "15m", ["4h", "1d"], allow_legacy_resample=True)   # 4H factor 16, 1d factor 96
     assert "4h" in lk.timeframes                          # had enough data
     late = lk(700)
     assert late["4h"] == "Bullish"                       # uptrend resampled to 4H
@@ -157,7 +161,7 @@ def test_make_trend_lookup_is_causal():
     assert htf_consensus(late, 1, lk.timeframes)["allowed"]
     assert not htf_consensus(late, -1, lk.timeframes)["allowed"]
     # exec >= tf is excluded, and a too-short series degrades gracefully
-    lk2 = make_trend_lookup(bars, "4h", ["4h", "1w"])
+    lk2 = make_trend_lookup(bars, "4h", ["4h", "1w"], allow_legacy_resample=True)
     assert "4h" not in lk2.timeframes
 
 

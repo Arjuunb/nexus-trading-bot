@@ -21,15 +21,19 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
     name = "adaptive_trend_pullback"
     label = "Adaptive MTF Trend Pullback"
     supported_regimes = ()  # its own stricter directional regime engine is authoritative
-    required_timeframes = ("4h", "1h", "15m", "5m")
+    # 1h is the shared policy's primary gate for a 5m entry. 4h arrives via
+    # set_native_mtf_context as secondary bias and is never a separate gate.
+    required_timeframes = ("1h", "15m", "5m")
     decision_timeframe = "5m"
 
-    def __init__(self, symbol: str, *, config: Optional[AdaptiveTrendPullbackConfig] = None, **params):
+    def __init__(self, symbol: str, *, config: Optional[AdaptiveTrendPullbackConfig] = None,
+                 allow_legacy_mtf_resample: bool = False, **params):
         self.config = config or AdaptiveTrendPullbackConfig(**params)
         super().__init__(symbol, atr_period=self.config.atr_period,
                          rr_target=self.config.target_rr)
         self._context: dict[str, list[Bar]] = {timeframe: [] for timeframe in self.required_timeframes}
         self._external_context = False
+        self.allow_legacy_mtf_resample = bool(allow_legacy_mtf_resample)
         self.regime_engine = MarketRegimeEngine(self.config)
         self.trend_engine = HigherTimeframeTrendEngine(self.config)
         self.pullback_detector = PullbackDetector(self.config)
@@ -41,6 +45,10 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
     def set_timeframe_context(self, context: Mapping[str, Sequence[Bar]]) -> None:
         """Supply independently completed candles; forming bars are forbidden upstream."""
         self._context = {timeframe: list(context.get(timeframe, ())) for timeframe in self.required_timeframes}
+        # Secondary policy evidence is retained for identity/telemetry only;
+        # it is deliberately absent from the gate list above.
+        if "4h" in context:
+            self._context["4h"] = list(context.get("4h", ()))
         self._external_context = True
         # The base engine still calls on_bar on each new 5M close. Keep the
         # canonical entry stream identical to that engine-owned sequence.
@@ -53,7 +61,7 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
         if not entry or entry[-1].timestamp != bar.timestamp:
             entry = [*entry, bar]
             self._context[self.decision_timeframe] = entry
-        if not self._external_context:
+        if not self._external_context and self.allow_legacy_mtf_resample:
             # Historical/walk-forward callers may stream genuine 5M candles.
             # Aggregate only complete aligned buckets; never interpolate a
             # higher timeframe or expose the in-progress bucket.
@@ -72,9 +80,9 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
             self._block(f"Insufficient completed candles: {', '.join(missing)}")
             return None
 
-        regime = self.regime_engine.assess(self._context["4h"])
+        regime = self.regime_engine.assess(self._context["1h"])
         if regime.regime not in (MarketRegime.BULL_TREND, MarketRegime.BEAR_TREND):
-            self._block(f"4H regime {regime.regime.value} blocks trend entries", regime=regime)
+            self._block(f"1H primary regime {regime.regime.value} blocks trend entries", regime=regime)
             return None
         direction = "LONG" if regime.regime == MarketRegime.BULL_TREND else "SHORT"
         trend = self.trend_engine.assess(self._context["1h"], direction)
@@ -135,8 +143,10 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
             return None
 
         self.lifecycle_state = SetupState.ORDER_PENDING
-        reason = (f"{direction} | 4H {regime.regime.value} {regime.confidence:.0f}% | "
-                  f"1H {trend.label} | 15M {pullback.location} | "
+        secondary = (self._native_mtf_evidence.get("secondary") or {})
+        reason = (f"{direction} | 1H primary {regime.regime.value} {regime.confidence:.0f}% | "
+                  f"4H bias {secondary.get('htf_bias', 'NEUTRAL')} | "
+                  f"15M {pullback.location} | "
                   f"5M confirmation | quality {quality:.0f}/100 | RR {rr:.2f}")
         signal = Signal(
             timestamp=bar.timestamp, symbol=self.symbol,
@@ -155,6 +165,7 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
             "quality_score": round(quality, 2), "planned_rr": round(rr, 2),
             "atr_5m": round(entry_atr, 8),
             "timeframe_closes": self._timeframe_closes(),
+            "mtf_evidence": dict(self._native_mtf_evidence),
         }
         signal.checklist = self._checklist(regime, trend, pullback, confirmation, quality, rr)
         self.last_decision = StrategyDecision(
@@ -172,7 +183,7 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
                 self._context[timeframe][-1].timestamp
                 + timedelta(seconds=TF_SECONDS[timeframe])
             ).isoformat()
-            for timeframe in self.required_timeframes
+            for timeframe in self._context
         }
 
     def _block(self, reason: str, direction=None, regime=None, trend=None) -> None:
@@ -183,8 +194,9 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
     @staticmethod
     def _checklist(regime, trend, pullback, confirmation, quality, rr) -> list[dict]:
         return [
-            {"name": "4H regime alignment", "status": "Passed", "detail": f"{regime.regime.value} {regime.confidence:.0f}%"},
-            {"name": "1H trend confirmation", "status": "Passed" if trend.valid else "Failed", "detail": trend.label},
+            {"name": "1H primary regime", "status": "Passed", "detail": f"{regime.regime.value} {regime.confidence:.0f}%"},
+            {"name": "1H primary trend confirmation", "status": "Passed" if trend.valid else "Failed", "detail": trend.label},
+            {"name": "4H secondary bias", "status": "Neutral", "detail": "context only; never an entry gate"},
             {"name": "15M corrective pullback", "status": "Passed" if pullback.valid else "Failed", "detail": pullback.location or "no valid location"},
             {"name": "5M candle confirmation", "status": "Passed" if confirmation.valid else "Failed", "detail": confirmation.label},
             {"name": "Volume confirmation", "status": "Passed" if confirmation.volume_confirmed else "Neutral", "detail": "5M vs 20-bar average"},

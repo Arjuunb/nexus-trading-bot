@@ -111,6 +111,7 @@ interface NativeState extends NativeSMCChartState {
   strategy_ladder?: StrategyLadder;
   source_strategy?: SMCSourceStrategyEvaluation;
   data_provenance?: DataProvenance;
+  mtf_policy?: { label: string; available_entry_timeframes: string[] };
 }
 
 interface SMCPaperState {
@@ -176,7 +177,6 @@ interface LiveHistoryPage {
 }
 
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "DOGEUSDT"];
-const TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"];
 const TABS: BottomTab[] = ["positions", "orders", "trades", "setups", "rejected", "journal", "analysis", "session", "connection"];
 
 const PRESETS: Record<ChartPreset, NativeSMCOverlayFilters> = {
@@ -352,7 +352,10 @@ export default function SMCStrategyLabPage() {
     }
   };
   const applyConfiguration = () => runAction(
-    () => apiPostJson("/research/smc/sessions/current/configuration", { operating_mode: operatingMode, model_id: selectedModelId, risk_pct: Number(riskPct) }),
+    () => apiPostJson("/research/smc/sessions/current/configuration", {
+      symbol, timeframe, operating_mode: operatingMode,
+      model_id: selectedModelId, risk_pct: Number(riskPct),
+    }),
     "SMC paper configuration saved",
   );
   const applyLeverage = (value: string) => {
@@ -440,10 +443,10 @@ export default function SMCStrategyLabPage() {
       </aside>
 
       <main className="pa-main">
-        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable ? "live" : "stale"} />{symbol}<span>SMC SESSION · PERPETUAL</span></div><div className="pa-timeframes">{TIMEFRAMES.map((row) => <button type="button" key={row} className={row === timeframe ? "active" : ""} onClick={() => switchMarket(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible SMC chart candles" value={visibleBars} onChange={(event) => { setVisibleBars(Number(event.target.value)); setTimeViewport(null); setFitSignal((value) => value + 1); }}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button type="button" onClick={() => { setTimeViewport(null); setPriceViewport({ auto: true, scale: 1, offset: 0 }); setFitSignal((value) => value + 1); }}>Fit</button><button type="button" onClick={onGoLatest}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{healthState}</span></div>
+        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable ? "live" : "stale"} />{symbol}<span>SMC SESSION · PERPETUAL</span></div><div className="pa-timeframes">{(data?.mtf_policy?.available_entry_timeframes ?? ["5m"]).map((row) => <button type="button" key={row} className={row === timeframe ? "active" : ""} onClick={() => switchMarket(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible SMC chart candles" value={visibleBars} onChange={(event) => { setVisibleBars(Number(event.target.value)); setTimeViewport(null); setFitSignal((value) => value + 1); }}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button type="button" onClick={() => { setTimeViewport(null); setPriceViewport({ auto: true, scale: 1, offset: 0 }); setFitSignal((value) => value + 1); }}>Fit</button><button type="button" onClick={onGoLatest}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{healthState}</span></div>
 
         <div className="pa-chart-shell" aria-label="Native SMC chart workspace">
-          <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{data?.data_provenance?.venue ?? "Binance USDⓈ-M Futures"} · session {paper.data?.session.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{evaluation ? `${evaluation.model.label} · ${evaluation.state} · ${evaluation.next_required_event}` : "SMC strategy evidence loading"}</span><span>{data?.snapshot?.swing_bias === 1 ? "BULLISH" : data?.snapshot?.swing_bias === -1 ? "BEARISH" : "NEUTRAL"}</span><b>{evaluation?.state === "ENTRY_READY" ? "READY" : "WAIT"}</b></div></div>
+          <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{data?.mtf_policy?.label ?? "Native MTF context loading"}</span><span>{data?.data_provenance?.venue ?? "Binance USDⓈ-M Futures"} · session {paper.data?.session.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{evaluation ? `${evaluation.model.label} · ${evaluation.state} · ${evaluation.next_required_event}` : "SMC strategy evidence loading"}</span><span>{data?.snapshot?.swing_bias === 1 ? "BULLISH" : data?.snapshot?.swing_bias === -1 ? "BEARISH" : "NEUTRAL"}</span><b>{evaluation?.state === "ENTRY_READY" ? "READY" : "WAIT"}</b></div></div>
           <div className="pa-metric-scope"><b>Selected SMC model shown above</b><span>Candidate {evaluation?.selected_candidate_id ?? selectedCandidate?.strategy_id ?? "watching"}</span><span>{evaluation?.missing_conditions.length ?? 0} missing conditions</span><span>Version {evaluation?.version ?? "—"} · execution PAPER ONLY</span></div>
           {chartState.error ? <div className="pa-error"><b>Market data unavailable</b><span>{chartState.error}</span><button type="button" onClick={() => void chartState.refetch()}>Retry</button></div> : null}
           {!chartData ? <div className="pa-loading">Loading and reconciling Binance market streams…</div> : <NativeSMCChartOverlay state={chartData} timeframe={timeframe} rightOffsetBars={8} initialVisibleBars={visibleBars} filters={filters} selectedObjectId={selectedId || undefined} highlightedObjectIds={highlightedObjectIds} onCandleSelect={setSelectedCandle} fitContentSignal={fitSignal} latestSignal={latestSignal} centerTimestamp={selectedCandle || undefined} priceViewport={priceViewport} viewport={timeViewport} onViewportChange={onViewportChange} onHistoryNearStart={requestOlderHistory} historyLoading={historyLoading} hasMoreHistory={hasMoreHistory} historicalMode={!autoFollowLatest} onGoLive={onGoLatest} prependedHistory={historyPrepend} onPriceAxisDrag={onPriceAxisDrag} onResetPriceScale={() => setPriceViewport({ auto: true, scale: 1, offset: 0 })} liveDataStale={!feedReliable} tradePlan={evaluation?.trade_plan ?? null} fillMarkers={fillMarkers} modelLabel="native SMC strategy" height="clamp(520px, 58vh, 680px)" />}

@@ -46,8 +46,8 @@ def test_aggregate_htf_groups_aligned_to_end():
 
 def test_htf_bias_detects_direction():
     cfg = BrainConfig()
-    up, s_up = htf_bias(_uptrend(), cfg)
-    dn, s_dn = htf_bias(_downtrend(), cfg)
+    up, s_up = htf_bias(_uptrend(), cfg, allow_legacy_resample=True)
+    dn, s_dn = htf_bias(_downtrend(), cfg, allow_legacy_resample=True)
     assert up == "bullish" and dn == "bearish"
     assert 0.0 <= s_up <= 1.0 and s_dn > 0.3  # clean trend => strong
 
@@ -200,13 +200,18 @@ def test_adapter_brain_blocks_and_logs():
 
 def test_adapter_quality_scales_confidence():
     from strategies.custom_adapter import CustomStrategyAdapter
+    from services.mtf_policy import evidence_at
     spec = {"name": "X", "symbol": "BTCUSDT", "timeframe": "1h", "side": "long",
             "entry": {"op": "AND", "rules": [{"type": "ema_cross", "fast": 20, "slow": 50, "dir": "above"}]},
             "stop": {"type": "atr", "mult": 1.5, "period": 14},
-            "target": {"type": "rr", "rr": 2.0}, "min_score": 40}
+            "target": {"type": "rr", "rr": 2.0}, "min_score": 40,
+            "mtf_filter": False}
     ad = CustomStrategyAdapter("BTCUSDT", spec)
+    native = {"4h": _uptrend(n=400)}
     got = None
     for b in _uptrend(n=400):
+        decision = b.timestamp + timedelta(hours=1)
+        ad.set_native_mtf_context(native, evidence_at("BTCUSDT", "1h", native, decision))
         s = ad.on_bar(b)
         if s is not None:
             got = s
