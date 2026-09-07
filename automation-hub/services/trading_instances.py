@@ -1201,15 +1201,8 @@ class TradingInstanceManager:
                 controls.pause_all()
             forward = inst.mode == "trading"
             market = self.store.market_state(instance_id) if forward else {}
-            raw_pending = dict(market.get("pending_orders_json") or {})
-            namespaced_pending = "forward_paper_intents" in raw_pending
-            pending_state = {
-                "forward_paper_intents": dict(
-                    raw_pending.get("forward_paper_intents") or {}),
-                "strategy_limit_intents": dict(
-                    raw_pending.get("strategy_limit_intents") or
-                    ({} if namespaced_pending else raw_pending)),
-            }
+            pending_state = self._split_pending_orders(
+                market.get("pending_orders_json") or {})
 
             def save_forward_intents(pending: dict) -> None:
                 pending_state["forward_paper_intents"] = dict(pending)
@@ -1523,6 +1516,34 @@ class TradingInstanceManager:
         return self._instances[instance_id]
 
     @staticmethod
+    def _split_pending_orders(raw_pending: dict) -> dict[str, dict]:
+        """Normalize legacy and namespaced pending-order checkpoints.
+
+        The strategy engine and forward quote-fill engine own different intent
+        schemas. Reboot validation must never mistake their namespace keys for
+        symbols, and must preserve both sets independently.
+        """
+        if not isinstance(raw_pending, dict):
+            raise RuntimeError("Persisted pending-order state is not an object")
+        namespaced = (
+            "forward_paper_intents" in raw_pending
+            or "strategy_limit_intents" in raw_pending
+        )
+        if not namespaced:
+            return {
+                "forward_paper_intents": {},
+                "strategy_limit_intents": dict(raw_pending),
+            }
+        forward = raw_pending.get("forward_paper_intents") or {}
+        strategy = raw_pending.get("strategy_limit_intents") or {}
+        if not isinstance(forward, dict) or not isinstance(strategy, dict):
+            raise RuntimeError("Persisted pending-order namespaces must be objects")
+        return {
+            "forward_paper_intents": dict(forward),
+            "strategy_limit_intents": dict(strategy),
+        }
+
+    @staticmethod
     def _validate_reboot_recovery(instance: TradingInstance, positions: list[dict],
                                   trades: list[dict], pending_orders: dict) -> None:
         """Fail closed when persisted execution state cannot be restored exactly."""
@@ -1678,14 +1699,22 @@ class TradingInstanceManager:
                 raise RuntimeError("Persisted paper balance changed while the worker was stopping")
             preserved["balance"] = float(persisted_balance)
             market = self.store.market_state(instance_id)
-            pending_orders = market.get("pending_orders_json") or {}
+            pending_state = self._split_pending_orders(
+                market.get("pending_orders_json") or {})
+            strategy_pending = pending_state["strategy_limit_intents"]
+            forward_pending = pending_state["forward_paper_intents"]
             self._set_reboot_phase(instance_id, "reconciling_execution_state",
                                    "Reconciling persisted positions and pending orders")
-            self._validate_reboot_recovery(reloaded, positions, trades, pending_orders)
+            self._validate_reboot_recovery(
+                reloaded, positions, trades, strategy_pending)
+            if forward_pending and self.market_hub is None:
+                raise RuntimeError(
+                    "Forward-paper intents cannot be restored without the market-data hub")
             preserved.update({
                 "simulation_session_id": session_id,
                 "position_ids": sorted(str(row.get("id")) for row in positions),
-                "pending_order_symbols": sorted(pending_orders),
+                "pending_order_symbols": sorted(
+                    set(strategy_pending) | set(forward_pending)),
             })
 
             self._set_reboot_phase(instance_id, "connecting_market_data",
@@ -1698,8 +1727,14 @@ class TradingInstanceManager:
             restored_ids = sorted(str(row.get("id")) for row in restored_positions)
             if restored_ids != preserved["position_ids"]:
                 raise RuntimeError("Open-position reconciliation changed the persisted position set")
-            if dict(new_engine._pending) != pending_orders:
+            if dict(new_engine._pending) != strategy_pending:
                 raise RuntimeError("Pending-order reconciliation did not restore the persisted order set")
+            restored_forward = (
+                new_paper.pending_intents()
+                if callable(getattr(new_paper, "pending_intents", None)) else {})
+            if restored_forward != forward_pending:
+                raise RuntimeError(
+                    "Forward-paper intent reconciliation did not restore the persisted intent set")
             if abs(float(new_paper.current_realized_equity()) - preserved["balance"]) > 0.000001:
                 raise RuntimeError("Paper balance changed during Full Bot Reboot")
             for position in restored_positions:

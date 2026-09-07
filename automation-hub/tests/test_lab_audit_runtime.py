@@ -172,7 +172,9 @@ def test_dashboard_status_is_scope_accurate_and_fails_closed(tmp_path):
         assert smc_status["account_scope"] == "SMC_STRATEGY_LAB_ONLY"
         assert pa_status["session_state"] == smc_status["session_state"] == "BLOCKED"
         assert pa_status["execution_armed"] is False
-        assert smc_status["execution_armed"] is True
+        # Both labs default to signals_only. An offline session is BLOCKED and
+        # must never claim execution authority merely because it exists.
+        assert smc_status["execution_armed"] is False
         assert pa_status["execution_state"] == smc_status["execution_state"] == "BLOCKED"
         assert pa_status["feed"]["state"] == smc_status["feed"]["state"] == "DISCONNECTED"
         assert pa_status["performance"].keys() == {"backtest", "forward_validation", "live_paper"}
