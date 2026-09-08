@@ -183,6 +183,9 @@ const JOURNAL_FULL = {
 const JOURNAL_TRADES = { trades: [{
   trade_id: "t1234567abcdef", created_at: "2026-07-05T08:00:00Z", closed_at: "2026-07-05T09:00:01Z",
   mode: "paper", symbol: "BTCUSDT", side: "long", strategy: "Decision Brain", timeframe: "4h",
+  execution_mode: "paper", market_data_mode: "live", market_data_source: "native exchange candles",
+  exchange: "kraken", instance_id: null, instance_name: null, position_id: "p1234567",
+  strategy_id: "decision-brain", strategy_name: "Decision Brain", strategy_version: "1.0.0",
   entry: 100, exit: 115, pnl: 30, planned_rr: 3, actual_rr: 3, result: "win", grade: "A", status: "closed",
 }] };
 const JOURNAL_EVOLUTION = { setups: [{
@@ -560,6 +563,32 @@ export async function mockApi(page: Page) {
     (url) => url.host === "localhost:8000",
     async (route: Route) => {
       const url = new URL(route.request().url());
+      if (url.pathname === "/forward-validation") {
+        return route.fulfill({ json: {
+          stage_status: "BLOCKED", verdict: "NO_ELIGIBLE_CANDIDATES", validation_started_at: null,
+          active_experiments: [], candidates: [],
+          candidate_counts: { "FORWARD PAPER ELIGIBLE": 0, "RESEARCH ONLY": 0, REJECTED: 0 },
+          historical_evidence: {
+            exchange: "Binance", instrument: "USD-M", timeframe: "5m",
+            start_utc: "2026-07-01T00:00:00Z", end_utc: "2026-08-01T00:00:00Z",
+            candles_per_symbol: 8928, symbols: ["BTCUSDT"], bundle_sha256: "mock-evidence-bundle",
+            forward_venue: "Kraken", exact_venue_parity: "Not established",
+          },
+          forward_evidence: { experiments: 0, counted_candles: 0, decisions: 0, trades: 0, note: "No forward evidence." },
+          next_action: "Review frozen evidence before starting an experiment.",
+        } });
+      }
+      if (url.pathname === "/research/price-action/journal") {
+        return route.fulfill({ json: { entries: [], real_execution_allowed: false,
+          statistics: { setups: 0, completed: 0, wins: 0, losses: 0, net_r: 0, expectancy_r: 0 } } });
+      }
+      if (url.pathname === "/research/price-action/learning/analysis") {
+        return route.fulfill({ json: { classifications: {}, patterns: [], minimum_pattern_sample: 30,
+          warning: "Insufficient evidence", active_strategy_mutated: false, real_execution_allowed: false } });
+      }
+      if (url.pathname === "/research/price-action/learning/candidates") {
+        return route.fulfill({ json: { candidates: [] } });
+      }
       if (url.pathname.includes("/research/price-action/live-chart")) {
         const symbol = url.searchParams.get("symbol") ?? paPaper.session.symbol;
         const timeframe = url.searchParams.get("timeframe") ?? paPaper.session.timeframe;

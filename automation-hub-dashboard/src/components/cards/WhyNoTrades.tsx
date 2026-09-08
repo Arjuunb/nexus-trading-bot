@@ -13,7 +13,7 @@ export default function WhyNoTrades() {
   const errored = data.instances.find((row) => row.state === "error");
   const headline = errored ? `${errored.symbol} instance needs recovery` : "No Paper Trading Instance is running";
   const detail = errored ? (errored.last_error || "Open Trading Instances and restart or inspect this worker.") : "Create or start a Trading Instance. The legacy autonomous engine is not used for Paper Trading.";
-  return <div className="card" style={{ borderColor: "#f59e0b", background: "#f59e0b18", display: "flex", gap: 12, alignItems: "flex-start" }}>
+  return <div className="card" style={{ borderColor: "#f59e0b", background: "#f59e0b18", display: "flex", flexDirection: "row", padding: 16, gap: 12, alignItems: "flex-start" }}>
     <Icon name="warning" size={18} color="#f59e0b" />
     <div><div style={{ fontWeight: 600, color: "#f59e0b" }}>{headline}</div><div className="dim" style={{ marginTop: 4, lineHeight: 1.55 }}>{detail}</div><div className="dim mono" style={{ marginTop: 6, fontSize: 12 }}>{data.active_slots} / {data.max_active_slots} active slots</div></div>
   </div>;

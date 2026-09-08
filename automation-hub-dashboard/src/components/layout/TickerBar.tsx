@@ -14,10 +14,25 @@ type Snapshot = {
 
 const ACTIVE_INSTANCE_STATES = new Set(["starting", "bootstrapping", "warming", "syncing", "ready", "running", "data_stale", "recovering", "paused"]);
 
+export function footerConnectionState(error: string | null, loading: boolean): string {
+  if (loading && !error) return "LOADING";
+  if (!error) return "DATA_UNAVAILABLE";
+  const status = error.match(/\bHTTP\s+(\d{3})\b/i)?.[1];
+  if (status === "401") return "AUTH_REQUIRED";
+  if (status === "403") return "ACCESS_DENIED";
+  if (status === "429") return "RATE_LIMITED";
+  if (status) return `API_ERROR · HTTP ${status}`;
+  if (/failed to fetch|fetch failed|networkerror|network error|load failed|connection refused/i.test(error)) {
+    return "BACKEND_UNREACHABLE";
+  }
+  return "API_ERROR";
+}
+
 /** Footer uses the same Trading Instance payload as the dashboard and detail UI. */
 export default function TickerBar({ surface }: { surface: string }) {
   const app = useApp();
-  const { data } = useLive<Snapshot>("/instances", 4000);
+  const instanceState = useLive<Snapshot>("/instances", 4000);
+  const { data } = instanceState;
   const pa = useLive<LabBotStatus>("/research/price-action/bot-status", 4000);
   const smc = useLive<LabBotStatus>("/research/smc-strategy/bot-status", 4000);
   const [, setClock] = useState(0);
@@ -35,27 +50,33 @@ export default function TickerBar({ surface }: { surface: string }) {
   const activeSeconds = Number.isFinite(parsedStart)
     ? Math.max(0, (Date.now() - parsedStart) / 1000)
     : selected?.engine?.uptime_s ?? undefined;
-  const lab = surface === "Price Action Lab" ? pa.data : surface === "SMC Strategy Lab" ? smc.data : null;
+  const labRequest = surface === "Price Action Lab" ? pa : surface === "SMC Strategy Lab" ? smc : null;
+  const lab = labRequest?.data ?? null;
   const labItems: [string, string][] | null = lab ? [
     ["Surface", lab.lab === "PRICE_ACTION" ? "PRICE ACTION LAB" : "SMC STRATEGY LAB"],
     ["Mode", lab.mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"],
-    ["Data", `Binance USD-M · ${lab.feed?.state ?? "DISCONNECTED"}`],
+    ["Data", `Binance USD-M · ${labRequest?.error ? "STALE" : lab.feed?.state ?? "DISCONNECTED"}`],
     ["Market", `${lab.symbol ?? "—"} · ${lab.timeframe ?? "—"}`],
     ["Positions / orders", `${lab.open_positions ?? 0} / ${lab.pending_orders ?? 0}`],
     ["Account", `${Number(lab.account?.equity ?? 0).toLocaleString()} USDT`],
-    ["State", lab.execution_state ?? "BLOCKED"],
+    ["State", labRequest?.error ? `DEGRADED · ${footerConnectionState(labRequest.error, false)}` : lab.execution_state ?? "BLOCKED"],
   ] : null;
   const researchItems: [string, string][] | null = surface === "SMC Visual Lab" ? [
     ["Surface", "SMC VISUAL RESEARCH"], ["Mode", "SIGNALS_ONLY"],
     ["Execution", "DISABLED"], ["Data", "Binance USD-M public market data"],
   ] : null;
   const instanceItems: [string, string][] = data ? [
+    ...(instanceState.error ? [["Connection", `DEGRADED · ${footerConnectionState(instanceState.error, false)}`] as [string, string]] : []),
     ["Instance mode", "FORWARD_PAPER"], ["Instances", `${runningCount} / ${data.max_active_slots} running · ${data.active_slots} workers`],
-    ["Global instance data", data.market_data_status], ["Open positions", String(data.total_open_positions)],
+    ["Global instance data", instanceState.error ? "STALE" : data.market_data_status], ["Open positions", String(data.total_open_positions)],
     ["Open risk", `$${data.current_global_risk_amount.toLocaleString()} / $${data.max_global_risk_amount.toLocaleString()}`],
     ["Bot active time", activeSeconds === undefined ? "—" : uptime(activeSeconds)],
     ["Active", selected ? `${selected.symbol} · ${selected.strategy_label} · ${selected.timeframe}` : instances],
-  ] : [["System", "backend not reachable"]];
-  const items = labItems ?? researchItems ?? instanceItems;
+  ] : [["System", footerConnectionState(instanceState.error, instanceState.loading)]];
+  const unavailableLabItems: [string, string][] | null = labRequest && !lab ? [
+    ["Surface", surface === "Price Action Lab" ? "PRICE ACTION LAB" : "SMC STRATEGY LAB"],
+    ["State", footerConnectionState(labRequest.error, labRequest.loading)],
+  ] : null;
+  const items = labItems ?? unavailableLabItems ?? researchItems ?? instanceItems;
   return <footer className="ticker"><div className="ticker-items">{items.map(([k, v]) => <span className="ticker-item" key={k}><b>{k}</b><span className="ticker-price">{v}</span></span>)}</div><div className="ticker-meta"><NexusBotPet /></div></footer>;
 }

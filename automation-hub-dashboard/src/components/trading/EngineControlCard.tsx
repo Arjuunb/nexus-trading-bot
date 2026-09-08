@@ -56,7 +56,7 @@ export default function EngineControlCard({ engine, logs, onRefresh, toast }: Pr
 
   return (
     <Card title="Paper Trading Engine" subtitle="Server-authoritative lifecycle · paper mode only">
-      <div className="row-actions" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div className="row-actions engine-control-head" style={{ justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <div>
           <Badge text={titleCase(state)} tone={stateTone(state) as any} />
           <span className="dim" style={{ marginLeft: 8, fontSize: 12 }}>{reconnectNote ?? engine?.reason ?? "Ready to scan the market."}</span>

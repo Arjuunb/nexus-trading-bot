@@ -300,7 +300,15 @@
 @keyframes nexus-pet-chart-pulse { 0%, 100% { opacity: .72; } 50% { opacity: 1; } }
 
 @media (max-width: 720px) {
-  .nexus-pet-root { right: -6px; }
+  /* The desktop character intentionally rises above the ticker. On phones that
+     covered the last card in every scroll view, so the launcher is scaled into
+     the footer's reserved 42px slot instead. */
+  .nexus-pet-root { right: 0; bottom: 0; width: 42px; height: 42px; }
+  .nexus-pet-root .nexus-pet-button { transform: scale(.72); transform-origin: right bottom; }
+  .nexus-pet-root[data-pet="sprig"] { width: 42px; height: 42px; }
+  .nexus-pet-root[data-pet="sprig"] .nexus-pet-button { transform: scale(.42); }
+  .nexus-pet-root[data-size="large"] .nexus-pet-button { transform: scale(.64); }
+  .nexus-pet-root[data-pet="sprig"][data-size="large"] .nexus-pet-button { transform: scale(.36); }
   .nexus-pet-popover { position: fixed; right: 10px; bottom: 54px; }
   .nexus-pet-settings { right: 10px; width: min(390px, calc(100vw - 20px)); }
   .nexus-pet-roster { grid-template-columns: 1fr; }

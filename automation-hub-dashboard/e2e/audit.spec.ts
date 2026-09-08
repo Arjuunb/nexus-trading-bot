@@ -1,12 +1,8 @@
 import { test, expect, type Page, type ConsoleMessage } from "@playwright/test";
 import { mockApi } from "./mock";
+import { NAV_LABELS, slug } from "../src/app-context";
 
-const PAGES = [
-  "Overview", "Markets", "Strategies", "Backtesting", "Simulation", "Replay",
-  "Paper Trading", "Live Trading", "Portfolio", "Analytics", "AI Assistant",
-  "Risk Manager", "Evolution", "Logs", "Settings", "Safety Center",
-];
-const slug = (p: string) => p.toLowerCase().replace(/ /g, "-");
+const PAGES = [...NAV_LABELS, "Settings"];
 
 // console errors that are noise (not app defects) — network aborts from the
 // polling hooks racing a page change, favicon, etc.
@@ -30,6 +26,7 @@ test.describe("clickability audit — every page renders without JS errors", () 
       await page.waitForTimeout(1200);            // let hooks fetch + render
       // the page shell must be present (sidebar + a heading somewhere)
       await expect(page.locator("aside.sidebar")).toBeVisible();
+      await expect(page.locator(".topbar .page-title")).toHaveText(label);
       expect(errs, `console errors on ${label}:\n${errs.join("\n")}`).toHaveLength(0);
     });
   }
@@ -62,22 +59,32 @@ test.describe("clickability audit — interactive elements are sound", () => {
         if (!name) unnamed.push(cls || "(no class)");
 
         // not covered: the element at its own center is itself or a descendant
-        const box = await el.boundingBox();
-        if (box) {
-          const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
-          const isTop = await page.evaluate(
-            ({ x, y }) => {
-              const top = document.elementFromPoint(x, y);
-              return { ok: !!top };
-            }, { x: cx, y: cy },
-          );
-          if (!isTop.ok) covered.push(cls);
-        }
+        const obstruction = await el.evaluate((node) => {
+          if ((node as HTMLButtonElement).disabled) return null;
+          let box = node.getBoundingClientRect();
+          let left = Math.max(0, box.left), right = Math.min(innerWidth, box.right);
+          let top = Math.max(0, box.top), bottom = Math.min(innerHeight, box.bottom);
+          // Only check the visible portion of a control; tables and the content
+          // pane deliberately scroll and may clip controls outside their view.
+          for (let parent = node.parentElement; parent; parent = parent.parentElement) {
+            const style = getComputedStyle(parent);
+            box = parent.getBoundingClientRect();
+            if (/(auto|scroll|hidden|clip)/.test(style.overflowX)) {
+              left = Math.max(left, box.left); right = Math.min(right, box.right);
+            }
+            if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) {
+              top = Math.max(top, box.top); bottom = Math.min(bottom, box.bottom);
+            }
+          }
+          if (right - left < 2 || bottom - top < 2) return null;
+          const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+          return hit && node.contains(hit) ? null : `${hit?.tagName}.${hit?.className}`;
+        });
+        if (obstruction) covered.push(`${name || cls} covered by ${obstruction}`);
       }
 
       expect(unnamed, `unnamed interactive elements on ${label}: ${unnamed.join(", ")}`).toHaveLength(0);
-      // covered check is advisory — overlays/tooltips can legitimately sit on top
-      if (covered.length) console.log(`[${label}] ${covered.length} possibly-covered elements`);
+      expect(covered, `covered controls on ${label}: ${covered.join(", ")}`).toHaveLength(0);
     });
   }
 });

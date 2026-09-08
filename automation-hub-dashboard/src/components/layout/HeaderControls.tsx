@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import Icon from "../common/Icon";
 import { useApp } from "../../app-context";
 import { apiPatchJson, apiPost, useLive } from "../../lib/api";
@@ -279,12 +280,12 @@ export default function HeaderControls() {
       <button type="button" className="hdr-chip command-trigger" aria-label="Open command palette" onClick={() => { setPalette(true); setOpen(null); }}><b>⌘K</b></button>
     </div>
 
-    {palette && <div className="command-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPalette(false); }}>
+    {palette && createPortal(<div className="command-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPalette(false); }}>
       <div className="command-palette" role="dialog" aria-modal="true" aria-label="Trading command palette">
         <div className="command-search"><span>⌕</span><input ref={commandInput} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter" && filteredCommands[0]) { event.preventDefault(); void runCommand(filteredCommands[0]); } }} placeholder="Switch instance, strategy, timeframe, risk…" /></div>
         <div className="command-list">{filteredCommands.map((command) => <button key={`${command.label}-${command.hint ?? ""}`} onClick={() => void runCommand(command)}><b>{command.label}</b>{command.hint && <span>{command.hint}</span>}</button>)}{!filteredCommands.length && <p className="hdr-note">No matching command.</p>}</div>
         <div className="command-foot"><span>Enter to run</span><span>Esc to close</span></div>
       </div>
-    </div>}
+    </div>, document.body)}
   </>;
 }
