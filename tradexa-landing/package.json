@@ -6,7 +6,7 @@
   "description": "Tradexa Trading Bot — premium landing page + authentication system.",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.ssr.config.ts --ssr src/entry-server.tsx --outDir dist-ssr && node scripts/prerender.mjs",
     "preview": "vite preview",
     "lint": "tsc --noEmit"
   },
