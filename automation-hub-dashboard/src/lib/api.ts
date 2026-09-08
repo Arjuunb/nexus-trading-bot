@@ -14,15 +14,16 @@ export const API_BASE = (_cfg.apiBase ?? (import.meta.env.VITE_API_BASE as strin
 const requestOptions: RequestInit = { credentials: "include" };
 
 async function requestError(res: Response, path: string): Promise<Error> {
+  const prefix = `${path}: HTTP ${res.status}`;
   try {
     const payload = await res.json();
     const detail = payload?.detail ?? payload?.error;
-    if (typeof detail === "string" && detail) return new Error(`${path}: ${detail}`);
+    if (typeof detail === "string" && detail) return new Error(`${prefix} · ${detail}`);
     if (detail && typeof detail === "object" && typeof detail.message === "string") {
-      return new Error(`${path}: ${detail.field ? `${detail.field}: ` : ""}${detail.message}`);
+      return new Error(`${prefix} · ${detail.field ? `${detail.field}: ` : ""}${detail.message}`);
     }
   } catch { /* keep the safe HTTP status when the error has no JSON body */ }
-  return new Error(`${path}: HTTP ${res.status}`);
+  return new Error(prefix);
 }
 
 export async function apiGet<T>(path: string): Promise<T> {

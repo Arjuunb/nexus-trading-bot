@@ -579,7 +579,7 @@ export default function BotTerminalPage() {
     <div className="terminal">
       {/* ── header strip ─────────────────────────────────────────── */}
       <div className="toolbar" style={{ marginBottom: 12 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <div className="terminal-title-wrap" style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <h1 className="pagehead-title" style={{ margin: 0, fontSize: 19 }}>Paper Trading</h1>
           <span className="dim" style={{ fontSize: 11.5 }}>bot observation terminal · live crypto · every value is a real engine read</span>
           <button className="btn btn-soft btn-sm" onClick={() => go("Paper Account")}>Account &amp; blotter</button>
@@ -607,7 +607,7 @@ export default function BotTerminalPage() {
       </div>
 
       {/* account bar — real paper-account values */}
-      <div className="stat-row" style={{ gridTemplateColumns: "repeat(4, 1fr)", marginBottom: 12 }}>
+      <div className="stat-row terminal-account-stats">
         <StatCard label="Account Balance" value={acct ? `$${acct.current_equity.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "—"}
           sub={acct ? `initial $${acct.initial_capital.toLocaleString()}` : ""} />
         <StatCard label="Unrealized PnL" value={acct ? `${acct.unrealized_pnl >= 0 ? "+" : "−"}$${Math.abs(acct.unrealized_pnl).toFixed(2)}` : "—"}
