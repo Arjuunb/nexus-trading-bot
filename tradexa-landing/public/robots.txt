@@ -5,5 +5,7 @@ Allow: /
 # tree is a large number of URLs that all render the same shell.
 Disallow: /auth/
 Disallow: /settings/
+Disallow: /app
+Disallow: /admin
 
 Sitemap: https://www.trade-logx.com/sitemap.xml

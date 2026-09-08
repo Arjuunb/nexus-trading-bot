@@ -60,7 +60,7 @@ const PRIMARY: SitePage[] = [
     label: "Features",
     title: "Features — every capability, explorable",
     description:
-      "Search, filter and expand every TradeLogX Nexus capability: the Nexus Engine, risk enforcement, Strategy Lab backtesting, the intelligence feed, trading memory and exchange connectivity.",
+      "Explore every TradeLogX Nexus capability: the decision engine, risk controls, backtesting, intelligence feed, trading memory and exchange connectivity.",
     accent: "gold",
     blurb: "The full capability map, searchable",
     themeColor: "#07080B",
@@ -71,7 +71,7 @@ const PRIMARY: SitePage[] = [
     label: "Engine",
     title: "Nexus Engine — the decision operating system",
     description:
-      "Inside the Nexus Engine: an eight-stage AI pipeline that ingests market data, extracts structure, scores conviction, arbitrates a decision and enforces risk before a single order leaves the building.",
+      "See how the Nexus Engine ingests market data, extracts structure, scores conviction, makes decisions and enforces risk before routing an order.",
     accent: "electric",
     blurb: "The AI pipeline, stage by stage",
     themeColor: "#0B0E12",
@@ -82,7 +82,7 @@ const PRIMARY: SitePage[] = [
     label: "Live trade",
     title: "Live trade — the execution terminal",
     description:
-      "A trading terminal view of TradeLogX Nexus: live candles, depth-of-book, open positions, the AI decision panel and a timestamped execution timeline for every fill.",
+      "Explore the TradeLogX Nexus terminal: live candles, order-book depth, positions, AI decisions and a timestamped execution timeline for every fill.",
     accent: "terminal",
     blurb: "Terminal, order book and fills",
     themeColor: "#06080A",
@@ -93,7 +93,7 @@ const PRIMARY: SitePage[] = [
     label: "Selectivity",
     title: "Selectivity — conviction before capital",
     description:
-      "How TradeLogX Nexus decides not to trade. A confidence gauge, a nine-point qualification checklist and the full reasoning trail behind every accepted and rejected setup.",
+      "See how TradeLogX Nexus rejects weak trades using conviction scoring, a nine-point qualification checklist and a recorded reasoning trail.",
     accent: "aurum",
     blurb: "Why most setups are rejected",
     themeColor: "#040404",
@@ -104,7 +104,7 @@ const PRIMARY: SitePage[] = [
     label: "How it works",
     title: "How it works — exchange to analytics",
     description:
-      "The end-to-end journey of a TradeLogX Nexus trade: exchange, analysis, AI, risk, execution, journal and analytics — told as a scroll-driven, stage-by-stage process.",
+      "Follow a TradeLogX Nexus trade through market data, analysis, AI decisions, risk controls, execution, the journal and performance analytics.",
     accent: "spectrum",
     blurb: "The seven-stage journey",
     themeColor: "#05070C",
@@ -115,7 +115,7 @@ const PRIMARY: SitePage[] = [
     label: "Security",
     title: "Security — zero-trust by construction",
     description:
-      "TradeLogX Nexus security: envelope-encrypted API keys, withdrawal-disabled scopes, zero-trust service identity, append-only audit logging and an isolated multi-region deployment.",
+      "Review TradeLogX Nexus security: encrypted API keys, withdrawal-disabled scopes, service isolation, audit logging and deployment controls.",
     accent: "emerald",
     blurb: "Keys, isolation and audit trails",
     themeColor: "#060B15",
@@ -140,7 +140,7 @@ const SECONDARY: SitePage[] = [
     label: "Performance",
     title: "Performance — the numbers, and how they were produced",
     description:
-      "TradeLogX Nexus performance methodology: equity curves, monthly return distribution, execution latency, cost drag and attribution across strategy, symbol, regime and session.",
+      "Understand TradeLogX Nexus performance through equity curves, return distributions, execution costs and attribution by strategy, symbol and regime.",
     accent: "emerald",
     blurb: "Results, methodology and cost drag",
     themeColor: "#06090B",
@@ -164,7 +164,7 @@ const SECONDARY: SitePage[] = [
     label: "Documentation",
     title: "Documentation — quickstart, concepts and guides",
     description:
-      "TradeLogX Nexus documentation: install, connect an exchange, run a backtest, promote a strategy to paper and then to live, and understand the concepts underneath.",
+      "Use TradeLogX Nexus documentation to install, connect an exchange, run backtests, configure paper trading and understand core platform concepts.",
     accent: "electric",
     blurb: "Quickstart, concepts, guides",
     themeColor: "#06080C",
@@ -175,7 +175,7 @@ const SECONDARY: SitePage[] = [
     label: "API reference",
     title: "API reference — endpoints, auth and webhooks",
     description:
-      "The TradeLogX Nexus HTTP API: authentication, rate limits, strategies, positions, decisions and backtests, plus the webhook envelope and the full error taxonomy.",
+      "Explore the TradeLogX Nexus API for authentication, strategies, positions, decisions, backtests, webhooks, rate limits and structured errors.",
     accent: "electric",
     blurb: "Endpoints, auth, webhooks",
     themeColor: "#06080C",
@@ -197,7 +197,7 @@ const SECONDARY: SitePage[] = [
     label: "Open source",
     title: "Open source — what we publish and why",
     description:
-      "The parts of TradeLogX Nexus that are public: the risk engine specification, the event envelope, the backtest harness and the client SDKs, with licences and contribution terms.",
+      "Explore the public TradeLogX Nexus risk specification, event envelope, backtest harness and client SDKs, including licences and contribution guidance.",
     accent: "electric",
     blurb: "What we publish, and why",
     themeColor: "#06080C",
@@ -221,7 +221,7 @@ const SECONDARY: SitePage[] = [
     label: "Support center",
     title: "Support center — answers, and a way to reach a person",
     description:
-      "TradeLogX Nexus support: common answers on connections, risk limits, billing and data, response-time targets by severity, and how to reach a human when the answer is not here.",
+      "Find TradeLogX Nexus help for connections, risk limits, billing and data, with response targets and clear routes for contacting support.",
     accent: "gold",
     blurb: "Answers, and a way to reach us",
     themeColor: "#08080A",
@@ -243,7 +243,7 @@ const SECONDARY: SitePage[] = [
     label: "Status",
     title: "Status — every service, and its recent history",
     description:
-      "Live operational status for TradeLogX Nexus: engine, risk service, execution, market data, API and dashboard, with ninety days of uptime and the full incident history.",
+      "Check TradeLogX Nexus service status for the engine, risk controls, execution, market data, API and dashboard, with uptime and incident history.",
     accent: "terminal",
     blurb: "Live service health",
     themeColor: "#050708",
@@ -278,7 +278,7 @@ const SECONDARY: SitePage[] = [
     label: "Risk disclosure",
     title: "Risk disclosure",
     description:
-      "Trading carries a real risk of loss. What automation does and does not change about that risk, the specific failure modes of an automated system, and what TradeLogX Nexus is not.",
+      "Understand trading loss risk, what automation can and cannot change, automated-system failure modes and the limits of TradeLogX Nexus.",
     accent: "aurum",
     blurb: "What can go wrong, stated plainly",
     themeColor: "#0A0908",

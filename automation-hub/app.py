@@ -409,7 +409,38 @@ def _serve_react() -> HTMLResponse:
                           "oauthProviders": [p for p in ("google", "apple")
                                             if _sec_os.environ.get(f"HUB_AUTH_{p.upper()}_ENABLED", "").lower() in ("1", "true", "yes")]})
            + '</script>')
-    return HTMLResponse(html.replace("<head>", "<head>" + cfg, 1))
+    return HTMLResponse(
+        html.replace("<head>", "<head>" + cfg, 1),
+        headers={
+            "Cache-Control": "no-store",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
+
+
+from functools import lru_cache as _lru_cache  # noqa: E402
+
+
+@_lru_cache(maxsize=64)
+def _landing_document(path: str) -> str:
+    """Return the route-specific, pre-rendered public document when present.
+
+    The client remains a BrowserRouter SPA, but a crawler (or a browser before
+    JavaScript starts) must receive the page it requested rather than twenty
+    copies of the home-page boot shell. The build writes immutable documents
+    under ``landing/seo``; auth/settings routes deliberately retain the generic
+    shell because they are private application surfaces.
+    """
+    clean = path.rstrip("/") or "/"
+    if clean == "/":
+        candidate = _LANDING / "seo" / "index.html"
+    elif clean in _LANDING_PAGE_PATHS:
+        candidate = _LANDING / "seo" / f"{clean[1:]}.html"
+    else:
+        candidate = _LANDING / "index.html"
+    if not candidate.exists():
+        candidate = _LANDING / "index.html"
+    return candidate.read_text(encoding="utf-8")
 
 
 def _serve_landing(request: Optional[Request] = None) -> HTMLResponse:
@@ -417,7 +448,8 @@ def _serve_landing(request: Optional[Request] = None) -> HTMLResponse:
     EXCEPT for a signed-in operator, whose Settings pages (e.g. the live
     strategy switcher) drive the engine and need the same runtime config the
     dashboard gets. Anonymous visitors always receive the bare page."""
-    html = (_LANDING / "index.html").read_text(encoding="utf-8")
+    path = request.url.path if request is not None else "/"
+    html = _landing_document(path)
     # URL and anon key are deliberately public Supabase browser values. Runtime
     # injection avoids baking deployment-specific keys into a Docker image; the
     # service-role key is never present here.
@@ -429,7 +461,17 @@ def _serve_landing(request: Optional[Request] = None) -> HTMLResponse:
                                             if _sec_os.environ.get(f"HUB_AUTH_{p.upper()}_ENABLED", "").lower() in ("1", "true", "yes")]})
            + '</script>')
     html = html.replace("<head>", "<head>" + cfg, 1)
-    return HTMLResponse(html)
+    clean = path.rstrip("/") or "/"
+    public_document = clean == "/" or clean in _LANDING_PAGE_PATHS
+    headers = {
+        "Cache-Control": (
+            "public, max-age=300, stale-while-revalidate=86400"
+            if public_document else "no-store"
+        ),
+    }
+    if not public_document:
+        headers["X-Robots-Tag"] = "noindex, nofollow"
+    return HTMLResponse(html, headers=headers)
 
 
 # Single-origin routing (only when the landing build is bundled): the public
