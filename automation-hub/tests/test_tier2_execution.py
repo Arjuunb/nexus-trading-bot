@@ -219,3 +219,26 @@ def test_pipeline_rejects_below_venue_minimum_notional():
     assert not result.accepted
     assert result.stage == "venue_rules"
     assert "minimum" in result.reason
+
+
+def test_usdm_dict_spec_is_normalized_before_pipeline_sizing(tmp_path, monkeypatch):
+    from data.market_data_v2 import MarketDataService
+
+    market = MarketDataService(tmp_path / "market")
+    monkeypatch.setattr(market, "usdm_contract_rules", lambda symbol: {
+        "symbol": symbol, "quantity_step": .001, "tick_size": .1,
+        "min_quantity": .001, "min_notional": 1.0,
+    })
+    ledger = SqliteLedger(":memory:")
+    paper = PaperExecutionEngine(ledger)
+    pipe = SignalPipeline(
+        ledger, paper, TradingControl(), equity=10_000,
+        position_sizing_mode="fixed", fixed_position_size=.03712941,
+        exposure_limit_pct=1.0, max_total_exposure_pct=1.0,
+    )
+    pipe.symbol_rules_provider = market.usdm_symbol_rules
+    result = pipe.process({"alert_id": "usdm-dict", "symbol": "ETHUSDT",
+                           "side": "BUY", "entry": 100., "stop": 95., "target": 115.})
+    assert result.accepted, result.reason
+    assert result.fill["size"] == .037
+    assert paper.positions()[0]["symbol"] == "ETHUSDT"

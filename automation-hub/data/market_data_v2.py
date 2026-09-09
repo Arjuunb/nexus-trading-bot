@@ -700,6 +700,19 @@ class MarketDataService:
             raise ValueError(f"active Binance USD-M perpetual metadata unavailable for '{key}'")
         return dict(rules[key])
 
+    def usdm_symbol_rules(self, symbol: str):
+        """Typed execution boundary; the public/lab contract remains a dict."""
+        from bot.brokers.symbol_rules import SymbolRules
+
+        spec = self.usdm_contract_rules(symbol)
+        if isinstance(spec, SymbolRules):
+            return spec
+        return SymbolRules(
+            symbol=spec["symbol"], step_size=spec["quantity_step"],
+            tick_size=spec["tick_size"], min_qty=spec["min_quantity"],
+            min_notional=spec["min_notional"],
+        )
+
     def verify_binance_usdm(self) -> dict:
         """Perform a real Binance USD-M Futures metadata health check.
 

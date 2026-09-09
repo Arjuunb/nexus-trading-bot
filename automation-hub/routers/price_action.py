@@ -15,6 +15,7 @@ from data.market_data_v2 import TIMEFRAMES
 from data.sqlite_runtime import is_sqlite_busy
 from services.native_price_action import RESEARCH_ID, STRATEGIES, STRATEGY_VERSION, PriceActionConfig
 from services.price_action_lab import PaperExecutionConfig, replay_state
+from services.lab_read_view import lab_read_view, saved_session, saved_status
 from services.price_action_governance import PersistenceBlocked
 from services.price_action_research import controlled_pa_smc_report
 from services.price_action_reference_study import run_reference_study
@@ -122,8 +123,11 @@ def live_chart(symbol: str = "BTCUSDT", timeframe: str = "5m",
                visible: int = Query(400, ge=50, le=1500),
                request_id: Optional[str] = Query(default=None, max_length=100)):
     try:
-        return _wa.price_action_runtime.live_state(
-            symbol, timeframe, visible=visible, request_id=request_id)
+        from copy import copy
+        with lab_read_view(_wa.price_action_paper) as account:
+            runtime = copy(_wa.price_action_runtime)
+            runtime.account = account
+            return runtime.live_state(symbol, timeframe, visible=visible, request_id=request_id)
     except (ValueError, RuntimeError) as exc:
         _bad(exc, 503)
 
@@ -149,14 +153,17 @@ def step_replay(symbol: str = "BTCUSDT", timeframe: str = "5m",
 
 
 def _paper_state() -> dict:
-    marks = {}
-    for position in _wa.price_action_paper.broker.positions():
-        try:
-            latest = _wa.v2_market_data.public_usdm_window(position["symbol"], "1m", limit=50)[-1]
-            marks[position["symbol"]] = latest.close
-        except Exception:
-            marks[position["symbol"]] = position["entry_price"]
-    return _wa.price_action_paper.state(marks)
+    # Saved account/session reads must not wait for public market providers.
+    with lab_read_view(_wa.price_action_paper) as account:
+        return account.state()
+
+
+@router.get("/session")
+def session_identity():
+    try:
+        return saved_session(_wa.price_action_paper)
+    except sqlite3.OperationalError as exc:
+        _persistence_blocked(exc)
 
 
 @router.get("/paper")
@@ -171,7 +178,8 @@ def paper_account():
 def bot_status():
     """Dashboard-safe status for the isolated Price Action paper system."""
     try:
-        return _wa.price_action_runtime.bot_status()
+        runtime = _wa.price_action_runtime
+        return saved_status(runtime) if hasattr(runtime, "account") else runtime.bot_status()
     except (PersistenceBlocked, sqlite3.OperationalError) as exc:
         _persistence_blocked(exc)
 
@@ -186,7 +194,8 @@ def export_paper_account():
 @router.get("/sessions")
 def list_sessions():
     try:
-        return {"sessions": _wa.price_action_paper.sessions(), "real_execution_allowed": False}
+        with lab_read_view(_wa.price_action_paper) as account:
+            return {"sessions": account.sessions(), "real_execution_allowed": False}
     except (PersistenceBlocked, sqlite3.OperationalError) as exc:
         _persistence_blocked(exc)
 

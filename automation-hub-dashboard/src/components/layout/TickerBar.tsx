@@ -34,7 +34,7 @@ export default function TickerBar({ surface }: { surface: string }) {
   const instanceState = useLive<Snapshot>("/instances", 4000);
   const { data } = instanceState;
   const pa = useLive<LabBotStatus>("/research/price-action/bot-status", 4000);
-  const smc = useLive<LabBotStatus>("/research/smc-strategy/bot-status", 4000);
+  const smc = useLive<LabBotStatus>("/research/smc/bot-status", 4000);
   const [, setClock] = useState(0);
   useEffect(() => {
     const timer = window.setInterval(() => setClock((value) => value + 1), 1000);
@@ -54,7 +54,7 @@ export default function TickerBar({ surface }: { surface: string }) {
   const lab = labRequest?.data ?? null;
   const labItems: [string, string][] | null = lab ? [
     ["Surface", lab.lab === "PRICE_ACTION" ? "PRICE ACTION LAB" : "SMC STRATEGY LAB"],
-    ["Mode", lab.mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"],
+    ["Mode", !lab.session_id || !lab.mode ? "LOADING SESSION" : lab.mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"],
     ["Data", `Binance USD-M · ${labRequest?.error ? "STALE" : lab.feed?.state ?? "DISCONNECTED"}`],
     ["Market", `${lab.symbol ?? "—"} · ${lab.timeframe ?? "—"}`],
     ["Positions / orders", `${lab.open_positions ?? 0} / ${lab.pending_orders ?? 0}`],

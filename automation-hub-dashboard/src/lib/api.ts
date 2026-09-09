@@ -129,6 +129,7 @@ export interface LiveState<T> {
 }
 
 export interface LabBotStatus {
+  session_id?: string | null;
   lab: "PRICE_ACTION" | "SMC";
   account_scope: string;
   scope_label: string;

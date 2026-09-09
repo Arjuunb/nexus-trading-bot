@@ -25,6 +25,7 @@ from services.smc_strategy_v1 import (
     strategy_models as source_strategy_models,
 )
 from services.smc_strategy_lab import SMCPaperConfig
+from services.lab_read_view import lab_read_view, saved_session, saved_status
 
 router = APIRouter(prefix="/research/smc", tags=["research-smc"])
 reviews = VisualReviewLedger()
@@ -197,13 +198,13 @@ def strategy_v1_evaluate(symbol: str = "BTCUSDT", timeframe: str = "5m",
 
 def _smc_paper_state() -> dict:
     runtime = _smc_runtime()
-    marks = {}
-    for position in runtime.smc_paper.broker.positions():
-        try:
-            marks[position["symbol"]] = runtime.v2_market_data.public_usdm_quote(position["symbol"])["mark"]
-        except Exception:
-            marks[position["symbol"]] = position["entry_price"]
-    return runtime.smc_paper.state(marks)
+    with lab_read_view(runtime.smc_paper) as account:
+        return account.state()
+
+
+@router.get("/session")
+def session_identity():
+    return saved_session(_smc_runtime().smc_paper)
 
 
 @router.get("/paper")
@@ -214,7 +215,7 @@ def smc_paper_account():
 @router.get("/bot-status")
 def smc_bot_status():
     """Dashboard-safe status for the isolated SMC paper system."""
-    return _smc_runtime().smc_runtime.bot_status()
+    return saved_status(_smc_runtime().smc_runtime)
 
 
 @router.get("/paper/export")
@@ -224,8 +225,8 @@ def smc_paper_export():
 
 @router.get("/sessions")
 def smc_sessions():
-    return {"sessions": _smc_runtime().smc_paper.sessions(), "paper_only": True,
-            "real_execution_allowed": False}
+    with lab_read_view(_smc_runtime().smc_paper) as account:
+        return {"sessions": account.sessions(), "paper_only": True, "real_execution_allowed": False}
 
 
 @router.post("/sessions")
@@ -480,6 +481,12 @@ def live_chart(symbol: str = "BTCUSDT", timeframe: str = "5m", venue: str = "bin
     """Read-only live-exchange visualisation; never a trading data path."""
     try:
         runtime = _smc_runtime().smc_runtime
+        if venue == "binance_usdm":
+            from copy import copy
+            with lab_read_view(_smc_runtime().smc_paper) as account:
+                view = copy(runtime)
+                view.account = account
+                return view.live_state(symbol, timeframe, visible=visible, window=window, model_id=model_id)
         session = _smc_runtime().smc_paper.session() or {}
         evidence = (runtime.last_mtf_evidence
                     if session.get("symbol") == symbol.upper() and

@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -29,6 +30,9 @@ class _Consumer:
     bar_sink: Callable[[Bar], None] | None = None
     quote_sink: Callable[[dict], None] | None = None
     event_sink: Callable[[dict], None] | None = None
+    pending: OrderedDict = field(default_factory=OrderedDict)
+    delivery_lock: threading.Lock = field(default_factory=threading.Lock)
+    last_error: str = ""
 
 
 @dataclass
@@ -48,6 +52,55 @@ class ForwardPaperMarketDataHub:
         self._channels: dict[tuple[str, str], _Channel] = {}
         self._consumer_keys: dict[str, tuple[str, str]] = {}
         self._lock = threading.RLock()
+        self._retry_timer: threading.Timer | None = None
+
+    def _retry_later(self):
+        with self._lock:
+            if self._retry_timer is None:
+                self._retry_timer = threading.Timer(1.0, self.retry_failed)
+                self._retry_timer.daemon = True
+                self._retry_timer.start()
+
+    def retry_failed(self):
+        """Retry only failed subscribers, preserving their candle order."""
+        with self._lock:
+            self._retry_timer = None
+            consumers = [consumer for channel in self._channels.values()
+                         for consumer in channel.consumers.values() if consumer.pending]
+        for consumer in consumers:
+            self._deliver_pending(consumer)
+
+    def _deliver_pending(self, consumer):
+        if not consumer.delivery_lock.acquire(blocking=False):
+            self._retry_later()
+            return
+        try:
+            while True:
+                with self._lock:
+                    if not consumer.pending:
+                        return
+                    cid, bar = consumer.pending.popitem(last=False)
+                    consumer.last_error = ""
+                try:
+                    consumer.bar_sink(bar)
+                except Exception as exc:
+                    with self._lock:
+                        consumer.pending[cid] = bar
+                        consumer.pending.move_to_end(cid, last=False)
+                        consumer.last_error = f"{type(exc).__name__}: {exc}"
+                    self._retry_later()
+                    return
+        finally:
+            consumer.delivery_lock.release()
+
+    @staticmethod
+    def _notify(consumer, sink, event):
+        try:
+            sink(dict(event))
+        except Exception as exc:
+            # Consumer failures are not transport failures. Candle retries are
+            # tracked separately; quotes are never replayed at a later price.
+            consumer.last_error = f"{type(exc).__name__}: {exc}"
 
     def subscription(
         self,
@@ -80,7 +133,9 @@ class ForwardPaperMarketDataHub:
                     consumers = list(channel.consumers.values())
                 for consumer in consumers:
                     if consumer.bar_sink:
-                        consumer.bar_sink(bar)
+                        with self._lock:
+                            consumer.pending.setdefault(cid, bar)
+                        self._deliver_pending(consumer)
 
             def on_quote(quote: dict) -> None:
                 with self._lock:
@@ -111,14 +166,14 @@ class ForwardPaperMarketDataHub:
                 }
                 for consumer in consumers:
                     if consumer.quote_sink:
-                        consumer.quote_sink(dict(snapshot))
+                        self._notify(consumer, consumer.quote_sink, snapshot)
 
             def on_event(event: dict) -> None:
                 with self._lock:
                     consumers = list(holder["channel"].consumers.values())
                 for consumer in consumers:
                     if consumer.event_sink:
-                        consumer.event_sink(dict(event))
+                        self._notify(consumer, consumer.event_sink, event)
 
             stream = self.stream_factory(
                 self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
@@ -153,7 +208,10 @@ class ForwardPaperMarketDataHub:
             channel = self._channels.get(key)
             if channel is None:
                 return
-            channel.consumers.pop(consumer_id, None)
+            consumer = channel.consumers.pop(consumer_id, None)
+            if consumer:
+                consumer.pending.clear()
+                consumer.last_error = ""
             if stop_empty and not channel.consumers:
                 self._channels.pop(key, None)
                 stream = channel.stream
@@ -167,6 +225,9 @@ class ForwardPaperMarketDataHub:
 
     def stop(self) -> None:
         with self._lock:
+            if self._retry_timer is not None:
+                self._retry_timer.cancel()
+                self._retry_timer = None
             streams = [channel.stream for channel in self._channels.values()]
             self._channels.clear()
             self._consumer_keys.clear()
@@ -219,12 +280,21 @@ class ForwardPaperSubscription:
                 "market_data_source": "Binance USD-M public WebSocket",
                 "consumer_id": self.consumer_id,
             }
-        return {
+        status = {
             **channel.stream.status(),
             "consumer_id": self.consumer_id,
             "candle_id": channel.last_candle_id,
             "market_data_source": "Binance USD-M public WebSocket",
         }
+        with self.hub._lock:
+            pending = list(self.consumer.pending)
+            error = self.consumer.last_error
+        if pending:
+            status.update({"reliable": False, "new_entries_paused": True,
+                           "failing_dependency": "LAB_CANDLE_DELIVERY",
+                           "health_reason": error or "subscriber candle delivery pending"})
+        status["subscriber_delivery"] = {"pending_candle_ids": pending, "last_error": error or None}
+        return status
 
     def snapshot(self) -> dict:
         channel = self.hub._for(self.consumer_id)
