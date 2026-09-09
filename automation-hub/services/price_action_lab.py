@@ -245,6 +245,11 @@ class PriceActionPaperAccount:
         if not session_id:
             return {"readiness_recheck_required": True,
                     "entry_pause_reason": "no active Price Action session"}
+        row = self._db.execute(
+            "SELECT * FROM pa_runtime_controls WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if row:
+            return dict(row)
         self._db.execute(
             "INSERT OR IGNORE INTO pa_runtime_controls VALUES (?,?,?,?)",
             (session_id, 0, "", _iso()),
@@ -741,7 +746,7 @@ class PriceActionPaperAccount:
             "real_funds": False,
             "live_execution_allowed": False,
             "session": self._decode_session(dict(current)) if current else {},
-            "account": self.broker.account(marks),
+            "account": self.broker.account(marks, persist_metrics=False),
             "positions": self._positions_with_protection(),
             "orders": self.broker.orders(),
             "trades": self.broker.fills(limit=500),
@@ -1697,6 +1702,10 @@ class PriceActionLabRuntime:
                 bar_sink=self._on_closed_bar, quote_sink=self._on_quote,
             )
         )
+        from services.native_context_loader import NativeContextLoader
+        fetch = (self.stream.make_fetcher() if market_hub is not None else
+                 lambda sym, tf, limit: market.public_usdm_window(sym, tf, limit=limit))
+        self.native_loader = NativeContextLoader(fetch)
         if autostart:
             self._supervisor_thread = threading.Thread(
                 target=self._run_supervisor, name="price-action-paper-runtime", daemon=True)
@@ -1731,20 +1740,7 @@ class PriceActionLabRuntime:
                 )
 
     def _native_context(self, symbol: str, timeframe: str) -> dict[str, list[Bar]]:
-        """Load the shared policy's independent native Binance candles."""
-        from services.mtf_policy import native_timeframes
-        context: dict[str, list[Bar]] = {}
-        if self.market_hub is not None:
-            fallback = lambda sym, tf, limit, **_kwargs: self.market.public_usdm_window(
-                sym, tf, limit=limit)
-            fetcher = self.stream.make_fetcher(fallback)
-            for htf in native_timeframes(timeframe):
-                result = fetcher(symbol, htf, 500)
-                context[htf] = list(result[0] if isinstance(result, tuple) else result)
-        else:
-            for htf in native_timeframes(timeframe):
-                context[htf] = list(self.market.public_usdm_window(symbol, htf, limit=500))
-        return context
+        return self.native_loader.context(symbol, timeframe)
 
     def _maintain_live_session(self) -> dict:
         """Keep the saved LIVE_PAPER session running without any browser client."""
@@ -1829,7 +1825,7 @@ class PriceActionLabRuntime:
                 )
                 if evidence.get("primary") is None:
                     raise RuntimeError(
-                        "Price Action primary native HTF candle is unavailable")
+                        "HTF_PRIMARY_UNAVAILABLE: Price Action primary native HTF candle is unavailable")
                 self.engine.set_native_mtf_context(native_context)
                 self.engine.process_closed_bar(bar, market_data_health=status["state"])
             except ValueError:
@@ -1938,22 +1934,31 @@ class PriceActionLabRuntime:
     def live_state(self, symbol: str, timeframe: str, *, visible: int = 500,
                    request_id: str | None = None) -> dict:
         session = self._assert_session_identity(symbol, timeframe, "LIVE_PAPER")
-        self.ensure(symbol, timeframe)
-        with self._lock:
-            if self.engine is None:
-                raise RuntimeError("Price Action runtime failed to initialize")
+        # Hydration is a read of the worker's snapshot. It must never start a
+        # stream, bootstrap REST history, or wait behind the worker's I/O lock.
+        acquired = self._lock.acquire(blocking=False)
+        try:
+            engine = (self.engine if acquired and self.identity == (normalize_symbol(symbol), timeframe)
+                      else None)
+            if engine is None:
+                engine = NativePriceActionEngine(self._engine_config(symbol, timeframe))
+            state = engine.visual_state(candle_window=max(50, min(visible, 1500)))
             snapshot = self.stream.snapshot()
-            state = self.engine.visual_state(candle_window=max(50, min(visible, 1500)))
+        finally:
+            if acquired:
+                self._lock.release()
+        from services.mtf_policy import evidence_at, display_contract
+        evidence = evidence_at(symbol, timeframe, self._native_context(symbol, timeframe),
+                               datetime.now(timezone.utc))
+        state["mtf_evidence"] = evidence
+        state["mtf_policy"] = display_contract(timeframe, evidence)
+        state["session_id"] = session["id"]
+        state["operating_mode"] = session.get("operating_mode")
+        state["blockers"] = ([] if evidence.get("primary") else ["HTF_PRIMARY_UNAVAILABLE"])
         quote, connection = snapshot["quote"], snapshot["connection"]
         quote_source = "PUBLIC_WEBSOCKET"
-        if quote.get("bid") is None or quote.get("mark") is None:
-            try:
-                quote = {**quote, **self.market.public_usdm_quote(symbol)}
-                quote_source = "PUBLIC_REST_FALLBACK_UNRECONCILED"
-            except Exception:
-                pass
         forming = snapshot["forming"]
-        last = quote.get("last") or (forming.close if forming else (self.engine.bars[-1].close if self.engine.bars else None))
+        last = quote.get("last") or (forming.close if forming else (engine.bars[-1].close if engine.bars else None))
         state["forming_candle"] = _candle(forming) if forming else None
         state["live_display"] = {
             "is_forming": forming is not None, "observed_at": _iso(),
@@ -1962,26 +1967,26 @@ class PriceActionLabRuntime:
             "last_price": last, "bid": quote.get("bid"), "ask": quote.get("ask"),
             "mark": quote.get("mark"), "funding_rate": quote.get("funding_rate"),
             "next_funding_time": quote.get("next_funding_time"),
-            "connection_state": connection["state"],
-            "transport_state": connection["transport_state"],
-            "health_reason": connection["health_reason"],
-            "reliable": connection["reliable"],
+            "connection_state": connection.get("state"),
+            "transport_state": connection.get("transport_state"),
+            "health_reason": connection.get("health_reason"),
+            "reliable": bool(connection.get("reliable")),
             "quote_source": quote_source,
-            "last_update": connection["last_update"],
-            "last_candle_update": connection["last_candle_update"],
-            "last_quote_update": connection["last_quote_update"],
-            "last_mark_update": connection["last_mark_update"],
-            "last_closed_update": connection["last_closed_update"],
-            "candle_age_seconds": connection["candle_age_seconds"],
-            "quote_age_seconds": connection["quote_age_seconds"],
-            "mark_age_seconds": connection["mark_age_seconds"],
-            "closed_candle_age_seconds": connection["closed_candle_age_seconds"],
-            "candle_quote_deviation_bps": connection["candle_quote_deviation_bps"],
+            "last_update": connection.get("last_update"),
+            "last_candle_update": connection.get("last_candle_update"),
+            "last_quote_update": connection.get("last_quote_update"),
+            "last_mark_update": connection.get("last_mark_update"),
+            "last_closed_update": connection.get("last_closed_update"),
+            "candle_age_seconds": connection.get("candle_age_seconds"),
+            "quote_age_seconds": connection.get("quote_age_seconds"),
+            "mark_age_seconds": connection.get("mark_age_seconds"),
+            "closed_candle_age_seconds": connection.get("closed_candle_age_seconds"),
+            "candle_quote_deviation_bps": connection.get("candle_quote_deviation_bps"),
             "failing_dependency": connection.get("failing_dependency"),
             "last_successful_event": connection.get("last_successful_event"),
             "retry_state": connection.get("retry_state"),
             "connecting_age_seconds": connection.get("connecting_age_seconds"),
-            "new_entries_paused": connection["new_entries_paused"],
+            "new_entries_paused": bool(connection.get("new_entries_paused", True)) or not evidence.get("primary"),
             "execution_uses_closed_bars_only": True,
         }
         state["data_identity"] = {
@@ -1997,18 +2002,18 @@ class PriceActionLabRuntime:
             "mode": "LIVE_BINANCE_WEBSOCKET_WITH_REST_RECOVERY",
             "market_data_mode": "LIVE", "market_data_source": "Binance USDⓈ-M public streams",
             "exchange": "Binance USDⓈ-M Futures", "symbol": normalize_symbol(symbol),
-            "timeframe": timeframe, "closed_candles_used": len(self.engine.bars),
+            "timeframe": timeframe, "closed_candles_used": len(engine.bars),
             "session_id": session["id"], "request_id": request_id,
             "forming_candle_excluded": forming is not None,
-            "connection_state": connection["state"],
-            "new_entries_paused": connection["new_entries_paused"],
+            "connection_state": connection.get("state"),
+            "new_entries_paused": bool(connection.get("new_entries_paused", True)) or not evidence.get("primary"),
             "real_execution_allowed": False,
         }
         return state
 
     def bot_status(self) -> dict:
         """One factual, scope-labelled control-plane view for the dashboard."""
-        from services.mtf_policy import display_contract
+        from services.mtf_policy import display_contract, evidence_at
         paper = self.account.state()
         session = paper.get("session") or {}
         connection = self.stream.status()
@@ -2046,6 +2051,11 @@ class PriceActionLabRuntime:
             realized_r_values=[row["outcome"].get("net_r") for row in paper_rows
                                if row.get("outcome", {}).get("net_r") is not None])
         activity = paper.get("activity") or []
+        evidence = (evidence_at(session["symbol"], session["timeframe"],
+                                self._native_context(session["symbol"], session["timeframe"]),
+                                datetime.now(timezone.utc)) if session else {})
+        if session.get("mode") == "LIVE_PAPER" and not evidence.get("primary"):
+            blockers.append("HTF_PRIMARY_UNAVAILABLE")
         execution_armed = session.get("operating_mode") == "automatic"
         operator_state = (
             "ERROR" if orphaned_exposure else
@@ -2053,7 +2063,7 @@ class PriceActionLabRuntime:
             "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
         )
         mtf_evidence = dict(self.engine._mtf_evidence) if self.engine is not None else {}
-        mtf_policy = (display_contract(session["timeframe"], mtf_evidence)
+        mtf_policy = (display_contract(session["timeframe"], evidence)
                       if session.get("timeframe") else None)
         return {
             "lab": "PRICE_ACTION", "account_scope": paper["account_scope"],
@@ -2063,7 +2073,8 @@ class PriceActionLabRuntime:
                          "version": PRICE_ACTION_STRATEGY_VERSION},
             "symbol": session.get("symbol"), "timeframe": session.get("timeframe"),
             "mtf_policy": mtf_policy,
-            "mode": session.get("operating_mode"), "saved_configuration": config,
+            "mode": session.get("operating_mode"),
+            "session_id": session.get("id"), "operating_mode": session.get("operating_mode"), "saved_configuration": config,
             "session_state": operator_state,
             "execution_armed": execution_armed,
             "feed": connection,
@@ -2291,6 +2302,7 @@ class PriceActionLabRuntime:
         return self.account.journal.shadow_report(candidate_id)
 
     def stop(self) -> None:
+        self.native_loader.stop()
         self._supervisor_stop.set()
         thread = self._supervisor_thread
         if thread and thread is not threading.current_thread():

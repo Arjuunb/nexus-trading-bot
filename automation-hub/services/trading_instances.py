@@ -1203,6 +1203,10 @@ class TradingInstanceManager:
             market = self.store.market_state(instance_id) if forward else {}
             pending_state = self._split_pending_orders(
                 market.get("pending_orders_json") or {})
+            self._quarantine_pending_ownership(inst, pending_state)
+            if pending_state.get("quarantined_intents"):
+                self.store.save_pending_orders(instance_id, pending_state)
+                controls.pause_all()
 
             def save_forward_intents(pending: dict) -> None:
                 pending_state["forward_paper_intents"] = dict(pending)
@@ -1452,6 +1456,11 @@ class TradingInstanceManager:
             if observed_state and observed_state != inst.state:
                 inst.state = observed_state
                 self.store.save(inst)
+            if pending_state.get("quarantined_intents"):
+                inst.state = "degraded"
+                inst.last_error = "PENDING_ORDER_OWNERSHIP_INVALID: quarantined intent requires ownership repair; worker remains available"
+                engine.last_blocker = "PENDING_ORDER_OWNERSHIP_INVALID"
+                self.store.save(inst)
             return inst
 
     def stop(self, instance_id: str) -> TradingInstance:
@@ -1528,6 +1537,7 @@ class TradingInstanceManager:
         namespaced = (
             "forward_paper_intents" in raw_pending
             or "strategy_limit_intents" in raw_pending
+            or "quarantined_intents" in raw_pending
         )
         if not namespaced:
             return {
@@ -1541,7 +1551,32 @@ class TradingInstanceManager:
         return {
             "forward_paper_intents": dict(forward),
             "strategy_limit_intents": dict(strategy),
+            **({"quarantined_intents": dict(raw_pending["quarantined_intents"])}
+               if raw_pending.get("quarantined_intents") else {}),
         }
+
+    @staticmethod
+    def _quarantine_pending_ownership(instance, pending_state):
+        """Preserve bad records without adopting or executing someone else's intent."""
+        for namespace in ("strategy_limit_intents", "forward_paper_intents"):
+            for symbol, order in list(pending_state[namespace].items()):
+                payload = (order.get("payload") or {}) if isinstance(order, dict) else {}
+                context = (order.get("sizing_context") or {}) if isinstance(order, dict) else {}
+                valid = str(symbol).upper() == instance.symbol and isinstance(order, dict)
+                for owner in (order, payload, context):
+                    if not isinstance(owner, dict):
+                        valid = False
+                        continue
+                    for field, expected in (("symbol", instance.symbol), ("instance_id", instance.id),
+                                            ("simulation_session_id", instance.simulation_session_id)):
+                        if owner.get(field) is not None and str(owner[field]) != expected:
+                            valid = False
+                if not valid:
+                    pending_state.setdefault("quarantined_intents", {})[f"{namespace}:{symbol}"] = {
+                        "blocker": "PENDING_ORDER_OWNERSHIP_INVALID", "namespace": namespace,
+                        "symbol_key": symbol, "original": order,
+                    }
+                    del pending_state[namespace][symbol]
 
     @staticmethod
     def _validate_reboot_recovery(instance: TradingInstance, positions: list[dict],
@@ -1701,6 +1736,9 @@ class TradingInstanceManager:
             market = self.store.market_state(instance_id)
             pending_state = self._split_pending_orders(
                 market.get("pending_orders_json") or {})
+            self._quarantine_pending_ownership(reloaded, pending_state)
+            if pending_state.get("quarantined_intents"):
+                self.store.save_pending_orders(instance_id, pending_state)
             strategy_pending = pending_state["strategy_limit_intents"]
             forward_pending = pending_state["forward_paper_intents"]
             self._set_reboot_phase(instance_id, "reconciling_execution_state",
@@ -1767,6 +1805,21 @@ class TradingInstanceManager:
             else:
                 raise RuntimeError("Replacement worker did not become healthy before the reboot timeout")
 
+            if pending_state.get("quarantined_intents"):
+                # The worker and existing position protection are restored.
+                # Unowned intents stay preserved and cannot authorize entries.
+                blocker = "PENDING_ORDER_OWNERSHIP_INVALID"
+                new_engine.last_blocker = blocker
+                with self._lock:
+                    current = self._instances[instance_id]
+                    current.state, current.desired_running = "degraded", True
+                    current.last_error = f"{blocker}: worker restored; quarantined intents need ownership repair"
+                    self.store.save(current)
+                self._set_reboot_phase(instance_id, "pending_ownership_blocked", current.last_error,
+                                       status="degraded", error=blocker,
+                                       details={**preserved, "quarantined_intents": pending_state["quarantined_intents"],
+                                                "worker_restored": True})
+                return
             new_controls.resume()
             with self._lock:
                 current = self._instances[instance_id]
@@ -1905,6 +1958,9 @@ class TradingInstanceManager:
         with self._lock:
             self._assert_reboot_idle(instance_id)
             inst = self._instances[instance_id]; runtime = self._runtime.get(instance_id)
+            pending = self.store.market_state(instance_id).get("pending_orders_json") or {}
+            if pending.get("quarantined_intents"):
+                raise ValueError("PENDING_ORDER_OWNERSHIP_INVALID: repair quarantined intents before arming entries")
         if runtime and runtime[0].running:
             runtime[3].resume()
             inst.state, inst.desired_running = "running", True

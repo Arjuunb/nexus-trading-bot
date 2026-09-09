@@ -234,7 +234,7 @@ class PaperBrokerV2:
         )
         return float(account["balance"]) - used
 
-    def account(self, marks: Optional[dict[str, float]] = None) -> dict:
+    def account(self, marks: Optional[dict[str, float]] = None, *, persist_metrics: bool = True) -> dict:
         with self._lock:
             a = self._account_row()
             positions = [dict(r) for r in self._c.execute("SELECT * FROM v2_positions")]
@@ -248,9 +248,10 @@ class PaperBrokerV2:
         equity = a["balance"] + unrealized
         peak = max(float(a["peak_equity"]), equity)
         drawdown = max(float(a["max_drawdown"]), peak - equity)
-        with self._lock:
-            self._c.execute("UPDATE v2_account SET peak_equity=?,max_drawdown=? WHERE id=1", (peak, drawdown))
-            self._c.commit()
+        if persist_metrics:
+            with self._lock:
+                self._c.execute("UPDATE v2_account SET peak_equity=?,max_drawdown=? WHERE id=1", (peak, drawdown))
+                self._c.commit()
         open_orders = len([row for row in self.orders() if row["status"] in OPEN_STATUSES])
         completed_orders = len([row for row in self.orders() if row["status"] not in OPEN_STATUSES])
         return {"account_id": a["account_id"], "account_type": a["account_type"],

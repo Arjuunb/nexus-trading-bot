@@ -202,7 +202,7 @@ class SMCPaperAccount:
     def state(self, marks: dict[str, float] | None = None) -> dict:
         current = self.session()
         sid = current.get("id", "")
-        account = self.broker.account(marks)
+        account = self.broker.account(marks, persist_metrics=False)
         positions = self._positions_with_protection()
         open_risk = 0.0
         for position in positions:
@@ -1393,28 +1393,26 @@ class SMCStrategyLabRuntime:
                 bar_sink=self._on_closed_bar,
                 quote_sink=self._on_quote,
             )
+        from services.native_context_loader import NativeContextLoader
+        fetch = (self.stream.make_fetcher() if market_hub is not None else
+                 lambda sym, tf, limit: market.public_usdm_window(sym, tf, limit=limit))
+        self.native_loader = NativeContextLoader(fetch)
         if autostart:
             self._thread = threading.Thread(target=self._run, name="smc-paper-runtime", daemon=True)
             self._thread.start()
 
+    def _native_context(self, symbol: str, timeframe: str) -> dict[str, list[Bar]]:
+        return self.native_loader.context(symbol, timeframe)
+
     def _native_mtf_evidence(self, symbol: str, timeframe: str,
                              decision_time: datetime) -> dict:
-        from services.mtf_policy import evidence_at, native_timeframes
-        context: dict[str, list[Bar]] = {}
-        if self.market_hub is not None and self.stream is not None:
-            fallback = lambda sym, tf, limit, **_kwargs: self.market.public_usdm_window(
-                sym, tf, limit=limit)
-            fetcher = self.stream.make_fetcher(fallback)
-            for htf in native_timeframes(timeframe):
-                result = fetcher(symbol, htf, 500)
-                context[htf] = list(result[0] if isinstance(result, tuple) else result)
-        else:
-            for htf in native_timeframes(timeframe):
-                context[htf] = list(self.market.public_usdm_window(symbol, htf, limit=500))
-        self.last_mtf_context = {tf: list(rows) for tf, rows in context.items()}
+        from services.mtf_policy import evidence_at
+        context = self._native_context(symbol, timeframe)
+        self.last_mtf_context = context
         evidence = evidence_at(symbol, timeframe, context, decision_time)
+        self.last_mtf_evidence = evidence
         if evidence.get("primary") is None:
-            raise RuntimeError("SMC primary native HTF candle is unavailable")
+            raise RuntimeError("HTF_PRIMARY_UNAVAILABLE: SMC primary native HTF candle is unavailable")
         return evidence
 
     def _on_quote(self, quote: dict) -> None:
@@ -1440,11 +1438,12 @@ class SMCStrategyLabRuntime:
         # idempotency in the account remains the second durable boundary.
         self.tick()
 
-    def reconcile_visual(self, visual: dict, *, symbol: str, timeframe: str) -> tuple[dict, dict | None]:
+    def reconcile_visual(self, visual: dict, *, symbol: str, timeframe: str,
+                         start_stream: bool = True) -> tuple[dict, dict | None]:
         """Use the shared Binance websocket state machine as entry authority."""
         from services.native_smc_live_visual import reconcile_market_state
         rest_quote = None
-        if self.stream is None:
+        if self.stream is None and start_stream:
             try:
                 rest_quote = self.market.public_usdm_quote(symbol)
             except Exception:
@@ -1454,7 +1453,7 @@ class SMCStrategyLabRuntime:
             self.last_market_health = dict(reconciled.get("live_display") or self.last_market_health)
             return reconciled, rest_quote
         identity = (normalize_symbol(symbol), timeframe)
-        if self._stream_identity != identity or not self.stream.running:
+        if start_stream and (self._stream_identity != identity or not self.stream.running):
             started = self.stream.start(*identity)
             if not started:
                 # Do not cache a failed identity.  The supervisor's next tick
@@ -1506,6 +1505,37 @@ class SMCStrategyLabRuntime:
             "exchange": "Binance USDⓈ-M Futures",
         })
         return visual, quote or None
+
+    def live_state(self, symbol: str, timeframe: str, *, visible: int = 240,
+                   window: int = 800, model_id: str = "SMC_M1_SWEEP_REVERSAL") -> dict:
+        """Hydrate the lab from snapshots, with no provider calls or startup."""
+        from services.native_smc_live_visual import live_visual_state, NativeSMCLiveDataUnavailable
+        from services.native_smc import SMCConfig, SMCMarketStructureEngine
+        from services.mtf_policy import evidence_at, display_contract
+
+        session = self.account.session()
+        if (session.get("symbol"), session.get("timeframe")) != (symbol.upper(), timeframe):
+            raise ValueError("requested market does not match the saved SMC session")
+        snapshot = self.stream.snapshot() if self.stream else {"closed_bars": [], "forming": None}
+        context = self._native_context(symbol, timeframe)
+        evidence = evidence_at(symbol, timeframe, context, datetime.now(timezone.utc))
+        def fetch(_symbol, _timeframe, _venue, limit, **_kwargs):
+            rows = list(snapshot["closed_bars"])
+            if snapshot.get("forming") is not None:
+                rows.append(snapshot["forming"])
+            return rows[-limit:]
+        try:
+            state = live_visual_state(symbol, timeframe, "binance_usdm", limit=window,
+                                      visible=visible, fetcher=fetch, model_id=model_id,
+                                      mtf_evidence=evidence, mtf_context=context)
+        except NativeSMCLiveDataUnavailable:
+            state = SMCMarketStructureEngine(SMCConfig(symbol=symbol, timeframe=timeframe)).visual_state()
+        if self.stream is not None:
+            state, _ = self.reconcile_visual(state, symbol=symbol, timeframe=timeframe, start_stream=False)
+        state.update({"session_id": session.get("id"), "operating_mode": session.get("operating_mode"),
+                      "mtf_evidence": evidence, "mtf_policy": display_contract(timeframe, evidence),
+                      "blockers": [] if evidence.get("primary") else ["HTF_PRIMARY_UNAVAILABLE"]})
+        return state
 
     def _run(self) -> None:
         while not self._stop.wait(self.poll_seconds):
@@ -1618,7 +1648,7 @@ class SMCStrategyLabRuntime:
 
     def bot_status(self) -> dict:
         """One factual, scope-labelled control-plane view for the dashboard."""
-        from services.mtf_policy import display_contract
+        from services.mtf_policy import display_contract, evidence_at
         paper = self.account.state()
         session = paper.get("session") or {}
         connection = dict(self.last_market_health)
@@ -1654,13 +1684,18 @@ class SMCStrategyLabRuntime:
             fills=fills, account=paper.get("account") or {}, realized_r_values=[],
             orders=paper.get("orders") or [])
         activity = paper.get("activity") or []
+        evidence = (evidence_at(session["symbol"], session["timeframe"],
+                                self._native_context(session["symbol"], session["timeframe"]),
+                                datetime.now(timezone.utc)) if session else {})
+        if session.get("mode") == "LIVE_PAPER" and not evidence.get("primary"):
+            blockers.append("HTF_PRIMARY_UNAVAILABLE")
         execution_armed = session.get("operating_mode") == "automatic"
         operator_state = (
             "ERROR" if orphaned_exposure else
             "BLOCKED" if not session or blockers else
             "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
         )
-        mtf_policy = (display_contract(session["timeframe"], self.last_mtf_evidence)
+        mtf_policy = (display_contract(session["timeframe"], evidence)
                       if session.get("timeframe") else None)
         return {
             "lab": "SMC", "account_scope": paper["account_scope"],
@@ -1671,6 +1706,7 @@ class SMCStrategyLabRuntime:
             "symbol": session.get("symbol"), "timeframe": session.get("timeframe"),
             "mtf_policy": mtf_policy,
             "mode": session.get("operating_mode"),
+            "session_id": session.get("id"), "operating_mode": session.get("operating_mode"),
             "session_state": operator_state,
             "execution_armed": execution_armed,
             "saved_configuration": {
@@ -1703,6 +1739,7 @@ class SMCStrategyLabRuntime:
         }
 
     def stop(self) -> None:
+        self.native_loader.stop()
         self._stop.set()
         if self.stream is not None:
             self.stream.stop()

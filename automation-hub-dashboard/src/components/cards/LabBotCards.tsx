@@ -57,7 +57,7 @@ function LabCard({ title, page, status, error }: {
           <p>{strategyLabel} · {status?.strategy?.version ?? "version unavailable"}</p>
         </div>
         <div className="lab-badges">
-          <span className="lab-badge paper">{status?.mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"}</span>
+          <span className="lab-badge paper">{!status?.session_id || !status.mode ? "LOADING SESSION" : status.mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"}</span>
           <span className={`lab-badge ${status?.feed?.reliable ? "ok" : "bad"}`}>{feedState}</span>
           <span className={`lab-badge ${ready ? "ok" : "bad"}`}>{status?.execution_state ?? "BLOCKED"}</span>
         </div>
@@ -85,14 +85,14 @@ function LabCard({ title, page, status, error }: {
         <div><small>Latest order / fill</small><b>{reference(latestOrder)} / {reference(latestFill)}</b>
           <span>{latestOrder?.status ?? "No order"} · {latestFill ? shortTime(latestFill.created_at ?? latestFill.timestamp) : "No fill"}</span>
         </div>
-        <div><small>Feed evidence</small><b>{status?.feed?.failing_dependency ?? "All required dependencies healthy"}</b>
+        <div><small>Feed evidence</small><b>{status?.feed?.failing_dependency ?? (status ? "All required dependencies healthy" : "Loading feed status")}</b>
           <span>{status?.feed?.health_reason ?? "No heartbeat"} · Last event {shortTime(status?.feed?.last_successful_event?.at)}</span>
           <span>Heartbeat {shortTime(status?.last_heartbeat)} · Retry {number(status?.feed?.retry_state?.attempt, 0)}</span>
         </div>
       </div>
 
       <div className={`lab-blockers ${status?.blockers?.length ? "has-blockers" : "clear"}`}>
-        <b>{status?.blockers?.length ? "Execution blockers" : "Execution gate clear"}</b>
+        <b>{!status ? "Loading execution status" : status.blockers?.length ? "Execution blockers" : "Execution gate clear"}</b>
         <span>{status?.blockers?.length ? status.blockers.join(" · ") : "May execute only on a new confirmed closed candle that produces an eligible signal."}</span>
       </div>
 

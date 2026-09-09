@@ -948,7 +948,7 @@ if "PYTEST_CURRENT_TEST" not in _os.environ:
 # import compatibility. Bind their production data/rules authority here so PA,
 # SMC and instances all consume the same Binance USD-M hub.
 instance_manager.market_hub = forward_paper_market_hub
-instance_manager.symbol_rules_provider = v2_market_data.usdm_contract_rules
+instance_manager.symbol_rules_provider = v2_market_data.usdm_symbol_rules
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
 price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,

@@ -87,12 +87,12 @@ class PriceActionPublicStream:
                              "timestamp": self.clock().isoformat(),
                              "symbol": self.symbol, "timeframe": self.timeframe})
 
-    def _emit_health(self, state: str, reason: str) -> None:
+    def _emit_health(self, state: str, reason: str, *, emit_event: bool = True) -> None:
         if state not in HEALTH_STATES:
             raise ValueError(state)
         changed = state != self._health_state or reason != self._health_reason
         self._health_state, self._health_reason = state, reason
-        if changed and self.event_sink:
+        if changed and emit_event and self.event_sink:
             self.event_sink({
                 "kind": "market_data_health", "state": state, "reason": reason,
                 "timestamp": self.clock().isoformat(), "symbol": self.symbol,
@@ -606,10 +606,14 @@ class PriceActionPublicStream:
                         "market": ["kline", "markPrice"], "public": ["bookTicker"],
                     },
                     "private_key_required": False, "real_execution_allowed": False}
-        self._emit_health(health, reason)
+        # A read-only status request must never synchronously call a consumer
+        # callback: lab callbacks may hold their account lock while a worker
+        # asks for status, which turns health hydration into a deadlock/504.
+        self._emit_health(health, reason, emit_event=False)
         return payload
 
     def snapshot(self) -> dict:
         with self._lock:
-            return {"closed_bars": list(self._bars), "forming": self._forming,
-                    "quote": dict(self._quote), "connection": self.status()}
+            payload = {"closed_bars": list(self._bars), "forming": self._forming,
+                       "quote": dict(self._quote)}
+        return {**payload, "connection": self.status()}

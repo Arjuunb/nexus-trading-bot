@@ -280,7 +280,7 @@ export default function PriceActionVisual() {
   const [marketBusy, setMarketBusy] = useState(false);
   const [pendingMarket, setPendingMarket] = useState<{ symbol: string; timeframe: string; mode: Mode } | null>(null);
   const [activeStrategy, setActiveStrategy] = useState(STRATEGIES[0]);
-  const [operatingMode, setOperatingMode] = useState<OperatingMode>("automatic");
+  const [operatingMode, setOperatingMode] = useState<OperatingMode | "">("");
   const [riskPct, setRiskPct] = useState("0.5");
   const [filters, setFilters] = useState<NativeSMCOverlayFilters>(PRESET_FILTERS.clean);
   const [order, setOrder] = useState({ side: "buy", type: "market", quantity: "0.001", limit_price: "", stop_loss: "", take_profit: "" });
@@ -299,29 +299,49 @@ export default function PriceActionVisual() {
   const marketSwitchSequence = useRef(0);
   const marketSwitchQueue = useRef<Promise<void>>(Promise.resolve());
 
-  const applyPaperIdentity = useCallback((next: PaperState) => {
+  const [identitySession, setIdentitySession] = useState<PaperState["session"] | null>(null);
+  const savedSession = paper?.session.id ? paper.session : identitySession;
+  const sessionLoaded = Boolean(savedSession?.id && savedSession.operating_mode);
+  const applyPaperIdentity = useCallback((next: { session: PaperState["session"] }) => {
     const nextMode: Mode = next.session.mode === "HISTORICAL" ? "replay" : "live";
     setSymbol(next.session.symbol ?? "BTCUSDT");
     setTimeframe(next.session.timeframe ?? "5m");
     setMode(nextMode);
-    setOperatingMode(next.session.operating_mode ?? "automatic");
+    setOperatingMode(next.session.operating_mode ?? "");
     setActiveStrategy(next.session.execution_config?.strategy_id ?? STRATEGIES[0]);
     setRiskPct(String(next.session.execution_config?.risk_pct ?? .5));
   }, []);
 
   const loadPaper = useCallback(async () => {
     try {
-      const [next, history] = await Promise.all([
-        apiGet<PaperState>("/research/price-action/paper"),
-        apiGet<{ sessions: typeof sessions }>("/research/price-action/sessions"),
-      ]);
+      const next = await apiGet<PaperState>("/research/price-action/paper");
       setPaper(next);
-      setSessions(history.sessions); setSelectedSession((current) => current || next.session.id);
+      setSelectedSession((current) => current || next.session.id);
       if (!identityInitialized.current) {
         identityInitialized.current = true;
         applyPaperIdentity(next);
       }
     } catch { /* chart remains usable */ }
+  }, [applyPaperIdentity]);
+  useEffect(() => {
+    let cancelled = false;
+    const hydrate = async () => {
+      try {
+        const payload = await apiGet<{ session: PaperState["session"] }>("/research/price-action/session");
+        if (cancelled || !payload.session.id) return;
+        setIdentitySession(payload.session);
+        if (!identityInitialized.current) {
+          identityInitialized.current = true;
+          applyPaperIdentity(payload);
+        }
+      } catch { /* Keep saved mode explicitly unavailable. */ }
+    };
+    void hydrate();
+    void apiGet<{ sessions: typeof sessions }>("/research/price-action/sessions").then(row => {
+      if (!cancelled) setSessions(row.sessions);
+    }).catch(() => undefined);
+    const timer = window.setInterval(() => void hydrate(), 5000);
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, [applyPaperIdentity]);
   const loadGovernance = useCallback(async () => {
     if (!paper?.session.id) return;
@@ -343,9 +363,9 @@ export default function PriceActionVisual() {
     } catch { /* research governance panels remain independently unavailable */ }
   }, [paper?.session.id, symbol, timeframe, journalFilters]);
   const loadChart = useCallback(async () => {
-    if (!paper?.session.id) return;
+    if (!savedSession?.id) return;
     const sequence = ++chartRequestSequence.current;
-    const requestId = `${paper.session.id}:${mode}:${symbol}:${timeframe}:${sequence}`;
+    const requestId = `${savedSession.id}:${mode}:${symbol}:${timeframe}:${sequence}`;
     setLoading(true);
     const path = mode === "live"
       ? `/research/price-action/live-chart?symbol=${symbol}&timeframe=${timeframe}&window=800&visible=500&request_id=${encodeURIComponent(requestId)}`
@@ -356,7 +376,7 @@ export default function PriceActionVisual() {
       const identity = next.data_identity;
       const expectedSessionMode = mode === "live" ? "LIVE_PAPER" : "HISTORICAL";
       const matches = next.symbol === symbol && next.timeframe === timeframe &&
-        identity?.session_id === paper.session.id && identity.symbol === symbol &&
+        identity?.session_id === savedSession.id && identity.symbol === symbol &&
         identity.timeframe === timeframe && identity.mode === expectedSessionMode &&
         (mode !== "live" || identity.request_id === requestId);
       if (!matches) throw new Error("Ignored stale market-data response with a different session, symbol or timeframe identity");
@@ -368,10 +388,10 @@ export default function PriceActionVisual() {
     } finally {
       if (sequence === chartRequestSequence.current) setLoading(false);
     }
-  }, [mode, symbol, timeframe, cursor, paper?.session.id]);
+  }, [mode, symbol, timeframe, cursor, savedSession?.id]);
 
   useEffect(() => { void apiGet<{ contracts: string[] }>("/research/price-action/contracts?limit=500").then((row) => setContracts(row.contracts)).catch(() => undefined); }, []);
-  useEffect(() => { if (!identityInitialized.current || !paper?.session.id) return; void loadChart(); if (mode !== "live") return; const timer = window.setInterval(() => void loadChart(), 3_000); return () => window.clearInterval(timer); }, [loadChart, mode, paper?.session.id]);
+  useEffect(() => { if (!identityInitialized.current || !savedSession?.id) return; void loadChart(); if (mode !== "live") return; const timer = window.setInterval(() => void loadChart(), 3_000); return () => window.clearInterval(timer); }, [loadChart, mode, savedSession?.id]);
   useEffect(() => { void loadPaper(); const timer = window.setInterval(() => void loadPaper(), 5_000); return () => window.clearInterval(timer); }, [loadPaper]);
   useEffect(() => { void loadGovernance(); const timer = window.setInterval(() => void loadGovernance(), 8_000); return () => window.clearInterval(timer); }, [loadGovernance]);
   useEffect(() => {
@@ -461,6 +481,7 @@ export default function PriceActionVisual() {
     applyPreset("strategy");
   };
   const applyAutomation = async () => {
+    if (!sessionLoaded || !operatingMode) return;
     try {
       const updated = await apiPostJson<PaperState>("/research/price-action/sessions/current/configuration", {
         mode: mode === "live" ? "LIVE_PAPER" : "HISTORICAL", symbol, timeframe,
@@ -564,7 +585,7 @@ export default function PriceActionVisual() {
     <header className="pa-titlebar">
       <div><span className="pa-kicker">ISOLATED FORWARD-PAPER</span><h1>Price Action Visual Lab</h1><p>Live Binance USD-M data · simulated orders · no exchange routing</p></div>
       <button type="button" className="pa-controls-toggle" onClick={() => setControlsOpen((open) => !open)} aria-expanded={controlsOpen}>Controls</button>
-      <div className="pa-safety"><b>{paper?.session.operating_mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"}</b><span>LIVE ROUTING DISABLED</span></div>
+      <div className="pa-safety"><b>{!sessionLoaded ? "LOADING SESSION" : savedSession?.operating_mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"}</b><span>LIVE ROUTING DISABLED</span></div>
     </header>
     <div className={`pa-health-scope ${feedReliable ? "is-healthy" : "is-stale"}`}>
       <b>PRICE ACTION SESSION</b><span>Candles / quote / mark: {healthState}</span>
@@ -576,7 +597,7 @@ export default function PriceActionVisual() {
     <div className="pa-workspace">
       <aside className={`pa-sidebar ${controlsOpen ? "is-open" : ""}`} aria-label="Price Action controls">
         <section><h2>PA session market</h2><label>Binance USDⓈ-M contract<select aria-label="Price Action session symbol" disabled={marketBusy} value={marketSelection.symbol} onChange={(event) => confirmMarketChange(event.target.value, timeframe)}>{contracts.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button disabled={marketBusy} className={marketSelection.mode === "live" ? "active" : ""} onClick={() => confirmMarketChange(symbol, timeframe, "live")}>Live paper</button><button disabled={marketBusy} className={marketSelection.mode === "replay" ? "active" : ""} onClick={() => confirmMarketChange(symbol, timeframe, "replay")}>Replay</button></div><small className="pa-context-note">Independent Price Action research session. The global header remains the selected Trading Instance context.</small>{marketBusy ? <small className="pa-syncing">Synchronizing session, feed and chart…</small> : null}</section>
-        <section><h2>Strategy &amp; execution</h2><label>Visible automated strategy<select value={activeStrategy} onChange={(event) => { setActiveStrategy(event.target.value); setFocusedSetupId(""); }}>{STRATEGIES.map((id) => <option key={id} value={id}>{pretty(id)}</option>)}</select></label><label>Paper operating mode<select value={operatingMode} onChange={(event) => setOperatingMode(event.target.value as OperatingMode)}><option value="signals_only">Signals only</option><option value="manual_approval">Manual approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%)<input value={riskPct} onChange={(event) => setRiskPct(event.target.value)} inputMode="decimal" /></label><button type="button" className="pa-export" onClick={() => void applyAutomation()}>Apply paper configuration</button><small>Visible metrics follow this strategy. Paper execution changes only after Apply; existing orders retain immutable snapshots.</small></section>
+        <section><h2>Strategy &amp; execution</h2><label>Visible automated strategy<select value={activeStrategy} onChange={(event) => { setActiveStrategy(event.target.value); setFocusedSetupId(""); }}>{STRATEGIES.map((id) => <option key={id} value={id}>{pretty(id)}</option>)}</select></label><label>Paper operating mode<select disabled={!sessionLoaded} value={operatingMode} onChange={(event) => setOperatingMode(event.target.value as OperatingMode)}>{!sessionLoaded && <option value="">Loading saved mode…</option>}<option value="signals_only">Signals only</option><option value="manual_approval">Manual approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%)<input value={riskPct} onChange={(event) => setRiskPct(event.target.value)} inputMode="decimal" /></label><button type="button" className="pa-export" disabled={!sessionLoaded} onClick={() => void applyAutomation()}>Apply paper configuration</button><small>Visible metrics follow this strategy. Paper execution changes only after Apply; existing orders retain immutable snapshots.</small></section>
         <section><h2>Chart layers</h2><label className="pa-layer-mode">Preset<select aria-label="Chart layer preset" value={chartPreset} onChange={(event) => applyPreset(event.target.value as ChartPreset)}>{(["clean", "structure", "zones", "strategy", "trades", "debug"] as ChartPreset[]).map((preset) => <option key={preset} value={preset}>{pretty(preset)}</option>)}</select></label>{([['pivots','Swings'], ['structure','Events'], ['orderBlocks','S/R zones'], ['mitigated','Invalidated · lifecycle'], ['labels','Labels']] as [keyof NativeSMCOverlayFilters, string][]).map(([key, label]) => <label className="pa-check" key={key}><input type="checkbox" checked={filters[key]} onChange={() => toggleLayer(key)} /><span>{label}</span></label>)}<label className="pa-layer-mode">Selected setup<select aria-label="Selected Price Action setup" value={selectedSetup?.id ?? ""} onChange={(event) => setSelectedSetupId(event.target.value)}><option value="">Latest relevant setup</option>{setupChoices.map((row) => <option key={row.id} value={row.id}>{pretty(row.strategy_id)} · {row.direction} · {row.phase}</option>)}</select></label><button className="pa-focus-setup" disabled={!selectedSetup} onClick={focusSelectedSetup}>Focus selected setup</button><small>Presets affect rendering only. All zones, setups, orders and trades remain in the audit records below.</small></section>
         <section><h2>Virtual account</h2><div className="pa-account"><span>Balance<b>{money(paper?.account.balance)} USDT</b></span><span>Equity<b>{money(paper?.account.equity)} USDT</b></span><span>Open P&amp;L<b className={(paper?.account.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(paper?.account.unrealized_pnl)}</b></span><span>Free margin<b>{money(paper?.account.free_margin)}</b></span></div><label>Isolated leverage<select value={paper?.account.leverage ?? 1} onChange={(event) => void setLeverage(Number(event.target.value))}>{Array.from({ length: 20 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}×</option>)}</select></label><small>Persistent and isolated from every other paper account.</small></section>
         <section className="pa-legend"><h2>Chart truth</h2><span><i className="confirmed" />Confirmed</span><span><i className="provisional" />Forming · display only</span><span><i className="invalid" />Invalidated</span></section>
@@ -586,7 +607,7 @@ export default function PriceActionVisual() {
         <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable && !error ? "live" : "stale"} />{symbol}<span>PA SESSION · PERPETUAL</span></div><div className="pa-timeframes">{(state?.mtf_policy?.available_entry_timeframes ?? ["5m"]).map((row) => <button key={row} disabled={marketBusy} className={row === marketSelection.timeframe ? "active" : ""} onClick={() => confirmMarketChange(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible chart candles" value={visibleBars} onChange={(event) => changeVisibleBars(Number(event.target.value))}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button onClick={() => setFitSignal((n) => n + 1)}>Fit</button><button onClick={() => setLatestSignal((n) => n + 1)}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{mode === "live" ? healthState : "REPLAY"}</span></div>
         {mode === "replay" ? <div className="pa-replay"><button onClick={() => setCursor(1)}>Restart</button><button onClick={() => setReplayPlaying((value) => !value)}>{replayPlaying ? "Pause" : "Play"}</button><button onClick={() => setCursor((n) => Math.max(1, n - 1))}>◀</button><input aria-label="Replay candle cursor" type="range" min="1" max={state?.replay?.total ?? 1000} value={Math.min(cursor, state?.replay?.total ?? cursor)} onChange={(event) => setCursor(Number(event.target.value))} /><button disabled={!state?.replay?.has_next} onClick={() => setCursor((n) => n + 1)}>▶</button><select aria-label="Replay speed" value={replaySpeed} onChange={(event) => setReplaySpeed(Number(event.target.value))}>{[1, 2, 5, 10, 25, 100].map((value) => <option key={value} value={value}>{value === 100 ? "Maximum" : `${value}×`}</option>)}</select><span>Candle {state?.replay?.cursor ?? cursor} / {state?.replay?.total ?? "—"} · future bars hidden</span></div> : null}
         <div className="pa-chart-shell">
-          <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{state?.mtf_policy?.label ?? "Native MTF context loading"}</span><span>{state?.data_provenance?.exchange ?? "Binance USDⓈ-M Futures"} · session {paper?.session.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{selectedMetrics ? `${pretty(activeStrategy)} · Net ${selectedMetrics.net_r.toFixed(2)}R · Execution R ${Number(selectedMetrics.gross_r ?? 0).toFixed(2)}R · Commission ${selectedMetrics.costs_r.toFixed(2)}R · ${selectedMetrics.wins}W/${selectedMetrics.losses}L · ${selectedMetrics.unfilled} unfilled` : `${pretty(activeStrategy)} · metric scope unavailable`}</span><span>{state?.snapshot?.structure_bias?.toUpperCase() ?? "NEUTRAL"}</span><b>{ready.length ? `${ready.length} READY` : "WAIT"}</b></div></div>
+          <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{state?.mtf_policy?.label ?? "Native MTF context loading"}</span><span>{state?.data_provenance?.exchange ?? "Binance USDⓈ-M Futures"} · session {savedSession?.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{selectedMetrics ? `${pretty(activeStrategy)} · Net ${selectedMetrics.net_r.toFixed(2)}R · Execution R ${Number(selectedMetrics.gross_r ?? 0).toFixed(2)}R · Commission ${selectedMetrics.costs_r.toFixed(2)}R · ${selectedMetrics.wins}W/${selectedMetrics.losses}L · ${selectedMetrics.unfilled} unfilled` : `${pretty(activeStrategy)} · metric scope unavailable`}</span><span>{state?.snapshot?.structure_bias?.toUpperCase() ?? "NEUTRAL"}</span><b>{ready.length ? `${ready.length} READY` : "WAIT"}</b></div></div>
           {aggregateMetrics ? <div className="pa-metric-scope"><b>Selected strategy shown above</b><span>All PA1–PA4 aggregate remains {aggregateMetrics.net_r.toFixed(2)}R across {aggregateMetrics.closed} closed trades; it is not the selected-strategy result.</span><span>Dataset {String(state?.metrics_scope?.dataset_start ?? "—")} → {String(state?.metrics_scope?.dataset_end ?? "—")}</span><span>Config {String(state?.metrics_scope?.configuration_id ?? "—").slice(0, 12)} · funding {String(state?.metrics_scope?.cost_model?.funding_coverage ?? "—")}</span></div> : null}
           {error ? <div className="pa-error"><b>Market data unavailable</b><span>{error}</span><button onClick={() => void loadChart()}>Retry</button></div> : null}
           {!chart ? <div className="pa-loading">{loading ? "Loading and reconciling Binance market streams…" : "No identity-verified candle state"}</div> : <NativeSMCChartOverlay state={chart} timeframe={timeframe} rightOffsetBars={8} initialVisibleBars={visibleBars} filters={filters} highlightedObjectIds={focusedObjectIds} centerTimestamp={focusedSetup?.created_at} onCandleSelect={() => undefined} fitContentSignal={fitSignal} latestSignal={latestSignal} modelLabel="native price action" height="clamp(520px, 58vh, 680px)" liveDataStale={!feedReliable || Boolean(error)} />}
@@ -614,7 +635,7 @@ export default function PriceActionVisual() {
             {tab === "rejected" ? <DataTable rows={rejected} empty="No rejected or waiting strategy traces." /> : null}
             {tab === "journal" ? <JournalPanel journal={journal} selected={selectedJournal} selectedId={selectedJournalId} onSelect={selectJournal} filters={journalFilters} onFilters={setJournalFilters} sessionId={paper?.session.id} symbol={symbol} timeframe={timeframe} /> : null}
             {tab === "learning" ? <LearningPanel analysis={learning} candidates={learningCandidates} /> : null}
-            {tab === "session" ? <><div className="pa-session"><span>Session ID<b>{paper?.session.id ?? "—"}</b></span><span>Started<b>{stamp(paper?.session.started_at)}</b></span><span>Starting balance<b>{money(paper?.session.starting_balance)} USDT</b></span><span>Status<b>{paper?.session.status?.toUpperCase() ?? "—"}</b></span><span>Operating mode<b>{pretty(paper?.session.operating_mode ?? "automatic")}</b></span></div><div className="pa-order-ticket"><select aria-label="Saved Price Action session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)}>{sessions.map((row) => <option key={row.id} value={row.id}>{row.symbol} · {row.timeframe} · {row.status} · {stamp(row.started_at)}</option>)}</select><button onClick={() => void sessionAction("start")}>Start new</button><button disabled={!selectedSession} onClick={() => void sessionAction("resume")}>Resume</button><button disabled={!selectedSession} onClick={() => void sessionAction("duplicate")}>Duplicate</button><button disabled={!paper?.session.id} onClick={() => void sessionAction("end")}>End</button><button className="pa-export" onClick={() => void apiDownload("/research/price-action/paper/export", `price-action-session-${paper?.session.id ?? "current"}.json`)}>Export</button><button className="btn-danger" onClick={() => void resetSession()}>Reset</button></div><DataTable rows={paper?.activity ?? []} empty="No session audit events yet." /></> : null}
+            {tab === "session" ? <><div className="pa-session"><span>Session ID<b>{paper?.session.id ?? "—"}</b></span><span>Started<b>{stamp(paper?.session.started_at)}</b></span><span>Starting balance<b>{money(paper?.session.starting_balance)} USDT</b></span><span>Status<b>{paper?.session.status?.toUpperCase() ?? "—"}</b></span><span>Operating mode<b>{sessionLoaded ? pretty(savedSession?.operating_mode ?? "") : "Loading"}</b></span></div><div className="pa-order-ticket"><select aria-label="Saved Price Action session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)}>{sessions.map((row) => <option key={row.id} value={row.id}>{row.symbol} · {row.timeframe} · {row.status} · {stamp(row.started_at)}</option>)}</select><button onClick={() => void sessionAction("start")}>Start new</button><button disabled={!selectedSession} onClick={() => void sessionAction("resume")}>Resume</button><button disabled={!selectedSession} onClick={() => void sessionAction("duplicate")}>Duplicate</button><button disabled={!paper?.session.id} onClick={() => void sessionAction("end")}>End</button><button className="pa-export" onClick={() => void apiDownload("/research/price-action/paper/export", `price-action-session-${paper?.session.id ?? "current"}.json`)}>Export</button><button className="btn-danger" onClick={() => void resetSession()}>Reset</button></div><DataTable rows={paper?.activity ?? []} empty="No session audit events yet." /></> : null}
             {tab === "connection" ? <div className="pa-session"><span>Exchange<b>Binance USDⓈ-M Futures</b></span><span>Overall health<b>{healthState}</b></span><span>Transport<b>{state?.live_display?.transport_state ?? (mode === "replay" ? "ISOLATED" : "CONNECTING")}</b></span><span>Candle stream<b>{age(state?.live_display?.candle_age_seconds)}</b></span><span>Bid / ask stream<b>{age(state?.live_display?.quote_age_seconds)}</b></span><span>Mark stream<b>{age(state?.live_display?.mark_age_seconds)}</b></span><span>Failing dependency<b>{state?.live_display?.failing_dependency ?? "None"}</b></span><span>Last successful event<b>{state?.live_display?.last_successful_event ? `${state.live_display.last_successful_event.kind} · ${state.live_display.last_successful_event.at}` : "—"}</b></span><span>Retry state<b>{state?.live_display?.retry_state?.automatic_retry ? `automatic · attempt ${state.live_display.retry_state.attempt ?? 0}` : "—"}</b></span><span>Reconciliation<b>{state?.live_display?.health_reason ?? "—"}</b></span><span>New entries<b>{state?.live_display?.new_entries_paused ? "PAUSED · FAIL CLOSED" : "CLOSED BARS ONLY"}</b></span><span>Real execution<b>DISABLED</b></span></div> : null}
           </div>
         </div>
