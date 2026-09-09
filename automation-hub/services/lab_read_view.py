@@ -8,7 +8,6 @@ from copy import copy
 from pathlib import Path
 import sqlite3
 import threading
-import time
 
 
 @contextmanager
@@ -20,8 +19,11 @@ def lab_read_view(account):
     connection = sqlite3.connect(Path(path).resolve().as_uri() + "?mode=ro",
                                  uri=True, timeout=.25)
     connection.row_factory = sqlite3.Row
-    deadline = time.monotonic() + 1
-    connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+    # A read-only snapshot must fail quickly if a writer has not committed,
+    # but must not interrupt an otherwise valid status query based on row
+    # count.  The previous progress deadline turned normal SMC activity
+    # reads into ``sqlite3.OperationalError: interrupted`` on the VPS.
+    connection.execute("PRAGMA busy_timeout=250")
     try:
         connection.execute("BEGIN")
         view = copy(account)
