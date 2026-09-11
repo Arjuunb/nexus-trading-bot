@@ -941,6 +941,9 @@ research_observer = ResearchObservationRuntime(
     forward_paper_market_hub, shadow_research_store,
     symbol=settings.auto_symbols[0] if settings.auto_symbols else "BTCUSDT",
     timeframe="5m",
+    # Supervised in the running service: a REST blip at boot must not end
+    # shadow research for the lifetime of the process.
+    supervise=True,
 )
 if "PYTEST_CURRENT_TEST" not in _os.environ:
     research_observer.start()
