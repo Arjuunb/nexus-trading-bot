@@ -139,18 +139,29 @@ try:
     d = json.load(open(sys.argv[1]))
 except Exception:
     print("  could not parse /health"); raise SystemExit
+# /health reports persistence as two named probes, not a single "mode" string.
+# Reading a key that does not exist printed "unreported" on a perfectly healthy
+# ledger, which is worse than printing nothing.
 p = d.get("persistence") or {}
-mode = p.get("mode") or "unreported"
-print("  persistence mode = " + str(mode))
-if mode == "read_only_degraded":
-    print("  \033[31mSupabase is configured but its connection probe failed.\033[0m")
-    print("  The startup hook returns before restoring ANY instance worker,")
-    print("  and every ledger write is denied, including logging. So the system")
-    print("  cannot even record why it is rejecting. Fix this before anything else.")
-elif mode == "primary":
-    print("  \033[32mprimary ledger connected\033[0m")
-elif mode == "local":
-    print("  \033[32mlocal SQLite ledger (Supabase not configured)\033[0m")
+led = p.get("ledger_supabase") or {}
+settings_mirror = p.get("settings_supabase") or {}
+if p.get("error"):
+    print("  \033[33mpersistence probe failed: " + str(p["error"]) + "\033[0m")
+for name, probe in (("ledger", led), ("settings mirror", settings_mirror)):
+    if not probe:
+        print("  " + name + ": not reported")
+        continue
+    configured, connected = probe.get("configured"), probe.get("connected")
+    if not configured:
+        print("  " + name + ": local SQLite (Supabase not configured)")
+    elif connected:
+        print("  \033[32m" + name + ": Supabase connected\033[0m")
+    else:
+        print("  \033[31m" + name + ": Supabase configured but NOT connected\033[0m")
+        print("    " + str(probe.get("error") or "no error reported"))
+        if name == "ledger":
+            print("    The startup hook returns before restoring ANY instance")
+            print("    worker while this holds. Fix it before anything else.")
 PY
 fi
 
@@ -203,6 +214,12 @@ for entry in "Price Action|/research/price-action/bot-status" "SMC|/research/smc
   fi
   if [ "$CODE" != "200" ]; then
     warn "$NAME status returned $CODE"
+    # 000 means the request never completed. The transport wrote the reason
+    # into the body; printing it is the difference between "something is wrong"
+    # and knowing whether the endpoint timed out or raised.
+    if [ -s "$TMP/body" ]; then
+      dim "    $(head -c 400 "$TMP/body")"
+    fi
     continue
   fi
   python3 - "$TMP/body" "$NAME" <<'PY'
@@ -216,14 +233,36 @@ session = d.get("session") or {}
 sid = d.get("session_id") or session.get("id")
 mode = d.get("operating_mode") or session.get("operating_mode")
 armed = d.get("execution_armed")
-feed = d.get("market_data_health") or d.get("feed_status") or d.get("connection")
+# bot_status returns the whole connection dict under "feed". Guessing at other
+# key names printed "None" on a lab that was reporting its state perfectly well,
+# which hid the one field that decides whether anything can fill.
+feed = d.get("feed")
+feed = feed if isinstance(feed, dict) else {}
 blockers = d.get("blockers") or []
 print("  " + name)
 print("    session_id      = " + (str(sid) if sid
       else "\033[31mMISSING — not armed, whatever the badge says\033[0m"))
 print("    operating_mode  = " + str(mode))
 print("    execution_armed = " + str(armed) + "   (true only when mode is automatic)")
-print("    feed            = " + str(feed))
+reliable = feed.get("reliable")
+colour = "\033[32m" if reliable else "\033[31m"
+print("    feed state      = " + colour + str(feed.get("state") or "unreported") + "\033[0m"
+      + "   reliable=" + str(reliable))
+if feed.get("health_reason"):
+    print("    feed reason     = " + str(feed["health_reason"]))
+if feed.get("failing_dependency"):
+    print("    failing         = " + str(feed["failing_dependency"]))
+ages = [(label, feed.get(key)) for label, key in (
+    ("candle", "candle_age_seconds"), ("quote", "quote_age_seconds"),
+    ("mark", "mark_age_seconds"), ("closed", "closed_candle_age_seconds"))]
+ages = [(label, value) for label, value in ages if value is not None]
+if ages:
+    # Each must be under 15s at the same instant, so the one that is over is
+    # the stream to chase rather than the lab.
+    print("    ages (s)        = " + ", ".join(
+        "%s %s%.0f%s" % (label, "\033[31m" if float(value) > 15 else "",
+                         float(value), "\033[0m" if float(value) > 15 else "")
+        for label, value in ages))
 print("    blockers        = " + (", ".join(map(str, blockers)) if blockers else "none"))
 if mode == "manual_approval":
     print("    \033[33mmanual_approval places nothing until you approve each proposal,\033[0m")
@@ -239,6 +278,9 @@ bold "5. PA vs SMC standings (shadow research, needs no arming)"
 CODE="$(fetch /research/observatory/comparison)"
 if [ "$CODE" != "200" ]; then
   warn "GET /research/observatory/comparison returned $CODE"
+  [ -s "$TMP/body" ] && dim "    $(head -c 300 "$TMP/body")"
+  dim "    The observer is opt-in. Set HUB_RESEARCH_AUTOSTART=1 in .env and"
+  dim "    redeploy to collect the PA versus SMC comparison; at 0 it stays empty."
 else
   python3 - "$TMP/body" <<'PY'
 import json, sys
