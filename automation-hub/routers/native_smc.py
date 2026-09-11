@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import csv
 import io
+import sqlite3
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,8 +27,23 @@ from services.smc_strategy_v1 import (
 )
 from services.smc_strategy_lab import SMCPaperConfig
 from services.lab_read_view import lab_read_view, saved_session, saved_status
+from data.sqlite_runtime import is_sqlite_busy
 
 router = APIRouter(prefix="/research/smc", tags=["research-smc"])
+
+
+def _persistence_blocked(exc: BaseException):
+    """Report a contended SQLite read as a retryable 503, matching the
+    Price Action lab. Without this the same fault surfaced here as an opaque
+    500, so an operator reading two lab statuses got two different codes for
+    one condition and had no signal that retrying was the right response."""
+    if is_sqlite_busy(exc):
+        raise HTTPException(status_code=503, detail={
+            "state": "PERSISTENCE_BLOCKED", "code": "PERSISTENCE_BLOCKED",
+            "retryable": True, "message": str(exc),
+            "real_execution_allowed": False,
+        }) from exc
+    raise exc
 reviews = VisualReviewLedger()
 _REFERENCE_PINE_PATH = Path(__file__).resolve().parents[1] / "research_references" / "smc_pro_v2_reference.pine"
 
@@ -204,7 +220,10 @@ def _smc_paper_state() -> dict:
 
 @router.get("/session")
 def session_identity():
-    return saved_session(_smc_runtime().smc_paper)
+    try:
+        return saved_session(_smc_runtime().smc_paper)
+    except sqlite3.OperationalError as exc:
+        _persistence_blocked(exc)
 
 
 @router.get("/paper")
@@ -215,7 +234,10 @@ def smc_paper_account():
 @router.get("/bot-status")
 def smc_bot_status():
     """Dashboard-safe status for the isolated SMC paper system."""
-    return saved_status(_smc_runtime().smc_runtime)
+    try:
+        return saved_status(_smc_runtime().smc_runtime)
+    except sqlite3.OperationalError as exc:
+        _persistence_blocked(exc)
 
 
 @router.get("/paper/export")

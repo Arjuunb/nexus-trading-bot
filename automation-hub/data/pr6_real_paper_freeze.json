@@ -4,9 +4,19 @@
   "approved_delta": "Replace synthesized HTF clocks with services/mtf_policy.py native-candle evidence only.",
   "sha256": {
     "services/mtf_policy.py": "f54da90f2643152f9e9864f42ea77e9fc920c4b75aba19e3190fc3e86ac199a0",
-    "services/price_action_lab.py": "516e4db4e1c92c28bc4e1dd5efa687a1e73482a775c04634795357c3881ca3e6",
-    "services/smc_strategy_lab.py": "ef3958beca3e2e18ddc45ed2c8d52170c38eece086dba9000b80752833c5552c",
+    "services/price_action_lab.py": "5eb6061b0145e64e12102ab4934c44043b67c91a822c0d889580dc7b78954c46",
+    "services/smc_strategy_lab.py": "8abfdca8e9972e0dd49bb1e2272aabe7109bebfcab798f6ac516018cff8ccfc3",
     "services/native_price_action.py": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",
     "services/native_smc.py": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
-  }
+  },
+  "subsequent_approved_deltas": [
+    {
+      "commits": ["829ee22 (PR #11)", "b7779e9 (PR #12)"],
+      "delta": "Unblock paper runtime hydration and execution: move native HTF loads to services/native_context_loader.py, serve lab status and live state from committed snapshots instead of request-thread provider I/O, and name the HTF_PRIMARY_UNAVAILABLE blocker explicitly.",
+      "files_rehashed": ["services/price_action_lab.py", "services/smc_strategy_lab.py"],
+      "alpha_rules_changed": false,
+      "fill_timing_changed": false,
+      "verification": "services/native_price_action.py, services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline values, so entry conditions, stop model, target R and the native MTF policy are untouched. The delta in the two lab modules is hydration, status reporting and blocker naming only; no decision or fill-timing path was modified."
+    }
+  ]
 }

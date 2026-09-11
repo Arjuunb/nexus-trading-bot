@@ -26,9 +26,12 @@ class ResearchObservationRuntime:
 
     def __init__(self, market_hub: ForwardPaperMarketDataHub,
                  store: ShadowResearchStore, *, symbol: str = "BTCUSDT",
-                 timeframe: str = "5m", research_config: dict | None = None):
+                 timeframe: str = "5m", research_config: dict | None = None,
+                 supervise: bool = False, poll_seconds: float = 15.0):
         self.market_hub = market_hub
         self.store = store
+        self.supervise = bool(supervise)
+        self.poll_seconds = float(poll_seconds)
         self.symbol = symbol.upper().replace("/", "")
         self.timeframe = timeframe
         self.research_config = dict(research_config or {})
@@ -51,6 +54,8 @@ class ResearchObservationRuntime:
             **self.research_config, "liquidity_config_hash": self.liquidity.config_hash,
         })
         self._lock = threading.RLock()
+        self._supervisor_stop = threading.Event()
+        self._supervisor_thread: threading.Thread | None = None
         self._last_observation: dict = {}
         self._last_error = ""
         self._market_data_fresh = False
@@ -69,17 +74,66 @@ class ResearchObservationRuntime:
                 bar_sink=lambda bar: self._on_htf(self.secondary_htf, bar)),
         ]
 
-    def start(self) -> bool:
+    def _attach(self) -> bool:
         # Warm native HTF clocks before any decision callback can run.
         htf_started = self._subscriptions[1].start(self.symbol, self.primary_htf)
         htf4_started = self._subscriptions[2].start(self.symbol, self.secondary_htf)
         started = self._subscriptions[0].start(self.symbol, self.timeframe)
         ready = bool(started and htf_started and htf4_started)
         if not ready:
-            self.stop()
+            for subscription in self._subscriptions:
+                subscription.stop()
         return ready
 
+    def start(self) -> bool:
+        """Attach to the shared feed, and keep trying when supervised.
+
+        A subscription starts by loading REST history first, so a single
+        network blip at container boot -- the likeliest moment for one --
+        used to leave this observer permanently dead. It ran once, failed,
+        detached and nothing retried, while both paper labs recovered through
+        their own supervisor threads. Research measurements simply never
+        accumulated again until someone restarted the process, and status
+        reported a generic BLOCKED that looked identical to an ordinary stale
+        feed. Supervision makes this observer as recoverable as the labs.
+        """
+        started = self._attach()
+        if self.supervise:
+            self._begin_supervision()
+        return started
+
+    def _begin_supervision(self) -> None:
+        with self._lock:
+            if self._supervisor_thread is not None:
+                return
+            self._supervisor_stop.clear()
+            self._supervisor_thread = threading.Thread(
+                target=self._run_supervisor, name="shadow-research-observer",
+                daemon=True)
+            thread = self._supervisor_thread
+        thread.start()
+
+    def attached(self) -> bool:
+        """Whether every required subscription is live right now."""
+        return all(subscription.running for subscription in self._subscriptions)
+
+    def _run_supervisor(self) -> None:
+        while not self._supervisor_stop.is_set():
+            try:
+                if not self.attached():
+                    self._attach()
+            except Exception as exc:  # noqa: BLE001 — an optional observer
+                with self._lock:                 # must never kill its own loop
+                    self._last_error = f"research observer reattach failed: {exc}"
+            self._supervisor_stop.wait(self.poll_seconds)
+
     def stop(self) -> None:
+        self._supervisor_stop.set()
+        with self._lock:
+            thread = self._supervisor_thread
+            self._supervisor_thread = None
+        if thread and thread is not threading.current_thread():
+            thread.join(timeout=3)
         for subscription in self._subscriptions:
             subscription.stop()
 
@@ -384,9 +438,19 @@ class ResearchObservationRuntime:
             error = self._last_error
         feed = self._subscriptions[0].status()
         self._market_data_fresh = bool(feed.get("reliable"))
+        attached = self.attached()
+        # DETACHED and BLOCKED mean different things to an operator. Blocked is
+        # an ordinary stale feed that clears itself; detached means this
+        # observer is not subscribed at all, so no candle will ever reach it
+        # until something reattaches. Reporting both as BLOCKED hid a
+        # permanently dead observer behind a routine-looking state.
         return {
-            "state": "ERROR" if error else ("OBSERVING" if self._market_data_fresh else "BLOCKED"),
+            "state": ("ERROR" if error else
+                      "OBSERVING" if self._market_data_fresh else
+                      "DETACHED" if not attached else "BLOCKED"),
             "error": error or None,
+            "attached": attached,
+            "supervised": self.supervise,
             "execution_class": "SHADOW", "real_execution_allowed": False,
             "symbol": self.symbol, "timeframe": self.timeframe,
             "market_data": feed,

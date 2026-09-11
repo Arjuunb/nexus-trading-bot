@@ -189,6 +189,21 @@ def test_configured_supabase_failure_is_fail_closed(monkeypatch):
             capital_allocation=1_000,
         )
 
+    # Diagnostics stay writable so the degraded mode can explain itself. The
+    # pipeline's rejection path calls both; denying them made every rejection
+    # raise out of its own reason-reporting code. Neither records execution
+    # state, so the throwaway in-memory schema cannot become a second truth.
+    degraded_probe.log(level="warning", stage="execution",
+                       message="primary unavailable", symbol="BTCUSDT")
+    degraded_probe.add_alert(severity="warning", category="system",
+                             title="Primary ledger unavailable", detail="probe failed")
+    assert degraded_probe.get_logs(), "degraded ledger must retain its own diagnostics"
+
+    # Execution state remains denied even though diagnostics are allowed.
+    for blocked in ("open_position_and_trade", "record_paper_trade", "close_position"):
+        with pytest.raises(RuntimeError, match="read-only/degraded"):
+            getattr(degraded_probe, blocked)()
+
     # healthy Supabase is used and reported connected
     class HealthyLedger:
         def __init__(self, url, key): ...

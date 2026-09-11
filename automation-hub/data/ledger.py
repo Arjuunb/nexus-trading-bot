@@ -798,8 +798,18 @@ class ReadOnlyDegradedLedger(SqliteLedger):
     """Non-authoritative diagnostic view used while the primary is unavailable.
 
     The in-memory schema exists only so dashboard reads can return empty,
-    typed collections. Every mutation is rejected, making this categorically
-    different from the former silent writable SQLite fallback.
+    typed collections. Every mutation that would record execution state is
+    rejected, making this categorically different from the former silent
+    writable SQLite fallback.
+
+    Diagnostics are the deliberate exception. ``log`` and ``add_alert`` carry
+    no position, trade or order state, so writing them to the throwaway
+    in-memory schema cannot create a second source of truth. Denying them
+    instead made the degraded mode self-concealing: the pipeline's own
+    rejection path calls ``log`` and ``add_alert``, so every rejected entry
+    raised out of the reason-reporting code and a caller saw an opaque 500
+    rather than the real cause. The system could not write down why it was
+    refusing to trade, which is precisely when that record matters most.
     """
     read_only_degraded = True
 
@@ -823,8 +833,9 @@ class ReadOnlyDegradedLedger(SqliteLedger):
     update_position_management = _deny
     record_paper_trade = _deny
     close_paper_trade = _deny
-    log = _deny
-    add_alert = _deny
+    # log / add_alert intentionally inherit SqliteLedger: see the class
+    # docstring. They record no execution state and keep the degraded mode
+    # able to explain itself.
     begin_factory_reset_audit = _deny
     finish_factory_reset_audit = _deny
     factory_reset_application_data = _deny
