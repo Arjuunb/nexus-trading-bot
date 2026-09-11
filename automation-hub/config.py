@@ -91,6 +91,17 @@ class Settings:
     auto_strategy: str = field(default_factory=lambda: os.environ.get("HUB_AUTO_STRATEGY", "brain"))
     use_live_data: bool = field(default_factory=lambda: os.environ.get("HUB_USE_LIVE_DATA", "").lower() in ("1", "true", "yes"))
     live_poll_s: float = field(default_factory=lambda: float(os.environ.get("HUB_LIVE_POLL", "60")))
+    # How often each lab supervisor re-evaluates. Both default to the value
+    # they were hard-coded to, so nothing changes unless an operator sets one.
+    #
+    # These are worth tuning on a small host. Each SMC tick rebuilds a market
+    # structure engine over an 800-bar window, while on a 5m timeframe a new
+    # closed candle only appears every 300 seconds, so the default spends most
+    # of its work recomputing an unchanged result. Raising the interval trades
+    # reaction latency within a candle for CPU, and on a two-core VPS that is
+    # usually the right trade.
+    smc_poll_s: float = field(default_factory=lambda: float(os.environ.get("HUB_SMC_POLL", "5")))
+    price_action_poll_s: float = field(default_factory=lambda: float(os.environ.get("HUB_PA_POLL", "5")))
     external_live_enabled: bool = field(default_factory=lambda: os.environ.get(
         "HUB_ENABLE_EXTERNAL_LIVE", "0").lower() in ("1", "true", "yes", "on"))
 
