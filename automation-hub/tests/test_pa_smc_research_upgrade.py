@@ -99,6 +99,10 @@ def test_all_variants_share_candle_and_snapshot_lineage_and_are_idempotent(tmp_p
 def test_observer_uses_shared_closed_feeds_and_stale_state_blocks_entries(tmp_path):
     hub = ForwardPaperMarketDataHub(
         lambda *_args, **_kwargs: [], stream_factory=_ResearchFeed)
+    # Assertions here read the observer's state directly after each emit_bar,
+    # so delivery must be complete when that call returns. Production dispatches
+    # to a pool instead, to keep a slow sink off the socket reader's thread.
+    hub.synchronous_delivery = True
     store = ShadowResearchStore(tmp_path / "shadow.db")
     observer = ResearchObservationRuntime(hub, store)
     assert observer.start()

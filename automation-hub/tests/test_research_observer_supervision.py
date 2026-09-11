@@ -94,6 +94,10 @@ def test_supervised_observer_observes_candles_after_recovery(tmp_path):
     _FlakyFeed.instances.clear()
     _FlakyFeed.fail_starts = 3
     hub = _hub()
+    # This test asserts on the observation as soon as the last bar is pushed.
+    # Production dispatches delivery to a pool, so a slow lab cannot stall the
+    # socket reader; here the sink must have run before the push returns.
+    hub.synchronous_delivery = True
     observer = ResearchObservationRuntime(
         hub, ShadowResearchStore(tmp_path / "c.db"),
         supervise=True, poll_seconds=0.05)
