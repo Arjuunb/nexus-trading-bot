@@ -97,10 +97,29 @@ bold "1. Process and deployed commit"
 CODE="$(fetch /version)"
 if [ "$CODE" != "200" ]; then
   fail "GET /version returned ${CODE}"
-  fail "The app is not serving. Nothing downstream can trade."
-  dim  "  docker compose ps"
-  dim  "  docker compose logs --tail=80 app | grep -i 'REFUSING TO BOOT'"
-  dim  "  Nginx will not start at all while the app container is unhealthy."
+  # The error the transport captured is the whole diagnosis here, and this
+  # section used to discard it. "Connection refused" and "timed out" call for
+  # opposite next steps, and both looked identical as a bare 000.
+  if [ -s "$TMP/body" ]; then
+    dim "  $(head -c 400 "$TMP/body")"
+  fi
+  if [ "$TRANSPORT" = "docker" ]; then
+    # Reaching this line means the container answered an exec a moment ago, so
+    # it is running. Something inside it is not listening on 8000: the app
+    # crashed after boot, is restarting, or is wedged with every worker thread
+    # busy. That is a different fault from a container that never started, and
+    # saying "nginx will not start" here would send the reader the wrong way.
+    fail "The container is alive but nothing is answering on port 8000 inside it."
+    dim  "  The app crashed after boot, is mid-restart, or every worker thread"
+    dim  "  is blocked. The log says which:"
+    dim  "    docker compose logs app --tail=120"
+    dim  "    docker compose ps            # look for restarts and health"
+  else
+    fail "The app is not serving. Nothing downstream can trade."
+    dim  "  docker compose ps"
+    dim  "  docker compose logs --tail=120 app | grep -i 'REFUSING TO BOOT'"
+    dim  "  Nginx will not start at all while the app container is unhealthy."
+  fi
   exit 1
 fi
 good "app is serving"
