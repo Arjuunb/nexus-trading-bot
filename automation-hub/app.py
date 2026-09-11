@@ -526,8 +526,32 @@ def _start_auto_engine() -> None:
           f"(Supabase active: {backend == 'SupabaseLedger'})", flush=True)
     from data.ledger import SUPABASE_STATUS
     if SUPABASE_STATUS.get("configured") and not SUPABASE_STATUS.get("connected"):
-        print("[startup] all primary-ledger execution remains disabled: "
-              f"{SUPABASE_STATUS.get('error')}", flush=True)
+        # Staying closed here is correct: a configured primary that cannot
+        # answer must not be worked around. What was wrong is how quietly it
+        # happened. No instance worker is restored and the autonomous engine
+        # never starts, yet instances still read as desired-running, so the
+        # whole platform presents as healthy and idle — the hardest state to
+        # diagnose. Record it where an operator actually looks instead of
+        # leaving one line in the container log.
+        reason = str(SUPABASE_STATUS.get("error") or "primary ledger did not answer")
+        detail = ("No trading instance worker was restored and the autonomous "
+                  "engine was not started. Instances remain desired-running but "
+                  f"nothing is executing. Cause: {reason}")
+        print(f"[startup] all primary-ledger execution remains disabled: {reason}",
+              flush=True)
+        for record in (
+            lambda: webhook_api.ledger.log(
+                level="error", stage="startup",
+                message=f"execution disabled: {detail}"),
+            lambda: webhook_api.ledger.add_alert(
+                severity="critical", category="system",
+                title="Execution disabled — primary ledger unavailable",
+                detail=detail),
+        ):
+            try:
+                record()
+            except Exception:  # noqa: BLE001 — reporting must not break boot
+                pass
         return
     # Instance workers own their own strategy state, execution ledger scope and
     # desired lifecycle. Restore them first; when at least one is intentionally

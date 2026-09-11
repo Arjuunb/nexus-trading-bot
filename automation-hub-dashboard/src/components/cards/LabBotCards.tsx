@@ -36,6 +36,24 @@ function PerformanceScope({ title, data }: { title: string; data: Record<string,
   );
 }
 
+/** Name the saved operating mode exactly.
+ *
+ * This badge used to read ISOLATED_FORWARD_PAPER for any mode that was not
+ * signals_only, so a session in manual_approval — which places no order until
+ * a person approves each proposal — was indistinguishable from an armed one.
+ * Only operating_mode "automatic" arms execution, so the three modes must read
+ * as three different things.
+ */
+function modeBadge(status: LabBotStatus | null): string {
+  if (!status?.session_id || !status.mode) return "LOADING SESSION";
+  switch (status.mode) {
+    case "signals_only": return "SIGNALS_ONLY";
+    case "manual_approval": return "MANUAL_APPROVAL";
+    case "automatic": return "ISOLATED_FORWARD_PAPER";
+    default: return String(status.mode).toUpperCase();
+  }
+}
+
 function LabCard({ title, page, status, error }: {
   title: string; page: string; status: LabBotStatus | null; error: string | null;
 }) {
@@ -57,7 +75,7 @@ function LabCard({ title, page, status, error }: {
           <p>{strategyLabel} · {status?.strategy?.version ?? "version unavailable"}</p>
         </div>
         <div className="lab-badges">
-          <span className="lab-badge paper">{!status?.session_id || !status.mode ? "LOADING SESSION" : status.mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"}</span>
+          <span className="lab-badge paper">{modeBadge(status)}</span>
           <span className={`lab-badge ${status?.feed?.reliable ? "ok" : "bad"}`}>{feedState}</span>
           <span className={`lab-badge ${ready ? "ok" : "bad"}`}>{status?.execution_state ?? "BLOCKED"}</span>
         </div>
