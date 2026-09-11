@@ -78,6 +78,11 @@ def test_four_hour_failure_still_evaluates_primary_context(tmp_path, monkeypatch
 
 def test_subscriber_failure_does_not_starve_sibling_or_reconnect():
     hub = ForwardPaperMarketDataHub(lambda *_a, **_k: [], stream_factory=FakePublicStream)
+    # This test is about redelivery ordering, not about scheduling, and it
+    # asserts on the sinks as soon as emit_bar returns. Production hands bars
+    # to a delivery pool so a slow sink cannot stall the socket reader; here we
+    # want the sink to have run by the time the emitting call returns.
+    hub.synchronous_delivery = True
     attempts, sibling = [], []
     fail = True
     def failing(bar):

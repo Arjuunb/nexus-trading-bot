@@ -10,6 +10,7 @@ import hashlib
 import json
 import threading
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
@@ -53,6 +54,29 @@ class ForwardPaperMarketDataHub:
         self._consumer_keys: dict[str, tuple[str, str]] = {}
         self._lock = threading.RLock()
         self._retry_timer: threading.Timer | None = None
+        # Bar delivery runs here rather than on the caller's thread. Bounded on
+        # purpose: a consumer that falls behind must queue in its own pending
+        # map, which preserves candle order, instead of spawning a thread per
+        # candle. Synchronous delivery stays available for tests, which need
+        # the sink to have run by the time the emitting call returns.
+        self._delivery: ThreadPoolExecutor | None = None
+        self.synchronous_delivery = False
+
+    def _dispatch(self, consumer: _Consumer) -> None:
+        """Hand one consumer's pending candles to the delivery pool."""
+        if self.synchronous_delivery:
+            self._deliver_pending(consumer)
+            return
+        with self._lock:
+            if self._delivery is None:
+                self._delivery = ThreadPoolExecutor(
+                    max_workers=4, thread_name_prefix="forward-paper-deliver")
+            pool = self._delivery
+        try:
+            pool.submit(self._deliver_pending, consumer)
+        except RuntimeError:
+            # The pool is shutting down; the retry timer still owns the backlog.
+            self._retry_later()
 
     def _retry_later(self):
         with self._lock:
@@ -135,7 +159,21 @@ class ForwardPaperMarketDataHub:
                     if consumer.bar_sink:
                         with self._lock:
                             consumer.pending.setdefault(cid, bar)
-                        self._deliver_pending(consumer)
+                        # Deliver off this thread. This callback runs inside the
+                        # stream's asyncio loop, and a bar sink is not cheap: it
+                        # drives a lab's whole closed-candle path, rebuilding a
+                        # market structure engine over hundreds of bars and
+                        # writing SQLite, once per subscribed consumer. Running
+                        # that inline stopped the loop reading its sockets, so
+                        # markPrice at one message per second went eighty
+                        # seconds without an update while bookTicker on the
+                        # other socket read zero, and the feed failed its
+                        # fifteen-second staleness check for reasons that had
+                        # nothing to do with Binance. Ordering is unaffected:
+                        # pending is an ordered map drained under the
+                        # consumer's own delivery lock, which is exactly the
+                        # path a retry already takes.
+                        self._dispatch(consumer)
 
             def on_quote(quote: dict) -> None:
                 with self._lock:
@@ -231,8 +269,13 @@ class ForwardPaperMarketDataHub:
             streams = [channel.stream for channel in self._channels.values()]
             self._channels.clear()
             self._consumer_keys.clear()
+            pool, self._delivery = self._delivery, None
         for stream in streams:
             stream.stop()
+        if pool is not None:
+            # Let in-flight candles finish; they hold the consumer's delivery
+            # lock and a half-applied one would leave a gap in its history.
+            pool.shutdown(wait=True)
 
 
 class ForwardPaperSubscription:

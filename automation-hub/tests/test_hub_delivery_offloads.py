@@ -1,0 +1,162 @@
+"""A slow bar sink must not stall the thread that reads the sockets.
+
+The hub's bar callback runs inside the market stream's asyncio loop. A bar sink
+is not cheap: it drives a lab's whole closed-candle path, rebuilding a market
+structure engine over hundreds of bars and writing SQLite, once per subscribed
+consumer. While that ran inline, the loop stopped reading, and the measured
+result on the VPS was markPrice at one message per second going eighty seconds
+without an update while bookTicker on the other socket read zero seconds old.
+The feed then failed its fifteen-second staleness check and every fill stopped,
+for reasons that had nothing to do with Binance.
+
+Delivery is therefore dispatched to a pool. Candle order per consumer still
+comes from the ordered pending map drained under that consumer's delivery lock.
+"""
+import threading
+import time
+from datetime import datetime, timedelta, timezone
+
+from bot.types import Bar
+from services.forward_paper_hub import ForwardPaperMarketDataHub
+
+UTC = timezone.utc
+BASE = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+
+
+def _bar(index: int) -> Bar:
+    return Bar(BASE + timedelta(minutes=5 * index), 100, 101, 99, 100.5, 1)
+
+
+class FakeStream:
+    def __init__(self, _loader, *, bar_sink=None, quote_sink=None,
+                 event_sink=None, **_kwargs):
+        self.bar_sink, self.quote_sink, self.event_sink = bar_sink, quote_sink, event_sink
+        self.running = False
+
+    def start(self, _symbol, _timeframe):
+        self.running = True
+        return True
+
+    def stop(self):
+        self.running = False
+
+    def status(self):
+        return {"state": "SYNCHRONIZED", "reliable": True, "new_entries_paused": False}
+
+    def snapshot(self):
+        return {"closed_bars": [], "forming": None, "quote": {}}
+
+    def emit_bar(self, bar):
+        self.bar_sink(bar)
+
+
+def _hub():
+    return ForwardPaperMarketDataHub(lambda *_a, **_k: [], stream_factory=FakeStream)
+
+
+def test_a_slow_sink_does_not_block_the_emitting_thread():
+    hub = _hub()
+    released = threading.Event()
+    entered = threading.Event()
+
+    def slow(_bar):
+        entered.set()
+        released.wait(10)
+
+    subscription = hub.subscription("SLOW", bar_sink=slow)
+    subscription.start("BTCUSDT", "5m")
+    stream = hub._for("SLOW").stream
+    try:
+        started = time.monotonic()
+        stream.emit_bar(_bar(0))
+        elapsed = time.monotonic() - started
+        # The sink is still parked inside its call; emit_bar must already have
+        # returned. Inline delivery would have made this take the full wait.
+        assert entered.wait(5), "the sink never ran"
+        assert elapsed < 2, "emit_bar blocked on the sink for %.1fs" % elapsed
+    finally:
+        released.set()
+        hub.stop()
+
+
+def test_a_slow_consumer_cannot_stall_a_sibling():
+    """One lab falling behind must not hold up another lab's candles."""
+    hub = _hub()
+    released = threading.Event()
+    fast: list[Bar] = []
+
+    def slow(_bar):
+        released.wait(10)
+
+    slow_subscription = hub.subscription("SLOW", bar_sink=slow)
+    fast_subscription = hub.subscription("FAST", bar_sink=fast.append)
+    slow_subscription.start("BTCUSDT", "5m")
+    fast_subscription.start("BTCUSDT", "5m")
+    stream = hub._for("SLOW").stream
+    try:
+        stream.emit_bar(_bar(0))
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not fast:
+            time.sleep(0.02)
+        assert fast, "the fast consumer never received its candle"
+    finally:
+        released.set()
+        hub.stop()
+
+
+def test_candle_order_is_preserved_per_consumer():
+    hub = _hub()
+    seen: list[Bar] = []
+    gate = threading.Event()
+
+    def record(bar):
+        # Hold the first candle briefly so the next ones queue behind it,
+        # which is the case where ordering could break.
+        if not seen:
+            gate.wait(5)
+        seen.append(bar)
+
+    subscription = hub.subscription("ORDER", bar_sink=record)
+    subscription.start("BTCUSDT", "5m")
+    stream = hub._for("ORDER").stream
+    try:
+        for index in range(4):
+            stream.emit_bar(_bar(index))
+        gate.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(seen) < 4:
+            time.sleep(0.02)
+        assert len(seen) == 4, "expected four candles, saw %d" % len(seen)
+        assert [bar.timestamp for bar in seen] == [_bar(i).timestamp for i in range(4)]
+    finally:
+        gate.set()
+        hub.stop()
+
+
+def test_synchronous_delivery_still_available_for_deterministic_callers():
+    hub = _hub()
+    hub.synchronous_delivery = True
+    seen: list[Bar] = []
+    subscription = hub.subscription("SYNC", bar_sink=seen.append)
+    subscription.start("BTCUSDT", "5m")
+    try:
+        hub._for("SYNC").stream.emit_bar(_bar(0))
+        assert seen, "synchronous delivery must complete before emit_bar returns"
+    finally:
+        hub.stop()
+
+
+def test_stop_waits_for_an_in_flight_candle():
+    """A half-applied candle would leave a gap in the consumer's history."""
+    hub = _hub()
+    finished = threading.Event()
+
+    def slow(_bar):
+        time.sleep(0.4)
+        finished.set()
+
+    subscription = hub.subscription("DRAIN", bar_sink=slow)
+    subscription.start("BTCUSDT", "5m")
+    hub._for("DRAIN").stream.emit_bar(_bar(0))
+    hub.stop()
+    assert finished.is_set(), "stop() returned while a candle was still being applied"
