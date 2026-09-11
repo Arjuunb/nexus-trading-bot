@@ -10,6 +10,9 @@ services:
     environment:
       HUB_ENV: production
       HUB_DATA_DIR: /var/lib/tradexa
+      # Shadow research opens three additional public Binance feeds. It is
+      # opt-in so an unused observer cannot consume the VPS CPU budget.
+      HUB_RESEARCH_AUTOSTART: "0"
       PORT: "8000"
       # Runtime metadata is explicit as well as baked into the image. This
       # prevents an empty value from env_file from masking the deployed build.
