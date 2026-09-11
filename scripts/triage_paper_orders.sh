@@ -21,7 +21,24 @@
 
 set -uo pipefail
 
-BASE="${BASE:-http://127.0.0.1:8000}"
+# Transport. The app container publishes nothing to the host: compose declares
+# "expose: 8000", not "ports", so http://127.0.0.1:8000 from a host shell always
+# fails and would report a perfectly healthy app as dead. Port 80 is no better
+# once certificates exist, because nginx then redirects it to HTTPS and the
+# certificate is issued for the domain rather than for a loopback address.
+#
+# So talk to the app from inside its own container, the way scripts/healthcheck.sh
+# already does. Python is present there; curl and wget are not. Set BASE to force
+# the HTTP path instead, e.g. BASE=https://trade-logx.com from a workstation.
+BASE="${BASE:-}"
+TRANSPORT="http"
+if [ -z "$BASE" ]; then
+  if docker compose exec -T app python -c "pass" >/dev/null 2>&1; then
+    TRANSPORT="docker"
+  else
+    BASE="https://trade-logx.com"
+  fi
+fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -40,7 +57,26 @@ good() { printf '  \033[32m%s\033[0m\n' "$*"; }
 # Fetch $1 into $TMP/body and echo the HTTP status code ("000" = unreachable).
 fetch() {
   local out
-  if [ -n "$KEY" ]; then
+  if [ "$TRANSPORT" = "docker" ]; then
+    out="$(docker compose exec -T app python -c '
+import sys, urllib.request, urllib.error
+path, key = sys.argv[1], sys.argv[2]
+request = urllib.request.Request("http://127.0.0.1:8000" + path)
+if key:
+    request.add_header("X-Webhook-Secret", key)
+try:
+    response = urllib.request.urlopen(request, timeout=20)
+    code, body = response.getcode(), response.read().decode("utf-8", "replace")
+except urllib.error.HTTPError as exc:
+    code, body = exc.code, exc.read().decode("utf-8", "replace")
+except Exception as exc:
+    code, body = 0, str(exc)
+sys.stdout.write("%s\n%s" % (code, body))
+' "$1" "$KEY" 2>/dev/null)"
+    printf '%s' "${out#*$'\n'}" > "$TMP/body"
+    out="${out%%$'\n'*}"
+    [ "$out" = "0" ] && out="000"
+  elif [ -n "$KEY" ]; then
     out="$(curl -sS -o "$TMP/body" -w '%{http_code}' --max-time 20 \
            -H "X-Webhook-Secret: $KEY" "$BASE$1" 2>/dev/null)"
   else
@@ -50,7 +86,8 @@ fetch() {
 }
 
 printf '\033[1mPaper order triage\033[0m  %s  %s\n' \
-       "$BASE" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+       "$([ "$TRANSPORT" = "docker" ] && printf 'via docker compose exec app' || printf '%s' "$BASE")" \
+       "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 if [ -z "$KEY" ]; then
   warn "No HUB_CONTROL_KEY found: only /health and /version will answer."
 fi
@@ -67,19 +104,27 @@ if [ "$CODE" != "200" ]; then
   exit 1
 fi
 good "app is serving"
-python3 - "$TMP/body" <<'PY'
+# Compare against this checkout rather than a commit hard-coded when the script
+# was written. What matters is whether the running container matches the source
+# you are about to reason about, and a pinned SHA goes stale on the next merge.
+CHECKOUT="$(git rev-parse HEAD 2>/dev/null || printf '')"
+python3 - "$TMP/body" "$CHECKOUT" <<'PY'
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
 except Exception:
     print("  could not parse /version"); raise SystemExit
-short = d.get("commit_short") or ""
-print("  commit_short = " + (short or "unknown"))
-print("  expected for the #12 merge: 2174850")
+short = (d.get("commit_short") or "").strip()
+checkout = (sys.argv[2] or "").strip()
+print("  running  = " + (short or "unknown"))
+print("  checkout = " + (checkout[:7] if checkout else "unknown"))
 if not short or short == "unknown":
     print("  (GIT_COMMIT was not passed at build time; identify the image another way)")
-elif not "2174850".startswith(short):
-    print("  \033[33m^ this host is NOT running 2174850\033[0m")
+elif checkout and not checkout.startswith(short):
+    print("  \033[33m^ the container is NOT running this checkout.\033[0m")
+    print("  \033[33m  Rebuild before trusting anything below: ./scripts/deploy.sh\033[0m")
+elif checkout:
+    print("  \033[32mcontainer matches the checkout\033[0m")
 PY
 
 # ---------------------------------------------------------------- 2. ledger
