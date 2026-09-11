@@ -945,7 +945,14 @@ research_observer = ResearchObservationRuntime(
     # shadow research for the lifetime of the process.
     supervise=True,
 )
-if "PYTEST_CURRENT_TEST" not in _os.environ:
+# Shadow research is observational and is not needed for the trading labs.
+# Starting it unconditionally opens three independent Binance feeds (entry,
+# primary HTF and secondary HTF) on every deployment, even when no research
+# session is being used. Keep it opt-in so the production worker does not spend
+# CPU on an unused workload; operators can enable it explicitly when needed.
+if ("PYTEST_CURRENT_TEST" not in _os.environ and
+        _os.environ.get("HUB_RESEARCH_AUTOSTART", "0").strip().lower()
+        in ("1", "true", "yes", "on")):
     research_observer.start()
 # Trading Instances are constructed before the research services for legacy
 # import compatibility. Bind their production data/rules authority here so PA,
