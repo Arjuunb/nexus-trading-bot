@@ -5,6 +5,8 @@ Endpoint bodies are unchanged except that references to shared state resolve via
 webhook_api at request time. That keeps the test suite's fixture rebinding
 (``webhook_api.pipeline = <fresh>``) working exactly as before the split.
 """
+import datetime as _dt
+
 import webhook_api as _wa
 from fastapi import APIRouter, Header, HTTPException, Body, Query, Depends  # noqa: F401
 from typing import Optional, List, Dict  # noqa: F401
@@ -304,6 +306,48 @@ def engine_stop(x_webhook_secret: _wa.Optional[str] = _wa.Header(default=None)):
 @router.get("/engine/status")
 def engine_status():
     return _engine_payload()
+
+@router.get("/system/threads")
+def system_threads(frames: int = Query(14, ge=1, le=60)):
+    """Every live thread and where it currently is.
+
+    A request that hangs leaves no trace: the log shows no exception because
+    none is raised, and the caller sees only a gateway timeout. That happened
+    to the Price Action status route, which nginx cut off at ninety seconds
+    while the app log stayed clean, and no amount of reading it could say which
+    call was stuck. This answers that directly, by naming the frame each thread
+    is sitting in right now.
+
+    Read-only: it inspects stacks and touches no engine, account or broker
+    state. Session-gated like every other control endpoint.
+    """
+    import sys
+    import threading
+    import traceback
+
+    names = {thread.ident: thread.name for thread in threading.enumerate()}
+    daemon = {thread.ident: thread.daemon for thread in threading.enumerate()}
+    rows = []
+    for ident, frame in sys._current_frames().items():
+        stack = traceback.extract_stack(frame)[-int(frames):]
+        rows.append({
+            "thread_id": ident,
+            "name": names.get(ident, "unknown"),
+            "daemon": daemon.get(ident),
+            # Innermost last, so the final line is where the thread actually is.
+            "stack": ["%s:%d in %s | %s" % (entry.filename.split("/")[-1],
+                                            entry.lineno, entry.name,
+                                            (entry.line or "").strip())
+                      for entry in stack],
+        })
+    rows.sort(key=lambda row: row["name"])
+    return {
+        "observed_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "thread_count": len(rows),
+        "read_only": True,
+        "threads": rows,
+    }
+
 
 @router.get("/system/status")
 def system_status():
