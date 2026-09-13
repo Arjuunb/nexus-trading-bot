@@ -379,16 +379,79 @@ CI fails if any of these is reintroduced.
 
 ---
 
+## Review round — fifteen defects found in this branch, eight of them mine
+
+A high-effort review of the accumulated diff found real bugs, including
+several introduced by the earlier phases of this work. All are fixed and
+pinned; each entry names the mechanism, not just the symptom.
+
+| # | Defect | Why it mattered |
+|---|---|---|
+| R-1 | `claim_worker_lease` was a read-then-upsert | The "exactly one execution owner" guarantee did not exist. Two processes could both read "no live lease" and both run an unconditional `ON CONFLICT DO UPDATE`; the second simply won. The predicate now lives in the write, with a rowcount check. **Eight threads across eight connections now yield one winner and seven refusals.** |
+| R-2 | Losing a lease called `stop()` | Wrote `desired_running=False` into the row every process reads, so nothing would restart the instance once a split brain resolved — the exact failure the supervisor exists to end. Now `halt_runtime()`, which gives up the worker without touching durable intent. |
+| R-3 | A config edit's rebuild called `stop()` | An edit during a brief venue outage left the instance un-desired, unsupervised and dark. Same fix. |
+| R-4 | `start()` wrote `"starting"` over `state="paused"` | The first restart restored the entry gate correctly; the **second** read `"running"` and re-armed a strategy the operator had deliberately disarmed. |
+| R-5 | The duplicate check ran *after* `paper.open()` | A replayed candle opened a real second position and only then hit the constraint, leaving an open position with no webhook row, no journal entry, and a caller told the cycle produced nothing. The key is now claimed *before* the fill and promoted to the order's final row. |
+| R-6 | A claim that never became an order stayed | Would make a legitimate retry of the same candle look like a duplicate and silently suppress a trade that never happened. Released on rejection. |
+| R-7 | The balance guard's refusal was anonymous | Surfaced as "Order rejected at fill (execution model)" — indistinguishable from a random simulated rejection, which is how a systematic stop hides. Now carries `GATE_REJECTED: INSUFFICIENT_PAPER_CAPITAL`. (The ordinary pipeline path was never affected: the exposure gate caps a position at 5% of equity long before it.) |
+| R-8 | `open()` re-derived the guard's `FillResult` with `float(entry)` | Crashed the decision cycle on exactly the unparseable input the guard exists to catch. |
+| R-9 | A kline-only channel was handed to a quote consumer | It would receive candles and never a quote, so every parked intent sat unfilled forever while the feed read as SYNCHRONIZED. Such a channel is now upgraded in place, keeping its consumers. |
+| R-10 | `stop()` nulled the notifier; `start()` never rebuilt it | A subscription stopped and restarted silently dropped every quote thereafter, uncounted. |
+| R-11 | Reconciliation keyed open trades by symbol | Two positions and one trade row on one pair reconciled clean — the exact discrepancy the check exists to catch. It counts now. |
+| R-12 | The supervisor iterated the live instance dict unlocked | A concurrent create/delete would abandon the whole sweep, including any dead worker it was about to repair. |
+| R-13 | `SUPERVISOR_ERROR` wrote nowhere | `log_event` skips a payload with no `instance_id`, so a supervisor failing on every tick left no trace anywhere. |
+| R-14 | `/instances/runtime/health` was unscoped | The one route left handing any caller every instance_id on the deployment. |
+| R-15 | The "one-time" slot migration ran every start | One is a legal deliberate choice now, and the unguarded `UPDATE ... WHERE max_active_slots<=1` reverted that operator's decision on every restart. Marked applied. |
+
+The acceptance proof re-run after these fixes shows R-4 visibly resolved: a
+paused instance now reports `runtime=PAUSED` after a restart, where it
+previously came back reporting RUNNING.
+
+---
+
+## Closing the last two spec gaps
+
+**A refused delete now has a route forward.** Refusing to delete an instance
+holding an open paper position is correct, but the operator was told no and
+left to work it out. `GET /instances/{id}/open-positions` names each blocking
+position with its unrealised P&L at the last observed mark, and
+`POST /instances/{id}/close-open-positions` realises them behind an explicit
+confirmation. It never invents a price: a position the runtime cannot price is
+left open and reported, because closing it at a guess would write a fabricated
+result into the history. The guard stays deliberately broad — any open
+position blocks, in any simulation session — so a position left from an
+earlier paper session cannot be discarded with the instance.
+
+**Warm-up is a declared contract.** Every registry entry now states how many
+entry candles it needs and which lookback that figure comes from, and three
+tests check the claim against the strategy itself: the engine must warm to at
+least the declared number, and the declared number must exceed the strategy's
+longest actual lookback. Only the two price-action engines declared anything
+before; the other eight relied on the engine's generic 150 covering their
+indicators — true, but unstated and untested.
+
+---
+
 ## Test results
 
 ```
-automation-hub:  2220 passed, 15 skipped   (phase 1 end: 2163; original baseline: 2111)
+automation-hub:  2234 passed, 15 skipped
+                 (original baseline 2111 -> phase 1: 2163 -> phase 2: 2220 -> review: 2234)
 engine (tests/):  508 passed
 dashboard:       tsc --noEmit clean; vite build ok
 soak (25 min):   8/8 checks over 25 samples
+soak (12 min, after the review fixes): 8/8 checks over 12 samples
 ```
 
-109 tests added across both phases.
+123 tests added across both phases and the review round.
+
+One observation from the post-fix soak worth recording rather than hiding: the
+last two samples reported `stale_feed_count: 3`. That run shared the host with
+the acceptance proof, and on the compressed clock a "5m" candle is 5 seconds
+with a 7.5-second staleness threshold — so CPU contention genuinely made the
+feeds briefly stale, and the metric correctly said so. On a real 5m clock the
+equivalent margin is seven and a half minutes. It is not a pass/fail criterion
+in the soak for that reason; treat a non-zero value on the VPS run as real.
 
 ---
 
