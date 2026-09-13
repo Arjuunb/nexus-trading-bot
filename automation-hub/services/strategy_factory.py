@@ -40,4 +40,10 @@ def make_builtin_strategy(key: str, symbol: str, *,
     if key == "brain":
         from strategies.brain_strategy import DecisionBrain
         return DecisionBrain(symbol)
+    if key == "price_action_rejection":
+        from strategies.price_action_rejection import PriceActionRejectionStrategy
+        return PriceActionRejectionStrategy(symbol)
+    if key == "price_action_flip_retest":
+        from strategies.price_action_rejection import PriceActionFlipRetestStrategy
+        return PriceActionFlipRetestStrategy(symbol)
     raise ValueError(f"unknown built-in strategy '{key}'")
