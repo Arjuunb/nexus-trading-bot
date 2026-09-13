@@ -252,3 +252,76 @@ def test_stale_shared_candles_cannot_reach_the_wrong_instance(tmp_path):
     assert first.status()["reliable"] is not False
     first.stop()
     second.stop()
+
+
+def test_pausing_while_the_worker_is_recovering_still_closes_the_gate(tmp_path):
+    """A pause must win regardless of what the feed is doing at that moment."""
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    engine = manager._runtime[instance.id][0]
+    # The worker is mid-recovery: stale feed, reconnect scheduled.
+    engine.lifecycle_state = "recovering"
+    engine.market_data_status = "stale"
+
+    manager.pause(instance.id)
+
+    assert manager._runtime[instance.id][3].trading_allowed() is False
+    assert manager._instances[instance.id].state == "paused"
+    # The entry gate closed; the worker and its subscription stayed.
+    assert manager._runtime[instance.id][0].running is True
+    row = manager.status(instance.id)
+    assert row["execution_status"] == "DISABLED"
+    manager.shutdown()
+
+
+def test_a_backend_restart_between_an_intent_and_its_fill_does_not_double_open(tmp_path):
+    """The intent is durable; the position it already created is authoritative."""
+    from datetime import datetime, timezone
+
+    from execution.paper_engine import ForwardPaperExecutionEngine
+    from services.trading_instances import InstanceLedger
+
+    ledger = SqliteLedger(str(tmp_path / "l.db"))
+    scoped = InstanceLedger(ledger, "inst-1")
+    saved: dict = {}
+    first = ForwardPaperExecutionEngine(scoped, 10_000,
+                                        intents_listener=saved.update)
+    first.open(symbol="BTCUSDT", side="BUY", size=0.01, entry=100.0, stop=95.0,
+               alert_id="crash-1",
+               sizing_context={"decision_timestamp": datetime.now(timezone.utc).isoformat()})
+    quote = {"symbol": "BTCUSDT", "last": 100.0, "bid": 99.9, "ask": 100.1,
+             "mark": 100.0, "sequence": 1,
+             "received_at": datetime.now(timezone.utc).isoformat(),
+             "event_timestamp": datetime.now(timezone.utc).isoformat(),
+             "quote_event_id": "q1", "candle_id": "BINANCE_USDM:BTCUSDT:5m:1"}
+    first.process_quote(quote)
+    assert len(first.positions()) == 1
+
+    # The process dies before the intent checkpoint cleared, so the successor
+    # is handed an intent whose position already exists.
+    successor = ForwardPaperExecutionEngine(scoped, 10_000,
+                                            initial_intents=dict(saved))
+    fills = successor.process_quote({**quote, "sequence": 2, "quote_event_id": "q2"})
+
+    assert fills == []                      # reconciled, not re-opened
+    assert len(successor.positions()) == 1
+
+
+def test_a_duplicate_subscription_request_reuses_one_channel_per_symbol(tmp_path):
+    _ledger, hub, manager = _manager(tmp_path)
+    first = _create(manager, "BTCUSDT")
+    second = manager.create(symbol="BTCUSDT", strategy_key="brain",
+                            strategy_label="Decision Brain", strategy_version="v1",
+                            timeframe="5m", risk_per_trade_pct=0.005,
+                            capital_allocation=1_000)
+    manager.start(first.id)
+    manager.start(second.id)
+    manager.start(first.id)        # repeated, must not add a consumer
+    manager.start(second.id)
+
+    entry = [row for row in hub.channel_report()
+             if (row["symbol"], row["timeframe"]) == ("BTCUSDT", "5m")]
+    assert len(entry) == 1
+    assert entry[0]["consumer_count"] == 2
+    manager.shutdown()

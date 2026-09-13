@@ -57,6 +57,10 @@ class _Consumer:
     # keep up with the feed.
     peak_pending: int = 0
     dropped_quotes: int = 0
+    #: Separate from last_error, which the next delivery attempt overwrites
+    #: with its own exception. The backlog is a distinct fact and must not be
+    #: lost behind the symptom it produces.
+    backlog_exceeded: bool = False
     # One worker, so this consumer's quotes and events reach it in arrival
     # order. A shared pool would let two quotes run at once, and the broker
     # keeps a per-symbol quote cursor that rejects anything not newer than the
@@ -262,9 +266,7 @@ class ForwardPaperMarketDataHub:
                                 # already closes its entry gate. The operator
                                 # sees queue depth and a named failing
                                 # dependency instead of silent memory growth.
-                                consumer.last_error = (
-                                    f"candle backlog exceeded {MAX_PENDING_CANDLES}; "
-                                    "this consumer is not keeping up with the feed")
+                                consumer.backlog_exceeded = True
                         # Deliver off this thread. This callback runs inside the
                         # stream's asyncio loop, and a bar sink is not cheap: it
                         # drives a lab's whole closed-candle path, rebuilding a
@@ -374,6 +376,7 @@ class ForwardPaperMarketDataHub:
             if consumer:
                 consumer.pending.clear()
                 consumer.last_error = ""
+                consumer.backlog_exceeded = False
                 # The notifier deliberately survives. _start() detaches before
                 # re-attaching the same consumer to a new channel, so tearing
                 # it down here would leave a live subscription unable to
@@ -516,11 +519,16 @@ class ForwardPaperSubscription:
         with self.hub._lock:
             peak = self.consumer.peak_pending
             dropped = self.consumer.dropped_quotes
+            backlog = self.consumer.backlog_exceeded
         notifier = self.consumer.notifier
         queue = getattr(notifier, "_work_queue", None) if notifier is not None else None
         status["subscriber_delivery"] = {
             "pending_candle_ids": pending, "last_error": error or None,
             "queue_depth": len(pending), "peak_queue_depth": peak,
+            "backlog_exceeded": backlog,
+            "backlog_detail": (
+                f"candle backlog exceeded {MAX_PENDING_CANDLES}; this consumer is "
+                "not keeping up with the feed" if backlog else None),
             "quote_queue_depth": queue.qsize() if queue is not None else 0,
             "dropped_quotes": dropped,
             "max_queue_depth": MAX_PENDING_CANDLES,

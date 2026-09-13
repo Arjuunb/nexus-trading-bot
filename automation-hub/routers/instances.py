@@ -267,6 +267,52 @@ def instance_options():
     }
 
 
+# Registered ahead of every "/instances/{instance_id}/..." route on purpose.
+# FastAPI matches in registration order, so a path parameter declared first
+# captures the literal segment "runtime" and answers 404 for these.
+@router.get("/instances/runtime/health")
+def instance_runtime_health():
+    """Process-level answer to "is the backend running my instances?".
+
+    Deliberately not per-instance: the question an operator asks after a
+    restart or a login is whether the *runtime* is alive and what it is
+    subscribed to, and that cannot be answered by any one instance's row.
+    """
+    manager = _manager()
+    supervisor = getattr(_wa, "instance_supervisor", None)
+    hub = getattr(manager, "market_hub", None)
+    rows = []
+    for inst in manager._instances.values():
+        runtime = manager._runtime.get(inst.id)
+        thread = getattr(runtime[0], "_thread", None) if runtime else None
+        rows.append({
+            "instance_id": inst.id, "symbol": inst.symbol,
+            "timeframe": inst.timeframe, "strategy_id": inst.strategy_key,
+            "mode": inst.mode, "state": inst.state,
+            "desired_running": inst.desired_running,
+            "worker_alive": bool(runtime and runtime[0].running
+                                 and thread is not None and thread.is_alive()),
+        })
+    return {
+        "supervisor": supervisor.status() if supervisor is not None else
+                      {"running": False, "detail": "supervisor not configured"},
+        "max_active_slots": manager.max_slots,
+        "workers": sorted(rows, key=lambda row: row["symbol"]),
+        "market_data_channels": hub.channel_report() if hasattr(hub, "channel_report") else [],
+    }
+
+
+@router.get("/instances/runtime/metrics")
+def instance_runtime_metrics(request: Request = None):  # noqa: B008
+    """Counters that separate "found no setup" from "never evaluated".
+
+    Both produce zero trades. Only these tell them apart.
+    """
+    from services.instance_metrics import platform_metrics
+    return platform_metrics(_manager(), supervisor=getattr(_wa, "instance_supervisor", None),
+                            owner_id=_owner(request))
+
+
 def _start_instance(manager, instance_id: str, *, restart: bool = False,
                     owner_id: Optional[str] = None):
     """Enter instance-first execution without mixing legacy account trades."""
@@ -541,6 +587,7 @@ def instance_status(instance_id: str, request: Request = None):  # noqa: B008
         "strategy_status", "strategy_status_reason",
         "execution_status", "execution_status_reason",
         "current_blocker", "feed", "subscription", "worker",
+        "configuration_revision", "last_error",
     ) if key in row}
 
 
@@ -609,49 +656,6 @@ def instance_logs(instance_id: str, limit: int = 100, request: Request = None): 
     # they were written for.
     return {"logs": _wa.ledger.get_logs(limit, instance_id=instance_id),
             "engine_events": manager.store.engine_logs(instance_id, limit)}
-
-
-@router.get("/instances/runtime/health")
-def instance_runtime_health():
-    """Process-level answer to "is the backend running my instances?".
-
-    Deliberately not per-instance: the question an operator asks after a
-    restart or a login is whether the *runtime* is alive and what it is
-    subscribed to, and that cannot be answered by any one instance's row.
-    """
-    manager = _manager()
-    supervisor = getattr(_wa, "instance_supervisor", None)
-    hub = getattr(manager, "market_hub", None)
-    rows = []
-    for inst in manager._instances.values():
-        runtime = manager._runtime.get(inst.id)
-        thread = getattr(runtime[0], "_thread", None) if runtime else None
-        rows.append({
-            "instance_id": inst.id, "symbol": inst.symbol,
-            "timeframe": inst.timeframe, "strategy_id": inst.strategy_key,
-            "mode": inst.mode, "state": inst.state,
-            "desired_running": inst.desired_running,
-            "worker_alive": bool(runtime and runtime[0].running
-                                 and thread is not None and thread.is_alive()),
-        })
-    return {
-        "supervisor": supervisor.status() if supervisor is not None else
-                      {"running": False, "detail": "supervisor not configured"},
-        "max_active_slots": manager.max_slots,
-        "workers": sorted(rows, key=lambda row: row["symbol"]),
-        "market_data_channels": hub.channel_report() if hasattr(hub, "channel_report") else [],
-    }
-
-
-@router.get("/instances/runtime/metrics")
-def instance_runtime_metrics(request: Request = None):  # noqa: B008
-    """Counters that separate "found no setup" from "never evaluated".
-
-    Both produce zero trades. Only these tell them apart.
-    """
-    from services.instance_metrics import platform_metrics
-    return platform_metrics(_manager(), supervisor=getattr(_wa, "instance_supervisor", None),
-                            owner_id=_owner(request))
 
 
 @router.get("/instances/{instance_id}/reconciliation")

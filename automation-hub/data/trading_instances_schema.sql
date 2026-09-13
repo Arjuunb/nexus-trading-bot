@@ -279,6 +279,56 @@ BEGIN
       FOREIGN KEY (instance_id) REFERENCES public.trading_instances(id) ON DELETE CASCADE;
   END IF;
 END $$;
+-- ---------------------------------------------------------------------------
+-- Exactly one execution owner per Trading Instance.
+--
+-- Nothing previously stopped two containers pointed at this database from each
+-- running a worker for the same instance, and two workers on one paper account
+-- duplicate every order, fill, position and journal entry it produces. The
+-- primary key is the instance, so a second claim cannot insert: it either
+-- takes over a lease that has genuinely expired, or it is refused and the
+-- caller fails closed. A crashed process's lease ages out on its own, which is
+-- why the expiry exists rather than a plain "is running" flag.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS instance_worker_leases (
+ instance_id TEXT PRIMARY KEY REFERENCES trading_instances(id) ON DELETE CASCADE,
+ worker_id TEXT NOT NULL,
+ process_id INTEGER NOT NULL,
+ host TEXT NOT NULL,
+ started_at TIMESTAMPTZ NOT NULL,
+ heartbeat_at TIMESTAMPTZ NOT NULL,
+ lease_expires_at TIMESTAMPTZ NOT NULL
+);
+ALTER TABLE instance_worker_leases ADD COLUMN IF NOT EXISTS worker_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE instance_worker_leases ADD COLUMN IF NOT EXISTS process_id INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE instance_worker_leases ADD COLUMN IF NOT EXISTS host TEXT NOT NULL DEFAULT '';
+ALTER TABLE instance_worker_leases ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE instance_worker_leases ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+ALTER TABLE instance_worker_leases ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+CREATE INDEX IF NOT EXISTS idx_worker_lease_expiry
+ ON instance_worker_leases(lease_expires_at);
+
+-- Ownership and configuration revision on the instance itself. owner_id
+-- defaults to the single-owner tenant, so every existing row keeps working and
+-- nothing is re-homed; it is the column every instance-scoped check keys on
+-- once this deployment stops being single-owner. config_revision lets the API
+-- say plainly when a running worker has not yet adopted an edit.
+ALTER TABLE trading_instances ADD COLUMN IF NOT EXISTS owner_id TEXT NOT NULL DEFAULT '__owner__';
+ALTER TABLE trading_instances ADD COLUMN IF NOT EXISTS config_revision INTEGER NOT NULL DEFAULT 1;
+CREATE INDEX IF NOT EXISTS idx_instance_owner ON trading_instances(owner_id, created_at);
+
+-- Order idempotency as a constraint, not only as application code. An
+-- autonomous alert_id is deterministic per instance and candle, so a replayed
+-- candle after a reconnect, a retry, or two threads racing DuplicateGuard's
+-- read-then-insert all produce the same key. status is part of the key because
+-- one order legitimately moves through pending and accepted; what must never
+-- happen twice is the same stage for the same key.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_alert_instance_unique
+ ON webhook_events(alert_id, instance_id, status);
+CREATE INDEX IF NOT EXISTS idx_webhook_instance ON webhook_events(instance_id, received_at);
+CREATE INDEX IF NOT EXISTS idx_paper_trades_instance
+ ON paper_trades(instance_id, simulation_session_id);
+
 CREATE TABLE IF NOT EXISTS trading_instance_platform_settings (
  id TEXT PRIMARY KEY, max_active_slots INTEGER NOT NULL DEFAULT 3,
  max_global_risk_pct DOUBLE PRECISION NOT NULL DEFAULT 0.02,

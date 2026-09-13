@@ -82,6 +82,7 @@ def instance_metrics(manager, instance_id: str) -> dict:
         "peak_queue_depth": delivery.get("peak_queue_depth"),
         "quote_queue_depth": delivery.get("quote_queue_depth"),
         "dropped_quotes": delivery.get("dropped_quotes"),
+        "backlog_exceeded": delivery.get("backlog_exceeded"),
         "config_revision": inst.config_revision,
         "running_config_revision": status.get("config_revision"),
     }
@@ -119,6 +120,8 @@ def platform_metrics(manager, *, supervisor=None, owner_id: str | None = None) -
         "missing_candles": total("missing_candles"),
         "queue_depth": total("queue_depth"),
         "dropped_quotes": total("dropped_quotes"),
+        "consumers_behind_the_feed": sum(
+            1 for row in rows if row.get("backlog_exceeded")),
         "max_market_message_age_seconds": max(
             [row["market_message_age_seconds"] for row in rows
              if row.get("market_message_age_seconds") is not None] or [0]),

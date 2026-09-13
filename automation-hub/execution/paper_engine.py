@@ -157,11 +157,31 @@ class PaperExecutionEngine:
         value = str(supplied or "").strip()
         return value or f"paper:{action.lower()}:{uuid.uuid4().hex}"
 
+    def _reject_unaffordable(self, symbol: str, size: float, entry: float):
+        """Reject an entry the paper account cannot fund. None means allowed."""
+        try:
+            notional = abs(float(size)) * abs(float(entry))
+        except (TypeError, ValueError):
+            return FillResult("rejected", symbol, "long", 0.0, 0.0)
+        if notional <= 0:
+            return None
+        available = self.available_balance()
+        if notional > available + 1e-9:
+            self.ledger.log(
+                level="warning", stage="execution", symbol=symbol,
+                message=(f"{symbol} entry rejected: notional {notional:.2f} exceeds "
+                         f"available paper capital {available:.2f}"))
+            return FillResult("rejected", symbol, "long", 0.0, float(entry))
+        return None
+
     def open(self, *, symbol: str, side: str, size: float, entry: float,
              stop: Optional[float], target: Optional[float] = None,
              alert_id: str = "", maker: bool = False,
              sizing_context: Optional[dict] = None) -> FillResult:
         direction = _dir(side)
+        rejection = self._reject_unaffordable(symbol, size, entry)
+        if rejection is not None:
+            return FillResult("rejected", symbol, direction, 0.0, float(entry))
         execution_id = self._execution_id("OPEN", alert_id)
         # route the entry through the fill model (price/size/rejection);
         # maker fills (resting limits) execute at the limit price exactly
@@ -400,6 +420,17 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
         context = dict(sizing_context or {})
         decision_timestamp = context.get("decision_timestamp")
         self._utc(decision_timestamp)
+        # A simulated account cannot spend money it does not have. The sizing
+        # pipeline normally keeps an entry well inside the balance, but the
+        # execution engine itself had no check at all, so any path that
+        # bypasses sizing -- a fixed-quantity configuration, an intent
+        # recovered from a previous process, a direct call -- could park an
+        # order worth more than the account and drive available capital
+        # arbitrarily negative. Refusing here is fail-closed and does not
+        # touch how any strategy sizes a trade.
+        rejection = self._reject_unaffordable(symbol, size, entry)
+        if rejection is not None:
+            return rejection
         with self._intent_lock:
             existing = self._intents.get(symbol)
             if existing is not None:
