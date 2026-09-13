@@ -1316,9 +1316,37 @@ class TradingInstanceManager:
                 return self.forward_fetcher(symbol, timeframe, limit, **kwargs)
             ws_feed = None
             runtime_fetcher = instance_forward_fetcher
+            # Declared before the feed because the candle sink below wakes the
+            # engine, and the feed starts delivering before the engine exists.
+            engine_ref: dict[str, AutoStrategyEngine] = {}
             if forward:
                 if self.market_hub is not None:
                     holder = {}
+
+                    def on_candle_close(_bar) -> None:
+                        """Wake the forward loop the moment a candle closes.
+
+                        Without this the instance read the same live socket the
+                        labs do but only every HUB_LIVE_POLL seconds, so a 5m
+                        decision landed up to a minute into the next candle and
+                        did not line up with PA/SMC on the same close.
+
+                        This is a notice, not a candle delivery: the engine owns
+                        a durable cursor and re-reads the feed itself, applying
+                        the same continuity checks as a polled pass. Taking it
+                        as a bar_sink instead would have put the candle in the
+                        hub's pending map, which reports the subscription
+                        unreliable until it drains and would have made this
+                        instance's stop-loss fills wait on however long the
+                        labs' candle processing took. Setting an Event is all
+                        that happens here, so it is safe inline on the stream's
+                        thread. A candle that closes before the engine exists
+                        needs no wake: bootstrap reads everything past the
+                        cursor.
+                        """
+                        engine = engine_ref.get("engine")
+                        if engine is not None:
+                            engine.notify_new_candle()
 
                     def on_quote(quote: dict) -> None:
                         subscription = holder.get("subscription")
@@ -1333,7 +1361,8 @@ class TradingInstanceManager:
                             )
 
                     ws_feed = self.market_hub.subscription(
-                        f"INSTANCE:{instance_id}", quote_sink=on_quote)
+                        f"INSTANCE:{instance_id}", quote_sink=on_quote,
+                        candle_notice=on_candle_close)
                     holder["subscription"] = ws_feed
                     if not ws_feed.start(inst.symbol, inst.timeframe):
                         raise RuntimeError("Binance USD-M market-data hub failed to start")
@@ -1413,7 +1442,6 @@ class TradingInstanceManager:
                     instance_id, level=level, timestamp=event.get("timestamp"),
                     message=(f"state={state} reason={event.get('reason') or ''} "
                              f"symbol={inst.symbol} timeframe={inst.timeframe}"))
-            engine_ref: dict[str, AutoStrategyEngine] = {}
             engine = AutoStrategyEngine(pipeline, paper, scoped, symbols=[inst.symbol], timeframe=inst.timeframe,
                                         strategy_factory=lambda symbol: self.strategy_factory(inst.strategy_key, symbol),
                                         live=forward, live_poll_s=self.live_poll_s,

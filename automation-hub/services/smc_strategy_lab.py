@@ -135,6 +135,23 @@ class SMCPaperAccount:
               CREATE TABLE IF NOT EXISTS smc_journal_revisions(
                 id TEXT PRIMARY KEY, journal_id TEXT NOT NULL, session_id TEXT NOT NULL,
                 note TEXT NOT NULL, created_at TEXT NOT NULL);
+              -- The same one-session-newest-first reads state() makes, and the
+              -- same missing indexes that turned the Price Action lab's status
+              -- route into six full table scans per poll until it timed out.
+              -- SMC has not hit that wall only because its history is younger.
+              -- It matters doubly here: the point of running both labs is to
+              -- compare them, and a lab whose status route is slower than the
+              -- other's is not being compared on equal terms.
+              CREATE INDEX IF NOT EXISTS smc_activity_session_created
+                ON smc_activity(session_id, created_at DESC);
+              CREATE INDEX IF NOT EXISTS smc_candidates_session_created
+                ON smc_candidates(session_id, created_at DESC);
+              CREATE INDEX IF NOT EXISTS smc_order_meta_session_created
+                ON smc_order_meta(session_id, created_at DESC);
+              CREATE INDEX IF NOT EXISTS smc_funding_session_time
+                ON smc_funding_events(session_id, funding_time DESC);
+              CREATE INDEX IF NOT EXISTS smc_evaluations_session_candle
+                ON smc_evaluations(session_id, candle_time DESC);
             """)
             self._db.execute("INSERT OR IGNORE INTO smc_settings(id,leverage) VALUES (1,1)")
             active_session = self._db.execute(
