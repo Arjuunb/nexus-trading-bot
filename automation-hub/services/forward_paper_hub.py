@@ -365,7 +365,35 @@ class ForwardPaperSubscription:
         started = self.hub._start(self.consumer, symbol, timeframe)
         if started:
             self.symbol, self.timeframe = normalize_symbol(symbol), timeframe
+            self._release_unneeded_natives(self.symbol, self.timeframe)
         return started
+
+    def _release_unneeded_natives(self, symbol: str, timeframe: str) -> None:
+        """Drop the higher-timeframe children the new identity has no use for.
+
+        Changing timeframe or symbol is a normal manual action — both labs
+        render a button per entry timeframe — and each identity needs a
+        different set of native clocks (5m wants 1h and 4h; 4h wants only 1d).
+        stop() released these children but start() did not, so every switch
+        stranded them: an attached consumer holding a channel open, and a
+        channel is two Binance websockets, a reader thread and a 1500-bar REST
+        reconciliation. Flipping through all five entry timeframes left six
+        channels running where three were needed.
+
+        Children a clock still needs are kept as they are, so a switch that
+        shares them (5m to 15m both use 1h and 4h) costs no reload. The cache
+        is only a cache: anything dropped that a strategy still asks for is
+        rebuilt by the next fetch.
+        """
+        from services.mtf_policy import native_timeframes
+        try:
+            keep = {(symbol, tf) for tf in native_timeframes(timeframe)}
+        except ValueError:
+            # A feed clock with no entry policy (1d). Callers that need a
+            # policy fail where the message names it; starting must not break.
+            return
+        for key in [key for key in self._native_fetch_subscriptions if key not in keep]:
+            self._native_fetch_subscriptions.pop(key).stop()
 
     def stop(self) -> None:
         children = list(self._native_fetch_subscriptions.values())
