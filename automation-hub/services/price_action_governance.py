@@ -712,14 +712,50 @@ class PriceActionJournalStore:
             )
         return journal_id
 
-    def _latest_records(self) -> list[dict]:
-        rows = self._db.execute("""
+    def _latest_records(self, *, session_id: str | None = None,
+                        strategy_id: str | None = None, symbol: str | None = None,
+                        timeframe: str | None = None, direction: str | None = None,
+                        partition: str | None = None, date_from: str | None = None,
+                        date_to: str | None = None) -> list[dict]:
+        """Load the newest revision of each matching entry.
+
+        The filters are applied here rather than after loading. Without them
+        this read every journal entry ever written, joined every revision, and
+        json.loads()'d every payload, and bot_status calls it three times per
+        poll. On a journal with real history that took longer than nginx's
+        ninety-second ceiling, so the Price Action lab answered 504 and the
+        dashboard showed nothing at all.
+
+        Every column filtered here is in idx_pa_journal_filters, and each one
+        is equivalent to the Python check it replaces: the insert writes
+        identity["research_partition"] into partition_label, and the remaining
+        columns are the same ones list() compared against row[...]. Filters
+        that read the JSON payload stay in Python, since only the payload can
+        answer them.
+        """
+        clauses, params = [], []
+        for column, value in (("session_id", session_id), ("strategy_id", strategy_id),
+                              ("symbol", symbol.upper() if symbol else None),
+                              ("timeframe", timeframe), ("direction", direction),
+                              ("partition_label", partition)):
+            if value:
+                clauses.append(f"e.{column}=?")
+                params.append(value)
+        if date_from:
+            clauses.append("e.opened_at>=?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("e.opened_at<=?")
+            params.append(date_to)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._db.execute(f"""
           SELECT e.*,r.revision_no,r.payload_json FROM pa_journal_entries e
           JOIN pa_journal_revisions r ON r.journal_id=e.id
           JOIN (SELECT journal_id,MAX(revision_no) revision_no FROM pa_journal_revisions GROUP BY journal_id) latest
             ON latest.journal_id=r.journal_id AND latest.revision_no=r.revision_no
+          {where}
           ORDER BY e.opened_at DESC
-        """).fetchall()
+        """, params).fetchall()
         return [{"index": dict(row), "record": json.loads(row["payload_json"])} for row in rows]
 
     def list(self, *, session_id: str | None = None, strategy_id: str | None = None,
@@ -731,7 +767,13 @@ class PriceActionJournalStore:
              regime: str | None = None, rule_compliance: bool | None = None,
              entry_model: str | None = None,
              date_from: str | None = None, date_to: str | None = None) -> dict:
-        records = self._latest_records()
+        records = self._latest_records(
+            session_id=session_id, strategy_id=strategy_id, symbol=symbol,
+            timeframe=timeframe, direction=direction, partition=partition,
+            date_from=date_from, date_to=date_to)
+        # keep() still re-checks these. They are now redundant rather than
+        # wrong, and leaving them means the payload-only filters below read
+        # exactly as before.
         def keep(item: dict) -> bool:
             row, record = item["index"], item["record"]
             ident, setup, review = record["identity"], record["setup"], record["review"]

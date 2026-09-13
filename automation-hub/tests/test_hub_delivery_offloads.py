@@ -133,6 +133,65 @@ def test_candle_order_is_preserved_per_consumer():
         hub.stop()
 
 
+def test_quotes_reach_a_consumer_in_arrival_order():
+    """Order matters more for quotes than for candles.
+
+    The broker keeps a per-symbol quote cursor and rejects anything not newer
+    than the last quote it saw. Two quotes running concurrently would have one
+    dropped as OUT_OF_ORDER_QUOTE and an intent left unfilled, so each consumer
+    gets a single worker rather than a share of a pool.
+    """
+    hub = _hub()
+    seen: list[int] = []
+    gate = threading.Event()
+
+    def record(quote):
+        if not seen:
+            gate.wait(5)          # hold the first so the rest queue behind it
+        seen.append(int(quote["sequence"]))
+
+    subscription = hub.subscription("QUOTES", quote_sink=record)
+    subscription.start("BTCUSDT", "5m")
+    stream = hub._for("QUOTES").stream
+    try:
+        for index in range(6):
+            stream.quote_sink({"bid": 1, "ask": 2, "mark": 1.5,
+                               "sequence": index, "received_at": "2026-09-13T00:00:%02dZ" % index})
+        gate.set()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and len(seen) < 6:
+            time.sleep(0.02)
+        assert seen == sorted(seen), "quotes arrived out of order: %s" % seen
+        assert len(seen) == 6
+    finally:
+        gate.set()
+        hub.stop()
+
+
+def test_a_slow_quote_sink_does_not_block_the_emitting_thread():
+    hub = _hub()
+    released = threading.Event()
+    entered = threading.Event()
+
+    def slow(_quote):
+        entered.set()
+        released.wait(10)
+
+    subscription = hub.subscription("SLOWQ", quote_sink=slow)
+    subscription.start("BTCUSDT", "5m")
+    stream = hub._for("SLOWQ").stream
+    try:
+        started = time.monotonic()
+        stream.quote_sink({"bid": 1, "ask": 2, "mark": 1.5, "sequence": 1,
+                           "received_at": "2026-09-13T00:00:00Z"})
+        elapsed = time.monotonic() - started
+        assert entered.wait(5), "the quote sink never ran"
+        assert elapsed < 2, "emitting a quote blocked for %.1fs" % elapsed
+    finally:
+        released.set()
+        hub.stop()
+
+
 def test_synchronous_delivery_still_available_for_deterministic_callers():
     hub = _hub()
     hub.synchronous_delivery = True

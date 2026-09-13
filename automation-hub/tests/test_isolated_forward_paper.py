@@ -52,8 +52,16 @@ class FakePublicStream:
 
 
 def _hub():
-    return ForwardPaperMarketDataHub(
+    hub = ForwardPaperMarketDataHub(
         lambda *_args, **_kwargs: [], stream_factory=FakePublicStream)
+    # These tests assert on fills the moment a quote is emitted, because what
+    # they check is fill correctness: which engines fill, at what price, from
+    # which quote. Production delivers to each consumer on its own single
+    # worker so a sink cannot stall the socket reader, and that is a schedule
+    # change, not a trading one. Keeping delivery synchronous here keeps the
+    # assertions about the trade rather than about timing.
+    hub.synchronous_delivery = True
+    return hub
 
 
 def _broker(path, account_type):
