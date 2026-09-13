@@ -192,6 +192,64 @@ def test_a_slow_quote_sink_does_not_block_the_emitting_thread():
         hub.stop()
 
 
+def test_quotes_still_arrive_after_a_restart():
+    """start() detaches before re-attaching, and must not kill the worker.
+
+    A subscription that survives a restart with no notifier would go silently
+    deaf: it stays attached, its sink is still registered, and not one further
+    quote ever reaches it.
+    """
+    hub = _hub()
+    seen: list[dict] = []
+    subscription = hub.subscription("RESTART", quote_sink=seen.append)
+    try:
+        subscription.start("BTCUSDT", "5m")
+        subscription.start("BTCUSDT", "5m")     # same identity
+        subscription.start("ETHUSDT", "5m")     # and a different one
+        hub._for("RESTART").stream.quote_sink(
+            {"bid": 1, "ask": 2, "mark": 1.5, "sequence": 1,
+             "received_at": "2026-09-13T00:00:00Z"})
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not seen:
+            time.sleep(0.02)
+        assert seen, "no quote arrived after the subscription restarted"
+    finally:
+        hub.stop()
+
+
+def test_dispatching_a_quote_takes_no_hub_lock():
+    """Handing a quote to a worker must not touch the global lock.
+
+    Building the worker lazily put a second acquisition on the hottest path in
+    the system: one per quote, per channel, on the same lock the notify workers
+    need for status(). A dump caught six stream threads and three workers
+    queued on it with the app burning six cores.
+
+    on_quote still takes the lock briefly to read the channel and build the
+    snapshot, which is short and predates this. What must not block is the
+    hand-off, so that is what this measures.
+    """
+    hub = _hub()
+    delivered = threading.Event()
+    subscription = hub.subscription("NOLOCK", quote_sink=lambda _q: delivered.set())
+    subscription.start("BTCUSDT", "5m")
+    try:
+        hub._lock.acquire()          # hold it for the whole hand-off
+        try:
+            handed_off = threading.Event()
+            threading.Thread(
+                target=lambda: (hub._dispatch_notify(
+                    subscription.consumer, subscription.consumer.quote_sink,
+                    {"bid": 1, "ask": 2, "mark": 1.5}), handed_off.set()),
+                daemon=True).start()
+            assert handed_off.wait(5), "the hand-off blocked on the hub lock"
+            assert delivered.wait(5), "the quote never reached the sink"
+        finally:
+            hub._lock.release()
+    finally:
+        hub.stop()
+
+
 def test_synchronous_delivery_still_available_for_deterministic_callers():
     hub = _hub()
     hub.synchronous_delivery = True

@@ -4,8 +4,8 @@
   "approved_delta": "Replace synthesized HTF clocks with services/mtf_policy.py native-candle evidence only.",
   "sha256": {
     "services/mtf_policy.py": "f54da90f2643152f9e9864f42ea77e9fc920c4b75aba19e3190fc3e86ac199a0",
-    "services/price_action_lab.py": "5eb6061b0145e64e12102ab4934c44043b67c91a822c0d889580dc7b78954c46",
-    "services/smc_strategy_lab.py": "8abfdca8e9972e0dd49bb1e2272aabe7109bebfcab798f6ac516018cff8ccfc3",
+    "services/price_action_lab.py": "ba9754b7106c35149d0f5abd84c5278e1692a643af2360d0bdddea8baeff45d0",
+    "services/smc_strategy_lab.py": "9a229daacae006c27dff0cee1b759db61d91ad6261fe1ba89c302892cdb36c6f",
     "services/native_price_action.py": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",
     "services/native_smc.py": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
   },
@@ -17,6 +17,14 @@
       "alpha_rules_changed": false,
       "fill_timing_changed": false,
       "verification": "services/native_price_action.py, services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline values, so entry conditions, stop model, target R and the native MTF policy are untouched. The delta in the two lab modules is hydration, status reporting and blocker naming only; no decision or fill-timing path was modified."
+    },
+    {
+      "commits": ["branch claude/paper-orders-incident-x1pl7x"],
+      "delta": "Add SQLite indexes covering the one-session-newest-first reads that each lab's state() makes. Schema access paths only: no statement, threshold, rule or fill path was changed.",
+      "files_rehashed": ["services/price_action_lab.py", "services/smc_strategy_lab.py"],
+      "alpha_rules_changed": false,
+      "fill_timing_changed": false,
+      "verification": "The diff in both files is additive CREATE INDEX IF NOT EXISTS statements inside the existing schema executescript, plus comments: 38 inserted lines and 0 deleted across the two. services/native_price_action.py, services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline values. An index changes how SQLite reaches rows, never which rows it returns or in what order, and the queries themselves are byte-identical; tests/test_lab_status_reads_are_indexed.py asserts both the new access paths and that state() still answers the same shape."
     }
   ]
 }

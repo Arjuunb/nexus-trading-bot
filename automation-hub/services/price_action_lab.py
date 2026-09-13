@@ -142,6 +142,27 @@ class PriceActionPaperAccount:
                 readiness_recheck_required INTEGER NOT NULL DEFAULT 0,
                 entry_pause_reason TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL);
+              -- state() asks each of these tables the same shape of question:
+              -- one session's rows, newest first. With no index every one of
+              -- them was a full table scan plus a sort of everything that
+              -- matched, and state() runs on every bot-status poll. On a lab
+              -- with real history that ran past nginx's ninety-second ceiling
+              -- and the Price Action dashboard answered HTTP 504 instead of
+              -- showing the account. Each index covers one query's filter and
+              -- its ordering, so the read becomes a seek to the session and an
+              -- already-sorted walk that LIMIT can stop early.
+              CREATE INDEX IF NOT EXISTS pa_activity_session_created
+                ON pa_activity(session_id, created_at DESC);
+              CREATE INDEX IF NOT EXISTS pa_candidates_session_created
+                ON pa_candidates(session_id, created_at DESC);
+              CREATE INDEX IF NOT EXISTS pa_order_meta_session_created
+                ON pa_order_meta(session_id, created_at DESC);
+              CREATE INDEX IF NOT EXISTS pa_funding_session_time
+                ON pa_funding_events(session_id, funding_time DESC);
+              CREATE INDEX IF NOT EXISTS pa_evaluations_session_candle
+                ON pa_evaluations(session_id, candle_time DESC);
+              CREATE INDEX IF NOT EXISTS pa_remediations_session_created
+                ON pa_position_remediations(session_id, created_at DESC);
             """)
             session_columns = {row[1] for row in self._db.execute("PRAGMA table_info(pa_sessions)")}
             for name, ddl in (

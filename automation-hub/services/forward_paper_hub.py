@@ -31,6 +31,13 @@ class _Consumer:
     bar_sink: Callable[[Bar], None] | None = None
     quote_sink: Callable[[dict], None] | None = None
     event_sink: Callable[[dict], None] | None = None
+    # A closed-candle notice, not a delivery. Unlike bar_sink it is never
+    # queued, retried or reported as pending, because there is nothing to
+    # replay: it tells a consumer that owns its own candle cursor that the
+    # cursor has moved, and that consumer then reads the feed itself. It runs
+    # inline on the stream's thread, so a notice must do no I/O and take no
+    # lock a slow path could hold.
+    candle_notice: Callable[[Bar], None] | None = None
     pending: OrderedDict = field(default_factory=OrderedDict)
     delivery_lock: threading.Lock = field(default_factory=threading.Lock)
     last_error: str = ""
@@ -78,12 +85,9 @@ class ForwardPaperMarketDataHub:
         if self.synchronous_delivery:
             self._notify(consumer, sink, event)
             return
-        with self._lock:
-            if consumer.notifier is None:
-                consumer.notifier = ThreadPoolExecutor(
-                    max_workers=1,
-                    thread_name_prefix="notify-%s" % consumer.consumer_id[:16])
-            pool = consumer.notifier
+        pool = consumer.notifier
+        if pool is None:
+            return  # detached; its queued quotes are no longer wanted
         try:
             pool.submit(self._notify, consumer, sink, event)
         except RuntimeError:
@@ -160,12 +164,14 @@ class ForwardPaperMarketDataHub:
         bar_sink: Callable[[Bar], None] | None = None,
         quote_sink: Callable[[dict], None] | None = None,
         event_sink: Callable[[dict], None] | None = None,
+        candle_notice: Callable[[Bar], None] | None = None,
     ) -> "ForwardPaperSubscription":
         if not str(consumer_id).strip():
             raise ValueError("forward-paper consumer_id is required")
         return ForwardPaperSubscription(
             self, str(consumer_id), bar_sink=bar_sink,
             quote_sink=quote_sink, event_sink=event_sink,
+            candle_notice=candle_notice,
         )
 
     def _channel(self, key: tuple[str, str]) -> _Channel:
@@ -182,6 +188,12 @@ class ForwardPaperMarketDataHub:
                 with self._lock:
                     channel.last_candle_id = cid
                     consumers = list(channel.consumers.values())
+                for consumer in consumers:
+                    if consumer.candle_notice:
+                        try:
+                            consumer.candle_notice(bar)
+                        except Exception as exc:
+                            consumer.last_error = f"{type(exc).__name__}: {exc}"
                 for consumer in consumers:
                     if consumer.bar_sink:
                         with self._lock:
@@ -282,20 +294,18 @@ class ForwardPaperMarketDataHub:
             if channel is None:
                 return
             consumer = channel.consumers.pop(consumer_id, None)
-            notifier = None
             if consumer:
                 consumer.pending.clear()
                 consumer.last_error = ""
-                notifier, consumer.notifier = consumer.notifier, None
+                # The notifier deliberately survives. _start() detaches before
+                # re-attaching the same consumer to a new channel, so tearing
+                # it down here would leave a live subscription unable to
+                # deliver another quote for the rest of the process.
             if stop_empty and not channel.consumers:
                 self._channels.pop(key, None)
                 stream = channel.stream
         if stream is not None:
             stream.stop()
-        if notifier is not None:
-            # Outside the lock: a queued quote may still be reaching this
-            # consumer, and its sink can take locks of its own.
-            notifier.shutdown(wait=False)
 
     def _for(self, consumer_id: str) -> _Channel | None:
         with self._lock:
@@ -331,6 +341,15 @@ class ForwardPaperSubscription:
     def __init__(self, hub: ForwardPaperMarketDataHub, consumer_id: str, **sinks):
         self.hub = hub
         self.consumer = _Consumer(consumer_id=consumer_id, **sinks)
+        # Built here, once, rather than lazily on first quote. Creating it
+        # under the hub's lock put a global acquisition on the hottest path in
+        # the system: every quote, on every channel, while the notify workers
+        # were contending for the same lock through subscription.status(). A
+        # thread dump caught six stream threads and three notify workers all
+        # queued on it, with the app burning six cores. An executor costs
+        # nothing until its first submit, so there is no reason to defer it.
+        self.consumer.notifier = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="notify-%s" % consumer_id[:16])
         self.symbol = ""
         self.timeframe = ""
         # Context fetches need concurrent native channels (for example 5m,
@@ -354,6 +373,12 @@ class ForwardPaperSubscription:
         for child in children:
             child.stop()
         self.hub._detach(self.consumer_id, stop_empty=True)
+        # This subscription is finished, unlike a detach during a restart, so
+        # its worker goes with it. Queued quotes are dropped rather than
+        # drained: one is only meaningful at the price it carried.
+        notifier, self.consumer.notifier = self.consumer.notifier, None
+        if notifier is not None:
+            notifier.shutdown(wait=False)
 
     @property
     def running(self) -> bool:

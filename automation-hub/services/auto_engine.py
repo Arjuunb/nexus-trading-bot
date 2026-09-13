@@ -139,6 +139,12 @@ class AutoStrategyEngine:
 
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
+        # Set by notify_new_candle() when the market feed pushes a closed
+        # candle. The forward loop waits on this instead of sleeping out its
+        # whole poll interval, so a 5m candle is acted on when it closes rather
+        # than up to live_poll_s later. The poll stays as the safety net for a
+        # feed that cannot push (REST) or a notification that went missing.
+        self._candle_ready = threading.Event()
         self._lock = threading.Lock()
         # Serializes one complete closed-candle decision. Pause acknowledgement
         # acquires this after closing the entry gate, proving no earlier cycle
@@ -277,6 +283,17 @@ class AutoStrategyEngine:
                             message=f"Autonomous engine started — {', '.join(self.symbols)} ({self.timeframe})")
             return True
 
+    def notify_new_candle(self) -> None:
+        """Tell the forward loop a closed candle is available now.
+
+        Called from the market feed's delivery worker, never from the loop
+        itself, so it must stay this cheap: setting an Event cannot block the
+        caller and cannot fail. Which candle it was does not matter — the loop
+        re-reads the feed and applies everything past its durable cursor, with
+        the same continuity checks as a polled pass.
+        """
+        self._candle_ready.set()
+
     def stop(self, reason: str = "Stopped by operator") -> bool:
         with self._lock:
             if not self.running:
@@ -287,6 +304,10 @@ class AutoStrategyEngine:
                 return False
             self.autostart_enabled = False
             self._stop.set()
+            # The forward loop parks on _candle_ready between candles, so
+            # stopping has to release that wait too or the join below would
+            # time out and report a thread stopped while it was still parked.
+            self._candle_ready.set()
         t = self._thread
         if t is not None:
             t.join(timeout=5)
@@ -754,7 +775,14 @@ class AutoStrategyEngine:
                         sym, strategies[sym], unseen, last_ts[sym])
                 self._mark_running()
                 self._heartbeat()
-            self._stop.wait(self.live_poll_s)
+            # Wake on the next closed candle, or on the poll deadline,
+            # whichever comes first. Clearing before the fetch would lose a
+            # candle that closed while the fetch above was running; clearing
+            # after the wait means at worst one extra fetch that finds nothing
+            # new, which _ingest already treats as a no-op.
+            if not self._stop.is_set():
+                self._candle_ready.wait(self.live_poll_s)
+                self._candle_ready.clear()
 
     def _ingest(self, sym, strat, bars, last_ts):
         """Process closed forward bars once; caller already removed forming bar."""

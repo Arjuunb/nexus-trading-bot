@@ -147,6 +147,24 @@ class ShadowResearchStore:
                 ON shadow_decisions(strategy_id,strategy_version,config_hash);
               CREATE INDEX IF NOT EXISTS ix_shadow_decisions_candle
                 ON shadow_decisions(candle_id,engine);
+              -- A FOREIGN KEY declaration creates no index in SQLite, so
+              -- measurements() — a four-way LEFT JOIN over every decision ever
+              -- recorded — re-scanned all of shadow_orders for each decision
+              -- and all of shadow_fills for each order. That is quadratic, and
+              -- the observatory writes one decision per variant per candle:
+              -- nine variants on a 5m chart is about 2,600 rows a day, so the
+              -- PA-vs-SMC comparison report grew until it timed out, which is
+              -- the one answer the two labs exist to produce.
+              CREATE INDEX IF NOT EXISTS ix_shadow_orders_decision
+                ON shadow_orders(decision_id);
+              CREATE INDEX IF NOT EXISTS ix_shadow_fills_order
+                ON shadow_fills(order_id);
+              -- shadow_outcomes.order_id and shadow_mae_mfe.order_id are
+              -- already indexed by their UNIQUE and PRIMARY KEY constraints.
+              -- This one supplies the report's ordering, which was otherwise a
+              -- temp B-tree sort over the whole joined result.
+              CREATE INDEX IF NOT EXISTS ix_shadow_decisions_created
+                ON shadow_decisions(created_at DESC);
             """)
             order_columns = {row[1] for row in self._db.execute(
                 "PRAGMA table_info(shadow_orders)"
