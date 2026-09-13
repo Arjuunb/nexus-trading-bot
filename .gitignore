@@ -29,6 +29,7 @@ dist/
 *.db
 *.db-wal
 *.db-shm
+*.db-journal
 automation-hub/logs/*.json
 
 # React builds bundled into the backend image (built in Docker, never committed)
