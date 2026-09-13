@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-from data.ledger import Ledger
+from data.ledger import DuplicateOrderIntent, Ledger
 from execution.paper_engine import PaperExecutionEngine, _dir
 from tradexa.risk.position_sizing import (
     FIXED_QUANTITY, PositionSizingRequest, PositionSizingService,
@@ -401,6 +401,20 @@ class SignalPipeline:
         if self.equity_provider is not None:
             return float(self.equity_provider())
         return float(self.paper.balance())
+
+    def _release_order_claim(self, alert_id: str) -> None:
+        """Drop a claim that never became an order.
+
+        A claim is a lock, not a record of something that happened. If the
+        entry does not become an order after it, leaving the row would make a
+        later legitimate retry of the same candle look like a duplicate and
+        suppress a trade that was never placed. The dedup constraint has no
+        time component, so nothing ages it out on its own.
+        """
+        try:
+            self.ledger.release_webhook_claim(alert_id)
+        except Exception:  # noqa: BLE001 — a stuck claim must not break the cycle
+            pass
 
     def process(self, payload: dict) -> PipelineResult:
         with self._proc_lock:
@@ -877,36 +891,94 @@ class SignalPipeline:
             steps.append(Step("global_risk", True, reason))
 
         # 6. paper execution (routed through the fill model)
-        fill = self.paper.open(symbol=symbol, side=side, size=size, entry=entry,
-                               stop=stop, target=payload.get("target"),
-                               alert_id=alert_id, maker=bool(payload.get("maker")),
-                               sizing_context={
-                                   "sizing_mode": sizing.mode,
-                                   "sizing_engine_version": sizing.sizing_engine_version,
-                                   "risk_basis_at_entry": sizing.risk_basis,
-                                   "risk_pct_at_entry": eff_risk,
-                                   "risk_amount_at_entry": abs(entry - stop) * size,
-                                   "equity_before_trade": realized_equity,
-                                   "signal_timestamp": payload.get("timestamp"),
-                                   "decision_timestamp": payload.get("timestamp"),
-                                   "signal_price": entry,
-                                   "strategy": payload.get("strategy"),
-                                   "strategy_version": self.journal_context.get("strategy_version"),
-                                   "timeframe": payload.get("timeframe"),
-                                   "market_data_source": payload.get("market_data_source"),
-                                   "candle_id": payload.get("decision_identity"),
-                                   "account_id": (
-                                       f"instance:{self.journal_context.get('instance_id')}:"
-                                       f"{self.journal_context.get('simulation_session_id')}"),
-                                   "execution_engine": "INSTANCE",
-                               })
-        if fill.action == "rejected":
-            return reject("execution", "Order rejected at fill (execution model)")
-        if fill.action == "intent":
+        #
+        # Claim the idempotency key BEFORE the fill. Checking afterwards meant a
+        # replayed candle opened a real second position and only then hit the
+        # unique constraint, leaving an open position with no webhook row, no
+        # journal entry and a caller told the cycle produced nothing -- which
+        # instance reconciliation would later report as position_without_trade.
+        # The claim is the same durable constraint, used as a lock: whoever
+        # inserts the row owns this entry, and the loser never reaches open().
+        try:
             self.ledger.insert_webhook_event(
-                alert_id=alert_id, symbol=symbol, side=side,
-                entry=entry, stop=stop, payload=payload, status="pending",
+                alert_id=alert_id, symbol=symbol, side=side, entry=entry,
+                stop=stop, payload=payload, status="claimed",
             )
+        except DuplicateOrderIntent as exc:
+            steps.append(Step("dedup", True, "idempotency key already claimed"))
+            return PipelineResult(
+                False, "dedup", f"order already claimed for this candle: {exc}",
+                steps, {})
+        try:
+            fill = self.paper.open(symbol=symbol, side=side, size=size, entry=entry,
+                                   stop=stop, target=payload.get("target"),
+                                   alert_id=alert_id, maker=bool(payload.get("maker")),
+                                   sizing_context={
+                                       "sizing_mode": sizing.mode,
+                                       "sizing_engine_version": sizing.sizing_engine_version,
+                                       "risk_basis_at_entry": sizing.risk_basis,
+                                       "risk_pct_at_entry": eff_risk,
+                                       "risk_amount_at_entry": abs(entry - stop) * size,
+                                       "equity_before_trade": realized_equity,
+                                       "signal_timestamp": payload.get("timestamp"),
+                                       "decision_timestamp": payload.get("timestamp"),
+                                       "signal_price": entry,
+                                       "strategy": payload.get("strategy"),
+                                       "strategy_version": self.journal_context.get("strategy_version"),
+                                       "timeframe": payload.get("timeframe"),
+                                       "market_data_source": payload.get("market_data_source"),
+                                       "candle_id": payload.get("decision_identity"),
+                                       "account_id": (
+                                           f"instance:{self.journal_context.get('instance_id')}:"
+                                           f"{self.journal_context.get('simulation_session_id')}"),
+                                       "execution_engine": "INSTANCE",
+                                   })
+        except Exception:
+            # Anything escaping the fill strands the claim, and a stranded
+            # claim bars this candle permanently -- the dedup constraint has no
+            # time component. Release it before the error propagates, so a
+            # retry of a trade that never happened is still possible.
+            self._release_order_claim(alert_id)
+            raise
+        if fill.action == "rejected":
+            # The claim did not become an order. Release it so a later,
+            # legitimate retry of this candle is not mistaken for a duplicate
+            # and a trade that never happened silently suppressed.
+            self._release_order_claim(alert_id)
+            # The reason travels on the result. Reading it off the engine let
+            # the hub's quote thread overwrite it between the rejection and
+            # this line, hiding a systematic capital stop behind a
+            # random-rejection reason.
+            return reject("execution",
+                          getattr(fill, "reason", "")
+                          or "Order rejected at fill (execution model)")
+        if fill.action == "intent":
+            try:
+                # The claim becomes this order's one row. Inserting a second
+                # would put every trade in the event log twice, once as its
+                # claim and once as itself.
+                if not self.ledger.promote_webhook_event(
+                        alert_id=alert_id, status="pending", payload=payload):
+                    self.ledger.insert_webhook_event(
+                        alert_id=alert_id, symbol=symbol, side=side,
+                        entry=entry, stop=stop, payload=payload, status="pending",
+                    )
+            except DuplicateOrderIntent as exc:
+                # The durable idempotency constraint caught a repeat of a key
+                # this instance has already parked -- the same candle replayed
+                # after a reconnect, or two threads racing the guard's
+                # read-then-insert. The intent already exists, so this is a
+                # no-op success, not a second order and not an error.
+                #
+                # The claim still has to go: the final row already exists under
+                # this key, so a surviving claim would bar the candle forever
+                # with nothing to age it out.
+                self._release_order_claim(alert_id)
+                steps.append(Step("execution", True, "duplicate intent suppressed by idempotency key"))
+                return PipelineResult(
+                    False, "dedup", f"order intent already recorded: {exc}",
+                    steps, {},
+                )
             self.ledger.log(
                 level="info", stage="execution", symbol=symbol,
                 message=(f"{symbol} {side} paper intent accepted; waiting for "
@@ -923,8 +995,20 @@ class SignalPipeline:
             "filled_size": round(size, 10),
             "filled_notional": round(size * entry, 2),
         })
-        self.ledger.insert_webhook_event(alert_id=alert_id, symbol=symbol, side=side,
-                                          entry=entry, stop=stop, payload=payload, status="accepted")
+        try:
+            if not self.ledger.promote_webhook_event(
+                    alert_id=alert_id, status="accepted", entry=entry, payload=payload):
+                self.ledger.insert_webhook_event(alert_id=alert_id, symbol=symbol, side=side,
+                                                 entry=entry, stop=stop, payload=payload,
+                                                 status="accepted")
+        except DuplicateOrderIntent as exc:
+            # Reaching here means the fill already happened and was recorded
+            # under this key. Reporting success would double-count it in the
+            # caller's statistics, so report the duplicate plainly -- and drop
+            # the claim, which would otherwise bar this candle permanently.
+            self._release_order_claim(alert_id)
+            steps.append(Step("execution", True, "duplicate fill suppressed by idempotency key"))
+            return PipelineResult(False, "dedup", f"order already recorded: {exc}", steps, {})
         open_msg = f"{symbol} {side} opened {size:.6f} @ {entry}"
         if brain_reason:
             open_msg += f" | {brain_reason}"

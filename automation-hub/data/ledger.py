@@ -35,6 +35,16 @@ _TRANSIENT_REMOTE_ERROR_MARKERS = (
 )
 
 
+class DuplicateOrderIntent(RuntimeError):
+    """One idempotency key, one order.
+
+    Raised when the durable unique constraint rejects a repeat of an alert_id
+    an instance has already acted on -- a replayed candle after a reconnect, a
+    retry, or two threads racing the same check. The caller must treat it as
+    "already done", never as a reason to try again with a fresh key.
+    """
+
+
 def remote_call_with_retry(operation, *, attempts: int = 3):
     """Retry idempotent PostgREST operations after transient transport loss.
 
@@ -70,6 +80,9 @@ class Ledger(Protocol):
     def insert_webhook_event(self, *, alert_id: str, symbol: str, side: str,
                              entry: Optional[float], stop: Optional[float],
                              payload: dict, status: str, reason: str = "", instance_id: str = "") -> str: ...
+    def promote_webhook_event(self, *, alert_id: str, status: str, entry=None,
+                              payload=None, instance_id: str = "") -> bool: ...
+    def release_webhook_claim(self, alert_id: str, instance_id: str = "") -> int: ...
     def webhook_seen(self, alert_id: str, since_iso: str, instance_id: str = "") -> bool: ...
     def get_webhook_events(self, limit: int = 500) -> list[dict]: ...
     # positions / trades
@@ -162,23 +175,126 @@ class SqliteLedger:
             ensure_column(self._c, "paper_trades", "target", "REAL")
             self._c.execute("CREATE INDEX IF NOT EXISTS idx_paper_strategy "
                             "ON paper_trades(strategy_id, closed_at)")
+            # The hot instance-scoped reads. Every status() call filters
+            # positions and trades by these exact columns; on Supabase the
+            # equivalents already exist, so SQLite was the odd one out.
+            self._c.execute("CREATE INDEX IF NOT EXISTS idx_positions_instance "
+                            "ON positions(instance_id, status)")
+            self._c.execute("CREATE INDEX IF NOT EXISTS idx_paper_trades_instance "
+                            "ON paper_trades(instance_id, simulation_session_id)")
+            self._c.execute("CREATE INDEX IF NOT EXISTS idx_webhook_instance "
+                            "ON webhook_events(instance_id, received_at)")
+            # Order idempotency as a database constraint, not just application
+            # code. An autonomous alert_id is deterministic per instance and
+            # candle, so a replayed candle or a racing retry produces the same
+            # key and the second insert must fail rather than create a second
+            # order. Only accepted events are constrained: a rejection and a
+            # later accepted retry of the same alert are both legitimate rows.
+            self.duplicate_order_constraint = self._ensure_order_idempotency_index()
             self._c.commit()
+
+    def _ensure_order_idempotency_index(self) -> dict:
+        """One (alert_id, instance_id, status) row, enforced by the database.
+
+        The status is part of the key because one order legitimately moves
+        through several of them -- a forward-paper entry is recorded pending
+        when its intent is parked and accepted when a quote fills it, and a
+        rejection followed by a later retry of the same alert is two honest
+        rows. What must never happen twice is the SAME stage for the same
+        deterministic key: two accepted opens, or two parked intents, from one
+        replayed candle. That is what this blocks.
+
+        A database that already contains such duplicates cannot take the index.
+        That is reported rather than swallowed: DuplicateGuard still runs, but
+        an operator needs to know the durable guarantee is absent and which
+        rows are preventing it.
+        """
+        try:
+            self._c.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_alert_instance_unique "
+                "ON webhook_events(alert_id, instance_id, status)")
+            return {"enforced": True}
+        except sqlite3.IntegrityError as exc:
+            duplicates = [dict(row) for row in self._c.execute(
+                "SELECT alert_id, instance_id, status, COUNT(*) AS copies "
+                "FROM webhook_events GROUP BY alert_id, instance_id, status "
+                "HAVING copies > 1 LIMIT 20")]
+            return {"enforced": False, "reason": f"{type(exc).__name__}: {exc}",
+                    "duplicate_samples": duplicates}
+        except sqlite3.Error as exc:
+            return {"enforced": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     # ----------------------------------------------------------- webhook
     def insert_webhook_event(self, *, alert_id, symbol, side, entry, stop, payload, status, reason="", instance_id=""):
         wid = _id()
         with self._lock:
-            self._c.execute(
-                "INSERT INTO webhook_events(id,alert_id,symbol,side,entry,stop,payload_json,received_at,status,reason,instance_id)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (wid, alert_id, symbol, side, entry, stop, json.dumps(payload), _now(), status, reason, instance_id))
+            try:
+                self._c.execute(
+                    "INSERT INTO webhook_events(id,alert_id,symbol,side,entry,stop,payload_json,received_at,status,reason,instance_id)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (wid, alert_id, symbol, side, entry, stop, json.dumps(payload), _now(), status, reason, instance_id))
+            except sqlite3.IntegrityError as exc:
+                # The unique index rejected a repeat of an idempotency key this
+                # instance has already acted on. That is the constraint doing
+                # its job, so surface it as a duplicate rather than a crash --
+                # the caller must not then create the order.
+                self._c.rollback()
+                raise DuplicateOrderIntent(
+                    f"alert_id {alert_id!r} already recorded for instance "
+                    f"{instance_id or 'legacy'}") from exc
             self._c.commit()
         return wid
+
+    def promote_webhook_event(self, *, alert_id: str, status: str, entry=None,
+                              payload=None, instance_id: str = "") -> bool:
+        """Turn this order's claim row into its final record.
+
+        The claim is the lock that makes an idempotency key exclusive, and it
+        must become the order's one row rather than leaving a second behind --
+        otherwise every trade appears twice in the event log, once as a claim
+        and once as itself.
+        """
+        sets, args = ["status=?"], [status]
+        if entry is not None:
+            sets.append("entry=?")
+            args.append(entry)
+        if payload is not None:
+            sets.append("payload_json=?")
+            args.append(json.dumps(payload))
+        args.extend([alert_id, instance_id or ""])
+        with self._lock:
+            try:
+                cursor = self._c.execute(
+                    f"UPDATE webhook_events SET {', '.join(sets)} "
+                    "WHERE alert_id=? AND COALESCE(instance_id,'')=? AND status='claimed'",
+                    args)
+            except sqlite3.IntegrityError as exc:
+                # The target (alert_id, instance_id, status) already exists, so
+                # this stage has already been recorded. Callers handle
+                # DuplicateOrderIntent; a raw IntegrityError would escape the
+                # pipeline instead of taking the duplicate path they were
+                # written for. insert_webhook_event makes the same translation.
+                self._c.rollback()
+                raise DuplicateOrderIntent(
+                    f"alert_id {alert_id!r} already recorded as {status!r} for instance "
+                    f"{instance_id or 'legacy'}") from exc
+            self._c.commit()
+            return cursor.rowcount > 0
+
+    def release_webhook_claim(self, alert_id: str, instance_id: str = "") -> int:
+        """Drop an idempotency claim that never became an order."""
+        with self._lock:
+            cursor = self._c.execute(
+                "DELETE FROM webhook_events WHERE alert_id=? AND "
+                "COALESCE(instance_id,'')=? AND status='claimed'",
+                (alert_id, instance_id or ""))
+            self._c.commit()
+            return cursor.rowcount
 
     def webhook_seen(self, alert_id: str, since_iso: str, instance_id: str = "") -> bool:
         with self._lock:
             query = ("SELECT 1 FROM webhook_events WHERE alert_id=? AND received_at>=? "
-                     "AND status!='rejected'")
+                     "AND status NOT IN ('rejected','claimed')")
             args = [alert_id, since_iso]
             if instance_id:
                 query += " AND instance_id=?"
@@ -605,14 +721,81 @@ class SupabaseLedger:
         }
         if instance_id:
             row["instance_id"] = instance_id
-        self._t("webhook_events").insert(row).execute()
+        try:
+            self._t("webhook_events").insert(row).execute()
+        except Exception as exc:
+            # Same translation as SqliteLedger. The unique index rejected a
+            # repeat of an idempotency key this instance has already acted on;
+            # callers handle DuplicateOrderIntent, and a raw PostgREST error
+            # would escape the pipeline and kill the decision cycle.
+            if self._is_duplicate_key(exc):
+                raise DuplicateOrderIntent(
+                    f"alert_id {alert_id!r} already recorded for instance "
+                    f"{instance_id or 'legacy'}") from exc
+            raise
         return wid
+
+    def promote_webhook_event(self, *, alert_id, status, entry=None,
+                              payload=None, instance_id=""):  # pragma: no cover
+        """Turn this order's claim row into its final record."""
+        values = {"status": status}
+        if entry is not None:
+            values["entry"] = entry
+        if payload is not None:
+            values["payload_json"] = json.dumps(payload)
+
+        def update():
+            query = (self._t("webhook_events").update(values)
+                     .eq("alert_id", alert_id).eq("status", "claimed"))
+            query = (query.eq("instance_id", instance_id) if instance_id
+                     else query.is_("instance_id", "null"))
+            return query.execute()
+        try:
+            return bool(getattr(remote_call_with_retry(update), "data", None))
+        except Exception as exc:
+            # Translate the constraint the way SqliteLedger does. Callers
+            # handle DuplicateOrderIntent; a raw PostgREST error escapes the
+            # pipeline and kills the decision cycle instead.
+            if self._is_duplicate_key(exc):
+                raise DuplicateOrderIntent(
+                    f"alert_id {alert_id!r} already recorded as {status!r} for instance "
+                    f"{instance_id or 'legacy'}") from exc
+            raise
+
+    @staticmethod
+    def _is_duplicate_key(exc: Exception) -> bool:
+        """Does this PostgREST error mean a unique constraint rejected the row?"""
+        text = f"{getattr(exc, 'code', '')} {exc}".lower()
+        return "23505" in text or "duplicate key" in text or "already exists" in text
+
+    def release_webhook_claim(self, alert_id, instance_id=""):  # pragma: no cover
+        """Drop an idempotency claim that never became an order.
+
+        This must exist here too. A no-op on the remote ledger left a stranded
+        claim with nothing to age it out -- the dedup constraint has no time
+        component -- so a rejected fill permanently barred that candle on
+        exactly the deployment shape with no other recourse.
+        """
+        def drop():
+            query = (self._t("webhook_events").delete()
+                     .eq("alert_id", alert_id).eq("status", "claimed"))
+            # insert_webhook_event only sets instance_id when it is non-empty,
+            # so an unscoped claim lands as NULL. An eq("") comparison never
+            # matches NULL in PostgREST, which left exactly those claims
+            # stranded on the backend that has nothing to age them out.
+            query = (query.eq("instance_id", instance_id) if instance_id
+                     else query.is_("instance_id", "null"))
+            return query.execute()
+        return len(getattr(remote_call_with_retry(drop), "data", None) or [])
 
     def webhook_seen(self, alert_id, since_iso, instance_id=""):  # pragma: no cover
         def query():
+            # 'claimed' is excluded here as it is in SqliteLedger: a claim is a
+            # lock, not an order. Leaving the two ledgers disagreeing meant a
+            # stranded claim blocked the candle forever on Supabase only.
             q = (self._t("webhook_events").select("id")
                  .eq("alert_id", alert_id).gte("received_at", since_iso)
-                 .neq("status", "rejected"))
+                 .not_.in_("status", ["rejected", "claimed"]))
             if instance_id:
                 q = q.eq("instance_id", instance_id)
             return q.limit(1).execute()

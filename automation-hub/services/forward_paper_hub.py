@@ -21,6 +21,17 @@ from services.mtf_policy import canonical_candle_id
 from services.price_action_stream import PriceActionPublicStream
 
 
+#: How far a consumer's candle backlog may grow before the hub stops accepting
+#: more for it and reports it unreliable. Sized well above any legitimate
+#: burst (a REST reconciliation replays at most a few candles) so it is only
+#: ever reached by a sink that has genuinely stopped keeping up.
+MAX_PENDING_CANDLES = 256
+
+#: How deep a consumer's quote queue may get before quotes are dropped rather
+#: than delivered late at a price that no longer exists.
+MAX_PENDING_QUOTES = 512
+
+
 def candle_id(symbol: str, timeframe: str, bar: Bar) -> str:
     return canonical_candle_id(symbol, timeframe, bar)
 
@@ -41,6 +52,15 @@ class _Consumer:
     pending: OrderedDict = field(default_factory=OrderedDict)
     delivery_lock: threading.Lock = field(default_factory=threading.Lock)
     last_error: str = ""
+    # High-water mark of this consumer's candle backlog, for queue-depth
+    # telemetry. A depth that keeps growing is the signal that a sink cannot
+    # keep up with the feed.
+    peak_pending: int = 0
+    dropped_quotes: int = 0
+    #: Separate from last_error, which the next delivery attempt overwrites
+    #: with its own exception. The backlog is a distinct fact and must not be
+    #: lost behind the symptom it produces.
+    backlog_exceeded: bool = False
     # One worker, so this consumer's quotes and events reach it in arrival
     # order. A shared pool would let two quotes run at once, and the broker
     # keeps a per-symbol quote cursor that rejects anything not newer than the
@@ -51,7 +71,9 @@ class _Consumer:
 
 @dataclass
 class _Channel:
-    stream: PriceActionPublicStream
+    #: Replaceable: a kline-only context channel is upgraded in place when a
+    #: consumer that needs quotes joins it.
+    stream: PriceActionPublicStream | None
     consumers: dict[str, _Consumer] = field(default_factory=dict)
     last_candle_id: str | None = None
     quote_sequence: int = 0
@@ -88,10 +110,17 @@ class ForwardPaperMarketDataHub:
         pool = consumer.notifier
         if pool is None:
             return  # detached; its queued quotes are no longer wanted
+        queue = getattr(pool, "_work_queue", None)
+        if queue is not None and queue.qsize() > MAX_PENDING_QUOTES:
+            # Quotes are only meaningful at the price they carried, so a
+            # consumer that has fallen this far behind must miss one rather
+            # than be filled later at a stale price. Counted, never silent.
+            consumer.dropped_quotes += 1
+            return
         try:
             pool.submit(self._notify, consumer, sink, event)
         except RuntimeError:
-            pass  # shutting down; a dropped quote is correct here
+            consumer.dropped_quotes += 1  # shutting down; dropping is correct
 
     def _dispatch(self, consumer: _Consumer) -> None:
         """Hand one consumer's pending candles to the delivery pool."""
@@ -174,112 +203,242 @@ class ForwardPaperMarketDataHub:
             candle_notice=candle_notice,
         )
 
-    def _channel(self, key: tuple[str, str]) -> _Channel:
+    def channel_exists(self, symbol: str, timeframe: str) -> bool:
+        """Is a Binance connection for this symbol/timeframe already open?
+
+        Lets a caller record whether it created a venue connection or joined
+        one, without reaching into private state.
+        """
+        with self._lock:
+            return (normalize_symbol(symbol), timeframe) in self._channels
+
+    def channel_report(self) -> list[dict]:
+        """Every open channel, its consumers and its transport state."""
+        with self._lock:
+            channels = list(self._channels.items())
+        rows = []
+        for (symbol, timeframe), channel in channels:
+            try:
+                status = channel.stream.status()
+            except Exception as exc:  # a broken stream must still be listed
+                status = {"state": "ERROR", "health_reason": f"{type(exc).__name__}: {exc}"}
+            rows.append({
+                "symbol": symbol, "timeframe": timeframe,
+                "consumers": sorted(channel.consumers),
+                "consumer_count": len(channel.consumers),
+                "state": status.get("state"),
+                "transport_state": status.get("transport_state"),
+                "reliable": status.get("reliable"),
+                "quotes_enabled": bool(getattr(channel.stream, "quotes_enabled", True)),
+            })
+        return sorted(rows, key=lambda row: (row["symbol"], row["timeframe"]))
+
+    def _channel(self, key: tuple[str, str], *, quotes: bool = True) -> _Channel:
+        """Return the channel for ``key``, creating or upgrading it as needed."""
         with self._lock:
             existing = self._channels.get(key)
-            if existing is not None:
+            if existing is None:
+                channel = _Channel(stream=None)
+                channel.stream = self._build_stream(key, channel, quotes=quotes)
+                self._channels[key] = channel
+                return channel
+            if not quotes or getattr(existing.stream, "quotes_enabled", True):
                 return existing
-            symbol, timeframe = key
-            holder: dict[str, _Channel] = {}
+        # A kline-only context channel that a quote consumer has now joined.
+        # Handing back the quote-less stream would deliver candles and never a
+        # single quote, so every parked forward-paper intent would sit unfilled
+        # forever while the feed reported itself synchronized.
+        #
+        # The upgrade runs OUTSIDE the hub lock. It starts a stream (a blocking
+        # REST bootstrap of up to 1500 bars) and stops another (a socket close
+        # plus a thread join), and the stream being stopped blocks on this very
+        # lock inside its own bar/quote callbacks -- so holding it here would
+        # freeze delivery on every symbol in the process for seconds.
+        self._upgrade_channel_to_quotes(key, existing)
+        return existing
 
-            def on_bar(bar: Bar) -> None:
+    def _build_stream(self, key: tuple[str, str], channel: "_Channel | None" = None,
+                      *, quotes: bool = True):
+        """Construct a stream bound to ``key``'s fan-out sinks.
+
+        Shared by channel creation and by the kline-only -> full upgrade, so a
+        replacement stream cannot drift from the sinks the original had.
+        """
+        symbol, timeframe = key
+        holder: dict[str, _Channel] = {}
+        if channel is not None:
+            holder["channel"] = channel
+
+        def on_bar(bar: Bar) -> None:
+            channel = holder["channel"]
+            cid = candle_id(symbol, timeframe, bar)
+            with self._lock:
+                channel.last_candle_id = cid
+                consumers = list(channel.consumers.values())
+            for consumer in consumers:
+                if consumer.candle_notice:
+                    try:
+                        consumer.candle_notice(bar)
+                    except Exception as exc:
+                        consumer.last_error = f"{type(exc).__name__}: {exc}"
+            for consumer in consumers:
+                if consumer.bar_sink:
+                    with self._lock:
+                        consumer.pending.setdefault(cid, bar)
+                        consumer.peak_pending = max(
+                            consumer.peak_pending, len(consumer.pending))
+                        if len(consumer.pending) > MAX_PENDING_CANDLES:
+                            # Deliberately not dropped. A missing candle is
+                            # worse than a late one -- a strategy would
+                            # evaluate a gap it never detected -- so the
+                            # backlog is capped by refusing to accept more
+                            # and reporting the consumer unreliable, which
+                            # already closes its entry gate. The operator
+                            # sees queue depth and a named failing
+                            # dependency instead of silent memory growth.
+                            consumer.backlog_exceeded = True
+                    # Deliver off this thread. This callback runs inside the
+                    # stream's asyncio loop, and a bar sink is not cheap: it
+                    # drives a lab's whole closed-candle path, rebuilding a
+                    # market structure engine over hundreds of bars and
+                    # writing SQLite, once per subscribed consumer. Running
+                    # that inline stopped the loop reading its sockets, so
+                    # markPrice at one message per second went eighty
+                    # seconds without an update while bookTicker on the
+                    # other socket read zero, and the feed failed its
+                    # fifteen-second staleness check for reasons that had
+                    # nothing to do with Binance. Ordering is unaffected:
+                    # pending is an ordered map drained under the
+                    # consumer's own delivery lock, which is exactly the
+                    # path a retry already takes.
+                    self._dispatch(consumer)
+
+        def on_quote(quote: dict) -> None:
+            with self._lock:
                 channel = holder["channel"]
-                cid = candle_id(symbol, timeframe, bar)
-                with self._lock:
-                    channel.last_candle_id = cid
-                    consumers = list(channel.consumers.values())
-                for consumer in consumers:
-                    if consumer.candle_notice:
-                        try:
-                            consumer.candle_notice(bar)
-                        except Exception as exc:
-                            consumer.last_error = f"{type(exc).__name__}: {exc}"
-                for consumer in consumers:
-                    if consumer.bar_sink:
-                        with self._lock:
-                            consumer.pending.setdefault(cid, bar)
-                        # Deliver off this thread. This callback runs inside the
-                        # stream's asyncio loop, and a bar sink is not cheap: it
-                        # drives a lab's whole closed-candle path, rebuilding a
-                        # market structure engine over hundreds of bars and
-                        # writing SQLite, once per subscribed consumer. Running
-                        # that inline stopped the loop reading its sockets, so
-                        # markPrice at one message per second went eighty
-                        # seconds without an update while bookTicker on the
-                        # other socket read zero, and the feed failed its
-                        # fifteen-second staleness check for reasons that had
-                        # nothing to do with Binance. Ordering is unaffected:
-                        # pending is an ordered map drained under the
-                        # consumer's own delivery lock, which is exactly the
-                        # path a retry already takes.
-                        self._dispatch(consumer)
-
-            def on_quote(quote: dict) -> None:
-                with self._lock:
-                    channel = holder["channel"]
-                    channel.quote_sequence += 1
-                    consumers = list(channel.consumers.values())
-                    cid = channel.last_candle_id
-                    sequence = int(quote.get("sequence") or channel.quote_sequence)
-                    event_timestamp = str(quote.get("event_timestamp") or
-                                          quote.get("received_at") or "")
-                    identity = {
-                        "source": "BINANCE_USDM_PUBLIC_WEBSOCKET",
-                        "symbol": symbol, "timeframe": timeframe,
-                        "event_timestamp": event_timestamp, "sequence": sequence,
-                        "bid": quote.get("bid"), "ask": quote.get("ask"),
-                        "mark": quote.get("mark"),
-                    }
-                    quote_event_id = "quote-" + hashlib.sha256(json.dumps(
-                        identity, sort_keys=True, separators=(",", ":")
-                    ).encode()).hexdigest()[:32]
-                snapshot = {
-                    **quote,
-                    "candle_id": cid,
-                    "event_timestamp": event_timestamp,
-                    "sequence": sequence,
-                    "quote_event_id": quote_event_id,
-                    "market_data_source": "Binance USD-M public WebSocket",
+                channel.quote_sequence += 1
+                consumers = list(channel.consumers.values())
+                cid = channel.last_candle_id
+                sequence = int(quote.get("sequence") or channel.quote_sequence)
+                event_timestamp = str(quote.get("event_timestamp") or
+                                      quote.get("received_at") or "")
+                identity = {
+                    "source": "BINANCE_USDM_PUBLIC_WEBSOCKET",
+                    "symbol": symbol, "timeframe": timeframe,
+                    "event_timestamp": event_timestamp, "sequence": sequence,
+                    "bid": quote.get("bid"), "ask": quote.get("ask"),
+                    "mark": quote.get("mark"),
                 }
-                for consumer in consumers:
-                    if consumer.quote_sink:
-                        # Off the socket reader's thread, for the same reason
-                        # bars are. A quote sink looks cheap and is not: it
-                        # takes the lab's runtime and account locks and fills
-                        # pending orders. A thread dump caught this callback
-                        # parked on an account lock inside the stream's event
-                        # loop, which is why markPrice at one message per
-                        # second still read eighty seconds old after bar
-                        # delivery had already been moved off.
-                        self._dispatch_notify(consumer, consumer.quote_sink, snapshot)
+                quote_event_id = "quote-" + hashlib.sha256(json.dumps(
+                    identity, sort_keys=True, separators=(",", ":")
+                ).encode()).hexdigest()[:32]
+            snapshot = {
+                **quote,
+                "candle_id": cid,
+                "event_timestamp": event_timestamp,
+                "sequence": sequence,
+                "quote_event_id": quote_event_id,
+                "market_data_source": "Binance USD-M public WebSocket",
+            }
+            for consumer in consumers:
+                if consumer.quote_sink:
+                    # Off the socket reader's thread, for the same reason
+                    # bars are. A quote sink looks cheap and is not: it
+                    # takes the lab's runtime and account locks and fills
+                    # pending orders. A thread dump caught this callback
+                    # parked on an account lock inside the stream's event
+                    # loop, which is why markPrice at one message per
+                    # second still read eighty seconds old after bar
+                    # delivery had already been moved off.
+                    self._dispatch_notify(consumer, consumer.quote_sink, snapshot)
 
-            def on_event(event: dict) -> None:
-                with self._lock:
-                    consumers = list(holder["channel"].consumers.values())
-                for consumer in consumers:
-                    if consumer.event_sink:
-                        self._notify(consumer, consumer.event_sink, event)
+        def on_event(event: dict) -> None:
+            with self._lock:
+                consumers = list(holder["channel"].consumers.values())
+            for consumer in consumers:
+                if consumer.event_sink:
+                    self._notify(consumer, consumer.event_sink, event)
 
+        try:
+            stream = self.stream_factory(
+                self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
+                event_sink=on_event, quotes_enabled=quotes,
+            )
+        except TypeError:
+            # Test doubles and any stream implementation that predates
+            # kline-only channels still construct with the original
+            # signature; they simply carry quotes as they always did.
             stream = self.stream_factory(
                 self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
                 event_sink=on_event,
             )
-            channel = _Channel(stream=stream)
-            holder["channel"] = channel
-            self._channels[key] = channel
-            return channel
+        return stream
 
-    def _start(self, consumer: _Consumer, symbol: str, timeframe: str) -> bool:
+    def _upgrade_channel_to_quotes(self, key: tuple[str, str], channel: _Channel) -> bool:
+        """Swap a kline-only stream for a full one, keeping its consumers.
+
+        Three rules make this safe, each learned from a way it was not:
+
+        * the replacement must prove itself before the working stream is
+          touched, so a failed upgrade never kills a feed that was serving
+          candles perfectly well;
+        * no ``stop()`` runs while the hub lock is held -- stopping a stream
+          joins a thread whose own callbacks take that lock, so it could not
+          finish and would freeze delivery for every symbol in the process;
+        * the channel must still be the registered one when the swap happens,
+          because a concurrent detach can remove it while this is running, and
+          swapping into an orphan leaks a live WebSocket that nothing will ever
+          close.
+
+        Returns whether the channel now carries quotes.
+        """
+        symbol, timeframe = key
+        old_stream = channel.stream
+        if old_stream is not None and getattr(old_stream, "quotes_enabled", True):
+            return True                     # somebody else already upgraded it
+        replacement = self._build_stream(key, channel, quotes=True)
+        if not replacement.start(symbol, timeframe):
+            self._stop_quietly(replacement)
+            return False                    # the working stream is untouched
+        discard = None
+        with self._lock:
+            if self._channels.get(key) is not channel or channel.stream is not old_stream:
+                # Detached, or another thread won this upgrade. Ours is
+                # redundant and must not be left running.
+                discard = replacement
+            else:
+                channel.stream, discard = replacement, old_stream
+        self._stop_quietly(discard)
+        return discard is not replacement
+
+    @staticmethod
+    def _stop_quietly(stream) -> None:
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:  # noqa: BLE001 — a replacement is already live
+            pass
+
+    def _start(self, consumer: _Consumer, symbol: str, timeframe: str, *,
+               quotes: bool = True) -> bool:
         symbol = normalize_symbol(symbol)
         if timeframe not in TF_MS:
             raise ValueError(f"unsupported timeframe '{timeframe}'")
         key = (symbol, timeframe)
         self._detach(consumer.consumer_id, stop_empty=True)
-        channel = self._channel(key)
+        channel = self._channel(key, quotes=quotes)
         with self._lock:
             channel.consumers[consumer.consumer_id] = consumer
             self._consumer_keys[consumer.consumer_id] = key
         started = channel.stream.start(symbol, timeframe)
+        if started and quotes and not getattr(channel.stream, "quotes_enabled", True):
+            # The channel exists and its candles flow, but it carries no
+            # quotes and this consumer needs them -- an upgrade that could not
+            # bootstrap. Reporting success here would park every forward-paper
+            # intent on a feed that can never fill one, while the subscription
+            # reported itself reliable. Fail, and let the caller retry.
+            started = False
         if not started:
             self._detach(consumer.consumer_id, stop_empty=True)
         return started
@@ -297,6 +456,7 @@ class ForwardPaperMarketDataHub:
             if consumer:
                 consumer.pending.clear()
                 consumer.last_error = ""
+                consumer.backlog_exceeded = False
                 # The notifier deliberately survives. _start() detaches before
                 # re-attaching the same consumer to a new channel, so tearing
                 # it down here would leave a live subscription unable to
@@ -361,8 +521,17 @@ class ForwardPaperSubscription:
     def consumer_id(self) -> str:
         return self.consumer.consumer_id
 
-    def start(self, symbol: str, timeframe: str) -> bool:
-        started = self.hub._start(self.consumer, symbol, timeframe)
+    def start(self, symbol: str, timeframe: str, *, quotes: bool = True) -> bool:
+        if self.consumer.notifier is None:
+            # stop() shuts this worker down and clears it, and a subscription
+            # object can legitimately be stopped and started again -- the
+            # research observer does exactly that on every failed attach. Not
+            # rebuilding it here meant the reattach appeared to succeed while
+            # _dispatch_notify returned early for every quote, forever, without
+            # even counting a drop.
+            self.consumer.notifier = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="notify-%s" % self.consumer_id[:16])
+        started = self.hub._start(self.consumer, symbol, timeframe, quotes=quotes)
         if started:
             self.symbol, self.timeframe = normalize_symbol(symbol), timeframe
             self._release_unneeded_natives(self.symbol, self.timeframe)
@@ -436,7 +605,23 @@ class ForwardPaperSubscription:
             status.update({"reliable": False, "new_entries_paused": True,
                            "failing_dependency": "LAB_CANDLE_DELIVERY",
                            "health_reason": error or "subscriber candle delivery pending"})
-        status["subscriber_delivery"] = {"pending_candle_ids": pending, "last_error": error or None}
+        with self.hub._lock:
+            peak = self.consumer.peak_pending
+            dropped = self.consumer.dropped_quotes
+            backlog = self.consumer.backlog_exceeded
+        notifier = self.consumer.notifier
+        queue = getattr(notifier, "_work_queue", None) if notifier is not None else None
+        status["subscriber_delivery"] = {
+            "pending_candle_ids": pending, "last_error": error or None,
+            "queue_depth": len(pending), "peak_queue_depth": peak,
+            "backlog_exceeded": backlog,
+            "backlog_detail": (
+                f"candle backlog exceeded {MAX_PENDING_CANDLES}; this consumer is "
+                "not keeping up with the feed" if backlog else None),
+            "quote_queue_depth": queue.qsize() if queue is not None else 0,
+            "dropped_quotes": dropped,
+            "max_queue_depth": MAX_PENDING_CANDLES,
+        }
         return status
 
     def snapshot(self) -> dict:
@@ -465,7 +650,12 @@ class ForwardPaperSubscription:
                         f"{self.consumer_id}:native:{requested[0]}:{requested[1]}"
                     )
                     self._native_fetch_subscriptions[requested] = source
-                if not source.running and not source.start(*requested):
+                # Context channels supply higher-timeframe candles only.
+                # markPrice and bookTicker are per-symbol, so subscribing to
+                # them again here duplicated the entry channel's quote streams
+                # once per higher timeframe -- two extra Binance subscriptions
+                # per symbol, for data no consumer of this channel reads.
+                if not source.running and not source.start(*requested, quotes=False):
                     raise RuntimeError(
                         f"Binance USD-M hub could not start {requested[0]} {requested[1]}"
                     )

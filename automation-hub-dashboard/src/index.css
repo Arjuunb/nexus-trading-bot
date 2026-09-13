@@ -1842,3 +1842,23 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .lab-bot-foot .btn{flex:0 0 auto}
 @media(max-width:1180px){.lab-bot-cards{grid-template-columns:1fr}.lab-bot-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:700px){.lab-bot-head{flex-direction:column}.lab-badges{justify-content:flex-start}.lab-bot-grid,.lab-evidence,.lab-performance{grid-template-columns:1fr}.lab-bot-grid>span,.lab-perf-scope{border-right:0}.lab-bot-foot{align-items:flex-start;flex-direction:column}}
+
+/* Four independent status axes on an instance card. One badge could not say
+   which of runtime / market / strategy / execution had failed, so each gets
+   its own row and its own colour. */
+.instance-axes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin-top: 10px;
+}
+.instance-axis {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.instance-axis .badge { justify-self: start; }
+@media (max-width: 560px) {
+  .instance-axes { grid-template-columns: minmax(0, 1fr); }
+}

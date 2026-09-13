@@ -34,7 +34,7 @@ def test_platform_defaults_apply_only_to_new_instances(api):
                          capital_allocation=500)
     response = client.post("/instances/platform", headers={"X-Webhook-Secret": SECRET}, json={
         "default_symbol": "ETHUSDT", "default_timeframe": "5m",
-        "default_strategy": "ema", "default_capital": 750,
+        "default_strategy": "supertrend", "default_capital": 750,
         "default_risk_per_trade_pct": 0.004, "default_max_open_positions": 2,
         "default_entry_mode": "market", "default_fill_model": "PerfectFill",
         "max_instance_risk_per_trade_pct": 0.01,
@@ -43,7 +43,7 @@ def test_platform_defaults_apply_only_to_new_instances(api):
     created = client.post("/instances", headers={"X-Webhook-Secret": SECRET}, json={})
     assert created.status_code == 200, created.text
     row = created.json()["instance"]
-    assert (row["symbol"], row["timeframe"], row["strategy_key"]) == ("ETHUSDT", "5m", "ema")
+    assert (row["symbol"], row["timeframe"], row["strategy_key"]) == ("ETHUSDT", "5m", "supertrend")
     assert row["capital_allocation"] == 750
     assert row["risk_per_trade_pct"] == 0.004
     assert row["entry_mode"] == "market"

@@ -10,15 +10,17 @@ import json
 import os
 import inspect
 import math
+import socket
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from data.ledger import Ledger, SqliteLedger, remote_call_with_retry
 from data.tenant_scope import ensure_column
+from services.tenancy import OWNER_TENANT
 from execution.paper_engine import FillResult, ForwardPaperExecutionEngine, PaperExecutionEngine
 from services.auto_engine import AutoStrategyEngine
 from services.controls import TradingControl
@@ -33,6 +35,13 @@ from tradexa.risk.position_sizing import (
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _hostname() -> str:
+    try:
+        return socket.gethostname() or "unknown-host"
+    except Exception:  # noqa: BLE001 — identity telemetry must not break a start
+        return "unknown-host"
 
 
 def _id() -> str:
@@ -51,6 +60,68 @@ _ACTIVE_INSTANCE_STATES = {
 
 _REBOOT_RUNNING = "running"
 _REBOOT_TERMINAL = {"completed", "degraded", "failed"}
+
+# How many trading workers may run at once. The shipped platform row defaulted
+# to ONE and the manager additionally hard-capped the configured value at three,
+# so the platform could only ever run a single Trading Instance without an
+# operator first discovering and changing an undocumented setting. Three is the
+# supported concurrent configuration; the ceiling leaves headroom to 5-10 for
+# operators who have measured their own host. Each instance costs one entry
+# channel plus its two native HTF channels, so raising this is a capacity
+# decision, not a free one.
+DEFAULT_ACTIVE_SLOTS = 3
+MAX_ACTIVE_SLOTS_CEILING = 10
+
+#: Marker for the one-time lift of the old single-slot default. Recorded so a
+#: later deliberate choice of one slot is never reverted on the next restart.
+_SLOT_CAPACITY_MIGRATION = "2026-09-13-active-slots-default-3"
+
+#: Worker lifecycle state -> canonical telemetry event.
+_LIFECYCLE_EVENTS = {
+    "starting": "INSTANCE_STARTING",
+    "bootstrapping": "MARKET_CONNECTING",
+    "warming": "WARMUP_STARTED",
+    "syncing": "WARMUP_COMPLETE",
+    "ready": "STRATEGY_READY",
+    "running": "MARKET_CONNECTED",
+    "data_stale": "MARKET_STALE",
+    "recovering": "MARKET_DISCONNECTED",
+    "error": "INSTANCE_ERROR",
+    "stopped": "INSTANCE_STOPPED",
+}
+
+
+class WorkerLeaseError(RuntimeError):
+    """Another process already owns this instance's execution.
+
+    Raised rather than started: two workers on one paper account duplicate
+    every order, fill, position and journal entry it produces.
+    """
+
+
+def _parse_iso(value: object) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def _iso_plus(stamp: str, seconds: float) -> str:
+    base = _parse_iso(stamp) or datetime.now(timezone.utc)
+    return (base + timedelta(seconds=float(seconds))).isoformat()
+
+
+def _iso_before(left: object, right: object) -> bool:
+    """True when ``left`` is strictly earlier than ``right``; False if unknown.
+
+    Unknown deliberately means "not expired": an unreadable lease expiry must
+    never be read as permission to start a second execution owner.
+    """
+    a, b = _parse_iso(left), _parse_iso(right)
+    return bool(a and b and a < b)
 
 
 def _age_seconds(value: object) -> Optional[int]:
@@ -130,6 +201,15 @@ class TradingInstance:
     execution_mode: str = "paper"
     simulation_session_id: str = ""
     simulation_session_number: int = 0
+    # Who owns this instance. Every instance-scoped read and control action
+    # verifies it: an instance_id alone is a guessable string, and trusting it
+    # would make one account's worker reachable from another's session the
+    # moment this deployment stops being single-owner.
+    owner_id: str = OWNER_TENANT
+    # Bumped on every configuration change. The worker records the revision it
+    # started with, so the UI can never show new settings while the running
+    # worker is still using the old ones.
+    config_revision: int = 1
     mode: str = "trading"              # trading | research (paper only)
     # Trading instances are always forward paper. Research remains the only
     # instance mode allowed to consume a historical replay.
@@ -157,6 +237,12 @@ class InstanceLedger:
 
     def insert_webhook_event(self, **kw):
         return self._ledger.insert_webhook_event(**kw, instance_id=self.instance_id)
+
+    def promote_webhook_event(self, **kw):
+        return self._ledger.promote_webhook_event(**kw, instance_id=self.instance_id)
+
+    def release_webhook_claim(self, alert_id: str):
+        return self._ledger.release_webhook_claim(alert_id, self.instance_id)
 
     def webhook_seen(self, alert_id: str, since_iso: str) -> bool:
         return self._ledger.webhook_seen(alert_id, since_iso,
@@ -266,6 +352,7 @@ CREATE TABLE IF NOT EXISTS trading_instances (
  entry_mode TEXT NOT NULL DEFAULT 'limit', fill_model TEXT NOT NULL DEFAULT 'RealisticFill',
  execution_mode TEXT NOT NULL DEFAULT 'paper',
  simulation_session_id TEXT NOT NULL DEFAULT '', simulation_session_number INTEGER NOT NULL DEFAULT 0,
+ owner_id TEXT NOT NULL DEFAULT '__owner__', config_revision INTEGER NOT NULL DEFAULT 1,
  mode TEXT NOT NULL, market_data_mode TEXT NOT NULL DEFAULT 'paper_forward', state TEXT NOT NULL, desired_running INTEGER NOT NULL DEFAULT 0,
  created_at TEXT NOT NULL, started_at TEXT, stopped_at TEXT, updated_at TEXT NOT NULL, last_error TEXT NOT NULL DEFAULT ''
 );
@@ -277,6 +364,7 @@ CREATE TABLE IF NOT EXISTS instance_engine_logs (
 );
 CREATE TABLE IF NOT EXISTS instance_market_state (
  instance_id TEXT PRIMARY KEY, last_processed_candle_timestamp TEXT,
+ worker_heartbeat TEXT,
  market_data_mode TEXT NOT NULL, market_data_status TEXT NOT NULL DEFAULT 'stopped',
  last_market_data_timestamp TEXT, data_source TEXT, warmup_bars INTEGER NOT NULL DEFAULT 0,
  duplicate_candles INTEGER NOT NULL DEFAULT 0, missing_candles INTEGER NOT NULL DEFAULT 0,
@@ -313,6 +401,16 @@ CREATE TABLE IF NOT EXISTS trading_instance_platform_settings (
  default_fill_model TEXT NOT NULL DEFAULT 'RealisticFill', updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_instance_symbol_strategy ON trading_instances(symbol, strategy_key, strategy_version);
+-- Exactly one execution owner per instance, enforced by the database rather
+-- than by hoping two processes never overlap. instance_id is the primary key,
+-- so a second worker cannot insert a competing lease; it must either take over
+-- an expired one or fail closed.
+CREATE TABLE IF NOT EXISTS instance_worker_leases (
+ instance_id TEXT PRIMARY KEY, worker_id TEXT NOT NULL, process_id INTEGER NOT NULL,
+ host TEXT NOT NULL, started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL,
+ lease_expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_worker_lease_expiry ON instance_worker_leases(lease_expires_at);
 """
 
 
@@ -345,6 +443,10 @@ class InstanceStore:
             "pending_orders_json", "updated_at",
         ),
         "instance_metrics": ("instance_id", "data_json", "updated_at"),
+        "instance_worker_leases": (
+            "instance_id", "worker_id", "process_id", "host",
+            "started_at", "heartbeat_at", "lease_expires_at",
+        ),
         "instance_engine_logs": ("id", "instance_id", "ts", "level", "message"),
         "simulation_sessions": (
             "id", "instance_id", "session_number", "starting_balance", "ending_balance",
@@ -378,6 +480,8 @@ class InstanceStore:
                 ensure_column(ledger._c, "trading_instances", "market_data_mode",
                               "TEXT NOT NULL DEFAULT 'paper_forward'")
                 for name, definition in (
+                    ("owner_id", "TEXT NOT NULL DEFAULT '__owner__'"),
+                    ("config_revision", "INTEGER NOT NULL DEFAULT 1"),
                     ("exchange", "TEXT NOT NULL DEFAULT 'inherit'"),
                     ("instrument_type", "TEXT NOT NULL DEFAULT 'spot'"),
                     ("sizing_mode", "TEXT NOT NULL DEFAULT 'fixed_starting_equity_percent'"),
@@ -422,9 +526,44 @@ class InstanceStore:
                     ("default_fill_model", "TEXT NOT NULL DEFAULT 'RealisticFill'"),
                 ):
                     ensure_column(ledger._c, "trading_instance_platform_settings", name, definition)
+                # One-time capacity migration, and genuinely once. The
+                # shipped row default was a single active slot and the manager
+                # additionally capped the configured value at three, so a
+                # persisted 1 was never an operator risk decision -- it was the
+                # only value the platform ever wrote.
+                #
+                # It has to be marked applied, not merely conditional: one is a
+                # legal deliberate choice now (a single-core host), and an
+                # unguarded "UPDATE ... WHERE max_active_slots<=1" would revert
+                # that operator's decision on every single restart, forever.
+                ledger._c.execute(
+                    "CREATE TABLE IF NOT EXISTS instance_schema_migrations ("
+                    " name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
+                already = ledger._c.execute(
+                    "SELECT 1 FROM instance_schema_migrations WHERE name=?",
+                    (_SLOT_CAPACITY_MIGRATION,)).fetchone()
+                if not already:
+                    ledger._c.execute(
+                        "UPDATE trading_instance_platform_settings SET max_active_slots=? "
+                        "WHERE max_active_slots<=1", (DEFAULT_ACTIVE_SLOTS,))
+                    ledger._c.execute(
+                        "INSERT INTO instance_schema_migrations(name, applied_at) VALUES (?,?)",
+                        (_SLOT_CAPACITY_MIGRATION, _now()))
                 ensure_column(ledger._c, "instance_market_state",
                               "pending_orders_json", "TEXT NOT NULL DEFAULT '{}'")
                 ensure_column(ledger._c, "instance_market_state", "last_blocker", "TEXT")
+                # The worker's last proof of life, durably. It lived only in
+                # the engine object, so after a crash or restart nobody could
+                # tell whether an instance had been working an hour ago or had
+                # been dark since yesterday.
+                ensure_column(ledger._c, "instance_market_state", "worker_heartbeat", "TEXT")
+                # Indexes over columns added by migration must be created here,
+                # not in _LOCAL_SCHEMA: executescript() runs before the
+                # ensure_column pass, so an index naming a new column would
+                # fail to open every pre-existing database.
+                ledger._c.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_instance_owner "
+                    "ON trading_instances(owner_id, created_at)")
                 ensure_column(ledger._c, "instance_market_state", "last_blocker_timestamp", "TEXT")
                 ledger._c.commit()
         if getattr(ledger, "read_only_degraded", False):
@@ -472,8 +611,8 @@ class InstanceStore:
         else:
             with self.ledger._lock:
                 self.ledger._c.execute("""INSERT INTO trading_instances
-                (id,symbol,strategy_key,strategy_label,strategy_version,timeframe,risk_per_trade_pct,capital_allocation,exchange,instrument_type,max_open_positions,sizing_mode,fixed_position_size,fixed_quantity,profit_reinvestment,maximum_risk_amount,minimum_equity,starting_equity,current_realized_equity,risk_basis,sizing_engine_version,entry_mode,fill_model,execution_mode,simulation_session_id,simulation_session_number,mode,market_data_mode,state,desired_running,created_at,started_at,stopped_at,updated_at,last_error)
-                VALUES (:id,:symbol,:strategy_key,:strategy_label,:strategy_version,:timeframe,:risk_per_trade_pct,:capital_allocation,:exchange,:instrument_type,:max_open_positions,:sizing_mode,:fixed_position_size,:fixed_quantity,:profit_reinvestment,:maximum_risk_amount,:minimum_equity,:starting_equity,:current_realized_equity,:risk_basis,:sizing_engine_version,:entry_mode,:fill_model,:execution_mode,:simulation_session_id,:simulation_session_number,:mode,:market_data_mode,:state,:desired_running,:created_at,:started_at,:stopped_at,:updated_at,:last_error)""", row)
+                (id,symbol,strategy_key,strategy_label,strategy_version,timeframe,risk_per_trade_pct,capital_allocation,exchange,instrument_type,max_open_positions,sizing_mode,fixed_position_size,fixed_quantity,profit_reinvestment,maximum_risk_amount,minimum_equity,starting_equity,current_realized_equity,risk_basis,sizing_engine_version,entry_mode,fill_model,execution_mode,simulation_session_id,simulation_session_number,owner_id,config_revision,mode,market_data_mode,state,desired_running,created_at,started_at,stopped_at,updated_at,last_error)
+                VALUES (:id,:symbol,:strategy_key,:strategy_label,:strategy_version,:timeframe,:risk_per_trade_pct,:capital_allocation,:exchange,:instrument_type,:max_open_positions,:sizing_mode,:fixed_position_size,:fixed_quantity,:profit_reinvestment,:maximum_risk_amount,:minimum_equity,:starting_equity,:current_realized_equity,:risk_basis,:sizing_engine_version,:entry_mode,:fill_model,:execution_mode,:simulation_session_id,:simulation_session_number,:owner_id,:config_revision,:mode,:market_data_mode,:state,:desired_running,:created_at,:started_at,:stopped_at,:updated_at,:last_error)""", row)
                 self.ledger._c.commit()
 
     def ensure_simulation_session(self, instance: TradingInstance) -> None:
@@ -703,6 +842,7 @@ class InstanceStore:
                         entry_mode=:entry_mode, fill_model=:fill_model, execution_mode=:execution_mode,
                         simulation_session_id=:simulation_session_id,
                         simulation_session_number=:simulation_session_number,
+                        owner_id=:owner_id, config_revision=:config_revision,
                         market_data_mode=:market_data_mode, state=:state, desired_running=:desired_running,
                         started_at=:started_at, stopped_at=:stopped_at,
                         updated_at=:updated_at, last_error=:last_error
@@ -774,14 +914,15 @@ class InstanceStore:
                "last_market_data_timestamp": None, "data_source": None,
                "warmup_bars": 0, "duplicate_candles": 0, "missing_candles": 0,
                "out_of_order_candles": 0, "last_blocker": None,
-               "last_blocker_timestamp": None, "updated_at": _now(), **values}
+               "last_blocker_timestamp": None, "worker_heartbeat": None,
+               "updated_at": _now(), **values}
         if self.remote:
             remote_call_with_retry(lambda: self._table("instance_market_state").upsert(row).execute())
         else:
             with self.ledger._lock:
                 self.ledger._c.execute("""INSERT INTO instance_market_state
-                (instance_id,last_processed_candle_timestamp,market_data_mode,market_data_status,last_market_data_timestamp,data_source,warmup_bars,duplicate_candles,missing_candles,out_of_order_candles,last_blocker,last_blocker_timestamp,updated_at)
-                VALUES (:instance_id,:last_processed_candle_timestamp,:market_data_mode,:market_data_status,:last_market_data_timestamp,:data_source,:warmup_bars,:duplicate_candles,:missing_candles,:out_of_order_candles,:last_blocker,:last_blocker_timestamp,:updated_at)
+                (instance_id,last_processed_candle_timestamp,market_data_mode,market_data_status,last_market_data_timestamp,data_source,warmup_bars,duplicate_candles,missing_candles,out_of_order_candles,last_blocker,last_blocker_timestamp,worker_heartbeat,updated_at)
+                VALUES (:instance_id,:last_processed_candle_timestamp,:market_data_mode,:market_data_status,:last_market_data_timestamp,:data_source,:warmup_bars,:duplicate_candles,:missing_candles,:out_of_order_candles,:last_blocker,:last_blocker_timestamp,:worker_heartbeat,:updated_at)
                 ON CONFLICT(instance_id) DO UPDATE SET
                   last_processed_candle_timestamp=excluded.last_processed_candle_timestamp,
                   market_data_mode=excluded.market_data_mode,
@@ -794,6 +935,7 @@ class InstanceStore:
                   out_of_order_candles=excluded.out_of_order_candles,
                   last_blocker=excluded.last_blocker,
                   last_blocker_timestamp=excluded.last_blocker_timestamp,
+                  worker_heartbeat=excluded.worker_heartbeat,
                   updated_at=excluded.updated_at""", row)
                 self.ledger._c.commit()
 
@@ -836,8 +978,160 @@ class InstanceStore:
                     "VALUES (:id,:instance_id,:ts,:level,:message)", row)
                 self.ledger._c.commit()
 
+    # ------------------------------------------------------- worker leases
+    def worker_lease(self, instance_id: str) -> dict | None:
+        if self.remote:
+            rows = remote_call_with_retry(
+                lambda: self._table("instance_worker_leases").select("*")
+                .eq("instance_id", instance_id).limit(1).execute()).data
+            return dict(rows[0]) if rows else None
+        with self.ledger._lock:
+            row = self.ledger._c.execute(
+                "SELECT * FROM instance_worker_leases WHERE instance_id=?",
+                (instance_id,)).fetchone()
+        return dict(row) if row else None
+
+    def worker_leases(self) -> list[dict]:
+        if self.remote:
+            return list(remote_call_with_retry(
+                lambda: self._table("instance_worker_leases").select("*").execute()).data)
+        with self.ledger._lock:
+            return [dict(row) for row in self.ledger._c.execute(
+                "SELECT * FROM instance_worker_leases")]
+
+    def claim_worker_lease(self, instance_id: str, *, worker_id: str, process_id: int,
+                           host: str, ttl_seconds: float, now: str | None = None) -> dict:
+        """Take exclusive execution ownership of one instance, or raise.
+
+        The write itself carries the predicate. A read-then-upsert would not be
+        exclusive at all: two processes could both read "no live lease" and
+        both then run an unconditional ON CONFLICT DO UPDATE, and the second
+        would simply win -- leaving two workers on one paper account,
+        duplicating every order, fill and journal entry, which is precisely
+        what this is for. The conditional update means at most one writer can
+        take a lease that somebody else holds, and only once it has expired.
+        """
+        stamp = now or _now()
+        expires = _iso_plus(stamp, ttl_seconds)
+        row = {"instance_id": instance_id, "worker_id": worker_id,
+               "process_id": int(process_id), "host": host,
+               "started_at": stamp, "heartbeat_at": stamp, "lease_expires_at": expires}
+
+        def refuse(existing: dict | None) -> None:
+            if existing is None:
+                raise WorkerLeaseError(
+                    f"instance {instance_id} worker lease could not be acquired")
+            if _parse_iso(existing.get("lease_expires_at")) is None:
+                raise WorkerLeaseError(
+                    f"instance {instance_id} has a worker lease with an unreadable "
+                    "expiry; refusing to start a second execution owner")
+            raise WorkerLeaseError(
+                f"instance {instance_id} is already owned by worker "
+                f"{existing.get('worker_id')} (pid {existing.get('process_id')} on "
+                f"{existing.get('host')}) until {existing.get('lease_expires_at')}")
+
+        if self.remote:
+            # PostgREST has no conditional upsert, so this is done as an
+            # insert-or-conditional-update pair. The insert is the exclusive
+            # step: the primary key means exactly one of two racing processes
+            # can create the row, and the loser falls through to the update,
+            # which only succeeds against an expired lease or its own.
+            try:
+                remote_call_with_retry(
+                    lambda: self._table("instance_worker_leases").insert(row).execute())
+                return row
+            except Exception:
+                pass                    # the row exists; try to take it over
+            taken = remote_call_with_retry(
+                lambda: self._table("instance_worker_leases")
+                .update({k: v for k, v in row.items() if k != "instance_id"})
+                .eq("instance_id", instance_id)
+                .or_(f"worker_id.eq.{worker_id},lease_expires_at.lt.{stamp}")
+                .execute())
+            if not getattr(taken, "data", None):
+                refuse(self.worker_lease(instance_id))
+            return row
+
+        with self.ledger._lock:
+            cursor = self.ledger._c.execute(
+                """INSERT INTO instance_worker_leases
+                   (instance_id,worker_id,process_id,host,started_at,heartbeat_at,lease_expires_at)
+                   VALUES (:instance_id,:worker_id,:process_id,:host,:started_at,:heartbeat_at,:lease_expires_at)
+                   ON CONFLICT(instance_id) DO UPDATE SET
+                     worker_id=excluded.worker_id, process_id=excluded.process_id,
+                     host=excluded.host, started_at=excluded.started_at,
+                     heartbeat_at=excluded.heartbeat_at,
+                     lease_expires_at=excluded.lease_expires_at
+                   WHERE instance_worker_leases.worker_id = excluded.worker_id
+                      OR instance_worker_leases.lease_expires_at < excluded.heartbeat_at""",
+                row)
+            self.ledger._c.commit()
+            if cursor.rowcount < 1:
+                existing = self.ledger._c.execute(
+                    "SELECT * FROM instance_worker_leases WHERE instance_id=?",
+                    (instance_id,)).fetchone()
+                refuse(dict(existing) if existing else None)
+        return row
+
+    def renew_worker_lease(self, instance_id: str, *, worker_id: str,
+                           ttl_seconds: float, now: str | None = None) -> bool:
+        """Extend a lease this worker still holds. False means it was lost."""
+        stamp = now or _now()
+        expires = _iso_plus(stamp, ttl_seconds)
+        if self.remote:
+            result = remote_call_with_retry(
+                lambda: self._table("instance_worker_leases")
+                .update({"heartbeat_at": stamp, "lease_expires_at": expires})
+                .eq("instance_id", instance_id).eq("worker_id", worker_id).execute())
+            return bool(getattr(result, "data", None))
+        with self.ledger._lock:
+            cursor = self.ledger._c.execute(
+                "UPDATE instance_worker_leases SET heartbeat_at=?, lease_expires_at=? "
+                "WHERE instance_id=? AND worker_id=?",
+                (stamp, expires, instance_id, worker_id))
+            self.ledger._c.commit()
+            return cursor.rowcount > 0
+
+    def release_worker_lease(self, instance_id: str, *, worker_id: str = "") -> None:
+        """Give up execution ownership. A blank worker_id releases regardless."""
+        if self.remote:
+            def drop():
+                query = self._table("instance_worker_leases").delete().eq("instance_id", instance_id)
+                if worker_id:
+                    query = query.eq("worker_id", worker_id)
+                return query.execute()
+            remote_call_with_retry(drop)
+            return
+        with self.ledger._lock:
+            if worker_id:
+                self.ledger._c.execute(
+                    "DELETE FROM instance_worker_leases WHERE instance_id=? AND worker_id=?",
+                    (instance_id, worker_id))
+            else:
+                self.ledger._c.execute(
+                    "DELETE FROM instance_worker_leases WHERE instance_id=?", (instance_id,))
+            self.ledger._c.commit()
+
+    def engine_logs(self, instance_id: str, limit: int = 200) -> list[dict]:
+        """Read back one instance's engine log, newest first.
+
+        Every lifecycle event is written here but nothing could read it: the
+        API served ``bot_logs`` instead, which is a different table, so the
+        structured instance timeline existed and was invisible.
+        """
+        limit = max(1, min(int(limit), 1000))
+        if self.remote:
+            return list(remote_call_with_retry(
+                lambda: self._table("instance_engine_logs").select("*")
+                .eq("instance_id", instance_id).order("ts", desc=True)
+                .limit(limit).execute()).data)
+        with self.ledger._lock:
+            return [dict(row) for row in self.ledger._c.execute(
+                "SELECT * FROM instance_engine_logs WHERE instance_id=? "
+                "ORDER BY ts DESC LIMIT ?", (instance_id, limit))]
+
     def platform_settings(self) -> dict:
-        defaults = {"max_active_slots": 1, "max_global_risk_pct": 0.02,
+        defaults = {"max_active_slots": DEFAULT_ACTIVE_SLOTS, "max_global_risk_pct": 0.02,
                     "max_global_daily_loss_pct": 0.05,
                     "max_instance_risk_per_trade_pct": 0.05,
                     "paper_account_capital": None, "default_symbol": "BTCUSDT",
@@ -884,7 +1178,8 @@ class InstanceStore:
 
 class TradingInstanceManager:
     def __init__(self, ledger: Ledger, *, strategy_factory: Callable[[str, str], object],
-                 live: bool, live_poll_s: float, fetcher=None, max_slots: int = 1,
+                 live: bool, live_poll_s: float, fetcher=None,
+                 max_slots: int = DEFAULT_ACTIVE_SLOTS,
                  max_global_risk_pct: float = 0.02, max_global_daily_loss_pct: float = 0.05,
                  paper_account_capital: float = 10_000.0, decision_store=None,
                  decision_journal=None, trade_memory=None, skipped_store=None,
@@ -925,7 +1220,8 @@ class TradingInstanceManager:
         from data.forward_market_data import fetch_forward_bars
         self.forward_fetcher = fetch_forward_bars
         configured = self.store.platform_settings() if self.store.available else {}
-        self.max_slots = min(3, max(1, int(configured.get("max_active_slots", max_slots))))
+        self.max_slots = min(MAX_ACTIVE_SLOTS_CEILING,
+                             max(1, int(configured.get("max_active_slots", max_slots))))
         self.max_global_risk_pct = min(1.0, max(0.001, float(configured.get("max_global_risk_pct", max_global_risk_pct))))
         self.max_global_daily_loss_pct = min(1.0, max(0.001, float(configured.get("max_global_daily_loss_pct", max_global_daily_loss_pct))))
         self.max_instance_risk_per_trade_pct = min(0.05, max(0.001, float(configured.get("max_instance_risk_per_trade_pct", 0.05))))
@@ -953,6 +1249,64 @@ class TradingInstanceManager:
             1.0, float(full_reboot_timeout_s if full_reboot_timeout_s is not None
                        else configured_reboot_timeout))
         self._lock = threading.RLock()
+        # One mutex per instance, separate from the state lock above.
+        #
+        # Lifecycle actions were not atomic: stop() and pause() read their
+        # runtime under the lock and then released it before doing the slow
+        # part (joining the worker thread) and before persisting the result.
+        # A Start landing in that window found a worker that still reported
+        # running, returned it as a success, and was then overwritten by the
+        # Stop's write -- so the operator saw "running / desired" come back
+        # from the API while the instance ended stopped with no worker.
+        #
+        # The state lock cannot simply be held across the whole transition:
+        # the engine thread takes it from its lifecycle callback, so holding
+        # it while joining that same thread would deadlock. A per-instance
+        # lifecycle mutex serialises the transitions without touching the
+        # engine thread's path, and without blocking sibling instances.
+        self._lifecycle_locks: dict[str, threading.RLock] = {}
+        self._worker_id = f"{_hostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+        self.worker_lease_ttl_s = max(
+            30.0, float(os.environ.get("HUB_WORKER_LEASE_TTL_SECONDS", "120")))
+
+    def _lifecycle_lock(self, instance_id: str) -> threading.RLock:
+        with self._lock:
+            lock = self._lifecycle_locks.get(instance_id)
+            if lock is None:
+                lock = self._lifecycle_locks[instance_id] = threading.RLock()
+            return lock
+
+    # ------------------------------------------------------------ ownership
+    def worker_alive(self, instance_id: str) -> bool:
+        """Is there a live execution runtime for this instance, right now?
+
+        One definition, because six hand-inlined copies of it meant a future
+        change to what "alive" means -- an added lease or heartbeat condition,
+        say -- had to be found in six places, and a miss would silently make
+        two parts of the platform disagree about whether a worker exists.
+        """
+        runtime = self._runtime.get(instance_id)
+        if runtime is None:
+            return False
+        engine = runtime[0]
+        thread = getattr(engine, "_thread", None)
+        return bool(engine.running and thread is not None and thread.is_alive())
+
+    def instance_for(self, instance_id: str, owner_id: str | None = None) -> TradingInstance:
+        """Look one instance up, verifying ownership when an owner is supplied.
+
+        A missing instance and one owned by somebody else raise the same
+        KeyError on purpose: answering differently would turn this into an
+        oracle for which instance ids exist on the deployment.
+        """
+        inst = self._instances[instance_id]
+        if owner_id is not None and inst.owner_id != owner_id:
+            raise KeyError(instance_id)
+        return inst
+
+    def owned_instances(self, owner_id: str | None = None) -> list[TradingInstance]:
+        return [item for item in self._instances.values()
+                if owner_id is None or item.owner_id == owner_id]
 
     def _reboot_active(self, instance_id: str) -> bool:
         return self._reboots.get(instance_id, {}).get("status") == _REBOOT_RUNNING
@@ -1002,7 +1356,8 @@ class TradingInstanceManager:
                maximum_risk_amount: float | None = None,
                minimum_equity: float | None = None,
                entry_mode: str = "limit", fill_model: str = "RealisticFill",
-               exchange: str = "inherit", instrument_type: str = "spot") -> TradingInstance:
+               exchange: str = "inherit", instrument_type: str = "spot",
+               owner_id: str = OWNER_TENANT) -> TradingInstance:
         with self._lock:
             # This must precede every insert.  A partially installed Supabase
             # migration previously left a stopped row behind when status() later
@@ -1055,7 +1410,8 @@ class TradingInstanceManager:
                 raise ValueError("max_open_positions must be between 1 and 50")
             if mode == "trading":
                 duplicate = next((item for item in self._instances.values()
-                                  if item.mode == "trading" and item.symbol == symbol.upper()
+                                  if item.owner_id == str(owner_id or OWNER_TENANT)
+                                  and item.mode == "trading" and item.symbol == symbol.upper()
                                   and item.strategy_key == strategy_key
                                   and item.strategy_version == (strategy_version or "builtin-1")
                                   and item.timeframe == timeframe and item.exchange == exchange
@@ -1083,6 +1439,7 @@ class TradingInstanceManager:
                                    sizing_engine_version=SIZING_ENGINE_VERSION,
                                    entry_mode=entry_mode,
                                    fill_model=fill_model, mode=mode,
+                                   owner_id=str(owner_id or OWNER_TENANT),
                                    market_data_mode="paper_forward" if mode == "trading" else "replay")
             self.store.create(inst)
             try:
@@ -1098,19 +1455,176 @@ class TradingInstanceManager:
                 # immediately if the required cursor row cannot be initialized.
                 self.store.delete(inst.id, purge_sessions=True)
                 raise
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "INSTANCE_CREATED", status="created",
+                      mode=inst.mode, capital_allocation=inst.capital_allocation)
             self._instances[inst.id] = inst
             return inst
 
-    def delete(self, instance_id: str) -> str:
-        """Delete one stopped instance without touching any sibling worker."""
-        with self._lock:
-            self._assert_reboot_idle(instance_id)
+    #: How old the worker's last observed price may be and still be used to
+    #: realise a position. A mark left in a stopped worker's memory is not a
+    #: price, it is a memory of one; writing it into trade history as a fill is
+    #: the same fabrication as a guess with a plausible number attached.
+    DISPOSAL_MARK_MAX_AGE_S = 120.0
+
+    def open_position_disposition(self, instance_id: str,
+                                  owner_id: str | None = None) -> dict:
+        """What stands between this instance and deletion, and how to resolve it.
+
+        Refusing a delete is correct -- an open paper position carries risk,
+        P&L and a session the ledger still owns -- but a refusal with no route
+        forward is a dead end. This names the positions and the one explicit
+        action that resolves them, so the choice to realise them is made
+        deliberately rather than as a side effect of pressing Delete.
+        """
+        self.instance_for(instance_id, owner_id)
+        # Deliberately not session-scoped, so this lists exactly what the
+        # delete guard blocks on -- including a position left open by an
+        # earlier simulation session, which is the one most likely to be
+        # forgotten and the one whose P&L a silent delete would discard.
+        positions = InstanceLedger(self.ledger, instance_id).get_positions("open")
+        runtime = self._runtime.get(instance_id)
+        engine = runtime[0] if runtime else None
+        worker_alive = self.worker_alive(instance_id)
+        status = engine.status() if engine else {}
+        marks = status.get("last_prices") or {}
+        # last_activity is stamped where last_prices is written -- on a closed
+        # candle. last_heartbeat is bumped on every loop pass, so a worker whose
+        # feed stalled for hours still looked fresh by it, and a 1h instance was
+        # always "fresh" while its mark was up to a full timeframe old.
+        mark_age = _age_seconds(status.get("last_activity"))
+        fresh = (worker_alive and mark_age is not None
+                 and mark_age <= self.DISPOSAL_MARK_MAX_AGE_S)
+        rows = []
+        for position in positions:
+            symbol = str(position.get("symbol"))
+            entry, size = float(position.get("entry") or 0), float(position.get("size") or 0)
+            mark = marks.get(symbol) if fresh else None
+            reason = None
+            if mark is None:
+                reason = ("no worker is running to price this position"
+                          if not worker_alive else
+                          f"the worker's last price is {mark_age:.0f}s old"
+                          if mark_age is not None and not fresh else
+                          "the worker has not observed a price for this symbol")
+            unrealized = None
+            if mark is not None:
+                direction = 1 if position.get("side") == "long" else -1
+                unrealized = round(direction * (float(mark) - entry) * size, 2)
+            rows.append({
+                "position_id": position.get("id"), "symbol": symbol,
+                "side": position.get("side"), "size": size, "entry": entry,
+                "stop": position.get("stop"), "mark": mark,
+                "unrealized_pnl": unrealized,
+                "mark_available": mark is not None,
+                "mark_reason": reason,
+                "simulation_session_id": position.get("simulation_session_id"),
+                "opened_at": position.get("opened_at"),
+            })
+        priceable = [row for row in rows if row["mark_available"]]
+        return {
+            "instance_id": instance_id,
+            "deletable": not rows,
+            "worker_running": worker_alive,
+            "open_positions": rows,
+            "resolution": (None if not rows else {
+                "action": "close_open_positions",
+                "endpoint": f"POST /instances/{instance_id}/close-open-positions",
+                "effect": ("Closes every open paper position at a fresh observed mark "
+                           "and realises the P&L into the session that owns it, after "
+                           "which the instance can be deleted."),
+                "requires_confirmation": True,
+                "ready": bool(priceable) and len(priceable) == len(rows),
+                "blocked_reason": (None if priceable and len(priceable) == len(rows) else
+                                   "Start the Trading Instance so its market feed can "
+                                   "price the open position(s); a stale or missing mark "
+                                   "is never written into trade history as a fill."),
+            }),
+        }
+
+    def close_open_positions(self, instance_id: str, *, owner_id: str | None = None,
+                             initiated_by: str = "operator") -> dict:
+        """Realise every open paper position at a fresh, observed mark.
+
+        The explicit handling path behind a refused delete. It never invents a
+        price and never uses a stale one: a mark left in a stopped worker's
+        memory from hours ago is the same fabrication as a guess, only with a
+        plausible number attached. A position that cannot be priced now is left
+        open and reported.
+        """
+        with self._lifecycle_lock(instance_id):
+            disposition = self.open_position_disposition(instance_id, owner_id)
+            if disposition["deletable"]:
+                return {"instance_id": instance_id, "closed": [], "remaining": []}
             inst = self._instances[instance_id]
+            runtime = self._runtime.get(instance_id)
+            from services.fill_model import from_name as fill_model_from_name
+            closed, remaining = [], []
+            for row in disposition["open_positions"]:
+                if not row["mark_available"]:
+                    remaining.append({**row, "reason": row.get("mark_reason")
+                                      or "no live mark available"})
+                    continue
+                # Close against a ledger scoped to THIS position's session, not
+                # the worker's current one: a position left by an earlier paper
+                # session is exactly what the delete guard blocks on, and the
+                # session-scoped engine cannot see it.
+                # Close against a ledger scoped to the session that OWNS this
+                # position. The worker's engine is scoped to the current
+                # session, so a position left by an earlier one was invisible
+                # to it: close() found nothing, reported a no-op, and the
+                # delete stayed refused with no way forward at all.
+                engine = runtime[1] if runtime is not None else None
+                owning_session = str(row.get("simulation_session_id") or "")
+                if engine is None or owning_session != inst.simulation_session_id:
+                    engine = PaperExecutionEngine(
+                        InstanceLedger(self.ledger, instance_id, owning_session),
+                        inst.starting_equity,
+                        fill_model=fill_model_from_name(inst.fill_model))
+                try:
+                    fill = engine.close(symbol=row["symbol"], exit_price=float(row["mark"]),
+                                        execution_id=f"dispose:{instance_id}:{row['position_id']}")
+                except Exception as exc:
+                    # The paper engine is fail-closed: a position whose trade
+                    # row is missing makes it refuse rather than guess. That is
+                    # one position's problem, not a reason to abandon the rest
+                    # of the disposal, and it must be reported rather than
+                    # counted as realised.
+                    remaining.append({**row, "reason": f"{type(exc).__name__}: {exc}"})
+                    continue
+                if fill.action == "noop":
+                    # close() resolves one position per symbol. A second
+                    # position on the same pair, or one the engine's ledger
+                    # scope cannot see, closes nothing -- reporting it as
+                    # realised would claim a P&L that was never written.
+                    remaining.append({**row, "reason":
+                                      "the execution engine found no matching open "
+                                      "position for this symbol and session"})
+                    continue
+                closed.append({"symbol": row["symbol"], "position_id": row["position_id"],
+                               "exit": fill.price, "pnl": getattr(fill, "pnl", None),
+                               "action": fill.action})
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "ORDER_CREATED", status="disposed",
+                      initiated_by=initiated_by,
+                      detail=(f"{len(closed)} open paper position(s) realised at a fresh "
+                              f"observed mark before deletion; {len(remaining)} left open"))
+            return {"instance_id": instance_id, "closed": closed, "remaining": remaining}
+
+    def delete(self, instance_id: str, *, owner_id: str | None = None) -> str:
+        """Delete one stopped instance without touching any sibling worker."""
+        with self._lifecycle_lock(instance_id), self._lock:
+            self._assert_reboot_idle(instance_id)
+            inst = self.instance_for(instance_id, owner_id)
             runtime = self._runtime.get(instance_id)
             if runtime and runtime[0].running:
                 raise ValueError("Stop the Trading Instance before deleting it")
             if InstanceLedger(self.ledger, instance_id).get_positions("open"):
-                raise ValueError("Close this instance's open positions before deleting it")
+                raise ValueError(
+                    "This Trading Instance still holds an open paper position. Close it "
+                    "explicitly first (GET /instances/{id}/open-positions shows what is "
+                    "open and POST /instances/{id}/close-open-positions realises it), so "
+                    "the P&L is recorded rather than discarded with the instance.")
             # Delete durable state first. If the database rejects the delete,
             # keep the in-memory worker intact so a transient persistence error
             # cannot silently stop an instance that still exists after restart.
@@ -1143,10 +1657,18 @@ class TradingInstanceManager:
                         self.ledger.log(level="warning", stage="instance",
                                         message=f"Deleted instance feed cleanup failed: {type(exc).__name__}",
                                         symbol=inst.symbol, instance_id=inst.id)
+            # Release ownership explicitly. A lease outliving its instance
+            # would make the supervisor's "worker running for a deleted
+            # instance" reconciliation check fire on every sweep.
+            try:
+                self.store.release_worker_lease(instance_id)
+            except Exception:  # noqa: BLE001 — the row is already gone
+                pass
             self._runtime.pop(instance_id, None)
             self._metric_fingerprints.pop(instance_id, None)
             self._reboots.pop(instance_id, None)
             self._reboot_threads.pop(instance_id, None)
+            self._lifecycle_locks.pop(instance_id, None)
             del self._instances[instance_id]
             return inst.id
 
@@ -1173,13 +1695,17 @@ class TradingInstanceManager:
         return True, "global risk within limit"
 
     def start(self, instance_id: str, *, entry_gate_closed: bool = False,
-              allow_during_reboot: bool = False) -> TradingInstance:
-        with self._lock:
+              allow_during_reboot: bool = False,
+              owner_id: str | None = None) -> TradingInstance:
+        with self._lifecycle_lock(instance_id), self._lock:
             if not allow_during_reboot:
                 self._assert_reboot_idle(instance_id)
-            inst = self._instances[instance_id]
+            inst = self.instance_for(instance_id, owner_id)
             prior_runtime = self._runtime.get(instance_id)
             if prior_runtime is not None and prior_runtime[0].running:
+                # Idempotent: a second Start joins the running worker rather
+                # than layering a second one over the same paper account.
+                self._renew_lease(inst)
                 return inst
             # A failed worker may still own a stopped thread and WebSocket feed.
             # Starting it again must replace those resources, never layer a
@@ -1195,6 +1721,17 @@ class TradingInstanceManager:
             if inst.mode == "trading" and active_trading >= self.max_slots:
                 raise ValueError(f"Maximum active trading slots reached ({self.max_slots})")
             self.store.assert_runtime_schema()
+            # Exclusive execution ownership, taken before anything is built.
+            # Two containers pointed at one database would otherwise each run a
+            # worker for this instance and duplicate every order it produces.
+            lease = self.store.claim_worker_lease(
+                instance_id, worker_id=self._worker_id, process_id=os.getpid(),
+                host=_hostname(), ttl_seconds=self.worker_lease_ttl_s)
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "INSTANCE_STARTING", status="starting",
+                      worker_id=lease["worker_id"], process_id=lease["process_id"],
+                      host=lease["host"], lease_expires_at=lease["lease_expires_at"],
+                      config_revision=inst.config_revision)
             scoped = InstanceLedger(self.ledger, instance_id, inst.simulation_session_id)
             controls = TradingControl()
             if entry_gate_closed:
@@ -1364,8 +1901,22 @@ class TradingInstanceManager:
                         f"INSTANCE:{instance_id}", quote_sink=on_quote,
                         candle_notice=on_candle_close)
                     holder["subscription"] = ws_feed
+                    from services.instance_telemetry import log_event
+                    # Whether this instance opened a Binance connection or
+                    # joined one another instance already owns is the single
+                    # most useful fact when reasoning about feed capacity, so
+                    # record which of the two happened.
+                    shared = self.market_hub.channel_exists(inst.symbol, inst.timeframe)
                     if not ws_feed.start(inst.symbol, inst.timeframe):
+                        log_event(self, inst, "SUBSCRIPTION_CREATED", status="failed",
+                                  detail="Binance USD-M hub refused the subscription")
                         raise RuntimeError("Binance USD-M market-data hub failed to start")
+                    log_event(self, inst,
+                              "SUBSCRIPTION_REUSED" if shared else "SUBSCRIPTION_CREATED",
+                              status="subscribed",
+                              channel=f"{inst.symbol}:{inst.timeframe}",
+                              consumer_id=ws_feed.consumer_id,
+                              shared_channel=bool(shared))
                     runtime_fetcher = ws_feed.make_fetcher()
                 else:
                     from data.ws_feed import WebSocketFeed
@@ -1388,6 +1939,7 @@ class TradingInstanceManager:
                 runtime_status = engine_ref["engine"].status() if "engine" in engine_ref else {}
                 self.store.save_market_state(instance_id,
                     last_processed_candle_timestamp=timestamp,
+                    worker_heartbeat=runtime_status.get("last_heartbeat") or _now(),
                     market_data_mode="paper_forward",
                     market_data_status=runtime_status.get("market_data_status", "healthy"),
                     last_market_data_timestamp=runtime_status.get("last_closed_candle") or timestamp,
@@ -1414,11 +1966,27 @@ class TradingInstanceManager:
                         elif state in ("data_stale", "recovering", "error"):
                             target.last_error = str(event.get("last_error") or event.get("reason") or "")[:500]
                         if state == "error":
-                            # Bounded automatic recovery has been exhausted.
-                            # Persist manual-recovery intent so a container
-                            # restart cannot resurrect the same broken worker
-                            # forever and produce an error loop on every boot.
-                            target.desired_running = False
+                            # The worker has exhausted its own in-thread
+                            # recovery. That is a reason to stop THIS worker,
+                            # not a reason to forget that the operator wants
+                            # this instance running.
+                            #
+                            # Clearing desired_running here was the single
+                            # largest reliability defect in the platform: five
+                            # consecutive feed failures (about 60s of Binance
+                            # being unreachable, the delays are 2+4+8+16+30s)
+                            # permanently un-desired the instance. Nothing then
+                            # restarted it -- not the next candle, not a page
+                            # load, and not the next container start, because
+                            # startup restores desired instances only. The
+                            # operator had to notice and press Start, which is
+                            # exactly the "it only works after I touch it"
+                            # symptom.
+                            #
+                            # The intent is durable now and InstanceSupervisor
+                            # owns the retry with its own bounded, observable
+                            # backoff. An instance is un-desired only by an
+                            # explicit operator Stop.
                             target.stopped_at = str(event.get("timestamp") or _now())
                         self.store.save(target)
                 if state in ("error", "stopped") and "engine" in engine_ref:
@@ -1442,6 +2010,15 @@ class TradingInstanceManager:
                     instance_id, level=level, timestamp=event.get("timestamp"),
                     message=(f"state={state} reason={event.get('reason') or ''} "
                              f"symbol={inst.symbol} timeframe={inst.timeframe}"))
+                # The same transition in the canonical structured shape, so a
+                # lifecycle timeline can be reconstructed by filtering on
+                # instance_id without parsing several ad-hoc formats.
+                from services.instance_telemetry import log_event
+                mapped = _LIFECYCLE_EVENTS.get(state)
+                if mapped:
+                    log_event(self, inst, mapped, status=state,
+                              detail=str(event.get("reason") or ""),
+                              lifecycle_state=state)
             engine = AutoStrategyEngine(pipeline, paper, scoped, symbols=[inst.symbol], timeframe=inst.timeframe,
                                         strategy_factory=lambda symbol: self.strategy_factory(inst.strategy_key, symbol),
                                         live=forward, live_poll_s=self.live_poll_s,
@@ -1459,6 +2036,7 @@ class TradingInstanceManager:
             except Exception as exc:
                 if ws_feed is not None:
                     ws_feed.stop()
+                self._release_lease(instance_id)
                 raise ValueError(
                     f"Cannot initialize {inst.strategy_label} {inst.strategy_version}: "
                     f"{type(exc).__name__}: {exc}") from exc
@@ -1466,22 +2044,36 @@ class TradingInstanceManager:
             if required_decision_timeframe and inst.timeframe != required_decision_timeframe:
                 if ws_feed is not None:
                     ws_feed.stop()
+                self._release_lease(instance_id)
                 raise ValueError(
                     f"{inst.strategy_label} {inst.strategy_version} requires "
                     f"the {required_decision_timeframe} decision timeframe")
             engine.ws_feed = ws_feed
+            # The revision this worker is running, so the dashboard can never
+            # show edited settings while the worker is still using the old ones.
+            engine.config_revision = inst.config_revision
+            engine.worker_id = self._worker_id
             engine.strategy_label = f"{inst.strategy_label} {inst.strategy_version}"
             engine.strategy_key = inst.strategy_key
             engine.strategy_version = inst.strategy_version
             engine.decisions = self.decision_store
             engine.reports = self.cycle_store
             self._runtime[instance_id] = (engine, paper, pipeline, controls)
-            inst.state, inst.desired_running, inst.last_error = "starting", True, ""
+            # A start with the entry gate closed IS a paused instance. Writing
+            # "starting" over it destroyed the only durable record that the
+            # operator had disarmed this strategy, so the NEXT restart read
+            # state="running", restored with the gate open, and silently
+            # re-armed it.
+            inst.state = "paused" if entry_gate_closed else "starting"
+            inst.desired_running, inst.last_error = True, ""
             inst.started_at, inst.stopped_at = _now(), None
             self.store.save(inst)
             engine.start()
             observed_state = engine.status().get("lifecycle_state")
-            if observed_state and observed_state != inst.state:
+            if (observed_state and observed_state != inst.state
+                    and not entry_gate_closed):
+                # A paused instance keeps its paused marker whatever the worker
+                # reports; its lifecycle is healthy, its entries are not armed.
                 inst.state = observed_state
                 self.store.save(inst)
             if pending_state.get("quarantined_intents"):
@@ -1491,17 +2083,103 @@ class TradingInstanceManager:
                 self.store.save(inst)
             return inst
 
-    def stop(self, instance_id: str) -> TradingInstance:
-        with self._lock:
-            self._assert_reboot_idle(instance_id)
-            inst = self._instances[instance_id]
-            runtime = self._runtime.get(instance_id)
-        if runtime:
-            runtime[0].stop("Stopped by instance operator")
-            ws_feed = getattr(runtime[0], "ws_feed", None)
-            if ws_feed is not None:
-                ws_feed.stop()
-        inst.state, inst.desired_running, inst.stopped_at = "stopped", False, _now(); self.store.save(inst); return inst
+    def _renew_lease(self, inst: TradingInstance) -> bool:
+        """Extend this process's ownership. False means it was lost."""
+        try:
+            return self.store.renew_worker_lease(
+                inst.id, worker_id=self._worker_id, ttl_seconds=self.worker_lease_ttl_s)
+        except Exception:  # noqa: BLE001 — a telemetry write must not stop a worker
+            return True
+
+    def _release_lease(self, instance_id: str) -> None:
+        try:
+            self.store.release_worker_lease(instance_id, worker_id=self._worker_id)
+        except Exception:  # noqa: BLE001 — the lease expires on its own regardless
+            pass
+
+    def worker_ownership(self, instance_id: str) -> dict:
+        """Who owns this instance's execution, and is that this process?"""
+        try:
+            lease = self.store.worker_lease(instance_id)
+        except Exception as exc:  # noqa: BLE001
+            return {"known": False, "detail": f"{type(exc).__name__}: {exc}"}
+        if not lease:
+            return {"known": True, "held": False, "instance_id": instance_id}
+        return {
+            "known": True, "held": True, "instance_id": instance_id,
+            "worker_id": lease.get("worker_id"),
+            "process_id": lease.get("process_id"),
+            "host": lease.get("host"),
+            "started_at": lease.get("started_at"),
+            "heartbeat_at": lease.get("heartbeat_at"),
+            "lease_expires_at": lease.get("lease_expires_at"),
+            "this_process": lease.get("worker_id") == self._worker_id,
+            "expired": _iso_before(lease.get("lease_expires_at"), _now()),
+        }
+
+    def halt_runtime(self, instance_id: str, *, reason: str, state: str = "error"
+                     ) -> TradingInstance | None:
+        """Stop this process's worker WITHOUT clearing the operator's intent.
+
+        Distinct from stop(), which is an operator decision that the instance
+        should no longer run. This is for the cases where this process must
+        give up the runtime but nobody has decided anything -- losing the
+        worker lease, or a configuration rebuild that has to tear the worker
+        down before building the replacement. Clearing desired_running there
+        would write "no longer wanted" into a row other processes read, and
+        nothing would ever restart it.
+        """
+        with self._lifecycle_lock(instance_id):
+            with self._lock:
+                inst = self._instances.get(instance_id)
+                if inst is None:
+                    return None
+                runtime = self._runtime.get(instance_id)
+            if runtime:
+                runtime[0].stop(reason)
+                feed = getattr(runtime[0], "ws_feed", None)
+                if feed is not None:
+                    feed.stop()
+            with self._lock:
+                self._runtime.pop(instance_id, None)
+            inst.state = state
+            # Only a genuine fault writes last_error. A routine configuration
+            # rebuild passing through here would otherwise leave an error the
+            # dashboard surfaces and an INSTANCE_ERROR row that makes real
+            # worker failures indistinguishable from ordinary edits.
+            fault = state not in ("starting", "paused", "stopped")
+            inst.last_error = reason[:500] if fault else ""
+            self.store.save(inst)
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "INSTANCE_ERROR" if fault else "INSTANCE_STARTING",
+                      status=state,
+                      detail=f"runtime halted, restart intent preserved: {reason}")
+            return inst
+
+    def stop(self, instance_id: str, *, owner_id: str | None = None) -> TradingInstance:
+        # The whole transition runs under this instance's lifecycle mutex. The
+        # state lock is taken only for the state read, because engine.stop()
+        # joins the worker thread and that thread takes the state lock from its
+        # own lifecycle callback.
+        with self._lifecycle_lock(instance_id):
+            with self._lock:
+                self._assert_reboot_idle(instance_id)
+                inst = self.instance_for(instance_id, owner_id)
+                runtime = self._runtime.get(instance_id)
+            if runtime:
+                runtime[0].stop("Stopped by instance operator")
+                ws_feed = getattr(runtime[0], "ws_feed", None)
+                if ws_feed is not None:
+                    ws_feed.stop()
+            inst.state, inst.desired_running, inst.stopped_at = "stopped", False, _now()
+            self.store.save(inst)
+            # Ownership goes with the worker. Holding an expired lease for the
+            # TTL after a clean stop would refuse a legitimate restart.
+            self._release_lease(instance_id)
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "INSTANCE_STOPPED", status="stopped",
+                      detail="stopped by operator; restart intent and worker lease released")
+            return inst
 
     def shutdown(self, timeout_s: float = 15.0) -> dict:
         """Quiesce every worker without erasing durable restart intent.
@@ -1541,16 +2219,23 @@ class TradingInstanceManager:
                 except Exception as exc:
                     report["errors"].append(
                         f"{instance_id}: feed stop {type(exc).__name__}: {exc}")
+            # Hand execution ownership back on a graceful shutdown. Without
+            # this the successor process would be refused until the lease TTL
+            # elapsed -- correct for a crash, where the old worker genuinely
+            # might still be alive, but wrong for a clean restart where this
+            # process has just proven it is not.
+            self._release_lease(instance_id)
         for thread in reboot_threads:
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
             if thread.is_alive():
                 report["errors"].append("full reboot worker did not stop before shutdown timeout")
         return report
 
-    def restart(self, instance_id: str) -> TradingInstance:
+    def restart(self, instance_id: str, *, owner_id: str | None = None) -> TradingInstance:
         """Begin a genuine staged Full Bot Reboot and return immediately."""
+        inst = self.instance_for(instance_id, owner_id)
         self.request_full_reboot(instance_id)
-        return self._instances[instance_id]
+        return inst
 
     @staticmethod
     def _split_pending_orders(raw_pending: dict) -> dict[str, dict]:
@@ -1962,41 +2647,57 @@ class TradingInstanceManager:
             return {**result, "resumed": resumed, "resume_error": resume_error,
                     "instance": self.status(instance_id)}
 
-    def pause(self, instance_id: str) -> TradingInstance:
-        with self._lock:
-            self._assert_reboot_idle(instance_id)
-            inst = self._instances[instance_id]; runtime = self._runtime.get(instance_id)
-        if runtime:
-            runtime[3].pause_all()
-            try:
-                acknowledgement = runtime[0].acknowledge_entry_pause()
-                self.store.append_engine_log(
-                    instance_id, level="info",
-                    message=f"pause_acknowledged checkpoint={acknowledgement}")
-            except Exception as exc:
-                inst.state, inst.desired_running = "degraded", False
-                inst.last_error = f"Pause acknowledgement failed: {type(exc).__name__}: {exc}"
-                self.store.save(inst)
-                raise RuntimeError(inst.last_error) from exc
-        inst.state, inst.desired_running = "paused", False
-        self.store.save(inst)
-        return inst
-
-    def resume(self, instance_id: str) -> TradingInstance:
-        with self._lock:
-            self._assert_reboot_idle(instance_id)
-            inst = self._instances[instance_id]; runtime = self._runtime.get(instance_id)
-            pending = self.store.market_state(instance_id).get("pending_orders_json") or {}
-            if pending.get("quarantined_intents"):
-                raise ValueError("PENDING_ORDER_OWNERSHIP_INVALID: repair quarantined intents before arming entries")
-        if runtime and runtime[0].running:
-            runtime[3].resume()
-            inst.state, inst.desired_running = "running", True
+    def pause(self, instance_id: str, *, owner_id: str | None = None) -> TradingInstance:
+        """Close the entry gate. The market worker deliberately stays alive."""
+        with self._lifecycle_lock(instance_id):
+            with self._lock:
+                self._assert_reboot_idle(instance_id)
+                inst = self.instance_for(instance_id, owner_id)
+                runtime = self._runtime.get(instance_id)
+            if runtime:
+                runtime[3].pause_all()
+                try:
+                    acknowledgement = runtime[0].acknowledge_entry_pause()
+                    self.store.append_engine_log(
+                        instance_id, level="info",
+                        message=f"pause_acknowledged checkpoint={acknowledgement}")
+                except Exception as exc:
+                    inst.state, inst.desired_running = "degraded", False
+                    inst.last_error = f"Pause acknowledgement failed: {type(exc).__name__}: {exc}"
+                    self.store.save(inst)
+                    raise RuntimeError(inst.last_error) from exc
+            # Pause is an entry gate, not a shutdown: the worker stays alive to
+            # keep its durable candle cursor and its market subscription.
+            # Clearing desired_running contradicted that the moment the process
+            # restarted -- the instance came back paused with no worker at all,
+            # so its feed stopped and its cursor froze until someone pressed
+            # Resume. The intent stays; restore_desired_instances() brings a
+            # paused instance back with its entry gate already closed.
+            inst.state, inst.desired_running = "paused", True
             self.store.save(inst)
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "INSTANCE_PAUSED", status="paused",
+                      detail="entry gate closed by operator; market worker retained")
             return inst
-        # A terminal error can retain its diagnostics object after the worker
-        # thread exits. Never label that dead object running; build a new worker.
-        return self.start(instance_id)
+
+    def resume(self, instance_id: str, *, owner_id: str | None = None) -> TradingInstance:
+        with self._lifecycle_lock(instance_id):
+            with self._lock:
+                self._assert_reboot_idle(instance_id)
+                inst = self.instance_for(instance_id, owner_id)
+                runtime = self._runtime.get(instance_id)
+                pending = self.store.market_state(instance_id).get("pending_orders_json") or {}
+                if pending.get("quarantined_intents"):
+                    raise ValueError("PENDING_ORDER_OWNERSHIP_INVALID: repair quarantined intents before arming entries")
+            if runtime and runtime[0].running:
+                runtime[3].resume()
+                inst.state, inst.desired_running = "running", True
+                self.store.save(inst)
+                self._renew_lease(inst)
+                return inst
+            # A terminal error can retain its diagnostics object after the worker
+            # thread exits. Never label that dead object running; build a new worker.
+            return self.start(instance_id, owner_id=owner_id)
 
     def update_configuration(self, instance_id: str, *, capital_allocation: float | None = None,
                              risk_per_trade_pct: float | None = None, sizing_mode: str | None = None,
@@ -2011,7 +2712,8 @@ class TradingInstanceManager:
                              instrument_type: str | None = None,
                              max_open_positions: int | None = None,
                              strategy_key: str | None = None, strategy_label: str | None = None,
-                             strategy_version: str | None = None, timeframe: str | None = None) -> TradingInstance:
+                             strategy_version: str | None = None, timeframe: str | None = None,
+                             owner_id: str | None = None) -> TradingInstance:
         """Persist execution configuration and safely rebuild an active worker.
 
         Strategy/timeframe changes cannot mutate a running strategy object in
@@ -2019,12 +2721,12 @@ class TradingInstanceManager:
         stops the worker, persists one authoritative configuration, and
         restores its prior running/paused lifecycle state.
         """
-        with self._lock:
+        with self._lifecycle_lock(instance_id), self._lock:
             self._assert_reboot_idle(instance_id)
-            inst = self._instances[instance_id]
+            inst = self.instance_for(instance_id, owner_id)
             open_positions = InstanceLedger(self.ledger, instance_id).get_positions("open")
             trade_history = self.ledger.get_paper_trades(instance_id=instance_id)
-            prior_state = inst.state
+            prior_state, prior_error = inst.state, inst.last_error
             had_runtime = instance_id in self._runtime
             candidate_capital = float(capital_allocation if capital_allocation is not None else inst.capital_allocation)
             if not math.isfinite(candidate_capital) or candidate_capital <= 0:
@@ -2129,7 +2831,14 @@ class TradingInstanceManager:
                 # lock inversion caused slow strategy switches and allowed a
                 # late "stopped" event to overwrite the replacement worker.
                 self._runtime[instance_id][0]._lifecycle_callback = None
-                self.stop(instance_id)
+                # halt_runtime, not stop: an edit is not a decision to stop
+                # running. stop() clears desired_running and releases the
+                # lease, so if the rebuild below failed -- a Binance blip
+                # during the restart is enough -- the instance was left
+                # un-desired, unsupervised and dark until somebody noticed.
+                self.halt_runtime(instance_id,
+                                  reason="worker replaced for a configuration change",
+                                  state="starting")
             inst.capital_allocation = candidate_capital
             inst.risk_per_trade_pct = float(risk_per_trade_pct if risk_per_trade_pct is not None else inst.risk_per_trade_pct)
             inst.max_open_positions = candidate_max
@@ -2152,15 +2861,40 @@ class TradingInstanceManager:
             inst.strategy_version = strategy_version or inst.strategy_version
             inst.timeframe = timeframe or inst.timeframe
             inst.last_error = ""
+            # Every accepted edit is a new revision. The running worker records
+            # the revision it was built from, so status() can say plainly when
+            # the dashboard is showing settings the worker has not adopted --
+            # rather than letting an edit look applied while the worker keeps
+            # trading the old configuration.
+            inst.config_revision = int(inst.config_revision or 1) + 1
             self.store.save(inst)
             if rebuild_required and prior_state in _ACTIVE_INSTANCE_STATES:
                 self.start(instance_id)
             elif rebuild_required and prior_state == "paused":
                 self.start(instance_id)
                 self.pause(instance_id)
-            elif had_runtime:
+            elif rebuild_required:
+                # Neither restart branch applies: the instance was not active
+                # before the edit, so it must come back as what it was, not as
+                # the transient "starting" halt_runtime left behind. Persisting
+                # "starting" with no worker is the state the four-axis contract
+                # exists to make impossible.
+                inst.state = prior_state
+                if prior_state in ("error", "blocked", "degraded"):
+                    # An edit does not resolve a reconciliation failure or a
+                    # terminal fault, so the state must not come back stripped
+                    # of the reason that explains it.
+                    inst.last_error = prior_error
+                self.store.save(inst)
+            elif had_runtime and instance_id in self._runtime:
                 # Risk and position-cap changes affect future entries only and
                 # can be applied atomically without interrupting market data.
+                #
+                # The membership re-check is not defensive padding: a rebuild
+                # for a stopped/error instance takes neither restart branch
+                # above, and halt_runtime has already removed the runtime, so
+                # indexing it here raised KeyError and left the instance
+                # persisted as "starting" with no worker.
                 pipeline = self._runtime[instance_id][2]
                 pipeline.risk_per_trade_pct = inst.risk_per_trade_pct
                 pipeline.max_open_positions = inst.max_open_positions
@@ -2184,8 +2918,9 @@ class TradingInstanceManager:
         candidate_capital = self.paper_account_capital if paper_account_capital is None else float(paper_account_capital)
         candidate_defaults = {**self.instance_defaults, **(defaults or {})}
 
-        if not 1 <= candidate_slots <= 3:
-            raise ValueError("max_active_slots must be between 1 and 3")
+        if not 1 <= candidate_slots <= MAX_ACTIVE_SLOTS_CEILING:
+            raise ValueError(
+                f"max_active_slots must be between 1 and {MAX_ACTIVE_SLOTS_CEILING}")
         running = sum(1 for key, runtime in self._runtime.items()
                       if runtime[0].running and self._instances[key].mode == "trading")
         if candidate_slots < running:
@@ -2335,6 +3070,8 @@ class TradingInstanceManager:
         leave the remainder visibly paused for an operator to start after
         freeing a slot; never silently exceed the account-level limit.
         """
+        from services.instance_reconciliation import BLOCKING, reconcile
+        from services.instance_telemetry import event_payload, format_event
         restored: list[str] = []
         restored_trading = 0
         for inst in sorted(self._instances.values(), key=lambda item: item.created_at):
@@ -2351,12 +3088,49 @@ class TradingInstanceManager:
                 self.store.save(inst)
                 continue
             try:
-                self.start(inst.id)
+                # Never trust the persisted state on its own. If the durable
+                # records disagree with each other -- an open position with no
+                # trade row, a quarantined intent, an instance another process
+                # still owns -- restoring it as healthy would let a strategy
+                # trade on top of a state nobody has verified.
+                report = reconcile(self, inst.id, expect_worker=False)
+                if report.blocked:
+                    inst.state = "blocked"
+                    inst.last_error = (
+                        "RECONCILIATION_FAILED: " + "; ".join(
+                            item.detail for item in report.findings
+                            if item.severity == BLOCKING))[:500]
+                    self.store.save(inst)
+                    self.store.append_engine_log(
+                        inst.id, level="error",
+                        message=format_event(event_payload(
+                            inst, "INSTANCE_ERROR", status="blocked",
+                            detail="startup reconciliation failed",
+                            findings=[item.public() for item in report.findings])))
+                    continue
+                # A paused instance is desired-running with its entry gate
+                # closed. Restoring it without the gate would silently re-arm
+                # a strategy the operator deliberately disarmed.
+                self.start(inst.id, entry_gate_closed=inst.state == "paused")
                 restored.append(inst.id)
                 if inst.mode == "trading":
                     restored_trading += 1
+            except WorkerLeaseError as exc:
+                # Another process still owns this instance. Fail closed and
+                # keep the intent: the supervisor retries once the lease
+                # expires, which is the only safe way to recover from a crash
+                # whose worker might still be alive somewhere.
+                inst.state = "blocked"
+                inst.last_error = f"WORKER_LEASE_HELD: {exc}"[:500]
+                self.store.save(inst)
+                continue
             except Exception as exc:  # one broken instance cannot block others
-                inst.state, inst.desired_running = "error", False
+                # The intent survives a failed restore. Binance being
+                # unreachable at the exact moment the container boots is a
+                # transient condition, and treating it as "the operator no
+                # longer wants this instance" is what made a restart during an
+                # outage permanent. InstanceSupervisor retries with backoff.
+                inst.state = "error"
                 inst.last_error = str(exc)[:500]
                 inst.stopped_at = _now()
                 self.store.save(inst)
@@ -2488,11 +3262,15 @@ class TradingInstanceManager:
             market = _market_health(market, timeframe=inst.timeframe, worker_state=state)
         if engine and state in ("stopped", "error") and inst.state != state:
             # Persist terminal worker state so a stale UI can never claim a
-            # dead engine is live. Errors require explicit operator recovery;
-            # a clean replay completion likewise must not restart on deploy.
+            # dead engine is live.
             inst.state = state
             inst.last_error = engine.get("last_error") or engine.get("stop_reason") or ""
-            if state == "stopped":
+            if state == "stopped" and inst.mode != "trading":
+                # A research replay that reaches the end of its data is
+                # genuinely finished and must not restart on deploy. A forward
+                # trading worker has no end of data, so a stopped one is a
+                # fault for the supervisor to repair -- reading status must
+                # never be what decides an instance is no longer wanted.
                 inst.desired_running = False
             self.store.save(inst)
         metrics = self.metrics(instance_id, trades_snapshot=trades_snapshot)
@@ -2659,7 +3437,30 @@ class TradingInstanceManager:
         except ValueError as exc:
             instance_mtf_policy = {
                 "entry_timeframe": inst.timeframe, "label": str(exc), "evidence": {}}
-        return {**inst.to_dict(), "effective_exchange": effective_exchange,
+        # Four independent axes plus the market facts behind them. A single
+        # badge had to answer "is the worker alive", "is the feed fresh", "has
+        # the strategy warmed up" and "are entries armed" with one word, so it
+        # could not say which of the four had failed.
+        from services import instance_status as status_contract
+        from services.strategy_registry import entry as registry_entry
+        registry_row = registry_entry(inst.strategy_key)
+        requires_htf = bool(registry_row and any(
+            item.startswith("native_") for item in registry_row.required_data))
+        worker_alive = self.worker_alive(instance_id)
+        contract = status_contract.build(
+            instance=inst, engine=engine,
+            market={**market, "_worker_state": state,
+                    "exchange": effective_exchange,
+                    "market_type": ("perpetual" if effective_exchange == "binance_usdm"
+                                    else inst.instrument_type)},
+            timeframe_seconds=_TIMEFRAME_SECONDS.get(inst.timeframe, 300),
+            worker_alive=worker_alive,
+            entries_armed=controls_armed,
+            health_status=strategy_health.get("status"),
+            htf_policy={**instance_mtf_policy, "requires_htf": requires_htf})
+        return {**inst.to_dict(), **contract,
+                "strategy_lifecycle": (registry_row.lifecycle if registry_row else "UNKNOWN"),
+                "effective_exchange": effective_exchange,
                 "effective_instrument_type": ("perpetual" if effective_exchange == "binance_usdm"
                                               else inst.instrument_type),
                 "state": state, "engine": engine,
@@ -2695,9 +3496,13 @@ class TradingInstanceManager:
                 "metrics": metrics,
                 "reboot": reboot}
 
-    def snapshot(self) -> tuple[list[dict], list[dict], list[dict]]:
-        """Materialize one dashboard snapshot without per-instance remote reads."""
-        instance_ids = set(self._instances)
+    def snapshot(self, owner_id: str | None = None) -> tuple[list[dict], list[dict], list[dict]]:
+        """Materialize one dashboard snapshot without per-instance remote reads.
+
+        Scoped to ``owner_id`` when supplied, so a listing can never include an
+        instance the caller does not own.
+        """
+        instance_ids = {item.id for item in self.owned_instances(owner_id)}
         markets = self.store.market_states(instance_ids)
         positions = [row for row in self.ledger.get_positions("open")
                      if row.get("instance_id") in instance_ids]
@@ -2710,7 +3515,7 @@ class TradingInstanceManager:
         for row in trades:
             trades_by_instance.setdefault(str(row.get("instance_id")), []).append(row)
         rows = []
-        for instance_id in self._instances:
+        for instance_id in instance_ids:
             rows.append(self.status(
                 instance_id,
                 market_snapshot=markets.get(instance_id),

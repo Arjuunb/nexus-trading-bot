@@ -559,7 +559,22 @@ def _start_auto_engine() -> None:
     # an un-attributed, mixed stream alongside the new instance platform).
     restored_instances = []
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.instance_manager.store.available:
-        restored_instances = webhook_api.instance_manager.restore_desired_instances()
+        try:
+            restored_instances = webhook_api.instance_manager.restore_desired_instances()
+        except Exception as exc:  # noqa: BLE001
+            # Boot-time restoration is best effort. A provider or database blip
+            # during this exact second must not be the reason nothing is
+            # supervised for the rest of the process lifetime -- that is the
+            # shape of the outage this whole component exists to end.
+            print(f"[startup] instance restoration failed, supervisor will retry: "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+        # Restoration is one shot; supervision is continuous. Start it even
+        # when nothing was restored -- an instance whose feed was unreachable
+        # at this exact moment is still desired, and the supervisor is what
+        # retries it without anyone opening the dashboard.
+        if webhook_api.instance_supervisor.start():
+            print("[startup] instance supervisor started "
+                  f"(interval={webhook_api.instance_supervisor.interval_s}s)", flush=True)
     if restored_instances:
         print(f"[startup] restored {len(restored_instances)} trading instance worker(s); "
               "legacy autonomous engine remains stopped", flush=True)
@@ -590,6 +605,9 @@ def _shutdown_all_runtimes() -> None:
     # Close all entry gates before waiting on any worker. Protective closes are
     # still classified as exposure-reducing and bypass these controls.
     webhook_api.controls.stop_all()
+    # Stop supervising before quiescing workers, or the supervisor would treat
+    # an intentionally stopping worker as a fault and start a replacement.
+    run("instance_supervisor", webhook_api.instance_supervisor.stop)
     run("trading_instances", webhook_api.instance_manager.shutdown)
     run("autonomous_engine_checkpoint", webhook_api.engine.flush_runtime_state)
     run("autonomous_engine", lambda: webhook_api.engine.stop("Process shutdown"))

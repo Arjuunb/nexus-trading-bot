@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -32,7 +33,8 @@ class PriceActionPublicStream:
                  bar_sink: Callable[[Bar], None] | None = None,
                  quote_sink: Callable[[dict], None] | None = None,
                  clock: Callable[[], datetime] | None = None,
-                 quote_mismatch_bps: float = 100.0):
+                 quote_mismatch_bps: float = 100.0,
+                 quotes_enabled: bool = True):
         self.rest_loader = rest_loader
         self.max_bars = max_bars
         self.stale_after_seconds = stale_after_seconds
@@ -41,6 +43,16 @@ class PriceActionPublicStream:
         self.quote_sink = quote_sink
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.quote_mismatch_bps = float(quote_mismatch_bps)
+        # markPrice and bookTicker are per-SYMBOL, not per-timeframe. A channel
+        # opened purely to supply higher-timeframe candles (the native 1h/4h
+        # context every MTF strategy needs) therefore subscribed to the exact
+        # same two quote streams the symbol's entry channel was already
+        # reading: with three instances on three symbols that was six redundant
+        # markPrice subscriptions and six redundant bookTicker sockets. Those
+        # channels take kline only; the entry channel remains the single
+        # quote authority for its symbol, so no fill can ever be driven by a
+        # duplicate quote arriving on a context channel.
+        self.quotes_enabled = bool(quotes_enabled)
         self.symbol = ""
         self.timeframe = ""
         self.state = "DISCONNECTED"
@@ -283,7 +295,9 @@ class PriceActionPublicStream:
     @property
     def market_url(self) -> str:
         lower = self.symbol.lower()
-        streams = f"{lower}@kline_{self.timeframe}/{lower}@markPrice@1s"
+        streams = f"{lower}@kline_{self.timeframe}"
+        if self.quotes_enabled:
+            streams += f"/{lower}@markPrice@1s"
         return f"wss://fstream.binance.com/market/stream?streams={streams}"
 
     @property
@@ -315,10 +329,14 @@ class PriceActionPublicStream:
             self._set_channel_state("market", "ERROR", error)
             self._set_channel_state("public", "ERROR", error)
             return
-        await asyncio.gather(
-            self._stream_channel("market", self.market_url, websockets),
-            self._stream_channel("public", self.public_url, websockets),
-        )
+        readers = [self._stream_channel("market", self.market_url, websockets)]
+        if self.quotes_enabled:
+            readers.append(self._stream_channel("public", self.public_url, websockets))
+        else:
+            # Nothing will ever connect this channel, so leave it in a state
+            # that reads as deliberate rather than as a socket that failed.
+            self._set_channel_state("public", "DISCONNECTED")
+        await asyncio.gather(*readers)
 
     async def _stream_channel(self, channel: str, url: str, websockets) -> None:
         while not self._stop.is_set():
@@ -357,7 +375,14 @@ class PriceActionPublicStream:
                 self._reconnect_attempts[channel] += 1
                 self.reconnect_attempt = max(self._reconnect_attempts.values())
                 self._set_channel_state(channel, "RECONNECTING", f"{type(exc).__name__}: {exc}")
-                await asyncio.sleep(min(2 ** min(self._reconnect_attempts[channel], 5), 30))
+                # Full jitter on the backoff. Without it every channel that
+                # dropped in the same Binance blip retries on the same tick:
+                # three instances is nine channels, and they would reconnect in
+                # lockstep for as long as the outage lasted, which is how a
+                # recovering venue turns into a rate-limit ban. The window is
+                # unchanged; only the moment inside it is randomised.
+                ceiling = min(2 ** min(self._reconnect_attempts[channel], 5), 30)
+                await asyncio.sleep(random.uniform(ceiling / 2, ceiling))
             finally:
                 if channel == "market":
                     self._socket = None
@@ -530,6 +555,14 @@ class PriceActionPublicStream:
                 health, reason = "RECONCILING", f"{unresolved} completed candle(s) remain missing"
             elif closed_age is None or closed_age > completed_candle_threshold or candle_age is None or candle_age > self.stale_after_seconds:
                 health, reason = "STALE_CANDLES", "completed history or live kline stream is stale"
+            elif not self.quotes_enabled:
+                # A context channel carries kline only by design. Judging it
+                # against quote freshness would report a permanent STALE_QUOTE
+                # for a stream that was never asked to carry quotes, and that
+                # false red is exactly the kind of untrue status this platform
+                # must not show. Its candles are still held to every freshness
+                # and reconciliation rule above.
+                health, reason = "SYNCHRONIZED", "higher-timeframe candles reconciled and fresh (kline-only channel)"
             elif quote_age is None or quote_age > self.stale_after_seconds or not bid_ask_valid:
                 health, reason = "STALE_QUOTE", "bid/ask stream is missing, invalid or stale"
             elif mark_age is None or mark_age > self.stale_after_seconds or not mark_valid:
@@ -543,7 +576,7 @@ class PriceActionPublicStream:
                 failing_dependency = "BINANCE_USDM_REST_HISTORY"
             elif self._channel_states.get("market") != "CONNECTED":
                 failing_dependency = "BINANCE_USDM_MARKET_WEBSOCKET"
-            elif self._channel_states.get("public") != "CONNECTED":
+            elif self.quotes_enabled and self._channel_states.get("public") != "CONNECTED":
                 failing_dependency = "BINANCE_USDM_BOOK_TICKER_WEBSOCKET"
             elif not self.reconciliation_complete or unresolved:
                 failing_dependency = "COMPLETED_CANDLE_RECONCILIATION"
@@ -596,6 +629,13 @@ class PriceActionPublicStream:
                     "last_successful_event": ({
                         "kind": latest_success[0], "at": latest_success[1].isoformat(),
                     } if latest_success else None),
+                    "quotes_enabled": self.quotes_enabled,
+                    # The live bid/ask/mark themselves, not just their ages.
+                    # A status payload that reports "STALE_QUOTE" without ever
+                    # showing the quote leaves an operator unable to check the
+                    # claim. Small and already under the lock; the bar buffer
+                    # stays out of status, which is on a hot path.
+                    "quote": dict(self._quote),
                     "transport_channels": dict(self._channel_states),
                     "transport_errors": dict(self._channel_errors),
                     "duplicate_events": self.duplicate_events, "missing_candles": self.missing_candles,
