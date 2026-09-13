@@ -241,6 +241,9 @@ class InstanceLedger:
     def promote_webhook_event(self, **kw):
         return self._ledger.promote_webhook_event(**kw, instance_id=self.instance_id)
 
+    def release_webhook_claim(self, alert_id: str):
+        return self._ledger.release_webhook_claim(alert_id, self.instance_id)
+
     def webhook_seen(self, alert_id: str, since_iso: str) -> bool:
         return self._ledger.webhook_seen(alert_id, since_iso,
                                         instance_id=self.instance_id)
@@ -1443,6 +1446,12 @@ class TradingInstanceManager:
             self._instances[inst.id] = inst
             return inst
 
+    #: How old the worker's last observed price may be and still be used to
+    #: realise a position. A mark left in a stopped worker's memory is not a
+    #: price, it is a memory of one; writing it into trade history as a fill is
+    #: the same fabrication as a guess with a plausible number attached.
+    DISPOSAL_MARK_MAX_AGE_S = 120.0
+
     def open_position_disposition(self, instance_id: str,
                                   owner_id: str | None = None) -> dict:
         """What stands between this instance and deletion, and how to resolve it.
@@ -1460,12 +1469,27 @@ class TradingInstanceManager:
         # forgotten and the one whose P&L a silent delete would discard.
         positions = InstanceLedger(self.ledger, instance_id).get_positions("open")
         runtime = self._runtime.get(instance_id)
-        marks = (runtime[0].status().get("last_prices") or {}) if runtime else {}
+        engine = runtime[0] if runtime else None
+        thread = getattr(engine, "_thread", None) if engine else None
+        worker_alive = bool(engine and engine.running
+                            and thread is not None and thread.is_alive())
+        status = engine.status() if engine else {}
+        marks = status.get("last_prices") or {}
+        mark_age = _age_seconds(status.get("last_heartbeat"))
+        fresh = (worker_alive and mark_age is not None
+                 and mark_age <= self.DISPOSAL_MARK_MAX_AGE_S)
         rows = []
         for position in positions:
             symbol = str(position.get("symbol"))
-            mark = marks.get(symbol)
             entry, size = float(position.get("entry") or 0), float(position.get("size") or 0)
+            mark = marks.get(symbol) if fresh else None
+            reason = None
+            if mark is None:
+                reason = ("no worker is running to price this position"
+                          if not worker_alive else
+                          f"the worker's last price is {mark_age:.0f}s old"
+                          if mark_age is not None and not fresh else
+                          "the worker has not observed a price for this symbol")
             unrealized = None
             if mark is not None:
                 direction = 1 if position.get("side") == "long" else -1
@@ -1476,60 +1500,91 @@ class TradingInstanceManager:
                 "stop": position.get("stop"), "mark": mark,
                 "unrealized_pnl": unrealized,
                 "mark_available": mark is not None,
+                "mark_reason": reason,
+                "simulation_session_id": position.get("simulation_session_id"),
                 "opened_at": position.get("opened_at"),
             })
+        priceable = [row for row in rows if row["mark_available"]]
         return {
             "instance_id": instance_id,
             "deletable": not rows,
+            "worker_running": worker_alive,
             "open_positions": rows,
             "resolution": (None if not rows else {
                 "action": "close_open_positions",
                 "endpoint": f"POST /instances/{instance_id}/close-open-positions",
-                "effect": ("Closes every open paper position at the worker's last "
-                           "observed mark and realises the P&L into this simulation "
-                           "session, then the instance can be deleted."),
+                "effect": ("Closes every open paper position at a fresh observed mark "
+                           "and realises the P&L into the session that owns it, after "
+                           "which the instance can be deleted."),
                 "requires_confirmation": True,
-                "blocked_reason": (None if all(row["mark_available"] for row in rows)
-                                   else "No live mark is available for every open "
-                                        "position; start the instance so its feed "
-                                        "can price them, or wait for the market "
-                                        "worker to report a price."),
+                "ready": bool(priceable) and len(priceable) == len(rows),
+                "blocked_reason": (None if priceable and len(priceable) == len(rows) else
+                                   "Start the Trading Instance so its market feed can "
+                                   "price the open position(s); a stale or missing mark "
+                                   "is never written into trade history as a fill."),
             }),
         }
 
     def close_open_positions(self, instance_id: str, *, owner_id: str | None = None,
                              initiated_by: str = "operator") -> dict:
-        """Realise every open paper position at the last observed mark.
+        """Realise every open paper position at a fresh, observed mark.
 
         The explicit handling path behind a refused delete. It never invents a
-        price: a position the runtime cannot price is left open and reported,
-        because closing it at a guessed number would write a fabricated P&L
-        into the trade history this platform exists to keep honest.
+        price and never uses a stale one: a mark left in a stopped worker's
+        memory from hours ago is the same fabrication as a guess, only with a
+        plausible number attached. A position that cannot be priced now is left
+        open and reported.
         """
         with self._lifecycle_lock(instance_id):
             disposition = self.open_position_disposition(instance_id, owner_id)
             if disposition["deletable"]:
-                return {"closed": [], "remaining": [], "instance_id": instance_id}
+                return {"instance_id": instance_id, "closed": [], "remaining": []}
+            inst = self._instances[instance_id]
             runtime = self._runtime.get(instance_id)
-            if runtime is None:
-                raise ValueError(
-                    "Start the Trading Instance so its market feed can price the open "
-                    "position(s) before closing them")
-            paper = runtime[1]
             closed, remaining = [], []
             for row in disposition["open_positions"]:
                 if not row["mark_available"]:
-                    remaining.append({**row, "reason": "no live mark available"})
+                    remaining.append({**row, "reason": row.get("mark_reason")
+                                      or "no live mark available"})
                     continue
-                fill = paper.close(symbol=row["symbol"], exit_price=float(row["mark"]),
-                                   execution_id=f"dispose:{instance_id}:{row['position_id']}")
-                closed.append({"symbol": row["symbol"], "exit": float(row["mark"]),
-                               "pnl": getattr(fill, "pnl", None), "action": fill.action})
+                # Close against a ledger scoped to THIS position's session, not
+                # the worker's current one: a position left by an earlier paper
+                # session is exactly what the delete guard blocks on, and the
+                # session-scoped engine cannot see it.
+                scoped = InstanceLedger(self.ledger, instance_id,
+                                        str(row.get("simulation_session_id") or ""))
+                engine = (runtime[1] if runtime is not None
+                          else ForwardPaperExecutionEngine(scoped, inst.starting_equity))
+                if runtime is None:
+                    engine.ledger = scoped
+                try:
+                    fill = engine.close(symbol=row["symbol"], exit_price=float(row["mark"]),
+                                        execution_id=f"dispose:{instance_id}:{row['position_id']}")
+                except Exception as exc:
+                    # The paper engine is fail-closed: a position whose trade
+                    # row is missing makes it refuse rather than guess. That is
+                    # one position's problem, not a reason to abandon the rest
+                    # of the disposal, and it must be reported rather than
+                    # counted as realised.
+                    remaining.append({**row, "reason": f"{type(exc).__name__}: {exc}"})
+                    continue
+                if fill.action == "noop":
+                    # close() resolves one position per symbol. A second
+                    # position on the same pair, or one the engine's ledger
+                    # scope cannot see, closes nothing -- reporting it as
+                    # realised would claim a P&L that was never written.
+                    remaining.append({**row, "reason":
+                                      "the execution engine found no matching open "
+                                      "position for this symbol and session"})
+                    continue
+                closed.append({"symbol": row["symbol"], "position_id": row["position_id"],
+                               "exit": fill.price, "pnl": getattr(fill, "pnl", None),
+                               "action": fill.action})
             from services.instance_telemetry import log_event
-            log_event(self, self._instances[instance_id], "ORDER_CREATED",
-                      status="disposed", initiated_by=initiated_by,
-                      detail=(f"{len(closed)} open paper position(s) closed at the last "
-                              f"observed mark before deletion; {len(remaining)} unpriced"))
+            log_event(self, inst, "ORDER_CREATED", status="disposed",
+                      initiated_by=initiated_by,
+                      detail=(f"{len(closed)} open paper position(s) realised at a fresh "
+                              f"observed mark before deletion; {len(remaining)} left open"))
             return {"instance_id": instance_id, "closed": closed, "remaining": remaining}
 
     def delete(self, instance_id: str, *, owner_id: str | None = None) -> str:
@@ -2064,10 +2119,16 @@ class TradingInstanceManager:
             with self._lock:
                 self._runtime.pop(instance_id, None)
             inst.state = state
-            inst.last_error = reason[:500]
+            # Only a genuine fault writes last_error. A routine configuration
+            # rebuild passing through here would otherwise leave an error the
+            # dashboard surfaces and an INSTANCE_ERROR row that makes real
+            # worker failures indistinguishable from ordinary edits.
+            fault = state not in ("starting", "paused", "stopped")
+            inst.last_error = reason[:500] if fault else ""
             self.store.save(inst)
             from services.instance_telemetry import log_event
-            log_event(self, inst, "INSTANCE_ERROR", status=state,
+            log_event(self, inst, "INSTANCE_ERROR" if fault else "INSTANCE_STARTING",
+                      status=state,
                       detail=f"runtime halted, restart intent preserved: {reason}")
             return inst
 
@@ -2788,9 +2849,23 @@ class TradingInstanceManager:
             elif rebuild_required and prior_state == "paused":
                 self.start(instance_id)
                 self.pause(instance_id)
-            elif had_runtime:
+            elif rebuild_required:
+                # Neither restart branch applies: the instance was not active
+                # before the edit, so it must come back as what it was, not as
+                # the transient "starting" halt_runtime left behind. Persisting
+                # "starting" with no worker is the state the four-axis contract
+                # exists to make impossible.
+                inst.state = prior_state
+                self.store.save(inst)
+            elif had_runtime and instance_id in self._runtime:
                 # Risk and position-cap changes affect future entries only and
                 # can be applied atomically without interrupting market data.
+                #
+                # The membership re-check is not defensive padding: a rebuild
+                # for a stopped/error instance takes neither restart branch
+                # above, and halt_runtime has already removed the runtime, so
+                # indexing it here raised KeyError and left the instance
+                # persisted as "starting" with no worker.
                 pipeline = self._runtime[instance_id][2]
                 pipeline.risk_per_trade_pct = inst.risk_per_trade_pct
                 pipeline.max_open_positions = inst.max_open_positions

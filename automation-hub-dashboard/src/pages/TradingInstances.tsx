@@ -276,23 +276,42 @@ export default function TradingInstancesPage({ instanceId }: { instanceId?: stri
       // resolves it, so realising that P&L stays a deliberate choice rather
       // than a side effect of pressing Delete.
       if (message.includes("open paper position")) {
+        let blocking: { open_positions: { symbol: string; side: string; size: number; unrealized_pnl: number | null; mark_available: boolean; mark_reason?: string | null }[]; resolution: { ready?: boolean; blocked_reason: string | null } | null } | null = null;
         try {
-          const blocking = await apiGet<{ open_positions: { symbol: string; side: string; size: number; unrealized_pnl: number | null; mark_available: boolean }[]; resolution: { blocked_reason: string | null } | null }>(`/instances/${instance.id}/open-positions`);
+          blocking = await apiGet(`/instances/${instance.id}/open-positions`);
+        } catch { /* the plain refusal below is still accurate */ }
+        if (blocking) {
           const rows = blocking.open_positions ?? [];
-          const summary = rows.map((row) => `${row.side} ${row.size} ${row.symbol}${row.unrealized_pnl === null ? " (no live mark)" : ` (${signedMoney(row.unrealized_pnl)} unrealised)`}`).join("\n");
-          if (blocking.resolution?.blocked_reason) {
-            const detail = `${blocking.resolution.blocked_reason}\n\n${summary}`;
+          const summary = rows.map((row) => `${row.side} ${row.size} ${row.symbol}${row.mark_available ? ` (${signedMoney(row.unrealized_pnl)} unrealised)` : ` — ${row.mark_reason ?? "cannot be priced"}`}`).join("\n");
+          if (!blocking.resolution?.ready) {
+            const detail = `${blocking.resolution?.blocked_reason ?? message}\n\n${summary}`;
             setActionErrors((current) => ({ ...current, [instance.id]: detail }));
             app.toast("Open positions cannot be priced yet", "error");
             return;
           }
-          if (window.confirm(`This instance still holds ${rows.length} open paper position(s):\n\n${summary}\n\nClose them at the last observed mark and realise the P&L into this simulation session? The instance can then be deleted.`)) {
-            await apiPostJson(`/instances/${instance.id}/close-open-positions`, { confirm: true });
-            app.toast("Open paper positions closed; delete again to remove the instance", "success");
-            await live.refetch();
-            return;
+          if (window.confirm(`This instance still holds ${rows.length} open paper position(s):\n\n${summary}\n\nClose them at the current mark and realise the P&L into the session that owns them? The instance can then be deleted.`)) {
+            try {
+              const outcome = await apiPostJson<{ closed: unknown[]; remaining: { symbol: string; reason: string }[] }>(`/instances/${instance.id}/close-open-positions`, { confirm: true });
+              await live.refetch();
+              // A close that only partly succeeded must not read as success:
+              // swallowing this left the operator staring at the original
+              // refusal with no sign the close had even been attempted.
+              if (outcome.remaining?.length) {
+                const detail = `Closed ${outcome.closed?.length ?? 0}; ${outcome.remaining.length} still open:\n${outcome.remaining.map((row) => `${row.symbol} — ${row.reason}`).join("\n")}`;
+                setActionErrors((current) => ({ ...current, [instance.id]: detail }));
+                app.toast("Some positions could not be closed", "error");
+                return;
+              }
+              app.toast("Open paper positions closed; delete again to remove the instance", "success");
+              return;
+            } catch (closeError) {
+              const detail = closeError instanceof Error ? closeError.message : "Could not close the open paper positions";
+              setActionErrors((current) => ({ ...current, [instance.id]: detail }));
+              app.toast(detail, "error");
+              return;
+            }
           }
-        } catch { /* fall through to the plain refusal below */ }
+        }
       }
       setActionErrors((current) => ({ ...current, [instance.id]: message }));
       app.toast(message, "error");

@@ -82,6 +82,7 @@ class Ledger(Protocol):
                              payload: dict, status: str, reason: str = "", instance_id: str = "") -> str: ...
     def promote_webhook_event(self, *, alert_id: str, status: str, entry=None,
                               payload=None, instance_id: str = "") -> bool: ...
+    def release_webhook_claim(self, alert_id: str, instance_id: str = "") -> int: ...
     def webhook_seen(self, alert_id: str, since_iso: str, instance_id: str = "") -> bool: ...
     def get_webhook_events(self, limit: int = 500) -> list[dict]: ...
     # positions / trades
@@ -262,12 +263,33 @@ class SqliteLedger:
             args.append(json.dumps(payload))
         args.extend([alert_id, instance_id or ""])
         with self._lock:
-            cursor = self._c.execute(
-                f"UPDATE webhook_events SET {', '.join(sets)} "
-                "WHERE alert_id=? AND COALESCE(instance_id,'')=? AND status='claimed'",
-                args)
+            try:
+                cursor = self._c.execute(
+                    f"UPDATE webhook_events SET {', '.join(sets)} "
+                    "WHERE alert_id=? AND COALESCE(instance_id,'')=? AND status='claimed'",
+                    args)
+            except sqlite3.IntegrityError as exc:
+                # The target (alert_id, instance_id, status) already exists, so
+                # this stage has already been recorded. Callers handle
+                # DuplicateOrderIntent; a raw IntegrityError would escape the
+                # pipeline instead of taking the duplicate path they were
+                # written for. insert_webhook_event makes the same translation.
+                self._c.rollback()
+                raise DuplicateOrderIntent(
+                    f"alert_id {alert_id!r} already recorded as {status!r} for instance "
+                    f"{instance_id or 'legacy'}") from exc
             self._c.commit()
             return cursor.rowcount > 0
+
+    def release_webhook_claim(self, alert_id: str, instance_id: str = "") -> int:
+        """Drop an idempotency claim that never became an order."""
+        with self._lock:
+            cursor = self._c.execute(
+                "DELETE FROM webhook_events WHERE alert_id=? AND "
+                "COALESCE(instance_id,'')=? AND status='claimed'",
+                (alert_id, instance_id or ""))
+            self._c.commit()
+            return cursor.rowcount
 
     def webhook_seen(self, alert_id: str, since_iso: str, instance_id: str = "") -> bool:
         with self._lock:
@@ -717,11 +739,28 @@ class SupabaseLedger:
                     .eq("status", "claimed").execute())
         return bool(getattr(remote_call_with_retry(update), "data", None))
 
+    def release_webhook_claim(self, alert_id, instance_id=""):  # pragma: no cover
+        """Drop an idempotency claim that never became an order.
+
+        This must exist here too. A no-op on the remote ledger left a stranded
+        claim with nothing to age it out -- the dedup constraint has no time
+        component -- so a rejected fill permanently barred that candle on
+        exactly the deployment shape with no other recourse.
+        """
+        def drop():
+            return (self._t("webhook_events").delete()
+                    .eq("alert_id", alert_id).eq("instance_id", instance_id or "")
+                    .eq("status", "claimed").execute())
+        return len(getattr(remote_call_with_retry(drop), "data", None) or [])
+
     def webhook_seen(self, alert_id, since_iso, instance_id=""):  # pragma: no cover
         def query():
+            # 'claimed' is excluded here as it is in SqliteLedger: a claim is a
+            # lock, not an order. Leaving the two ledgers disagreeing meant a
+            # stranded claim blocked the candle forever on Supabase only.
             q = (self._t("webhook_events").select("id")
                  .eq("alert_id", alert_id).gte("received_at", since_iso)
-                 .neq("status", "rejected"))
+                 .not_.in_("status", ["rejected", "claimed"]))
             if instance_id:
                 q = q.eq("instance_id", instance_id)
             return q.limit(1).execute()

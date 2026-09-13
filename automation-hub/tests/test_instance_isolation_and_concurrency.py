@@ -508,3 +508,105 @@ def test_a_deliberate_single_slot_is_not_reverted_on_restart(tmp_path):
     for _restart in range(3):
         _again, reopened = _manager(path)
         assert reopened.max_slots == 1
+
+
+def test_an_exception_during_the_fill_does_not_bar_the_candle_forever():
+    """A stranded claim is permanent: the dedup constraint has no time component."""
+    from execution.paper_engine import PaperExecutionEngine
+    from services.controls import TradingControl
+    from services.signal_pipeline import SignalPipeline
+    from services.trading_instances import InstanceLedger
+
+    ledger = SqliteLedger(":memory:")
+    scoped = InstanceLedger(ledger, "inst-1")
+
+    class _Exploding(PaperExecutionEngine):
+        def open(self, **kwargs):
+            raise RuntimeError("ledger write failed mid-fill")
+
+    pipeline = SignalPipeline(scoped, _Exploding(scoped, 10_000),
+                              TradingControl(), equity=10_000)
+    payload = {"alert_id": "boom", "symbol": "BTCUSDT", "side": "BUY",
+               "entry": 100.0, "stop": 95.0}
+
+    with pytest.raises(RuntimeError, match="ledger write failed"):
+        pipeline.process(dict(payload))
+
+    # No claim may be left behind...
+    assert [row for row in ledger.get_webhook_events()
+            if row["alert_id"] == "boom" and row["status"] == "claimed"] == []
+    # ...so the same candle is still tradeable once the fault clears.
+    pipeline.paper = PaperExecutionEngine(scoped, 10_000)
+    assert pipeline.process(dict(payload)).accepted is True
+
+
+def test_promoting_onto_an_existing_row_reports_a_duplicate_not_a_crash():
+    """Both call sites handle DuplicateOrderIntent; a raw IntegrityError escapes."""
+    ledger = SqliteLedger(":memory:")
+    key = "auto:inst-1:BTCUSDT:5m:2026-09-13T10:00:00+00:00:buy"
+    ledger.insert_webhook_event(alert_id=key, symbol="BTCUSDT", side="BUY", entry=1,
+                                stop=0.5, payload={}, status="accepted",
+                                instance_id="inst-1")
+    ledger.insert_webhook_event(alert_id=key, symbol="BTCUSDT", side="BUY", entry=1,
+                                stop=0.5, payload={}, status="claimed",
+                                instance_id="inst-1")
+
+    with pytest.raises(DuplicateOrderIntent):
+        ledger.promote_webhook_event(alert_id=key, status="accepted",
+                                     instance_id="inst-1")
+
+
+def test_a_claim_can_be_released_on_every_ledger_backend():
+    """The release was a no-op off SQLite, where nothing else frees the key."""
+    from data.ledger import SqliteLedger as _Sqlite
+
+    assert hasattr(_Sqlite, "release_webhook_claim")
+    from data.ledger import SupabaseLedger
+    assert hasattr(SupabaseLedger, "release_webhook_claim")
+
+    ledger = _Sqlite(":memory:")
+    ledger.insert_webhook_event(alert_id="k", symbol="BTCUSDT", side="BUY", entry=1,
+                                stop=0.5, payload={}, status="claimed",
+                                instance_id="inst-1")
+    assert ledger.release_webhook_claim("k", "inst-1") == 1
+    # The key is free again, so the candle can be retried.
+    ledger.insert_webhook_event(alert_id="k", symbol="BTCUSDT", side="BUY", entry=1,
+                                stop=0.5, payload={}, status="claimed",
+                                instance_id="inst-1")
+
+
+def test_a_claim_never_makes_the_duplicate_guard_trip():
+    """A claim is a lock, not an order. Both ledgers must agree on that."""
+    import inspect
+
+    from data.ledger import SupabaseLedger
+    from services.dedup import DuplicateGuard
+
+    ledger = SqliteLedger(":memory:")
+    ledger.insert_webhook_event(alert_id="auto:x", symbol="BTCUSDT", side="BUY", entry=1,
+                                stop=0.5, payload={}, status="claimed",
+                                instance_id="inst-1")
+    assert DuplicateGuard(ledger, window_seconds=0).is_duplicate("auto:x") is False
+    # The remote ledger excluded only 'rejected', so a stranded claim blocked
+    # the candle there and nowhere else.
+    assert "claimed" in inspect.getsource(SupabaseLedger.webhook_seen)
+
+
+def test_a_rejected_entry_does_not_mislabel_the_next_one():
+    """last_blocker must describe THIS attempt, not a previous one."""
+    from execution.paper_engine import PaperExecutionEngine
+    from services.fill_model import RealisticFill
+    from services.trading_instances import InstanceLedger
+
+    ledger = SqliteLedger(":memory:")
+    engine = PaperExecutionEngine(InstanceLedger(ledger, "inst-1"), 1_000,
+                                  fill_model=RealisticFill(reject_prob=1.0))
+
+    engine.open(symbol="BTCUSDT", side="BUY", size=100.0, entry=60_000.0,
+                stop=59_000.0, alert_id="unfunded")
+    assert engine.last_blocker == engine.UNFUNDED_BLOCKER
+
+    # An affordable order rejected by the fill model is a different thing.
+    engine.open(symbol="BTCUSDT", side="BUY", size=0.001, entry=100.0,
+                stop=95.0, alert_id="fill-reject")
+    assert engine.last_blocker != engine.UNFUNDED_BLOCKER

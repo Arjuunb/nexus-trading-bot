@@ -282,3 +282,85 @@ def test_the_status_endpoint_carries_the_configuration_revision(monkeypatch, fas
 
     assert row["configuration_revision"]["configured"] == 1
     assert "worker_id" in row["worker"]
+
+
+def test_the_runtime_health_route_answers(monkeypatch, fast_worker):
+    """It had no request parameter after being moved, so it raised NameError.
+
+    The route that answers "is the backend running my instances?" was a 500
+    for every caller, and nothing covered it.
+    """
+    pytest.importorskip("fastapi")
+    from routers import instances as instance_api
+
+    _ledger, manager = _manager()
+    instance = _create(manager)
+    manager.start(instance.id)
+    monkeypatch.setattr(instance_api._wa, "instance_manager", manager)
+
+    payload = instance_api.instance_runtime_health()
+
+    assert payload["max_active_slots"] >= 3
+    assert [row["instance_id"] for row in payload["workers"]] == [instance.id]
+    assert "supervisor" in payload and "market_data_channels" in payload
+
+
+def test_every_instance_route_answers_without_a_request_object(monkeypatch, fast_worker):
+    """Direct callers pass no Request; none of these may raise on that."""
+    pytest.importorskip("fastapi")
+    from routers import instances as instance_api
+
+    _ledger, manager = _manager()
+    instance = _create(manager)
+    manager.start(instance.id)
+    monkeypatch.setattr(instance_api._wa, "instance_manager", manager)
+
+    for call in (lambda: instance_api.list_instances(),
+                 lambda: instance_api.instance_detail(instance.id),
+                 lambda: instance_api.instance_status(instance.id),
+                 lambda: instance_api.instance_positions(instance.id),
+                 lambda: instance_api.instance_orders(instance.id),
+                 lambda: instance_api.instance_metrics(instance.id),
+                 lambda: instance_api.instance_trades(instance.id),
+                 lambda: instance_api.instance_logs(instance.id),
+                 lambda: instance_api.instance_open_positions(instance.id),
+                 lambda: instance_api.instance_reconciliation(instance.id),
+                 lambda: instance_api.instance_runtime_health(),
+                 lambda: instance_api.instance_runtime_metrics()):
+        assert call() is not None
+
+
+def test_editing_a_stopped_instance_does_not_lose_its_runtime(fast_worker):
+    """halt_runtime pops the runtime; the live-apply fallback must re-check.
+
+    A rebuild for a stopped or errored instance takes neither restart branch,
+    so indexing the popped runtime raised KeyError and left the instance
+    persisted as "starting" with no worker.
+    """
+    _ledger, manager = _manager()
+    instance = _create(manager)
+    manager.start(instance.id)
+    manager.stop(instance.id)                 # leaves a stale runtime entry
+    assert instance.id in manager._runtime
+
+    updated = manager.update_configuration(instance.id, capital_allocation=750)
+
+    assert updated.capital_allocation == 750
+    assert manager._instances[instance.id].state != "starting"
+
+
+def test_a_configuration_edit_is_not_logged_as_an_instance_error(fast_worker):
+    _ledger, manager = _manager()
+    instance = _create(manager)
+    manager.start(instance.id)
+    manager.update_configuration(instance.id, timeframe="15m")
+
+    import json
+    events = [json.loads(row["message"][len("instance_event "):])
+              for row in manager.store.engine_logs(instance.id, 200)
+              if row["message"].startswith("instance_event ")]
+    rebuilds = [row for row in events
+                if "configuration change" in str(row.get("detail", ""))]
+    assert rebuilds, "the rebuild was not recorded at all"
+    assert all(row["event"] != "INSTANCE_ERROR" for row in rebuilds)
+    assert manager._instances[instance.id].last_error == ""

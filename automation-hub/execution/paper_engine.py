@@ -177,6 +177,11 @@ class PaperExecutionEngine:
         account was previously able to park a $6,000,000 order and drive
         available capital to -6,004,190.
         """
+        # Cleared first. A blocker that outlives its own rejection made every
+        # later refusal -- an ordinary simulated fill rejection included -- read
+        # as a systematic capital stop, and it was never reset on success
+        # either, so it stayed wrong for the life of the engine.
+        self.last_blocker = None
         try:
             notional = abs(float(size)) * abs(float(entry))
             reference = float(entry)

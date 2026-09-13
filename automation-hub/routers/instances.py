@@ -271,7 +271,7 @@ def instance_options():
 # FastAPI matches in registration order, so a path parameter declared first
 # captures the literal segment "runtime" and answers 404 for these.
 @router.get("/instances/runtime/health")
-def instance_runtime_health():
+def instance_runtime_health(request: Request = None):  # noqa: B008
     """Process-level answer to "is the backend running my instances?".
 
     Deliberately not per-instance: the question an operator asks after a

@@ -159,9 +159,6 @@ class InstanceSupervisor:
                 # stop this worker rather than run a second execution owner.
                 if not self.manager._renew_lease(inst):
                     report.append({"instance_id": inst.id, "action": "lease_lost"})
-                    log_event(self.manager, inst, "INSTANCE_ERROR", status="error",
-                              detail=("worker lease lost to another owner; stopping this "
-                                      "worker to keep exactly one execution owner"))
                     try:
                         # halt_runtime, not stop: losing a lease is not the
                         # operator deciding this instance should stop. stop()

@@ -406,21 +406,13 @@ class SignalPipeline:
         """Drop a claim that never became an order.
 
         A claim is a lock, not a record of something that happened. If the
-        entry is rejected after it, leaving the row would make a later
-        legitimate retry of the same candle look like a duplicate and suppress
-        a trade that was never placed.
+        entry does not become an order after it, leaving the row would make a
+        later legitimate retry of the same candle look like a duplicate and
+        suppress a trade that was never placed. The dedup constraint has no
+        time component, so nothing ages it out on its own.
         """
-        ledger = getattr(self.ledger, "_ledger", self.ledger)
-        connection = getattr(ledger, "_c", None)
-        if connection is None:
-            return                      # remote ledger: the claim ages out with the row
-        instance_id = getattr(self.ledger, "instance_id", "")
         try:
-            with ledger._lock:
-                connection.execute(
-                    "DELETE FROM webhook_events WHERE alert_id=? AND status='claimed' "
-                    "AND COALESCE(instance_id,'')=?", (alert_id, instance_id or ""))
-                connection.commit()
+            self.ledger.release_webhook_claim(alert_id)
         except Exception:  # noqa: BLE001 — a stuck claim must not break the cycle
             pass
 
@@ -917,29 +909,37 @@ class SignalPipeline:
             return PipelineResult(
                 False, "dedup", f"order already claimed for this candle: {exc}",
                 steps, {})
-        fill = self.paper.open(symbol=symbol, side=side, size=size, entry=entry,
-                               stop=stop, target=payload.get("target"),
-                               alert_id=alert_id, maker=bool(payload.get("maker")),
-                               sizing_context={
-                                   "sizing_mode": sizing.mode,
-                                   "sizing_engine_version": sizing.sizing_engine_version,
-                                   "risk_basis_at_entry": sizing.risk_basis,
-                                   "risk_pct_at_entry": eff_risk,
-                                   "risk_amount_at_entry": abs(entry - stop) * size,
-                                   "equity_before_trade": realized_equity,
-                                   "signal_timestamp": payload.get("timestamp"),
-                                   "decision_timestamp": payload.get("timestamp"),
-                                   "signal_price": entry,
-                                   "strategy": payload.get("strategy"),
-                                   "strategy_version": self.journal_context.get("strategy_version"),
-                                   "timeframe": payload.get("timeframe"),
-                                   "market_data_source": payload.get("market_data_source"),
-                                   "candle_id": payload.get("decision_identity"),
-                                   "account_id": (
-                                       f"instance:{self.journal_context.get('instance_id')}:"
-                                       f"{self.journal_context.get('simulation_session_id')}"),
-                                   "execution_engine": "INSTANCE",
-                               })
+        try:
+            fill = self.paper.open(symbol=symbol, side=side, size=size, entry=entry,
+                                   stop=stop, target=payload.get("target"),
+                                   alert_id=alert_id, maker=bool(payload.get("maker")),
+                                   sizing_context={
+                                       "sizing_mode": sizing.mode,
+                                       "sizing_engine_version": sizing.sizing_engine_version,
+                                       "risk_basis_at_entry": sizing.risk_basis,
+                                       "risk_pct_at_entry": eff_risk,
+                                       "risk_amount_at_entry": abs(entry - stop) * size,
+                                       "equity_before_trade": realized_equity,
+                                       "signal_timestamp": payload.get("timestamp"),
+                                       "decision_timestamp": payload.get("timestamp"),
+                                       "signal_price": entry,
+                                       "strategy": payload.get("strategy"),
+                                       "strategy_version": self.journal_context.get("strategy_version"),
+                                       "timeframe": payload.get("timeframe"),
+                                       "market_data_source": payload.get("market_data_source"),
+                                       "candle_id": payload.get("decision_identity"),
+                                       "account_id": (
+                                           f"instance:{self.journal_context.get('instance_id')}:"
+                                           f"{self.journal_context.get('simulation_session_id')}"),
+                                       "execution_engine": "INSTANCE",
+                                   })
+        except Exception:
+            # Anything escaping the fill strands the claim, and a stranded
+            # claim bars this candle permanently -- the dedup constraint has no
+            # time component. Release it before the error propagates, so a
+            # retry of a trade that never happened is still possible.
+            self._release_order_claim(alert_id)
+            raise
         if fill.action == "rejected":
             # The claim did not become an order. Release it so a later,
             # legitimate retry of this candle is not mistaken for a duplicate

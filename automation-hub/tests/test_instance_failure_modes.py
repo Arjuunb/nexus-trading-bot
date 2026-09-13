@@ -393,6 +393,73 @@ def test_an_unpriceable_position_is_reported_rather_than_closed_at_a_guess(tmp_p
     result = manager.close_open_positions(instance.id)
 
     assert result["closed"] == []
-    assert [row["reason"] for row in result["remaining"]] == ["no live mark available"]
+    assert len(result["remaining"]) == 1
+    assert "not observed a price" in result["remaining"][0]["reason"]
     assert manager.open_position_disposition(instance.id)["deletable"] is False
+    manager.shutdown()
+
+
+def test_a_stale_mark_is_not_written_into_trade_history_as_a_fill(tmp_path):
+    """A price remembered by a stopped worker is not a price.
+
+    last_prices survives in the engine object after the worker stops, so a
+    position could be "realised" at an arbitrarily old number and that number
+    written into the trade history as a genuine fill -- the same fabrication
+    as a guess, with a plausible value attached.
+    """
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    runtime = manager._runtime[instance.id]
+    runtime[1].ledger.open_position(symbol="BTCUSDT", side="long", size=0.01,
+                                    entry=100.0, stop=95.0)
+    runtime[0].last_prices["BTCUSDT"] = 110.0
+    manager.stop(instance.id)                       # the worker is gone
+
+    disposition = manager.open_position_disposition(instance.id)
+
+    assert disposition["worker_running"] is False
+    assert disposition["open_positions"][0]["mark_available"] is False
+    assert "no worker" in disposition["open_positions"][0]["mark_reason"]
+    assert disposition["resolution"]["ready"] is False
+    assert "Start the Trading Instance" in disposition["resolution"]["blocked_reason"]
+
+    result = manager.close_open_positions(instance.id)
+    assert result["closed"] == []
+    assert len(result["remaining"]) == 1
+    # And the delete still refuses, rather than the position silently vanishing.
+    with pytest.raises(ValueError, match="open paper position"):
+        manager.delete(instance.id)
+
+
+def test_a_second_position_on_one_symbol_is_not_reported_as_closed(tmp_path):
+    """close() resolves one position per symbol; the rest must be reported."""
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    runtime = manager._runtime[instance.id]
+    session = manager._instances[instance.id].simulation_session_id
+    for _each in range(2):
+        runtime[1].ledger.open_position(symbol="BTCUSDT", side="long", size=0.01,
+                                        entry=100.0, stop=95.0)
+    import threading
+    idle = threading.Event()
+    runtime[0]._thread = threading.Thread(target=idle.wait, daemon=True)
+    runtime[0]._thread.start()
+    runtime[0].last_prices["BTCUSDT"] = 110.0
+    runtime[0].last_heartbeat = __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc).isoformat()
+
+    result = manager.close_open_positions(instance.id)
+
+    # Every position is accounted for, and nothing the engine declined to
+    # close is reported as realised. The engine is fail-closed about a
+    # position with no trade row, so here both are reported rather than one
+    # silently counted with pnl=None.
+    assert len(result["closed"]) + len(result["remaining"]) == 2
+    assert len(result["remaining"]) >= 1
+    assert all(row["pnl"] is not None for row in result["closed"])
+    # And a disposal that closed nothing leaves the delete refusal standing.
+    assert manager.open_position_disposition(instance.id)["deletable"] is False
+    idle.set()
     manager.shutdown()

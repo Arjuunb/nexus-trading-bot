@@ -234,25 +234,28 @@ class ForwardPaperMarketDataHub:
         return sorted(rows, key=lambda row: (row["symbol"], row["timeframe"]))
 
     def _channel(self, key: tuple[str, str], *, quotes: bool = True) -> _Channel:
+        """Return the channel for ``key``, creating or upgrading it as needed."""
         with self._lock:
             existing = self._channels.get(key)
-            if existing is not None:
-                if quotes and not getattr(existing.stream, "quotes_enabled", True):
-                    # This channel was opened kline-only for higher-timeframe
-                    # context, and a consumer that needs quotes has now asked
-                    # for it. Handing back the quote-less stream would deliver
-                    # candles and never a single quote, so every parked
-                    # forward-paper intent would sit unfilled forever while the
-                    # feed reported itself synchronized. Upgrade it instead:
-                    # the existing consumers only ever wanted candles, and they
-                    # keep receiving them from the replacement.
-                    self._upgrade_channel_to_quotes(key, existing)
+            if existing is None:
+                channel = _Channel(stream=None)
+                channel.stream = self._build_stream(key, channel, quotes=quotes)
+                self._channels[key] = channel
+                return channel
+            if not quotes or getattr(existing.stream, "quotes_enabled", True):
                 return existing
-            symbol, timeframe = key
-            channel = _Channel(stream=None)
-            channel.stream = self._build_stream(key, channel, quotes=quotes)
-            self._channels[key] = channel
-            return channel
+        # A kline-only context channel that a quote consumer has now joined.
+        # Handing back the quote-less stream would deliver candles and never a
+        # single quote, so every parked forward-paper intent would sit unfilled
+        # forever while the feed reported itself synchronized.
+        #
+        # The upgrade runs OUTSIDE the hub lock. It starts a stream (a blocking
+        # REST bootstrap of up to 1500 bars) and stops another (a socket close
+        # plus a thread join), and the stream being stopped blocks on this very
+        # lock inside its own bar/quote callbacks -- so holding it here would
+        # freeze delivery on every symbol in the process for seconds.
+        self._upgrade_channel_to_quotes(key, existing)
+        return existing
 
     def _build_stream(self, key: tuple[str, str], channel: "_Channel | None" = None,
                       *, quotes: bool = True):
@@ -372,15 +375,36 @@ class ForwardPaperMarketDataHub:
         return stream
 
     def _upgrade_channel_to_quotes(self, key: tuple[str, str], channel: _Channel) -> None:
-        """Replace a kline-only stream with a full one, keeping its consumers."""
-        old_stream = channel.stream
+        """Swap a kline-only stream for a full one, keeping its consumers.
+
+        The replacement must prove itself before the working stream is touched.
+        Stopping the old one first, or unconditionally, would leave the
+        consumers that were happily receiving candles attached to a dead
+        channel with no retry path -- a worse outcome than the missing quotes
+        this is fixing.
+        """
         symbol, timeframe = key
-        channel.stream = self._build_stream(key, channel, quotes=True)
-        channel.stream.start(symbol, timeframe)
-        try:
-            old_stream.stop()
-        except Exception:  # noqa: BLE001 — the replacement is already running
-            pass
+        old_stream = channel.stream
+        if old_stream is not None and getattr(old_stream, "quotes_enabled", True):
+            return                          # somebody else already upgraded it
+        replacement = self._build_stream(key, channel, quotes=True)
+        if not replacement.start(symbol, timeframe):
+            try:
+                replacement.stop()
+            except Exception:  # noqa: BLE001 — it never started
+                pass
+            return                          # the working stream is untouched
+        with self._lock:
+            if channel.stream is not old_stream:
+                # Another thread won this upgrade; ours is redundant.
+                replacement.stop()
+                return
+            channel.stream = replacement
+        if old_stream is not None:
+            try:
+                old_stream.stop()
+            except Exception:  # noqa: BLE001 — the replacement is already live
+                pass
 
     def _start(self, consumer: _Consumer, symbol: str, timeframe: str, *,
                quotes: bool = True) -> bool:
