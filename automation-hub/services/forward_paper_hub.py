@@ -34,6 +34,12 @@ class _Consumer:
     pending: OrderedDict = field(default_factory=OrderedDict)
     delivery_lock: threading.Lock = field(default_factory=threading.Lock)
     last_error: str = ""
+    # One worker, so this consumer's quotes and events reach it in arrival
+    # order. A shared pool would let two quotes run at once, and the broker
+    # keeps a per-symbol quote cursor that rejects anything not newer than the
+    # last one it saw, so a reordered pair would have one silently dropped and
+    # an intent left unfilled.
+    notifier: object | None = None
 
 
 @dataclass
@@ -61,6 +67,27 @@ class ForwardPaperMarketDataHub:
         # the sink to have run by the time the emitting call returns.
         self._delivery: ThreadPoolExecutor | None = None
         self.synchronous_delivery = False
+
+    def _dispatch_notify(self, consumer: _Consumer, sink, event) -> None:
+        """Deliver a quote or event without holding up the socket reader.
+
+        Unlike candles these are not queued or replayed: a quote is only
+        meaningful at the price it carried, so a consumer that cannot keep up
+        must miss one rather than be filled at a stale price later.
+        """
+        if self.synchronous_delivery:
+            self._notify(consumer, sink, event)
+            return
+        with self._lock:
+            if consumer.notifier is None:
+                consumer.notifier = ThreadPoolExecutor(
+                    max_workers=1,
+                    thread_name_prefix="notify-%s" % consumer.consumer_id[:16])
+            pool = consumer.notifier
+        try:
+            pool.submit(self._notify, consumer, sink, event)
+        except RuntimeError:
+            pass  # shutting down; a dropped quote is correct here
 
     def _dispatch(self, consumer: _Consumer) -> None:
         """Hand one consumer's pending candles to the delivery pool."""
@@ -204,7 +231,15 @@ class ForwardPaperMarketDataHub:
                 }
                 for consumer in consumers:
                     if consumer.quote_sink:
-                        self._notify(consumer, consumer.quote_sink, snapshot)
+                        # Off the socket reader's thread, for the same reason
+                        # bars are. A quote sink looks cheap and is not: it
+                        # takes the lab's runtime and account locks and fills
+                        # pending orders. A thread dump caught this callback
+                        # parked on an account lock inside the stream's event
+                        # loop, which is why markPrice at one message per
+                        # second still read eighty seconds old after bar
+                        # delivery had already been moved off.
+                        self._dispatch_notify(consumer, consumer.quote_sink, snapshot)
 
             def on_event(event: dict) -> None:
                 with self._lock:
@@ -247,14 +282,20 @@ class ForwardPaperMarketDataHub:
             if channel is None:
                 return
             consumer = channel.consumers.pop(consumer_id, None)
+            notifier = None
             if consumer:
                 consumer.pending.clear()
                 consumer.last_error = ""
+                notifier, consumer.notifier = consumer.notifier, None
             if stop_empty and not channel.consumers:
                 self._channels.pop(key, None)
                 stream = channel.stream
         if stream is not None:
             stream.stop()
+        if notifier is not None:
+            # Outside the lock: a queued quote may still be reaching this
+            # consumer, and its sink can take locks of its own.
+            notifier.shutdown(wait=False)
 
     def _for(self, consumer_id: str) -> _Channel | None:
         with self._lock:
@@ -267,11 +308,17 @@ class ForwardPaperMarketDataHub:
                 self._retry_timer.cancel()
                 self._retry_timer = None
             streams = [channel.stream for channel in self._channels.values()]
+            notifiers = [consumer.notifier
+                         for channel in self._channels.values()
+                         for consumer in channel.consumers.values()
+                         if consumer.notifier is not None]
             self._channels.clear()
             self._consumer_keys.clear()
             pool, self._delivery = self._delivery, None
         for stream in streams:
             stream.stop()
+        for notifier in notifiers:
+            notifier.shutdown(wait=False)
         if pool is not None:
             # Let in-flight candles finish; they hold the consumer's delivery
             # lock and a half-applied one would leave a gap in its history.
