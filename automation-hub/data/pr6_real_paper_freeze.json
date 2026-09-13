@@ -19,7 +19,7 @@
       "verification": "services/native_price_action.py, services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline values, so entry conditions, stop model, target R and the native MTF policy are untouched. The delta in the two lab modules is hydration, status reporting and blocker naming only; no decision or fill-timing path was modified."
     },
     {
-      "commits": ["branch claude/paper-orders-incident-x1pl7x"],
+      "commits": ["e824bfa"],
       "delta": "Add SQLite indexes covering the one-session-newest-first reads that each lab's state() makes. Schema access paths only: no statement, threshold, rule or fill path was changed.",
       "files_rehashed": ["services/price_action_lab.py", "services/smc_strategy_lab.py"],
       "alpha_rules_changed": false,
