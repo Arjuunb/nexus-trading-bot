@@ -302,6 +302,10 @@ export default function TradingInstancesPage({ instanceId }: { instanceId?: stri
                 app.toast("Some positions could not be closed", "error");
                 return;
               }
+              // Clear the refusal the operator just resolved. Leaving it
+              // pinned under the row redisplays the message they acted on,
+              // which is the defect this whole branch exists to fix.
+              setActionErrors((current) => { const next = { ...current }; delete next[instance.id]; return next; });
               app.toast("Open paper positions closed; delete again to remove the instance", "success");
               return;
             } catch (closeError) {

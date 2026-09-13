@@ -374,37 +374,51 @@ class ForwardPaperMarketDataHub:
             )
         return stream
 
-    def _upgrade_channel_to_quotes(self, key: tuple[str, str], channel: _Channel) -> None:
+    def _upgrade_channel_to_quotes(self, key: tuple[str, str], channel: _Channel) -> bool:
         """Swap a kline-only stream for a full one, keeping its consumers.
 
-        The replacement must prove itself before the working stream is touched.
-        Stopping the old one first, or unconditionally, would leave the
-        consumers that were happily receiving candles attached to a dead
-        channel with no retry path -- a worse outcome than the missing quotes
-        this is fixing.
+        Three rules make this safe, each learned from a way it was not:
+
+        * the replacement must prove itself before the working stream is
+          touched, so a failed upgrade never kills a feed that was serving
+          candles perfectly well;
+        * no ``stop()`` runs while the hub lock is held -- stopping a stream
+          joins a thread whose own callbacks take that lock, so it could not
+          finish and would freeze delivery for every symbol in the process;
+        * the channel must still be the registered one when the swap happens,
+          because a concurrent detach can remove it while this is running, and
+          swapping into an orphan leaks a live WebSocket that nothing will ever
+          close.
+
+        Returns whether the channel now carries quotes.
         """
         symbol, timeframe = key
         old_stream = channel.stream
         if old_stream is not None and getattr(old_stream, "quotes_enabled", True):
-            return                          # somebody else already upgraded it
+            return True                     # somebody else already upgraded it
         replacement = self._build_stream(key, channel, quotes=True)
         if not replacement.start(symbol, timeframe):
-            try:
-                replacement.stop()
-            except Exception:  # noqa: BLE001 — it never started
-                pass
-            return                          # the working stream is untouched
+            self._stop_quietly(replacement)
+            return False                    # the working stream is untouched
+        discard = None
         with self._lock:
-            if channel.stream is not old_stream:
-                # Another thread won this upgrade; ours is redundant.
-                replacement.stop()
-                return
-            channel.stream = replacement
-        if old_stream is not None:
-            try:
-                old_stream.stop()
-            except Exception:  # noqa: BLE001 — the replacement is already live
-                pass
+            if self._channels.get(key) is not channel or channel.stream is not old_stream:
+                # Detached, or another thread won this upgrade. Ours is
+                # redundant and must not be left running.
+                discard = replacement
+            else:
+                channel.stream, discard = replacement, old_stream
+        self._stop_quietly(discard)
+        return discard is not replacement
+
+    @staticmethod
+    def _stop_quietly(stream) -> None:
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:  # noqa: BLE001 — a replacement is already live
+            pass
 
     def _start(self, consumer: _Consumer, symbol: str, timeframe: str, *,
                quotes: bool = True) -> bool:
@@ -418,6 +432,13 @@ class ForwardPaperMarketDataHub:
             channel.consumers[consumer.consumer_id] = consumer
             self._consumer_keys[consumer.consumer_id] = key
         started = channel.stream.start(symbol, timeframe)
+        if started and quotes and not getattr(channel.stream, "quotes_enabled", True):
+            # The channel exists and its candles flow, but it carries no
+            # quotes and this consumer needs them -- an upgrade that could not
+            # bootstrap. Reporting success here would park every forward-paper
+            # intent on a feed that can never fill one, while the subscription
+            # reported itself reliable. Fail, and let the caller retry.
+            started = False
         if not started:
             self._detach(consumer.consumer_id, stop_empty=True)
         return started

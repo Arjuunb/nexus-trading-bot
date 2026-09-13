@@ -6,6 +6,7 @@ subscription, a missing higher-timeframe candle, a database error, and the
 ordinary operator actions (pause, stop, delete) taken while other instances
 keep trading.
 """
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -361,12 +362,20 @@ def test_closing_open_positions_unblocks_delete_and_records_the_pnl(tmp_path):
                               "quote_event_id": "dq1",
                               "candle_id": "BINANCE_USDM:BTCUSDT:5m:1"})
     assert len(runtime[1].positions()) == 1
-    runtime[0].last_prices["BTCUSDT"] = 110.0          # a real observed mark
+    # A real observed mark, stamped the way the engine stamps one: last_activity
+    # is written where last_prices is, on a closed candle. A price with no
+    # timestamp cannot be shown to be current and is refused.
+    runtime[0].last_prices["BTCUSDT"] = 110.0
+    runtime[0].last_activity = datetime.now(timezone.utc).isoformat()
+    idle = threading.Event()
+    runtime[0]._thread = threading.Thread(target=idle.wait, daemon=True)
+    runtime[0]._thread.start()
 
     result = manager.close_open_positions(instance.id)
 
     assert [row["symbol"] for row in result["closed"]] == ["BTCUSDT"]
     assert result["remaining"] == []
+    idle.set()
     assert manager.open_position_disposition(instance.id)["deletable"] is True
     # The P&L was realised into the history, not discarded with the instance.
     closed = [row for row in _ledger.get_paper_trades(instance_id=instance.id)
@@ -432,34 +441,83 @@ def test_a_stale_mark_is_not_written_into_trade_history_as_a_fill(tmp_path):
         manager.delete(instance.id)
 
 
-def test_a_second_position_on_one_symbol_is_not_reported_as_closed(tmp_path):
-    """close() resolves one position per symbol; the rest must be reported."""
+def test_a_position_the_engine_will_not_close_is_never_reported_as_realised(tmp_path):
+    """close() resolves one position per symbol and is fail-closed otherwise.
+
+    Whatever the engine declines -- a second position on the same pair, a
+    position whose trade row is missing -- must land in `remaining` with a
+    reason. Counting it as closed would claim a P&L that was never written.
+    """
     _ledger, _hub, manager = _manager(tmp_path)
     instance = _create(manager, "BTCUSDT")
     manager.start(instance.id)
     runtime = manager._runtime[instance.id]
     session = manager._instances[instance.id].simulation_session_id
-    for _each in range(2):
-        runtime[1].ledger.open_position(symbol="BTCUSDT", side="long", size=0.01,
-                                        entry=100.0, stop=95.0)
-    import threading
+    # One well-formed position (position + trade row, as the engine writes it)
+    # and one bare position row, the shape a death between two writes leaves.
+    runtime[1].open(symbol="BTCUSDT", side="BUY", size=0.01, entry=100.0, stop=95.0,
+                    alert_id="pair-1",
+                    sizing_context={"decision_timestamp": datetime.now(timezone.utc).isoformat()})
+    stamp = datetime.now(timezone.utc).isoformat()
+    runtime[1].process_quote({"symbol": "BTCUSDT", "last": 100.0, "bid": 99.9,
+                              "ask": 100.1, "mark": 100.0, "sequence": 1,
+                              "received_at": stamp, "event_timestamp": stamp,
+                              "quote_event_id": "pq1",
+                              "candle_id": "BINANCE_USDM:BTCUSDT:5m:1"})
+    _ledger.open_position(symbol="BTCUSDT", side="long", size=0.02, entry=101.0,
+                          stop=96.0, instance_id=instance.id,
+                          simulation_session_id=session)
     idle = threading.Event()
     runtime[0]._thread = threading.Thread(target=idle.wait, daemon=True)
     runtime[0]._thread.start()
     runtime[0].last_prices["BTCUSDT"] = 110.0
-    runtime[0].last_heartbeat = __import__("datetime").datetime.now(
-        __import__("datetime").timezone.utc).isoformat()
+    runtime[0].last_activity = datetime.now(timezone.utc).isoformat()
 
     result = manager.close_open_positions(instance.id)
 
-    # Every position is accounted for, and nothing the engine declined to
-    # close is reported as realised. The engine is fail-closed about a
-    # position with no trade row, so here both are reported rather than one
-    # silently counted with pnl=None.
+    # Every position is accounted for exactly once.
     assert len(result["closed"]) + len(result["remaining"]) == 2
-    assert len(result["remaining"]) >= 1
-    assert all(row["pnl"] is not None for row in result["closed"])
-    # And a disposal that closed nothing leaves the delete refusal standing.
+    # The one that closed carries a real P&L; the one that did not carries a
+    # reason and is NOT in `closed`.
+    assert len(result["closed"]) == 1
+    assert result["closed"][0]["pnl"] is not None
+    assert len(result["remaining"]) == 1
+    assert result["remaining"][0]["reason"]
+    # And the delete refusal stands while anything is still open.
     assert manager.open_position_disposition(instance.id)["deletable"] is False
     idle.set()
-    manager.shutdown()
+
+
+def test_a_position_from_an_earlier_session_can_still_be_closed(tmp_path):
+    """The worker's engine is scoped to the CURRENT session.
+
+    A position left by a previous paper session was invisible to it, so the
+    close reported a no-op and the delete refusal was a dead end with no route
+    forward at all.
+    """
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    runtime = manager._runtime[instance.id]
+    # A position and its trade row under an OLD session id.
+    _ledger.open_position_and_trade(
+        position={"symbol": "BTCUSDT", "side": "long", "size": 0.01, "entry": 100.0,
+                  "stop": 95.0, "instance_id": instance.id,
+                  "simulation_session_id": "session-from-before"},
+        trade={"alert_id": "old", "symbol": "BTCUSDT", "side": "long", "size": 0.01,
+               "entry": 100.0, "stop": 95.0, "status": "open",
+               "instance_id": instance.id,
+               "simulation_session_id": "session-from-before"},
+        execution_id="old-open")
+    idle = threading.Event()
+    runtime[0]._thread = threading.Thread(target=idle.wait, daemon=True)
+    runtime[0]._thread.start()
+    runtime[0].last_prices["BTCUSDT"] = 110.0
+    runtime[0].last_activity = datetime.now(timezone.utc).isoformat()
+
+    result = manager.close_open_positions(instance.id)
+
+    assert [row["symbol"] for row in result["closed"]] == ["BTCUSDT"]
+    assert result["remaining"] == []
+    assert manager.open_position_disposition(instance.id)["deletable"] is True
+    idle.set()

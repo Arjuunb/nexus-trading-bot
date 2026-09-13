@@ -124,10 +124,7 @@ def reconcile(manager, instance_id: str, *,
                                and str(row.get("status")) == "open"]}))
 
     # --- durable state claims a running worker; is one actually there?
-    runtime = manager._runtime.get(instance_id)
-    thread = getattr(runtime[0], "_thread", None) if runtime else None
-    worker_alive = bool(runtime and runtime[0].running
-                        and thread is not None and thread.is_alive())
+    worker_alive = manager.worker_alive(instance_id)
     if expect_worker and inst.state == "running" and not worker_alive:
         result.findings.append(Finding(
             "worker_matches_state", BLOCKING,

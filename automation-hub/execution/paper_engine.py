@@ -30,6 +30,11 @@ class FillResult:
     trade_id: str = ""
     fee: float = 0.0            # round-trip commission charged on this fill
     execution_id: str = ""
+    #: Why this fill was refused, when it was. Carried here rather than on the
+    #: engine: one engine is shared by the decision thread and the hub's quote
+    #: notifier, so a field would let one thread erase or overwrite the other's
+    #: reason between the rejection and the read.
+    reason: str = ""
 
 
 def _dir(side: str) -> str:
@@ -49,9 +54,6 @@ class PaperExecutionEngine:
         # (current equity / available / realized) so capital survives a restart.
         self.account_store = None
         self.equity_listener = None  # optional callable(current_realized_equity)
-        # The most recent named refusal from this engine, so a rejection can be
-        # attributed rather than collapsing into "execution model".
-        self.last_blocker: Optional[str] = None
         # H-5: history() is read ~10x per signal (PnL/streak/Kelly/curve).
         # Cache the closed-trade list and invalidate on any write, so one
         # process() call scans the ledger once, not ten times.
@@ -177,27 +179,22 @@ class PaperExecutionEngine:
         account was previously able to park a $6,000,000 order and drive
         available capital to -6,004,190.
         """
-        # Cleared first. A blocker that outlives its own rejection made every
-        # later refusal -- an ordinary simulated fill rejection included -- read
-        # as a systematic capital stop, and it was never reset on success
-        # either, so it stayed wrong for the life of the engine.
-        self.last_blocker = None
         try:
             notional = abs(float(size)) * abs(float(entry))
             reference = float(entry)
         except (TypeError, ValueError):
-            self.last_blocker = self.UNFUNDED_BLOCKER
-            return FillResult("rejected", symbol, _dir(side), 0.0, 0.0)
+            return FillResult("rejected", symbol, _dir(side), 0.0, 0.0,
+                              reason=self.UNFUNDED_BLOCKER)
         if notional <= 0:
             return None
         available = self.available_balance()
         if notional > available + 1e-9:
-            self.last_blocker = self.UNFUNDED_BLOCKER
             self.ledger.log(
                 level="warning", stage="execution", symbol=symbol,
                 message=(f"{self.UNFUNDED_BLOCKER}: {symbol} notional {notional:.2f} "
                          f"exceeds uncommitted paper capital {available:.2f}"))
-            return FillResult("rejected", symbol, _dir(side), 0.0, reference)
+            return FillResult("rejected", symbol, _dir(side), 0.0, reference,
+                              reason=self.UNFUNDED_BLOCKER)
         return None
 
     def open(self, *, symbol: str, side: str, size: float, entry: float,

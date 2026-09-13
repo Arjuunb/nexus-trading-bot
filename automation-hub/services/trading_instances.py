@@ -1277,6 +1277,21 @@ class TradingInstanceManager:
             return lock
 
     # ------------------------------------------------------------ ownership
+    def worker_alive(self, instance_id: str) -> bool:
+        """Is there a live execution runtime for this instance, right now?
+
+        One definition, because six hand-inlined copies of it meant a future
+        change to what "alive" means -- an added lease or heartbeat condition,
+        say -- had to be found in six places, and a miss would silently make
+        two parts of the platform disagree about whether a worker exists.
+        """
+        runtime = self._runtime.get(instance_id)
+        if runtime is None:
+            return False
+        engine = runtime[0]
+        thread = getattr(engine, "_thread", None)
+        return bool(engine.running and thread is not None and thread.is_alive())
+
     def instance_for(self, instance_id: str, owner_id: str | None = None) -> TradingInstance:
         """Look one instance up, verifying ownership when an owner is supplied.
 
@@ -1470,12 +1485,14 @@ class TradingInstanceManager:
         positions = InstanceLedger(self.ledger, instance_id).get_positions("open")
         runtime = self._runtime.get(instance_id)
         engine = runtime[0] if runtime else None
-        thread = getattr(engine, "_thread", None) if engine else None
-        worker_alive = bool(engine and engine.running
-                            and thread is not None and thread.is_alive())
+        worker_alive = self.worker_alive(instance_id)
         status = engine.status() if engine else {}
         marks = status.get("last_prices") or {}
-        mark_age = _age_seconds(status.get("last_heartbeat"))
+        # last_activity is stamped where last_prices is written -- on a closed
+        # candle. last_heartbeat is bumped on every loop pass, so a worker whose
+        # feed stalled for hours still looked fresh by it, and a 1h instance was
+        # always "fresh" while its mark was up to a full timeframe old.
+        mark_age = _age_seconds(status.get("last_activity"))
         fresh = (worker_alive and mark_age is not None
                  and mark_age <= self.DISPOSAL_MARK_MAX_AGE_S)
         rows = []
@@ -1541,6 +1558,7 @@ class TradingInstanceManager:
                 return {"instance_id": instance_id, "closed": [], "remaining": []}
             inst = self._instances[instance_id]
             runtime = self._runtime.get(instance_id)
+            from services.fill_model import from_name as fill_model_from_name
             closed, remaining = [], []
             for row in disposition["open_positions"]:
                 if not row["mark_available"]:
@@ -1551,12 +1569,18 @@ class TradingInstanceManager:
                 # the worker's current one: a position left by an earlier paper
                 # session is exactly what the delete guard blocks on, and the
                 # session-scoped engine cannot see it.
-                scoped = InstanceLedger(self.ledger, instance_id,
-                                        str(row.get("simulation_session_id") or ""))
-                engine = (runtime[1] if runtime is not None
-                          else ForwardPaperExecutionEngine(scoped, inst.starting_equity))
-                if runtime is None:
-                    engine.ledger = scoped
+                # Close against a ledger scoped to the session that OWNS this
+                # position. The worker's engine is scoped to the current
+                # session, so a position left by an earlier one was invisible
+                # to it: close() found nothing, reported a no-op, and the
+                # delete stayed refused with no way forward at all.
+                engine = runtime[1] if runtime is not None else None
+                owning_session = str(row.get("simulation_session_id") or "")
+                if engine is None or owning_session != inst.simulation_session_id:
+                    engine = PaperExecutionEngine(
+                        InstanceLedger(self.ledger, instance_id, owning_session),
+                        inst.starting_equity,
+                        fill_model=fill_model_from_name(inst.fill_model))
                 try:
                     fill = engine.close(symbol=row["symbol"], exit_price=float(row["mark"]),
                                         execution_id=f"dispose:{instance_id}:{row['position_id']}")
@@ -2702,7 +2726,7 @@ class TradingInstanceManager:
             inst = self.instance_for(instance_id, owner_id)
             open_positions = InstanceLedger(self.ledger, instance_id).get_positions("open")
             trade_history = self.ledger.get_paper_trades(instance_id=instance_id)
-            prior_state = inst.state
+            prior_state, prior_error = inst.state, inst.last_error
             had_runtime = instance_id in self._runtime
             candidate_capital = float(capital_allocation if capital_allocation is not None else inst.capital_allocation)
             if not math.isfinite(candidate_capital) or candidate_capital <= 0:
@@ -2856,6 +2880,11 @@ class TradingInstanceManager:
                 # "starting" with no worker is the state the four-axis contract
                 # exists to make impossible.
                 inst.state = prior_state
+                if prior_state in ("error", "blocked", "degraded"):
+                    # An edit does not resolve a reconciliation failure or a
+                    # terminal fault, so the state must not come back stripped
+                    # of the reason that explains it.
+                    inst.last_error = prior_error
                 self.store.save(inst)
             elif had_runtime and instance_id in self._runtime:
                 # Risk and position-cap changes affect future entries only and
@@ -3417,9 +3446,7 @@ class TradingInstanceManager:
         registry_row = registry_entry(inst.strategy_key)
         requires_htf = bool(registry_row and any(
             item.startswith("native_") for item in registry_row.required_data))
-        worker_thread = getattr(runtime[0], "_thread", None) if runtime else None
-        worker_alive = bool(runtime and runtime[0].running
-                            and worker_thread is not None and worker_thread.is_alive())
+        worker_alive = self.worker_alive(instance_id)
         contract = status_contract.build(
             instance=inst, engine=engine,
             market={**market, "_worker_state": state,

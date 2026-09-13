@@ -587,13 +587,39 @@ def test_a_claim_never_makes_the_duplicate_guard_trip():
                                 stop=0.5, payload={}, status="claimed",
                                 instance_id="inst-1")
     assert DuplicateGuard(ledger, window_seconds=0).is_duplicate("auto:x") is False
+
     # The remote ledger excluded only 'rejected', so a stranded claim blocked
-    # the candle there and nowhere else.
-    assert "claimed" in inspect.getsource(SupabaseLedger.webhook_seen)
+    # the candle there and nowhere else. Asserted against the query it builds,
+    # not against its comment -- a source-text check the comment itself
+    # satisfies cannot fail when the behaviour regresses.
+    recorded = {}
+
+    class _Query:
+        def select(self, *_a, **_k): return self
+        def eq(self, *_a, **_k): return self
+        def gte(self, *_a, **_k): return self
+        def neq(self, key, value):
+            recorded.setdefault("neq", []).append((key, value)); return self
+        @property
+        def not_(self): return self
+        def in_(self, key, values):
+            recorded["excluded"] = list(values); return self
+        def limit(self, *_a, **_k): return self
+        def execute(self): return type("R", (), {"data": []})()
+
+    remote = SupabaseLedger.__new__(SupabaseLedger)
+    remote._t = lambda _name: _Query()
+    assert remote.webhook_seen("auto:x", "1970-01-01T00:00:00+00:00") is False
+    assert "claimed" in recorded.get("excluded", []), recorded
 
 
-def test_a_rejected_entry_does_not_mislabel_the_next_one():
-    """last_blocker must describe THIS attempt, not a previous one."""
+def test_a_rejection_reason_travels_on_the_result_not_on_the_engine():
+    """One engine is shared by the decision thread and the quote notifier.
+
+    A reason parked on the engine could be erased or overwritten by the other
+    thread between the rejection and the read, hiding a systematic capital stop
+    behind a random-rejection reason.
+    """
     from execution.paper_engine import PaperExecutionEngine
     from services.fill_model import RealisticFill
     from services.trading_instances import InstanceLedger
@@ -602,11 +628,15 @@ def test_a_rejected_entry_does_not_mislabel_the_next_one():
     engine = PaperExecutionEngine(InstanceLedger(ledger, "inst-1"), 1_000,
                                   fill_model=RealisticFill(reject_prob=1.0))
 
-    engine.open(symbol="BTCUSDT", side="BUY", size=100.0, entry=60_000.0,
-                stop=59_000.0, alert_id="unfunded")
-    assert engine.last_blocker == engine.UNFUNDED_BLOCKER
+    unfunded = engine.open(symbol="BTCUSDT", side="BUY", size=100.0, entry=60_000.0,
+                           stop=59_000.0, alert_id="unfunded")
+    assert unfunded.action == "rejected"
+    assert unfunded.reason == engine.UNFUNDED_BLOCKER
 
-    # An affordable order rejected by the fill model is a different thing.
-    engine.open(symbol="BTCUSDT", side="BUY", size=0.001, entry=100.0,
-                stop=95.0, alert_id="fill-reject")
-    assert engine.last_blocker != engine.UNFUNDED_BLOCKER
+    # An affordable order rejected by the fill model is a different thing, and
+    # the earlier rejection cannot colour it.
+    fill_rejected = engine.open(symbol="BTCUSDT", side="BUY", size=0.001, entry=100.0,
+                                stop=95.0, alert_id="fill-reject")
+    assert fill_rejected.action == "rejected"
+    assert fill_rejected.reason != engine.UNFUNDED_BLOCKER
+    assert not hasattr(engine, "last_blocker")

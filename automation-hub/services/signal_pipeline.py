@@ -945,11 +945,13 @@ class SignalPipeline:
             # legitimate retry of this candle is not mistaken for a duplicate
             # and a trade that never happened silently suppressed.
             self._release_order_claim(alert_id)
-            # Prefer the engine's own named reason. A guard whose refusal shows
-            # up as "execution model" is indistinguishable from a random
-            # simulated rejection, which is how a systematic stop hides.
-            named = getattr(self.paper, "last_blocker", None)
-            return reject("execution", named or "Order rejected at fill (execution model)")
+            # The reason travels on the result. Reading it off the engine let
+            # the hub's quote thread overwrite it between the rejection and
+            # this line, hiding a systematic capital stop behind a
+            # random-rejection reason.
+            return reject("execution",
+                          getattr(fill, "reason", "")
+                          or "Order rejected at fill (execution model)")
         if fill.action == "intent":
             try:
                 # The claim becomes this order's one row. Inserting a second
@@ -967,6 +969,11 @@ class SignalPipeline:
                 # after a reconnect, or two threads racing the guard's
                 # read-then-insert. The intent already exists, so this is a
                 # no-op success, not a second order and not an error.
+                #
+                # The claim still has to go: the final row already exists under
+                # this key, so a surviving claim would bar the candle forever
+                # with nothing to age it out.
+                self._release_order_claim(alert_id)
                 steps.append(Step("execution", True, "duplicate intent suppressed by idempotency key"))
                 return PipelineResult(
                     False, "dedup", f"order intent already recorded: {exc}",
@@ -997,7 +1004,9 @@ class SignalPipeline:
         except DuplicateOrderIntent as exc:
             # Reaching here means the fill already happened and was recorded
             # under this key. Reporting success would double-count it in the
-            # caller's statistics, so report the duplicate plainly.
+            # caller's statistics, so report the duplicate plainly -- and drop
+            # the claim, which would otherwise bar this candle permanently.
+            self._release_order_claim(alert_id)
             steps.append(Step("execution", True, "duplicate fill suppressed by idempotency key"))
             return PipelineResult(False, "dedup", f"order already recorded: {exc}", steps, {})
         open_msg = f"{symbol} {side} opened {size:.6f} @ {entry}"

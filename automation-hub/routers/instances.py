@@ -286,15 +286,12 @@ def instance_runtime_health(request: Request = None):  # noqa: B008
     # account every instance_id on the deployment, which is exactly the
     # enumeration the 404-not-403 rule elsewhere exists to prevent.
     for inst in manager.owned_instances(_owner(request)):
-        runtime = manager._runtime.get(inst.id)
-        thread = getattr(runtime[0], "_thread", None) if runtime else None
         rows.append({
             "instance_id": inst.id, "symbol": inst.symbol,
             "timeframe": inst.timeframe, "strategy_id": inst.strategy_key,
             "mode": inst.mode, "state": inst.state,
             "desired_running": inst.desired_running,
-            "worker_alive": bool(runtime and runtime[0].running
-                                 and thread is not None and thread.is_alive()),
+            "worker_alive": manager.worker_alive(inst.id),
         })
     return {
         "supervisor": supervisor.status() if supervisor is not None else

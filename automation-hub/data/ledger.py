@@ -721,7 +721,18 @@ class SupabaseLedger:
         }
         if instance_id:
             row["instance_id"] = instance_id
-        self._t("webhook_events").insert(row).execute()
+        try:
+            self._t("webhook_events").insert(row).execute()
+        except Exception as exc:
+            # Same translation as SqliteLedger. The unique index rejected a
+            # repeat of an idempotency key this instance has already acted on;
+            # callers handle DuplicateOrderIntent, and a raw PostgREST error
+            # would escape the pipeline and kill the decision cycle.
+            if self._is_duplicate_key(exc):
+                raise DuplicateOrderIntent(
+                    f"alert_id {alert_id!r} already recorded for instance "
+                    f"{instance_id or 'legacy'}") from exc
+            raise
         return wid
 
     def promote_webhook_event(self, *, alert_id, status, entry=None,
@@ -734,10 +745,28 @@ class SupabaseLedger:
             values["payload_json"] = json.dumps(payload)
 
         def update():
-            return (self._t("webhook_events").update(values)
-                    .eq("alert_id", alert_id).eq("instance_id", instance_id or "")
-                    .eq("status", "claimed").execute())
-        return bool(getattr(remote_call_with_retry(update), "data", None))
+            query = (self._t("webhook_events").update(values)
+                     .eq("alert_id", alert_id).eq("status", "claimed"))
+            query = (query.eq("instance_id", instance_id) if instance_id
+                     else query.is_("instance_id", "null"))
+            return query.execute()
+        try:
+            return bool(getattr(remote_call_with_retry(update), "data", None))
+        except Exception as exc:
+            # Translate the constraint the way SqliteLedger does. Callers
+            # handle DuplicateOrderIntent; a raw PostgREST error escapes the
+            # pipeline and kills the decision cycle instead.
+            if self._is_duplicate_key(exc):
+                raise DuplicateOrderIntent(
+                    f"alert_id {alert_id!r} already recorded as {status!r} for instance "
+                    f"{instance_id or 'legacy'}") from exc
+            raise
+
+    @staticmethod
+    def _is_duplicate_key(exc: Exception) -> bool:
+        """Does this PostgREST error mean a unique constraint rejected the row?"""
+        text = f"{getattr(exc, 'code', '')} {exc}".lower()
+        return "23505" in text or "duplicate key" in text or "already exists" in text
 
     def release_webhook_claim(self, alert_id, instance_id=""):  # pragma: no cover
         """Drop an idempotency claim that never became an order.
@@ -748,9 +777,15 @@ class SupabaseLedger:
         exactly the deployment shape with no other recourse.
         """
         def drop():
-            return (self._t("webhook_events").delete()
-                    .eq("alert_id", alert_id).eq("instance_id", instance_id or "")
-                    .eq("status", "claimed").execute())
+            query = (self._t("webhook_events").delete()
+                     .eq("alert_id", alert_id).eq("status", "claimed"))
+            # insert_webhook_event only sets instance_id when it is non-empty,
+            # so an unscoped claim lands as NULL. An eq("") comparison never
+            # matches NULL in PostgREST, which left exactly those claims
+            # stranded on the backend that has nothing to age them out.
+            query = (query.eq("instance_id", instance_id) if instance_id
+                     else query.is_("instance_id", "null"))
+            return query.execute()
         return len(getattr(remote_call_with_retry(drop), "data", None) or [])
 
     def webhook_seen(self, alert_id, since_iso, instance_id=""):  # pragma: no cover

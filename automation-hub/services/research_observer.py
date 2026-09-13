@@ -121,16 +121,21 @@ class ResearchObservationRuntime:
         while not self._supervisor_stop.is_set():
             try:
                 if not self.attached():
-                    # _attach() reports failure by returning False, not by
-                    # raising. Clearing on "did not raise" inverted the
-                    # reported state: a persistently failing reattach cleared
-                    # the error on every tick while the observer was fully
-                    # detached. Clear only on a reattach that actually worked.
-                    if self._attach():
-                        with self._lock:
+                    # _attach() reports failure by RETURNING False, not by
+                    # raising, so the outcome has to be read. Clearing on "did
+                    # not raise" cleared the error on every tick while the
+                    # observer was fully detached; never setting one left a
+                    # detached observer reporting no reason at all.
+                    reattached = self._attach()
+                    with self._lock:
+                        if reattached:
                             if self._last_error.startswith(
                                     "research observer reattach failed"):
                                 self._last_error = ""
+                        else:
+                            self._last_error = (
+                                "research observer reattach failed: one or more "
+                                "subscriptions did not start")
             except Exception as exc:  # noqa: BLE001 — an optional observer
                 with self._lock:                 # must never kill its own loop
                     self._last_error = f"research observer reattach failed: {exc}"

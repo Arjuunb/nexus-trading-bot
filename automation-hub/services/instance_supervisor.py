@@ -118,12 +118,7 @@ class InstanceSupervisor:
 
     # ---------------------------------------------------------------- sweep
     def _worker_alive(self, instance_id: str) -> bool:
-        runtime = self.manager._runtime.get(instance_id)
-        if runtime is None:
-            return False
-        engine = runtime[0]
-        thread = getattr(engine, "_thread", None)
-        return bool(engine.running and thread is not None and thread.is_alive())
+        return self.manager.worker_alive(instance_id)
 
     def sweep(self) -> list[dict]:
         """One reconciliation pass. Returns what it did, for tests and status."""

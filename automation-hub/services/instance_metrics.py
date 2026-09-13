@@ -53,15 +53,13 @@ def instance_metrics(manager, instance_id: str) -> dict:
     status = engine.status() if engine is not None else {}
     subscription = status.get("websocket") or {}
     delivery = subscription.get("subscriber_delivery") or {}
-    thread = getattr(engine, "_thread", None) if engine else None
     return {
         "instance_id": instance_id,
         "symbol": inst.symbol,
         "strategy_id": inst.strategy_key,
         "timeframe": inst.timeframe,
         "state": inst.state,
-        "worker_alive": bool(engine is not None and engine.running
-                             and thread is not None and thread.is_alive()),
+        "worker_alive": manager.worker_alive(instance_id),
         # "Did the strategy get asked?" -- bars is the count of closed candles
         # actually handed to it. Zero bars with a live worker is the signature
         # of a feed that never delivered, which no P&L number can tell you.
