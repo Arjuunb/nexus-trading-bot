@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
-from services.trading_instances import MAX_ACTIVE_SLOTS_CEILING
+from services.trading_instances import MAX_ACTIVE_SLOTS_CEILING, WorkerLeaseError
 
 router = APIRouter()
 
@@ -138,6 +138,44 @@ def _manager():
     return manager
 
 
+def _owner(request: Request | None) -> str:
+    """The tenant this request may act on.
+
+    Every instance-scoped route resolves this and passes it down. An
+    instance_id on its own is a guessable string; without an ownership check
+    it would be the only thing standing between one account's session and
+    another account's running worker the moment this deployment stops being
+    single-owner. Today resolve_tenant() returns the owner for everyone, so
+    behaviour is unchanged -- what changes is that the check now exists and is
+    tested, instead of being a thing to remember later.
+    """
+    from services.tenancy import OWNER_TENANT, multi_user_enabled, resolve_tenant
+    if request is None or not multi_user_enabled():
+        # Single-owner deployment: every caller is the owner, exactly as
+        # before. Deliberately NOT app._tenant(), which returns the Supabase
+        # UUID even while multi-user is off -- that would re-home every
+        # existing instance (they carry the owner tenant) and show an admin an
+        # empty list. The tenancy switch stays the one thing that changes this.
+        return OWNER_TENANT
+    try:
+        app_module = importlib.import_module("app")
+        return resolve_tenant(app_module._user(request)) or OWNER_TENANT
+    except Exception:  # pragma: no cover - direct router consumers
+        return OWNER_TENANT
+
+
+def _owned(manager, instance_id: str, request: Request | None):
+    """Resolve an instance the caller actually owns, or 404.
+
+    404 rather than 403 deliberately: a different answer for "exists but is
+    not yours" would let one account enumerate another's instance ids.
+    """
+    try:
+        return manager.instance_for(instance_id, _owner(request))
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+
+
 def _initiated_by(request: Request) -> str:
     """Return authenticated identity without logging credentials."""
     try:
@@ -229,19 +267,22 @@ def instance_options():
     }
 
 
-def _start_instance(manager, instance_id: str, *, restart: bool = False):
+def _start_instance(manager, instance_id: str, *, restart: bool = False,
+                    owner_id: Optional[str] = None):
     """Enter instance-first execution without mixing legacy account trades."""
     if _wa.engine.running:
         _wa.engine.stop("Trading Instance started — legacy multi-pair engine disabled to preserve attribution")
         _wa.ledger.log(level="info", stage="instance",
                        message="Legacy multi-pair engine stopped before Trading Instance execution")
-    return manager.restart(instance_id) if restart else manager.start(instance_id)
+    return (manager.restart(instance_id, owner_id=owner_id) if restart
+            else manager.start(instance_id, owner_id=owner_id))
 
 
 @router.get("/instances")
-def list_instances():
+def list_instances(request: Request = None):  # noqa: B008 - FastAPI injects it
     manager = _manager()
-    rows, positions, trades = manager.snapshot()
+    owner = _owner(request)
+    rows, positions, trades = manager.snapshot(owner_id=owner)
     return {"instances": rows, **manager.platform_status(
         runtime_states=rows, open_positions=positions, instance_trades=trades)}
 
@@ -304,7 +345,8 @@ def auto_select_instance(x_webhook_secret: Optional[str] = Header(default=None))
 
 
 @router.post("/instances")
-def create_instance(body: InstanceCreate, x_webhook_secret: Optional[str] = Header(default=None)):
+def create_instance(body: InstanceCreate, request: Request = None,  # noqa: B008
+                    x_webhook_secret: Optional[str] = Header(default=None)):
     _wa._check_secret(x_webhook_secret)
     manager = _manager()
     defaults = manager.instance_defaults
@@ -344,6 +386,7 @@ def create_instance(body: InstanceCreate, x_webhook_secret: Optional[str] = Head
                                  minimum_equity=body.minimum_equity,
                                  entry_mode=entry_mode, fill_model=fill_model,
                                  exchange=body.exchange, instrument_type=body.instrument_type,
+            owner_id=_owner(request),
                                  max_open_positions=max_open_positions)
     except ValueError as exc:
         raise HTTPException(409, str(exc))
@@ -354,11 +397,12 @@ def create_instance(body: InstanceCreate, x_webhook_secret: Optional[str] = Head
 
 
 @router.delete("/instances/{instance_id}")
-def delete_instance(instance_id: str, x_webhook_secret: Optional[str] = Header(default=None)):
+def delete_instance(instance_id: str, request: Request = None,  # noqa: B008
+                    x_webhook_secret: Optional[str] = Header(default=None)):
     _wa._check_secret(x_webhook_secret)
     manager = _manager()
     try:
-        deleted_id = manager.delete(instance_id)
+        deleted_id = manager.delete(instance_id, owner_id=_owner(request))
     except KeyError:
         raise HTTPException(404, "Trading instance not found")
     except ValueError as exc:
@@ -378,15 +422,17 @@ def instance_leaderboard(sort: str = "realized_pnl"):
 
 
 @router.get("/instances/{instance_id}")
-def instance_detail(instance_id: str):
-    try: return _manager().status(instance_id)
-    except KeyError: raise HTTPException(404, "Trading instance not found")
+def instance_detail(instance_id: str, request: Request = None):  # noqa: B008
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    return manager.status(instance_id)
 
 
 @router.patch("/instances/{instance_id}")
-def update_instance(instance_id: str, body: InstanceUpdate,
+def update_instance(instance_id: str, body: InstanceUpdate, request: Request = None,  # noqa: B008
                     x_webhook_secret: Optional[str] = Header(default=None)):
     _wa._check_secret(x_webhook_secret)
+    _owned(_manager(), instance_id, request)
     try:
         if (body.risk_per_trade_pct is not None
                 and body.risk_per_trade_pct > _manager().max_instance_risk_per_trade_pct):
@@ -437,6 +483,7 @@ def restart_simulation_account(instance_id: str, body: SimulationAccountRestart,
     _wa._check_secret(x_webhook_secret)
     if not body.confirm:
         raise HTTPException(400, "Explicit confirmation is required to restart a simulation account")
+    _owned(_manager(), instance_id, request)
     try:
         return _manager().restart_simulation_account(
             instance_id, initiated_by=_initiated_by(request))
@@ -449,43 +496,43 @@ def restart_simulation_account(instance_id: str, body: SimulationAccountRestart,
 
 
 @router.get("/instances/{instance_id}/simulation-sessions")
-def simulation_sessions(instance_id: str):
+def simulation_sessions(instance_id: str, request: Request = None):  # noqa: B008
     manager = _manager()
-    try:
-        manager.status(instance_id)
-    except KeyError:
-        raise HTTPException(404, "Trading instance not found")
+    _owned(manager, instance_id, request)
     return {"sessions": manager.store.simulation_sessions(instance_id)}
 
 
 @router.post("/instances/{instance_id}/{action}")
-def instance_action(instance_id: str, action: str, x_webhook_secret: Optional[str] = Header(default=None)):
+def instance_action(instance_id: str, action: str, request: Request = None,  # noqa: B008
+                    x_webhook_secret: Optional[str] = Header(default=None)):
     _wa._check_secret(x_webhook_secret)
     manager = _manager()
+    owner = _owner(request)
+    _owned(manager, instance_id, request)
     try:
-        if action == "start": inst = _start_instance(manager, instance_id)
-        elif action == "stop": inst = manager.stop(instance_id)
-        elif action == "pause": inst = manager.pause(instance_id)
-        elif action == "resume": inst = manager.resume(instance_id)
-        elif action == "restart": inst = _start_instance(manager, instance_id, restart=True)
+        if action == "start": inst = _start_instance(manager, instance_id, owner_id=owner)
+        elif action == "stop": inst = manager.stop(instance_id, owner_id=owner)
+        elif action == "pause": inst = manager.pause(instance_id, owner_id=owner)
+        elif action == "resume": inst = manager.resume(instance_id, owner_id=owner)
+        elif action == "restart": inst = _start_instance(manager, instance_id, restart=True, owner_id=owner)
         else: raise HTTPException(404, "Unknown instance action")
     except KeyError: raise HTTPException(404, "Trading instance not found")
+    except WorkerLeaseError as exc: raise HTTPException(409, str(exc))
     except ValueError as exc: raise HTTPException(409, str(exc))
     except RuntimeError as exc: raise HTTPException(503, str(exc))
     return {"instance": manager.status(inst.id)}
 
 
 @router.get("/instances/{instance_id}/status")
-def instance_status(instance_id: str):
+def instance_status(instance_id: str, request: Request = None):  # noqa: B008
     """The truthful four-axis status for one instance.
 
     Separated from the full detail payload so a status poll does not have to
     pull metrics, performance and the decision journal with it.
     """
-    try:
-        row = _manager().status(instance_id)
-    except KeyError:
-        raise HTTPException(404, "Trading instance not found")
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    row = manager.status(instance_id)
     return {key: row[key] for key in (
         "id", "symbol", "strategy_key", "strategy_label", "strategy_version",
         "strategy_lifecycle", "timeframe", "mode", "state", "ui_status",
@@ -498,12 +545,9 @@ def instance_status(instance_id: str):
 
 
 @router.get("/instances/{instance_id}/positions")
-def instance_positions(instance_id: str):
+def instance_positions(instance_id: str, request: Request = None):  # noqa: B008
     manager = _manager()
-    try:
-        inst = manager._instances[instance_id]
-    except KeyError:
-        raise HTTPException(404, "Trading instance not found")
+    inst = _owned(manager, instance_id, request)
     return {"instance_id": instance_id,
             "positions": _wa.ledger.get_positions(
                 "open", instance_id=instance_id,
@@ -511,7 +555,7 @@ def instance_positions(instance_id: str):
 
 
 @router.get("/instances/{instance_id}/orders")
-def instance_orders(instance_id: str):
+def instance_orders(instance_id: str, request: Request = None):  # noqa: B008
     """Working forward-paper intents and resting strategy limits.
 
     A forward-paper entry is an intent until a Binance quote fills it, so
@@ -519,10 +563,7 @@ def instance_orders(instance_id: str):
     exists or ever will.
     """
     manager = _manager()
-    try:
-        manager._instances[instance_id]
-    except KeyError:
-        raise HTTPException(404, "Trading instance not found")
+    _owned(manager, instance_id, request)
     pending = manager.store.market_state(instance_id).get("pending_orders_json") or {}
     return {"instance_id": instance_id,
             "forward_paper_intents": pending.get("forward_paper_intents") or {},
@@ -532,24 +573,19 @@ def instance_orders(instance_id: str):
 
 
 @router.get("/instances/{instance_id}/metrics")
-def instance_metrics(instance_id: str):
+def instance_metrics(instance_id: str, request: Request = None):  # noqa: B008
     manager = _manager()
-    try:
-        row = manager.status(instance_id)
-    except KeyError:
-        raise HTTPException(404, "Trading instance not found")
+    _owned(manager, instance_id, request)
+    row = manager.status(instance_id)
     return {"instance_id": instance_id, "metrics": row["metrics"],
             "performance": row["performance"], "execution": row["execution"],
             "risk": row["risk"], "worker_counts": row["worker_counts"]}
 
 
 @router.get("/instances/{instance_id}/trades")
-def instance_trades(instance_id: str):
+def instance_trades(instance_id: str, request: Request = None):  # noqa: B008
     manager = _manager()
-    try:
-        inst = manager._instances[instance_id]
-    except KeyError:
-        raise HTTPException(404, "Trading instance not found")
+    inst = _owned(manager, instance_id, request)
     # Scoped to the instance AND its current simulation session. Without the
     # session scope a restarted paper account still returned the previous
     # session's trades, so the trade list disagreed with the balance and the
@@ -562,12 +598,9 @@ def instance_trades(instance_id: str):
 
 
 @router.get("/instances/{instance_id}/logs")
-def instance_logs(instance_id: str, limit: int = 100):
+def instance_logs(instance_id: str, limit: int = 100, request: Request = None):  # noqa: B008
     manager = _manager()
-    try:
-        manager._instances[instance_id]
-    except KeyError:
-        raise HTTPException(404, "Trading instance not found")
+    _owned(manager, instance_id, request)
     limit = max(1, min(limit, 500))
     # Both halves of this instance's record: the trading log and the worker's
     # own lifecycle timeline. The lifecycle events were written to
@@ -608,3 +641,23 @@ def instance_runtime_health():
         "workers": sorted(rows, key=lambda row: row["symbol"]),
         "market_data_channels": hub.channel_report() if hasattr(hub, "channel_report") else [],
     }
+
+
+@router.get("/instances/runtime/metrics")
+def instance_runtime_metrics(request: Request = None):  # noqa: B008
+    """Counters that separate "found no setup" from "never evaluated".
+
+    Both produce zero trades. Only these tell them apart.
+    """
+    from services.instance_metrics import platform_metrics
+    return platform_metrics(_manager(), supervisor=getattr(_wa, "instance_supervisor", None),
+                            owner_id=_owner(request))
+
+
+@router.get("/instances/{instance_id}/reconciliation")
+def instance_reconciliation(instance_id: str, request: Request = None):  # noqa: B008
+    """Cross-check this instance's durable records on demand. Read-only."""
+    from services.instance_reconciliation import reconcile
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    return reconcile(manager, instance_id).public()

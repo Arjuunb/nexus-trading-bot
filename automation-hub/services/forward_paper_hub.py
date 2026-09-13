@@ -21,6 +21,17 @@ from services.mtf_policy import canonical_candle_id
 from services.price_action_stream import PriceActionPublicStream
 
 
+#: How far a consumer's candle backlog may grow before the hub stops accepting
+#: more for it and reports it unreliable. Sized well above any legitimate
+#: burst (a REST reconciliation replays at most a few candles) so it is only
+#: ever reached by a sink that has genuinely stopped keeping up.
+MAX_PENDING_CANDLES = 256
+
+#: How deep a consumer's quote queue may get before quotes are dropped rather
+#: than delivered late at a price that no longer exists.
+MAX_PENDING_QUOTES = 512
+
+
 def candle_id(symbol: str, timeframe: str, bar: Bar) -> str:
     return canonical_candle_id(symbol, timeframe, bar)
 
@@ -41,6 +52,11 @@ class _Consumer:
     pending: OrderedDict = field(default_factory=OrderedDict)
     delivery_lock: threading.Lock = field(default_factory=threading.Lock)
     last_error: str = ""
+    # High-water mark of this consumer's candle backlog, for queue-depth
+    # telemetry. A depth that keeps growing is the signal that a sink cannot
+    # keep up with the feed.
+    peak_pending: int = 0
+    dropped_quotes: int = 0
     # One worker, so this consumer's quotes and events reach it in arrival
     # order. A shared pool would let two quotes run at once, and the broker
     # keeps a per-symbol quote cursor that rejects anything not newer than the
@@ -88,10 +104,17 @@ class ForwardPaperMarketDataHub:
         pool = consumer.notifier
         if pool is None:
             return  # detached; its queued quotes are no longer wanted
+        queue = getattr(pool, "_work_queue", None)
+        if queue is not None and queue.qsize() > MAX_PENDING_QUOTES:
+            # Quotes are only meaningful at the price they carried, so a
+            # consumer that has fallen this far behind must miss one rather
+            # than be filled later at a stale price. Counted, never silent.
+            consumer.dropped_quotes += 1
+            return
         try:
             pool.submit(self._notify, consumer, sink, event)
         except RuntimeError:
-            pass  # shutting down; a dropped quote is correct here
+            consumer.dropped_quotes += 1  # shutting down; dropping is correct
 
     def _dispatch(self, consumer: _Consumer) -> None:
         """Hand one consumer's pending candles to the delivery pool."""
@@ -228,6 +251,20 @@ class ForwardPaperMarketDataHub:
                     if consumer.bar_sink:
                         with self._lock:
                             consumer.pending.setdefault(cid, bar)
+                            consumer.peak_pending = max(
+                                consumer.peak_pending, len(consumer.pending))
+                            if len(consumer.pending) > MAX_PENDING_CANDLES:
+                                # Deliberately not dropped. A missing candle is
+                                # worse than a late one -- a strategy would
+                                # evaluate a gap it never detected -- so the
+                                # backlog is capped by refusing to accept more
+                                # and reporting the consumer unreliable, which
+                                # already closes its entry gate. The operator
+                                # sees queue depth and a named failing
+                                # dependency instead of silent memory growth.
+                                consumer.last_error = (
+                                    f"candle backlog exceeded {MAX_PENDING_CANDLES}; "
+                                    "this consumer is not keeping up with the feed")
                         # Deliver off this thread. This callback runs inside the
                         # stream's asyncio loop, and a bar sink is not cheap: it
                         # drives a lab's whole closed-candle path, rebuilding a
@@ -476,7 +513,18 @@ class ForwardPaperSubscription:
             status.update({"reliable": False, "new_entries_paused": True,
                            "failing_dependency": "LAB_CANDLE_DELIVERY",
                            "health_reason": error or "subscriber candle delivery pending"})
-        status["subscriber_delivery"] = {"pending_candle_ids": pending, "last_error": error or None}
+        with self.hub._lock:
+            peak = self.consumer.peak_pending
+            dropped = self.consumer.dropped_quotes
+        notifier = self.consumer.notifier
+        queue = getattr(notifier, "_work_queue", None) if notifier is not None else None
+        status["subscriber_delivery"] = {
+            "pending_candle_ids": pending, "last_error": error or None,
+            "queue_depth": len(pending), "peak_queue_depth": peak,
+            "quote_queue_depth": queue.qsize() if queue is not None else 0,
+            "dropped_quotes": dropped,
+            "max_queue_depth": MAX_PENDING_CANDLES,
+        }
         return status
 
     def snapshot(self) -> dict:

@@ -178,7 +178,7 @@ def test_delete_api_returns_actionable_service_unavailable_for_persistence_failu
     class FailingManager:
         store = type("Store", (), {"available": True})()
 
-        def delete(self, _instance_id):
+        def delete(self, _instance_id, **_kwargs):
             raise RuntimeError("Supabase delete unavailable")
 
     monkeypatch.setattr(instance_api._wa, "instance_manager", FailingManager())

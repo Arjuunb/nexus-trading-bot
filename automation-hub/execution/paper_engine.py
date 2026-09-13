@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from data.ledger import Ledger
+from data.ledger import DuplicateOrderIntent, Ledger
 from bot.tradecore.rmath import gross_r as _gross_r
 
 
@@ -495,11 +495,17 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
                         "blocker": "NONE", "paper_only": True,
                         "real_execution_allowed": False,
                     }
-                    self.ledger.insert_webhook_event(
-                        alert_id=f"{intent.get('alert_id', '')}:fill:{received.isoformat()}",
-                        symbol=symbol, side=intent["side"], entry=fill.price,
-                        stop=intent.get("stop"), payload=evidence, status="accepted",
-                    )
+                    try:
+                        self.ledger.insert_webhook_event(
+                            alert_id=f"{intent.get('alert_id', '')}:fill:{received.isoformat()}",
+                            symbol=symbol, side=intent["side"], entry=fill.price,
+                            stop=intent.get("stop"), payload=evidence, status="accepted",
+                        )
+                    except DuplicateOrderIntent:
+                        # This exact quote already filled this intent. Clearing
+                        # the intent below is still correct and idempotent; a
+                        # second fill row is not.
+                        pass
                     self._intents.pop(symbol, None)
                     fills.append(fill)
         if fills or recovered:

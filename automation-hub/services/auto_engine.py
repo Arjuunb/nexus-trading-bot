@@ -446,6 +446,10 @@ class AutoStrategyEngine:
             "last_heartbeat": self.last_heartbeat,
             "last_transition": self.last_transition,
             "instance_id": self.instance_id,
+            # Which configuration revision this worker was actually built from,
+            # and which process owns it. Both are set by the manager at start.
+            "config_revision": getattr(self, "config_revision", None),
+            "worker_id": getattr(self, "worker_id", None),
             "worker_task_identifier": self.worker_task_identifier,
             "bootstrap_status": self.bootstrap_status,
             "last_recovery_attempt": self.last_recovery_attempt,

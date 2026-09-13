@@ -35,6 +35,7 @@ import time
 from datetime import datetime, timezone
 
 from services.instance_telemetry import log_event
+from services.trading_instances import WorkerLeaseError
 
 #: Worker states that mean "this instance has no usable execution runtime".
 _NEEDS_REPAIR = {"error", "stopped", "created", "degraded"}
@@ -133,6 +134,26 @@ class InstanceSupervisor:
             if self._worker_alive(inst.id):
                 self._failures.pop(inst.id, None)
                 self._next_attempt.pop(inst.id, None)
+                # A live worker must keep proving it owns this instance. If the
+                # renewal fails the lease was taken or expired underneath us,
+                # which means another process may now be trading this account:
+                # stop this worker rather than run a second execution owner.
+                if not self.manager._renew_lease(inst):
+                    report.append({"instance_id": inst.id, "action": "lease_lost"})
+                    log_event(self.manager, inst, "INSTANCE_ERROR", status="error",
+                              detail=("worker lease lost to another owner; stopping this "
+                                      "worker to keep exactly one execution owner"))
+                    try:
+                        self.manager.stop(inst.id)
+                    except Exception:  # noqa: BLE001 — the lease is gone either way
+                        pass
+                continue
+            if inst.state == "blocked":
+                # Reconciliation found the durable records disagreeing. A
+                # restart would rebuild the same worker over the same
+                # unexplained state, so this needs a person, not a retry.
+                report.append({"instance_id": inst.id, "action": "blocked",
+                               "reason": inst.last_error})
                 continue
             if inst.state not in _NEEDS_REPAIR and inst.state != "paused":
                 # starting / bootstrapping / warming / syncing / recovering are
@@ -158,6 +179,16 @@ class InstanceSupervisor:
                       detail=f"supervisor repair from state={inst.state}")
             try:
                 self.manager.start(inst.id, entry_gate_closed=paused)
+            except WorkerLeaseError as exc:
+                # Somebody else owns it. That is not a fault to retry hard:
+                # back off quietly and let the lease expire if the holder is
+                # genuinely gone. Starting anyway would duplicate every order.
+                self._next_attempt[inst.id] = now + self.max_backoff_s
+                report.append({"instance_id": inst.id, "action": "lease_held",
+                               "error": str(exc)})
+                log_event(self.manager, inst, "INSTANCE_ERROR", status="blocked",
+                          detail=f"another worker owns this instance: {exc}")
+                continue
             except Exception as exc:
                 attempts = self._failures.get(inst.id, 0) + 1
                 self._failures[inst.id] = attempts

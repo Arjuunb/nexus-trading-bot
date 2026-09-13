@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
-from data.ledger import Ledger
+from data.ledger import DuplicateOrderIntent, Ledger
 from execution.paper_engine import PaperExecutionEngine, _dir
 from tradexa.risk.position_sizing import (
     FIXED_QUANTITY, PositionSizingRequest, PositionSizingService,
@@ -903,10 +903,22 @@ class SignalPipeline:
         if fill.action == "rejected":
             return reject("execution", "Order rejected at fill (execution model)")
         if fill.action == "intent":
-            self.ledger.insert_webhook_event(
-                alert_id=alert_id, symbol=symbol, side=side,
-                entry=entry, stop=stop, payload=payload, status="pending",
-            )
+            try:
+                self.ledger.insert_webhook_event(
+                    alert_id=alert_id, symbol=symbol, side=side,
+                    entry=entry, stop=stop, payload=payload, status="pending",
+                )
+            except DuplicateOrderIntent as exc:
+                # The durable idempotency constraint caught a repeat of a key
+                # this instance has already parked -- the same candle replayed
+                # after a reconnect, or two threads racing the guard's
+                # read-then-insert. The intent already exists, so this is a
+                # no-op success, not a second order and not an error.
+                steps.append(Step("execution", True, "duplicate intent suppressed by idempotency key"))
+                return PipelineResult(
+                    False, "dedup", f"order intent already recorded: {exc}",
+                    steps, {},
+                )
             self.ledger.log(
                 level="info", stage="execution", symbol=symbol,
                 message=(f"{symbol} {side} paper intent accepted; waiting for "
@@ -923,8 +935,16 @@ class SignalPipeline:
             "filled_size": round(size, 10),
             "filled_notional": round(size * entry, 2),
         })
-        self.ledger.insert_webhook_event(alert_id=alert_id, symbol=symbol, side=side,
-                                          entry=entry, stop=stop, payload=payload, status="accepted")
+        try:
+            self.ledger.insert_webhook_event(alert_id=alert_id, symbol=symbol, side=side,
+                                             entry=entry, stop=stop, payload=payload,
+                                             status="accepted")
+        except DuplicateOrderIntent as exc:
+            # Reaching here means the fill already happened and was recorded
+            # under this key. Reporting success would double-count it in the
+            # caller's statistics, so report the duplicate plainly.
+            steps.append(Step("execution", True, "duplicate fill suppressed by idempotency key"))
+            return PipelineResult(False, "dedup", f"order already recorded: {exc}", steps, {})
         open_msg = f"{symbol} {side} opened {size:.6f} @ {entry}"
         if brain_reason:
             open_msg += f" | {brain_reason}"

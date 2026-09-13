@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import threading
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -374,7 +375,14 @@ class PriceActionPublicStream:
                 self._reconnect_attempts[channel] += 1
                 self.reconnect_attempt = max(self._reconnect_attempts.values())
                 self._set_channel_state(channel, "RECONNECTING", f"{type(exc).__name__}: {exc}")
-                await asyncio.sleep(min(2 ** min(self._reconnect_attempts[channel], 5), 30))
+                # Full jitter on the backoff. Without it every channel that
+                # dropped in the same Binance blip retries on the same tick:
+                # three instances is nine channels, and they would reconnect in
+                # lockstep for as long as the outage lasted, which is how a
+                # recovering venue turns into a rate-limit ban. The window is
+                # unchanged; only the moment inside it is randomised.
+                ceiling = min(2 ** min(self._reconnect_attempts[channel], 5), 30)
+                await asyncio.sleep(random.uniform(ceiling / 2, ceiling))
             finally:
                 if channel == "market":
                     self._socket = None

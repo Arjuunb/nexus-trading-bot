@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 # ---------------------------------------------------------------- runtime
 RUNNING, PAUSED, STOPPED, RUNTIME_ERROR = "RUNNING", "PAUSED", "STOPPED", "ERROR"
 STARTING = "STARTING"
+#: Durable state failed reconciliation. Distinct from ERROR: nothing crashed,
+#: the records simply do not agree and a person has to look.
+RUNTIME_BLOCKED = "BLOCKED"
 
 # ----------------------------------------------------------------- market
 CONNECTING = "CONNECTING"
@@ -62,6 +65,8 @@ def runtime_status(*, worker_state: str, desired_running: bool,
     state = str(worker_state or "").lower()
     if state == "error":
         return RUNTIME_ERROR
+    if state in ("blocked", "degraded"):
+        return RUNTIME_BLOCKED
     if state == "paused":
         return PAUSED
     if not desired_running:
@@ -86,7 +91,7 @@ def market_status(*, worker_state: str, feed: dict | None,
     health = str((subscription or {}).get("state") or "").upper()
     reconnects = int((subscription or {}).get("reconnect_attempt") or 0)
 
-    if state in ("stopped", "created") :
+    if state in ("stopped", "created", "blocked"):
         return DISCONNECTED, "no market worker is running"
     if state == "error" or health in ("ERROR", "DATA_ERROR"):
         return FAILED, str((subscription or {}).get("health_reason")
@@ -121,6 +126,8 @@ def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
     state = str(worker_state or "").lower()
     if state == "error":
         return STRATEGY_ERROR, "worker error"
+    if state == "blocked":
+        return BLOCKED, "durable state failed reconciliation"
     if market in (DISCONNECTED, FAILED, STALE, RECONNECTING):
         return WAITING_FOR_DATA, f"market feed is {market}"
     if market in (CONNECTING, SYNCHRONIZING, WAITING_FOR_DATA_MARKET):
@@ -142,7 +149,9 @@ def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
 
 
 def execution_status(*, mode: str, execution_mode: str, entries_armed: bool,
-                     market: str) -> tuple[str, str]:
+                     market: str, runtime: str = RUNNING) -> tuple[str, str]:
+    if runtime == RUNTIME_BLOCKED:
+        return EXECUTION_DISABLED, "durable state failed reconciliation; entries stay closed"
     if str(mode) == "research":
         return SIGNALS_ONLY, "research instance: signals are recorded, no orders are created"
     if str(execution_mode or "").lower() != "paper":
@@ -186,7 +195,7 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
         health_status=health_status)
     execution, execution_reason = execution_status(
         mode=instance.mode, execution_mode=instance.execution_mode,
-        entries_armed=bool(entries_armed), market=feed)
+        entries_armed=bool(entries_armed), market=feed, runtime=runtime)
 
     primary = (htf_policy or {}).get("primary_timeframe")
     secondary = (htf_policy or {}).get("secondary_timeframe")
@@ -247,9 +256,19 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
             "retry_state": subscription.get("retry_state"),
             "pending_candle_ids": (subscription.get("subscriber_delivery") or {}).get("pending_candle_ids"),
         },
+        "configuration_revision": {
+            "configured": int(getattr(instance, "config_revision", 1) or 1),
+            "running": engine.get("config_revision"),
+            # True only when a worker exists and is demonstrably behind. A
+            # stopped instance is not "stale", it simply has no worker.
+            "stale": bool(worker_alive and engine.get("config_revision") is not None
+                          and int(engine["config_revision"]) != int(
+                              getattr(instance, "config_revision", 1) or 1)),
+        },
         "worker": {
             "alive": bool(worker_alive),
             "lifecycle_state": worker_state,
+            "worker_id": engine.get("worker_id"),
             # Falls back to the persisted heartbeat, so "when did this worker
             # last do anything?" is answerable after a restart from storage
             # alone -- with no worker object to ask.

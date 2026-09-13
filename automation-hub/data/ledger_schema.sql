@@ -15,6 +15,14 @@ CREATE TABLE IF NOT EXISTS webhook_events (
     reason       TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_webhook_alert ON webhook_events(alert_id);
+-- Order idempotency, enforced by the database rather than only by
+-- DuplicateGuard. An autonomous alert_id is deterministic
+-- (auto:<instance>:<symbol>:<timeframe>:<candle_open>:<action>), so two
+-- evaluations of the same candle -- a reconnect replaying it, a retry, or two
+-- threads racing the read-then-insert -- produce the same key. The unique
+-- index makes the second insert fail instead of creating a second order.
+-- instance_id is part of the key so two instances on the same pair and candle
+-- remain independent. Created after the instance_id column is ensured.
 
 CREATE TABLE IF NOT EXISTS positions (
     id         TEXT PRIMARY KEY,
