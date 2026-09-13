@@ -842,6 +842,7 @@ class FillModelBody(BaseModel):
 
 
 
+from services.native_price_action import STRATEGY_VERSION as _NATIVE_PA_VERSION
 _STRATEGY_CATALOG = [
     {"key": "brain", "label": "Decision Brain",
      "version": builtin_strategy_version("brain"),
@@ -860,6 +861,26 @@ _STRATEGY_CATALOG = [
      "version": builtin_strategy_version("adaptive_trend_pullback"),
      "supported_timeframes": ["5m"],
      "desc": "5m entry + native 1h regime gate + native 4h bias + 15m pullback context"},
+    # The Price Action lab's own engine, so its setup can run autonomously and
+    # be compared with SMC on the same feed. 5m only: that is the clock the
+    # engine's defaults are tuned for and the only one the shadow observatory
+    # measures, so anything else would not be comparable.
+    #
+    # The version is the engine's own STRATEGY_VERSION rather than a
+    # BUILTIN_STRATEGY_VERSIONS entry, because that is what actually identifies
+    # this alpha: the engine module is hash-frozen in
+    # data/pr6_real_paper_freeze.json, which pins its behaviour more tightly
+    # than a signal fixture, and the lab records the same string.
+    {"key": "price_action_rejection", "label": "Price Action S/R Rejection",
+     "version": _NATIVE_PA_VERSION,
+     "supported_timeframes": ["5m"],
+     "desc": "Price Action lab engine: confirmed S/R zone + closed-candle rejection, "
+             "rejection-extreme stop, native 1h gate and 4h bias"},
+    {"key": "price_action_flip_retest", "label": "Price Action Flip Retest",
+     "version": _NATIVE_PA_VERSION,
+     "supported_timeframes": ["5m"],
+     "desc": "Price Action lab engine: flipped zone retested after a break, "
+             "rejection-extreme stop, native 1h gate and 4h bias"},
 ]
 
 # Reconcile the engine label with a persisted strategy choice: the overrides
