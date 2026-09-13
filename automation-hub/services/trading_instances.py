@@ -72,6 +72,10 @@ _REBOOT_TERMINAL = {"completed", "degraded", "failed"}
 DEFAULT_ACTIVE_SLOTS = 3
 MAX_ACTIVE_SLOTS_CEILING = 10
 
+#: Marker for the one-time lift of the old single-slot default. Recorded so a
+#: later deliberate choice of one slot is never reverted on the next restart.
+_SLOT_CAPACITY_MIGRATION = "2026-09-13-active-slots-default-3"
+
 #: Worker lifecycle state -> canonical telemetry event.
 _LIFECYCLE_EVENTS = {
     "starting": "INSTANCE_STARTING",
@@ -233,6 +237,9 @@ class InstanceLedger:
 
     def insert_webhook_event(self, **kw):
         return self._ledger.insert_webhook_event(**kw, instance_id=self.instance_id)
+
+    def promote_webhook_event(self, **kw):
+        return self._ledger.promote_webhook_event(**kw, instance_id=self.instance_id)
 
     def webhook_seen(self, alert_id: str, since_iso: str) -> bool:
         return self._ledger.webhook_seen(alert_id, since_iso,
@@ -516,16 +523,29 @@ class InstanceStore:
                     ("default_fill_model", "TEXT NOT NULL DEFAULT 'RealisticFill'"),
                 ):
                     ensure_column(ledger._c, "trading_instance_platform_settings", name, definition)
-                # One-time capacity migration. The shipped row default was a
-                # single active slot and the manager additionally capped the
-                # configured value at three, so a persisted 1 was never an
-                # operator risk decision -- it was the only value the platform
-                # ever wrote. Lift exactly that value to the supported default;
-                # anything an operator has since chosen (2, or 4-10 after this
-                # release) is left alone.
+                # One-time capacity migration, and genuinely once. The
+                # shipped row default was a single active slot and the manager
+                # additionally capped the configured value at three, so a
+                # persisted 1 was never an operator risk decision -- it was the
+                # only value the platform ever wrote.
+                #
+                # It has to be marked applied, not merely conditional: one is a
+                # legal deliberate choice now (a single-core host), and an
+                # unguarded "UPDATE ... WHERE max_active_slots<=1" would revert
+                # that operator's decision on every single restart, forever.
                 ledger._c.execute(
-                    "UPDATE trading_instance_platform_settings SET max_active_slots=? "
-                    "WHERE max_active_slots<=1", (DEFAULT_ACTIVE_SLOTS,))
+                    "CREATE TABLE IF NOT EXISTS instance_schema_migrations ("
+                    " name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
+                already = ledger._c.execute(
+                    "SELECT 1 FROM instance_schema_migrations WHERE name=?",
+                    (_SLOT_CAPACITY_MIGRATION,)).fetchone()
+                if not already:
+                    ledger._c.execute(
+                        "UPDATE trading_instance_platform_settings SET max_active_slots=? "
+                        "WHERE max_active_slots<=1", (DEFAULT_ACTIVE_SLOTS,))
+                    ledger._c.execute(
+                        "INSERT INTO instance_schema_migrations(name, applied_at) VALUES (?,?)",
+                        (_SLOT_CAPACITY_MIGRATION, _now()))
                 ensure_column(ledger._c, "instance_market_state",
                               "pending_orders_json", "TEXT NOT NULL DEFAULT '{}'")
                 ensure_column(ledger._c, "instance_market_state", "last_blocker", "TEXT")
@@ -980,43 +1000,74 @@ class InstanceStore:
                            host: str, ttl_seconds: float, now: str | None = None) -> dict:
         """Take exclusive execution ownership of one instance, or raise.
 
-        The instance_id is the primary key, so two processes cannot both hold a
-        lease: the second either takes over one that has genuinely expired, or
-        it is refused. Refusal is the correct outcome -- two workers trading the
-        same paper account would duplicate every order, fill and journal entry.
+        The write itself carries the predicate. A read-then-upsert would not be
+        exclusive at all: two processes could both read "no live lease" and
+        both then run an unconditional ON CONFLICT DO UPDATE, and the second
+        would simply win -- leaving two workers on one paper account,
+        duplicating every order, fill and journal entry, which is precisely
+        what this is for. The conditional update means at most one writer can
+        take a lease that somebody else holds, and only once it has expired.
         """
         stamp = now or _now()
         expires = _iso_plus(stamp, ttl_seconds)
         row = {"instance_id": instance_id, "worker_id": worker_id,
                "process_id": int(process_id), "host": host,
                "started_at": stamp, "heartbeat_at": stamp, "lease_expires_at": expires}
-        existing = self.worker_lease(instance_id)
-        if existing is not None and existing.get("worker_id") != worker_id:
-            if _age_seconds(existing.get("lease_expires_at")) is None:
+
+        def refuse(existing: dict | None) -> None:
+            if existing is None:
+                raise WorkerLeaseError(
+                    f"instance {instance_id} worker lease could not be acquired")
+            if _parse_iso(existing.get("lease_expires_at")) is None:
                 raise WorkerLeaseError(
                     f"instance {instance_id} has a worker lease with an unreadable "
                     "expiry; refusing to start a second execution owner")
-            if not _iso_before(existing.get("lease_expires_at"), stamp):
-                raise WorkerLeaseError(
-                    f"instance {instance_id} is already owned by worker "
-                    f"{existing.get('worker_id')} (pid {existing.get('process_id')} on "
-                    f"{existing.get('host')}) until {existing.get('lease_expires_at')}")
-            row["started_at"] = stamp   # a genuine takeover starts a new tenure
+            raise WorkerLeaseError(
+                f"instance {instance_id} is already owned by worker "
+                f"{existing.get('worker_id')} (pid {existing.get('process_id')} on "
+                f"{existing.get('host')}) until {existing.get('lease_expires_at')}")
+
         if self.remote:
-            remote_call_with_retry(
-                lambda: self._table("instance_worker_leases").upsert(row).execute())
-        else:
-            with self.ledger._lock:
-                self.ledger._c.execute(
-                    """INSERT INTO instance_worker_leases
-                       (instance_id,worker_id,process_id,host,started_at,heartbeat_at,lease_expires_at)
-                       VALUES (:instance_id,:worker_id,:process_id,:host,:started_at,:heartbeat_at,:lease_expires_at)
-                       ON CONFLICT(instance_id) DO UPDATE SET
-                         worker_id=excluded.worker_id, process_id=excluded.process_id,
-                         host=excluded.host, started_at=excluded.started_at,
-                         heartbeat_at=excluded.heartbeat_at,
-                         lease_expires_at=excluded.lease_expires_at""", row)
-                self.ledger._c.commit()
+            # PostgREST has no conditional upsert, so this is done as an
+            # insert-or-conditional-update pair. The insert is the exclusive
+            # step: the primary key means exactly one of two racing processes
+            # can create the row, and the loser falls through to the update,
+            # which only succeeds against an expired lease or its own.
+            try:
+                remote_call_with_retry(
+                    lambda: self._table("instance_worker_leases").insert(row).execute())
+                return row
+            except Exception:
+                pass                    # the row exists; try to take it over
+            taken = remote_call_with_retry(
+                lambda: self._table("instance_worker_leases")
+                .update({k: v for k, v in row.items() if k != "instance_id"})
+                .eq("instance_id", instance_id)
+                .or_(f"worker_id.eq.{worker_id},lease_expires_at.lt.{stamp}")
+                .execute())
+            if not getattr(taken, "data", None):
+                refuse(self.worker_lease(instance_id))
+            return row
+
+        with self.ledger._lock:
+            cursor = self.ledger._c.execute(
+                """INSERT INTO instance_worker_leases
+                   (instance_id,worker_id,process_id,host,started_at,heartbeat_at,lease_expires_at)
+                   VALUES (:instance_id,:worker_id,:process_id,:host,:started_at,:heartbeat_at,:lease_expires_at)
+                   ON CONFLICT(instance_id) DO UPDATE SET
+                     worker_id=excluded.worker_id, process_id=excluded.process_id,
+                     host=excluded.host, started_at=excluded.started_at,
+                     heartbeat_at=excluded.heartbeat_at,
+                     lease_expires_at=excluded.lease_expires_at
+                   WHERE instance_worker_leases.worker_id = excluded.worker_id
+                      OR instance_worker_leases.lease_expires_at < excluded.heartbeat_at""",
+                row)
+            self.ledger._c.commit()
+            if cursor.rowcount < 1:
+                existing = self.ledger._c.execute(
+                    "SELECT * FROM instance_worker_leases WHERE instance_id=?",
+                    (instance_id,)).fetchone()
+                refuse(dict(existing) if existing else None)
         return row
 
     def renew_worker_lease(self, instance_id: str, *, worker_id: str,
@@ -1836,12 +1887,21 @@ class TradingInstanceManager:
             engine.decisions = self.decision_store
             engine.reports = self.cycle_store
             self._runtime[instance_id] = (engine, paper, pipeline, controls)
-            inst.state, inst.desired_running, inst.last_error = "starting", True, ""
+            # A start with the entry gate closed IS a paused instance. Writing
+            # "starting" over it destroyed the only durable record that the
+            # operator had disarmed this strategy, so the NEXT restart read
+            # state="running", restored with the gate open, and silently
+            # re-armed it.
+            inst.state = "paused" if entry_gate_closed else "starting"
+            inst.desired_running, inst.last_error = True, ""
             inst.started_at, inst.stopped_at = _now(), None
             self.store.save(inst)
             engine.start()
             observed_state = engine.status().get("lifecycle_state")
-            if observed_state and observed_state != inst.state:
+            if (observed_state and observed_state != inst.state
+                    and not entry_gate_closed):
+                # A paused instance keeps its paused marker whatever the worker
+                # reports; its lifecycle is healthy, its entries are not armed.
                 inst.state = observed_state
                 self.store.save(inst)
             if pending_state.get("quarantined_intents"):
@@ -1884,6 +1944,39 @@ class TradingInstanceManager:
             "this_process": lease.get("worker_id") == self._worker_id,
             "expired": _iso_before(lease.get("lease_expires_at"), _now()),
         }
+
+    def halt_runtime(self, instance_id: str, *, reason: str, state: str = "error"
+                     ) -> TradingInstance | None:
+        """Stop this process's worker WITHOUT clearing the operator's intent.
+
+        Distinct from stop(), which is an operator decision that the instance
+        should no longer run. This is for the cases where this process must
+        give up the runtime but nobody has decided anything -- losing the
+        worker lease, or a configuration rebuild that has to tear the worker
+        down before building the replacement. Clearing desired_running there
+        would write "no longer wanted" into a row other processes read, and
+        nothing would ever restart it.
+        """
+        with self._lifecycle_lock(instance_id):
+            with self._lock:
+                inst = self._instances.get(instance_id)
+                if inst is None:
+                    return None
+                runtime = self._runtime.get(instance_id)
+            if runtime:
+                runtime[0].stop(reason)
+                feed = getattr(runtime[0], "ws_feed", None)
+                if feed is not None:
+                    feed.stop()
+            with self._lock:
+                self._runtime.pop(instance_id, None)
+            inst.state = state
+            inst.last_error = reason[:500]
+            self.store.save(inst)
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "INSTANCE_ERROR", status=state,
+                      detail=f"runtime halted, restart intent preserved: {reason}")
+            return inst
 
     def stop(self, instance_id: str, *, owner_id: str | None = None) -> TradingInstance:
         # The whole transition runs under this instance's lifecycle mutex. The
@@ -2560,7 +2653,14 @@ class TradingInstanceManager:
                 # lock inversion caused slow strategy switches and allowed a
                 # late "stopped" event to overwrite the replacement worker.
                 self._runtime[instance_id][0]._lifecycle_callback = None
-                self.stop(instance_id)
+                # halt_runtime, not stop: an edit is not a decision to stop
+                # running. stop() clears desired_running and releases the
+                # lease, so if the rebuild below failed -- a Binance blip
+                # during the restart is enough -- the instance was left
+                # un-desired, unsupervised and dark until somebody noticed.
+                self.halt_runtime(instance_id,
+                                  reason="worker replaced for a configuration change",
+                                  state="starting")
             inst.capital_allocation = candidate_capital
             inst.risk_per_trade_pct = float(risk_per_trade_pct if risk_per_trade_pct is not None else inst.risk_per_trade_pct)
             inst.max_open_positions = candidate_max

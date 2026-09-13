@@ -307,7 +307,12 @@ def test_a_worker_that_loses_its_lease_stops_itself(tmp_path, fast_worker):
     report = InstanceSupervisor(manager, interval_s=60).sweep()
 
     assert [row["action"] for row in report] == ["lease_lost"]
-    assert manager._runtime[instance.id][0].running is False
+    # The runtime is gone...
+    assert instance.id not in manager._runtime
+    # ...but the operator's intent is not. Clearing it here would write "no
+    # longer wanted" into the row every process reads, so nothing would
+    # restart this instance once the split brain resolved.
+    assert manager._instances[instance.id].desired_running is True
     idle.set()
 
 
@@ -382,3 +387,124 @@ def test_the_pipeline_reports_a_duplicate_instead_of_crashing_the_worker():
     # matters is that the worker reports a duplicate rather than raising.
     assert result.accepted is False
     assert result.stage in ("dedup", "duplicate")
+
+
+def test_a_failed_configuration_rebuild_leaves_the_instance_still_desired(monkeypatch, fast_worker):
+    """An edit is not a decision to stop running.
+
+    The rebuild path used stop(), which clears desired_running and releases the
+    lease -- so an edit made during a brief venue outage left the instance
+    un-desired, unsupervised, and dark until somebody noticed.
+    """
+    _ledger, manager = _manager()
+    instance = _create(manager)
+    manager.start(instance.id)
+    original_start = manager.start
+    calls = {"n": 0}
+
+    def failing_start(instance_id, **kwargs):
+        calls["n"] += 1
+        if calls["n"] > 0:
+            raise RuntimeError("Binance USD-M feed unavailable")
+        return original_start(instance_id, **kwargs)
+
+    monkeypatch.setattr(manager, "start", failing_start)
+    with pytest.raises(RuntimeError):
+        manager.update_configuration(instance.id, timeframe="15m")
+
+    assert manager._instances[instance.id].desired_running is True
+
+
+def test_racing_claimants_produce_exactly_one_execution_owner(tmp_path):
+    """The lease must be exclusive in the WRITE, not in a read before it.
+
+    A read-then-upsert is not exclusive at all: two processes both read "no
+    live lease", both run an unconditional ON CONFLICT DO UPDATE, and the
+    second simply wins -- leaving two workers on one paper account.
+    """
+    from services.trading_instances import InstanceStore
+
+    path = str(tmp_path / "shared.db")
+    _ledger, seed = _manager(path)
+    instance = _create(seed)
+    stores = [InstanceStore(SqliteLedger(path)) for _ in range(8)]
+    won, refused = [], []
+    barrier = threading.Barrier(len(stores))
+
+    def claim(index, store):
+        barrier.wait()
+        try:
+            store.claim_worker_lease(instance.id, worker_id=f"worker-{index}",
+                                     process_id=1000 + index, host=f"host-{index}",
+                                     ttl_seconds=300)
+            won.append(index)
+        except WorkerLeaseError:
+            refused.append(index)
+
+    threads = [threading.Thread(target=claim, args=(index, store))
+               for index, store in enumerate(stores)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert len(won) == 1, f"{len(won)} processes believed they owned this instance"
+    assert len(refused) == len(stores) - 1
+    assert stores[0].worker_lease(instance.id)["worker_id"] == f"worker-{won[0]}"
+
+
+def test_a_claim_that_never_becomes_an_order_does_not_block_a_retry():
+    """The claim is a lock, not a record of something that happened."""
+    from execution.paper_engine import PaperExecutionEngine
+    from services.controls import TradingControl
+    from services.fill_model import RealisticFill
+    from services.signal_pipeline import SignalPipeline
+    from services.trading_instances import InstanceLedger
+
+    ledger = SqliteLedger(":memory:")
+    scoped = InstanceLedger(ledger, "inst-1")
+    rejecting = PaperExecutionEngine(scoped, 10_000,
+                                     fill_model=RealisticFill(reject_prob=1.0))
+    pipeline = SignalPipeline(scoped, rejecting, TradingControl(), equity=10_000)
+    payload = {"alert_id": "retry-me", "symbol": "BTCUSDT", "side": "BUY",
+               "entry": 100.0, "stop": 95.0}
+
+    first = pipeline.process(dict(payload))
+    assert first.accepted is False
+
+    # The same candle, retried against a working engine, must still trade.
+    pipeline.paper = PaperExecutionEngine(scoped, 10_000)
+    second = pipeline.process(dict(payload))
+    assert second.accepted is True, second.reason
+
+
+def test_one_order_leaves_exactly_one_webhook_row():
+    """The claim becomes the order's row rather than leaving a second."""
+    from execution.paper_engine import PaperExecutionEngine
+    from services.controls import TradingControl
+    from services.signal_pipeline import SignalPipeline
+    from services.trading_instances import InstanceLedger
+
+    ledger = SqliteLedger(":memory:")
+    scoped = InstanceLedger(ledger, "inst-1")
+    pipeline = SignalPipeline(scoped, PaperExecutionEngine(scoped, 10_000),
+                              TradingControl(), equity=10_000)
+
+    assert pipeline.process({"alert_id": "one-row", "symbol": "BTCUSDT",
+                             "side": "BUY", "entry": 100.0, "stop": 95.0}).accepted
+
+    rows = [row for row in ledger.get_webhook_events() if row["alert_id"] == "one-row"]
+    assert len(rows) == 1
+    assert rows[0]["status"] == "accepted"
+
+
+def test_a_deliberate_single_slot_is_not_reverted_on_restart(tmp_path):
+    """One slot is a legal choice now; the migration must be genuinely once."""
+    path = str(tmp_path / "l.db")
+    _ledger, manager = _manager(path)
+    assert manager.max_slots == 3                 # the migration ran
+    manager.configure(max_active_slots=1)         # the operator chooses one
+
+    for _restart in range(3):
+        _again, reopened = _manager(path)
+        assert reopened.max_slots == 1

@@ -80,6 +80,8 @@ class Ledger(Protocol):
     def insert_webhook_event(self, *, alert_id: str, symbol: str, side: str,
                              entry: Optional[float], stop: Optional[float],
                              payload: dict, status: str, reason: str = "", instance_id: str = "") -> str: ...
+    def promote_webhook_event(self, *, alert_id: str, status: str, entry=None,
+                              payload=None, instance_id: str = "") -> bool: ...
     def webhook_seen(self, alert_id: str, since_iso: str, instance_id: str = "") -> bool: ...
     def get_webhook_events(self, limit: int = 500) -> list[dict]: ...
     # positions / trades
@@ -242,10 +244,35 @@ class SqliteLedger:
             self._c.commit()
         return wid
 
+    def promote_webhook_event(self, *, alert_id: str, status: str, entry=None,
+                              payload=None, instance_id: str = "") -> bool:
+        """Turn this order's claim row into its final record.
+
+        The claim is the lock that makes an idempotency key exclusive, and it
+        must become the order's one row rather than leaving a second behind --
+        otherwise every trade appears twice in the event log, once as a claim
+        and once as itself.
+        """
+        sets, args = ["status=?"], [status]
+        if entry is not None:
+            sets.append("entry=?")
+            args.append(entry)
+        if payload is not None:
+            sets.append("payload_json=?")
+            args.append(json.dumps(payload))
+        args.extend([alert_id, instance_id or ""])
+        with self._lock:
+            cursor = self._c.execute(
+                f"UPDATE webhook_events SET {', '.join(sets)} "
+                "WHERE alert_id=? AND COALESCE(instance_id,'')=? AND status='claimed'",
+                args)
+            self._c.commit()
+            return cursor.rowcount > 0
+
     def webhook_seen(self, alert_id: str, since_iso: str, instance_id: str = "") -> bool:
         with self._lock:
             query = ("SELECT 1 FROM webhook_events WHERE alert_id=? AND received_at>=? "
-                     "AND status!='rejected'")
+                     "AND status NOT IN ('rejected','claimed')")
             args = [alert_id, since_iso]
             if instance_id:
                 query += " AND instance_id=?"
@@ -674,6 +701,21 @@ class SupabaseLedger:
             row["instance_id"] = instance_id
         self._t("webhook_events").insert(row).execute()
         return wid
+
+    def promote_webhook_event(self, *, alert_id, status, entry=None,
+                              payload=None, instance_id=""):  # pragma: no cover
+        """Turn this order's claim row into its final record."""
+        values = {"status": status}
+        if entry is not None:
+            values["entry"] = entry
+        if payload is not None:
+            values["payload_json"] = json.dumps(payload)
+
+        def update():
+            return (self._t("webhook_events").update(values)
+                    .eq("alert_id", alert_id).eq("instance_id", instance_id or "")
+                    .eq("status", "claimed").execute())
+        return bool(getattr(remote_call_with_retry(update), "data", None))
 
     def webhook_seen(self, alert_id, since_iso, instance_id=""):  # pragma: no cover
         def query():

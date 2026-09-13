@@ -71,7 +71,9 @@ class _Consumer:
 
 @dataclass
 class _Channel:
-    stream: PriceActionPublicStream
+    #: Replaceable: a kline-only context channel is upgraded in place when a
+    #: consumer that needs quotes joins it.
+    stream: PriceActionPublicStream | None
     consumers: dict[str, _Consumer] = field(default_factory=dict)
     last_candle_id: str | None = None
     quote_sequence: int = 0
@@ -235,117 +237,150 @@ class ForwardPaperMarketDataHub:
         with self._lock:
             existing = self._channels.get(key)
             if existing is not None:
+                if quotes and not getattr(existing.stream, "quotes_enabled", True):
+                    # This channel was opened kline-only for higher-timeframe
+                    # context, and a consumer that needs quotes has now asked
+                    # for it. Handing back the quote-less stream would deliver
+                    # candles and never a single quote, so every parked
+                    # forward-paper intent would sit unfilled forever while the
+                    # feed reported itself synchronized. Upgrade it instead:
+                    # the existing consumers only ever wanted candles, and they
+                    # keep receiving them from the replacement.
+                    self._upgrade_channel_to_quotes(key, existing)
                 return existing
             symbol, timeframe = key
-            holder: dict[str, _Channel] = {}
-
-            def on_bar(bar: Bar) -> None:
-                channel = holder["channel"]
-                cid = candle_id(symbol, timeframe, bar)
-                with self._lock:
-                    channel.last_candle_id = cid
-                    consumers = list(channel.consumers.values())
-                for consumer in consumers:
-                    if consumer.candle_notice:
-                        try:
-                            consumer.candle_notice(bar)
-                        except Exception as exc:
-                            consumer.last_error = f"{type(exc).__name__}: {exc}"
-                for consumer in consumers:
-                    if consumer.bar_sink:
-                        with self._lock:
-                            consumer.pending.setdefault(cid, bar)
-                            consumer.peak_pending = max(
-                                consumer.peak_pending, len(consumer.pending))
-                            if len(consumer.pending) > MAX_PENDING_CANDLES:
-                                # Deliberately not dropped. A missing candle is
-                                # worse than a late one -- a strategy would
-                                # evaluate a gap it never detected -- so the
-                                # backlog is capped by refusing to accept more
-                                # and reporting the consumer unreliable, which
-                                # already closes its entry gate. The operator
-                                # sees queue depth and a named failing
-                                # dependency instead of silent memory growth.
-                                consumer.backlog_exceeded = True
-                        # Deliver off this thread. This callback runs inside the
-                        # stream's asyncio loop, and a bar sink is not cheap: it
-                        # drives a lab's whole closed-candle path, rebuilding a
-                        # market structure engine over hundreds of bars and
-                        # writing SQLite, once per subscribed consumer. Running
-                        # that inline stopped the loop reading its sockets, so
-                        # markPrice at one message per second went eighty
-                        # seconds without an update while bookTicker on the
-                        # other socket read zero, and the feed failed its
-                        # fifteen-second staleness check for reasons that had
-                        # nothing to do with Binance. Ordering is unaffected:
-                        # pending is an ordered map drained under the
-                        # consumer's own delivery lock, which is exactly the
-                        # path a retry already takes.
-                        self._dispatch(consumer)
-
-            def on_quote(quote: dict) -> None:
-                with self._lock:
-                    channel = holder["channel"]
-                    channel.quote_sequence += 1
-                    consumers = list(channel.consumers.values())
-                    cid = channel.last_candle_id
-                    sequence = int(quote.get("sequence") or channel.quote_sequence)
-                    event_timestamp = str(quote.get("event_timestamp") or
-                                          quote.get("received_at") or "")
-                    identity = {
-                        "source": "BINANCE_USDM_PUBLIC_WEBSOCKET",
-                        "symbol": symbol, "timeframe": timeframe,
-                        "event_timestamp": event_timestamp, "sequence": sequence,
-                        "bid": quote.get("bid"), "ask": quote.get("ask"),
-                        "mark": quote.get("mark"),
-                    }
-                    quote_event_id = "quote-" + hashlib.sha256(json.dumps(
-                        identity, sort_keys=True, separators=(",", ":")
-                    ).encode()).hexdigest()[:32]
-                snapshot = {
-                    **quote,
-                    "candle_id": cid,
-                    "event_timestamp": event_timestamp,
-                    "sequence": sequence,
-                    "quote_event_id": quote_event_id,
-                    "market_data_source": "Binance USD-M public WebSocket",
-                }
-                for consumer in consumers:
-                    if consumer.quote_sink:
-                        # Off the socket reader's thread, for the same reason
-                        # bars are. A quote sink looks cheap and is not: it
-                        # takes the lab's runtime and account locks and fills
-                        # pending orders. A thread dump caught this callback
-                        # parked on an account lock inside the stream's event
-                        # loop, which is why markPrice at one message per
-                        # second still read eighty seconds old after bar
-                        # delivery had already been moved off.
-                        self._dispatch_notify(consumer, consumer.quote_sink, snapshot)
-
-            def on_event(event: dict) -> None:
-                with self._lock:
-                    consumers = list(holder["channel"].consumers.values())
-                for consumer in consumers:
-                    if consumer.event_sink:
-                        self._notify(consumer, consumer.event_sink, event)
-
-            try:
-                stream = self.stream_factory(
-                    self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
-                    event_sink=on_event, quotes_enabled=quotes,
-                )
-            except TypeError:
-                # Test doubles and any stream implementation that predates
-                # kline-only channels still construct with the original
-                # signature; they simply carry quotes as they always did.
-                stream = self.stream_factory(
-                    self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
-                    event_sink=on_event,
-                )
-            channel = _Channel(stream=stream)
-            holder["channel"] = channel
+            channel = _Channel(stream=None)
+            channel.stream = self._build_stream(key, channel, quotes=quotes)
             self._channels[key] = channel
             return channel
+
+    def _build_stream(self, key: tuple[str, str], channel: "_Channel | None" = None,
+                      *, quotes: bool = True):
+        """Construct a stream bound to ``key``'s fan-out sinks.
+
+        Shared by channel creation and by the kline-only -> full upgrade, so a
+        replacement stream cannot drift from the sinks the original had.
+        """
+        symbol, timeframe = key
+        holder: dict[str, _Channel] = {}
+        if channel is not None:
+            holder["channel"] = channel
+
+        def on_bar(bar: Bar) -> None:
+            channel = holder["channel"]
+            cid = candle_id(symbol, timeframe, bar)
+            with self._lock:
+                channel.last_candle_id = cid
+                consumers = list(channel.consumers.values())
+            for consumer in consumers:
+                if consumer.candle_notice:
+                    try:
+                        consumer.candle_notice(bar)
+                    except Exception as exc:
+                        consumer.last_error = f"{type(exc).__name__}: {exc}"
+            for consumer in consumers:
+                if consumer.bar_sink:
+                    with self._lock:
+                        consumer.pending.setdefault(cid, bar)
+                        consumer.peak_pending = max(
+                            consumer.peak_pending, len(consumer.pending))
+                        if len(consumer.pending) > MAX_PENDING_CANDLES:
+                            # Deliberately not dropped. A missing candle is
+                            # worse than a late one -- a strategy would
+                            # evaluate a gap it never detected -- so the
+                            # backlog is capped by refusing to accept more
+                            # and reporting the consumer unreliable, which
+                            # already closes its entry gate. The operator
+                            # sees queue depth and a named failing
+                            # dependency instead of silent memory growth.
+                            consumer.backlog_exceeded = True
+                    # Deliver off this thread. This callback runs inside the
+                    # stream's asyncio loop, and a bar sink is not cheap: it
+                    # drives a lab's whole closed-candle path, rebuilding a
+                    # market structure engine over hundreds of bars and
+                    # writing SQLite, once per subscribed consumer. Running
+                    # that inline stopped the loop reading its sockets, so
+                    # markPrice at one message per second went eighty
+                    # seconds without an update while bookTicker on the
+                    # other socket read zero, and the feed failed its
+                    # fifteen-second staleness check for reasons that had
+                    # nothing to do with Binance. Ordering is unaffected:
+                    # pending is an ordered map drained under the
+                    # consumer's own delivery lock, which is exactly the
+                    # path a retry already takes.
+                    self._dispatch(consumer)
+
+        def on_quote(quote: dict) -> None:
+            with self._lock:
+                channel = holder["channel"]
+                channel.quote_sequence += 1
+                consumers = list(channel.consumers.values())
+                cid = channel.last_candle_id
+                sequence = int(quote.get("sequence") or channel.quote_sequence)
+                event_timestamp = str(quote.get("event_timestamp") or
+                                      quote.get("received_at") or "")
+                identity = {
+                    "source": "BINANCE_USDM_PUBLIC_WEBSOCKET",
+                    "symbol": symbol, "timeframe": timeframe,
+                    "event_timestamp": event_timestamp, "sequence": sequence,
+                    "bid": quote.get("bid"), "ask": quote.get("ask"),
+                    "mark": quote.get("mark"),
+                }
+                quote_event_id = "quote-" + hashlib.sha256(json.dumps(
+                    identity, sort_keys=True, separators=(",", ":")
+                ).encode()).hexdigest()[:32]
+            snapshot = {
+                **quote,
+                "candle_id": cid,
+                "event_timestamp": event_timestamp,
+                "sequence": sequence,
+                "quote_event_id": quote_event_id,
+                "market_data_source": "Binance USD-M public WebSocket",
+            }
+            for consumer in consumers:
+                if consumer.quote_sink:
+                    # Off the socket reader's thread, for the same reason
+                    # bars are. A quote sink looks cheap and is not: it
+                    # takes the lab's runtime and account locks and fills
+                    # pending orders. A thread dump caught this callback
+                    # parked on an account lock inside the stream's event
+                    # loop, which is why markPrice at one message per
+                    # second still read eighty seconds old after bar
+                    # delivery had already been moved off.
+                    self._dispatch_notify(consumer, consumer.quote_sink, snapshot)
+
+        def on_event(event: dict) -> None:
+            with self._lock:
+                consumers = list(holder["channel"].consumers.values())
+            for consumer in consumers:
+                if consumer.event_sink:
+                    self._notify(consumer, consumer.event_sink, event)
+
+        try:
+            stream = self.stream_factory(
+                self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
+                event_sink=on_event, quotes_enabled=quotes,
+            )
+        except TypeError:
+            # Test doubles and any stream implementation that predates
+            # kline-only channels still construct with the original
+            # signature; they simply carry quotes as they always did.
+            stream = self.stream_factory(
+                self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
+                event_sink=on_event,
+            )
+        return stream
+
+    def _upgrade_channel_to_quotes(self, key: tuple[str, str], channel: _Channel) -> None:
+        """Replace a kline-only stream with a full one, keeping its consumers."""
+        old_stream = channel.stream
+        symbol, timeframe = key
+        channel.stream = self._build_stream(key, channel, quotes=True)
+        channel.stream.start(symbol, timeframe)
+        try:
+            old_stream.stop()
+        except Exception:  # noqa: BLE001 — the replacement is already running
+            pass
 
     def _start(self, consumer: _Consumer, symbol: str, timeframe: str, *,
                quotes: bool = True) -> bool:
@@ -442,6 +477,15 @@ class ForwardPaperSubscription:
         return self.consumer.consumer_id
 
     def start(self, symbol: str, timeframe: str, *, quotes: bool = True) -> bool:
+        if self.consumer.notifier is None:
+            # stop() shuts this worker down and clears it, and a subscription
+            # object can legitimately be stopped and started again -- the
+            # research observer does exactly that on every failed attach. Not
+            # rebuilding it here meant the reattach appeared to succeed while
+            # _dispatch_notify returned early for every quote, forever, without
+            # even counting a drop.
+            self.consumer.notifier = ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix="notify-%s" % self.consumer_id[:16])
         started = self.hub._start(self.consumer, symbol, timeframe, quotes=quotes)
         if started:
             self.symbol, self.timeframe = normalize_symbol(symbol), timeframe

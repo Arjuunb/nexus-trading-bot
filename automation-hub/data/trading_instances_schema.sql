@@ -341,14 +341,26 @@ ALTER TABLE trading_instance_platform_settings
  ADD COLUMN IF NOT EXISTS paper_account_capital DOUBLE PRECISION NOT NULL DEFAULT 10000;
 ALTER TABLE trading_instance_platform_settings
  ADD COLUMN IF NOT EXISTS max_active_slots INTEGER NOT NULL DEFAULT 3;
--- One-time capacity migration. The shipped default was a single active slot
--- and the manager capped the configured value at three, so a persisted 1 was
--- never an operator risk decision: it was the only value the platform ever
--- wrote, and it meant only one Trading Instance could run. Lift exactly that
--- value; any deliberate choice (2, or 4-10 after this release) is untouched.
--- Re-running this statement is a no-op.
-UPDATE trading_instance_platform_settings SET max_active_slots = 3
- WHERE max_active_slots <= 1;
+-- One-time capacity migration, and genuinely once. The shipped default was a
+-- single active slot and the manager capped the configured value at three, so
+-- a persisted 1 was never an operator risk decision: it was the only value the
+-- platform ever wrote, and it meant only one Trading Instance could run.
+--
+-- It is marked applied rather than left conditional, because one IS a legal
+-- deliberate choice now (a single-core host) and an unguarded UPDATE would
+-- revert that operator's decision on every migration run.
+CREATE TABLE IF NOT EXISTS instance_schema_migrations (
+ name TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM instance_schema_migrations
+                 WHERE name = '2026-09-13-active-slots-default-3') THEN
+    UPDATE trading_instance_platform_settings SET max_active_slots = 3
+     WHERE max_active_slots <= 1;
+    INSERT INTO instance_schema_migrations(name) VALUES ('2026-09-13-active-slots-default-3');
+  END IF;
+END $$;
 ALTER TABLE trading_instance_platform_settings
  ADD COLUMN IF NOT EXISTS max_global_risk_pct DOUBLE PRECISION NOT NULL DEFAULT 0.02;
 ALTER TABLE trading_instance_platform_settings

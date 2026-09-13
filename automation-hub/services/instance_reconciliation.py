@@ -95,26 +95,33 @@ def reconcile(manager, instance_id: str, *,
             f"instance ledger could not be read: {type(exc).__name__}: {exc}"))
         return result
 
-    open_trades = {str(row.get("symbol")): row for row in trades
-                   if str(row.get("status")) == "open"}
+    # Counted per symbol, not set membership. Keying by symbol alone collapsed
+    # several open positions on one pair into a single entry, so an instance
+    # holding two BTCUSDT positions with only one BTCUSDT trade row -- exactly
+    # the shape a process death between two writes leaves -- reconciled clean.
+    from collections import Counter
 
-    # --- an open position must have the open trade row that records it
-    for position in positions:
-        symbol = str(position.get("symbol"))
-        if symbol not in open_trades:
+    open_trades = Counter(str(row.get("symbol")) for row in trades
+                          if str(row.get("status")) == "open")
+    open_positions = Counter(str(row.get("symbol")) for row in positions)
+
+    for symbol in sorted(set(open_positions) | set(open_trades)):
+        held, recorded = open_positions[symbol], open_trades[symbol]
+        if held > recorded:
             result.findings.append(Finding(
                 "position_without_trade", BLOCKING,
-                f"open {symbol} position has no matching open trade row",
-                {"position_id": position.get("id"), "symbol": symbol}))
-
-    # --- and an open trade must have its position
-    position_symbols = {str(row.get("symbol")) for row in positions}
-    for symbol, trade in open_trades.items():
-        if symbol not in position_symbols:
+                f"{held} open {symbol} position(s) but {recorded} open trade row(s)",
+                {"symbol": symbol, "positions": held, "trades": recorded,
+                 "position_ids": [row.get("id") for row in positions
+                                  if str(row.get("symbol")) == symbol]}))
+        elif recorded > held:
             result.findings.append(Finding(
                 "trade_without_position", BLOCKING,
-                f"open {symbol} trade row has no matching open position",
-                {"trade_id": trade.get("id"), "symbol": symbol}))
+                f"{recorded} open {symbol} trade row(s) but {held} open position(s)",
+                {"symbol": symbol, "positions": held, "trades": recorded,
+                 "trade_ids": [row.get("id") for row in trades
+                               if str(row.get("symbol")) == symbol
+                               and str(row.get("status")) == "open"]}))
 
     # --- durable state claims a running worker; is one actually there?
     runtime = manager._runtime.get(instance_id)

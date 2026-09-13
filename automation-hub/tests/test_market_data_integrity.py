@@ -228,3 +228,32 @@ def test_a_context_channel_opens_no_redundant_quote_subscriptions():
     assert "markPrice" not in context.market_url
     # And it is not then reported stale for lacking the quotes it never wanted.
     assert context.quotes_enabled is False
+
+
+def test_a_context_channel_is_upgraded_when_a_consumer_needs_quotes():
+    """A kline-only channel must not silently starve a quote consumer.
+
+    Context channels are opened without markPrice/bookTicker. If a consumer
+    that needs quotes then joined one, it received candles and never a single
+    quote -- so every parked forward-paper intent would sit unfilled forever
+    while the feed reported itself synchronized.
+    """
+    hub = ForwardPaperMarketDataHub(lambda *a, **k: [], stream_factory=_Stream)
+    hub.synchronous_delivery = True
+
+    context = hub.subscription("CONTEXT")
+    assert context.start("BTCUSDT", "1h", quotes=False)
+    assert hub._channels[("BTCUSDT", "1h")].stream.quotes_enabled is False
+
+    quotes_seen = []
+    trader = hub.subscription("TRADER", quote_sink=quotes_seen.append)
+    assert trader.start("BTCUSDT", "1h")          # needs quotes
+
+    channel = hub._channels[("BTCUSDT", "1h")]
+    assert channel.stream.quotes_enabled is True
+    # Both consumers are still attached to the one upgraded channel.
+    assert set(channel.consumers) == {"CONTEXT", "TRADER"}
+    channel.stream.quote_sink({"bid": 1.0, "ask": 1.1, "mark": 1.05})
+    assert quotes_seen and quotes_seen[0]["bid"] == 1.0
+    trader.stop()
+    context.stop()

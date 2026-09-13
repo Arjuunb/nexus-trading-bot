@@ -474,3 +474,30 @@ def test_lifecycle_transitions_are_logged_with_the_instance_id(tmp_path):
         assert row["instance_id"] == instance.id
         assert row["symbol"] == "BTCUSDT"
     manager.shutdown()
+
+
+def test_a_paused_instance_stays_paused_across_repeated_restarts(tmp_path):
+    """The paused marker must survive more than one restart.
+
+    start() wrote "starting" over it, so the FIRST restart restored the gate
+    correctly and the SECOND read state="running" and silently re-armed a
+    strategy the operator had deliberately disarmed.
+    """
+    ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    manager.pause(instance.id)
+    manager.shutdown()
+
+    for restart in range(3):
+        hub = ForwardPaperMarketDataHub(lambda *a, **k: [], stream_factory=_Stream)
+        hub.synchronous_delivery = True
+        reopened = TradingInstanceManager(ledger, strategy_factory=_factory,
+                                          live=True, live_poll_s=1.0)
+        reopened.market_hub = hub
+        reopened.symbol_rules_provider = manager.symbol_rules_provider
+        assert reopened.restore_desired_instances() == [instance.id], restart
+        assert reopened._instances[instance.id].state == "paused", restart
+        assert reopened._runtime[instance.id][3].trading_allowed() is False, restart
+        assert reopened.status(instance.id)["execution_status"] == "DISABLED", restart
+        reopened.shutdown()

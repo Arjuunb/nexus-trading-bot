@@ -34,7 +34,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from services.instance_telemetry import log_event
+from services.instance_telemetry import event_payload, format_event, log_event
 from services.trading_instances import WorkerLeaseError
 
 #: Worker states that mean "this instance has no usable execution runtime".
@@ -68,6 +68,8 @@ class InstanceSupervisor:
         self.last_sweep: str | None = None
         self.sweeps = 0
         self.repairs = 0
+        self.errors = 0
+        self.last_error: str | None = None
         self.last_report: list[dict] = []
 
     # ------------------------------------------------------------- lifecycle
@@ -97,8 +99,21 @@ class InstanceSupervisor:
             try:
                 self.sweep()
             except Exception as exc:  # a supervisor that dies supervises nothing
-                log_event(self.manager, None, "SUPERVISOR_ERROR",
-                          status="error", detail=f"{type(exc).__name__}: {exc}")
+                # log_event skips the store when there is no instance_id, so a
+                # supervisor-level failure had nowhere to go and could repeat
+                # silently on every tick. Record it where an operator looks,
+                # and always leave a line on stdout as the last resort.
+                self.last_error = f"{type(exc).__name__}: {exc}"
+                self.errors += 1
+                payload = event_payload(None, "SUPERVISOR_ERROR", status="error",
+                                        detail=self.last_error)
+                print("[instance-supervisor] " + format_event(payload), flush=True)
+                try:
+                    self.manager.ledger.log(
+                        level="error", stage="instance-supervisor",
+                        message=format_event(payload))
+                except Exception:  # noqa: BLE001 — stdout already has it
+                    pass
             self._stop.wait(self.interval_s)
 
     # ---------------------------------------------------------------- sweep
@@ -123,10 +138,14 @@ class InstanceSupervisor:
             return report
 
         with self.manager._lock:
-            candidates = [inst for inst in self.manager._instances.values()
-                          if inst.desired_running and inst.mode == "trading"]
-        running = sum(1 for inst in self.manager._instances.values()
-                      if inst.mode == "trading" and self._worker_alive(inst.id))
+            # One snapshot, under the lock. Iterating the live dict here raced
+            # create()/delete() -- "dictionary changed size during iteration"
+            # would abandon the whole sweep, including any dead worker it was
+            # about to repair.
+            trading = [inst for inst in self.manager._instances.values()
+                       if inst.mode == "trading"]
+        candidates = [inst for inst in trading if inst.desired_running]
+        running = sum(1 for inst in trading if self._worker_alive(inst.id))
 
         for inst in sorted(candidates, key=lambda item: item.created_at):
             if self._stop.is_set():
@@ -144,7 +163,13 @@ class InstanceSupervisor:
                               detail=("worker lease lost to another owner; stopping this "
                                       "worker to keep exactly one execution owner"))
                     try:
-                        self.manager.stop(inst.id)
+                        # halt_runtime, not stop: losing a lease is not the
+                        # operator deciding this instance should stop. stop()
+                        # writes desired_running=False into the row every
+                        # process reads, so nothing would ever restart it once
+                        # the split brain resolved.
+                        self.manager.halt_runtime(
+                            inst.id, reason="worker lease lost to another owner")
                     except Exception:  # noqa: BLE001 — the lease is gone either way
                         pass
                 continue
@@ -222,6 +247,8 @@ class InstanceSupervisor:
             "interval_s": self.interval_s,
             "sweeps": self.sweeps,
             "repairs": self.repairs,
+            "errors": self.errors,
+            "last_error": self.last_error,
             "last_sweep": self.last_sweep,
             "last_report": list(self.last_report),
             "backoff": {key: {"consecutive_failures": value,

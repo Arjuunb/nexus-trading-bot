@@ -49,6 +49,9 @@ class PaperExecutionEngine:
         # (current equity / available / realized) so capital survives a restart.
         self.account_store = None
         self.equity_listener = None  # optional callable(current_realized_equity)
+        # The most recent named refusal from this engine, so a rejection can be
+        # attributed rather than collapsing into "execution model".
+        self.last_blocker: Optional[str] = None
         # H-5: history() is read ~10x per signal (PnL/streak/Kelly/curve).
         # Cache the closed-trade list and invalidate on any write, so one
         # process() call scans the ledger once, not ten times.
@@ -157,21 +160,39 @@ class PaperExecutionEngine:
         value = str(supplied or "").strip()
         return value or f"paper:{action.lower()}:{uuid.uuid4().hex}"
 
-    def _reject_unaffordable(self, symbol: str, size: float, entry: float):
-        """Reject an entry the paper account cannot fund. None means allowed."""
+    #: Named so a refusal can never surface as the opaque "execution model"
+    #: reason. A silent stop is the failure mode this guard must not have.
+    UNFUNDED_BLOCKER = "GATE_REJECTED: INSUFFICIENT_PAPER_CAPITAL"
+
+    def _reject_unaffordable(self, symbol: str, side: str, size: float, entry: float):
+        """Reject an entry the paper account cannot fund. None means allowed.
+
+        The account is modelled as unleveraged cash -- leverage and margin are
+        deliberately not simulated -- so a position's notional IS its cost and
+        cannot exceed uncommitted capital. In the ordinary pipeline flow this
+        never fires, because the exposure gate has already capped a position at
+        ``exposure_limit_pct`` of equity (5% by default); it exists for the
+        paths that bypass sizing entirely -- a fixed-quantity configuration, an
+        intent recovered from a previous process, a direct call -- where a $10
+        account was previously able to park a $6,000,000 order and drive
+        available capital to -6,004,190.
+        """
         try:
             notional = abs(float(size)) * abs(float(entry))
+            reference = float(entry)
         except (TypeError, ValueError):
-            return FillResult("rejected", symbol, "long", 0.0, 0.0)
+            self.last_blocker = self.UNFUNDED_BLOCKER
+            return FillResult("rejected", symbol, _dir(side), 0.0, 0.0)
         if notional <= 0:
             return None
         available = self.available_balance()
         if notional > available + 1e-9:
+            self.last_blocker = self.UNFUNDED_BLOCKER
             self.ledger.log(
                 level="warning", stage="execution", symbol=symbol,
-                message=(f"{symbol} entry rejected: notional {notional:.2f} exceeds "
-                         f"available paper capital {available:.2f}"))
-            return FillResult("rejected", symbol, "long", 0.0, float(entry))
+                message=(f"{self.UNFUNDED_BLOCKER}: {symbol} notional {notional:.2f} "
+                         f"exceeds uncommitted paper capital {available:.2f}"))
+            return FillResult("rejected", symbol, _dir(side), 0.0, reference)
         return None
 
     def open(self, *, symbol: str, side: str, size: float, entry: float,
@@ -179,9 +200,12 @@ class PaperExecutionEngine:
              alert_id: str = "", maker: bool = False,
              sizing_context: Optional[dict] = None) -> FillResult:
         direction = _dir(side)
-        rejection = self._reject_unaffordable(symbol, size, entry)
+        # Return the result the guard built. Re-deriving it here called
+        # float(entry) on exactly the unparseable input the guard exists to
+        # catch, turning a clean rejection into a crashed decision cycle.
+        rejection = self._reject_unaffordable(symbol, side, size, entry)
         if rejection is not None:
-            return FillResult("rejected", symbol, direction, 0.0, float(entry))
+            return rejection
         execution_id = self._execution_id("OPEN", alert_id)
         # route the entry through the fill model (price/size/rejection);
         # maker fills (resting limits) execute at the limit price exactly
@@ -428,7 +452,7 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
         # order worth more than the account and drive available capital
         # arbitrarily negative. Refusing here is fail-closed and does not
         # touch how any strategy sizes a trade.
-        rejection = self._reject_unaffordable(symbol, size, entry)
+        rejection = self._reject_unaffordable(symbol, side, size, entry)
         if rejection is not None:
             return rejection
         with self._intent_lock:

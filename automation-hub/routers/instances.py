@@ -282,7 +282,10 @@ def instance_runtime_health():
     supervisor = getattr(_wa, "instance_supervisor", None)
     hub = getattr(manager, "market_hub", None)
     rows = []
-    for inst in manager._instances.values():
+    # Owner-scoped like every sibling route. An unscoped listing would hand one
+    # account every instance_id on the deployment, which is exactly the
+    # enumeration the 404-not-403 rule elsewhere exists to prevent.
+    for inst in manager.owned_instances(_owner(request)):
         runtime = manager._runtime.get(inst.id)
         thread = getattr(runtime[0], "_thread", None) if runtime else None
         rows.append({

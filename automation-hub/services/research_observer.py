@@ -122,6 +122,15 @@ class ResearchObservationRuntime:
             try:
                 if not self.attached():
                     self._attach()
+                    # Clear the reattach failure once it has actually
+                    # reattached. Leaving it set made status() report ERROR
+                    # permanently after the first transient blip, while the
+                    # observer was attached and candles were flowing -- and
+                    # nothing else clears it until a decision completes, which
+                    # never happens on the two HTF subscriptions.
+                    with self._lock:
+                        if self._last_error.startswith("research observer reattach failed"):
+                            self._last_error = ""
             except Exception as exc:  # noqa: BLE001 — an optional observer
                 with self._lock:                 # must never kill its own loop
                     self._last_error = f"research observer reattach failed: {exc}"
