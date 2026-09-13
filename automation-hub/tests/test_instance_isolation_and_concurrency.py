@@ -640,3 +640,121 @@ def test_a_rejection_reason_travels_on_the_result_not_on_the_engine():
     assert fill_rejected.action == "rejected"
     assert fill_rejected.reason != engine.UNFUNDED_BLOCKER
     assert not hasattr(engine, "last_blocker")
+
+
+def _claim_rows(ledger, alert_id, status=None):
+    return [row for row in ledger.get_webhook_events()
+            if row["alert_id"] == alert_id
+            and (status is None or row["status"] == status)]
+
+
+@pytest.mark.parametrize("outcome", ["rejected_fill", "exception", "gate_rejection"])
+def test_no_exit_path_leaves_a_claim_behind(outcome):
+    """A stranded claim bars its candle forever -- nothing ages one out.
+
+    So every way out of the entry path has to be checked, not just the happy
+    one. Each case below must leave zero claims AND leave the candle tradeable,
+    because in none of them did a trade actually happen.
+    """
+    from execution.paper_engine import PaperExecutionEngine
+    from services.controls import TradingControl
+    from services.fill_model import RealisticFill
+    from services.signal_pipeline import SignalPipeline
+    from services.trading_instances import InstanceLedger
+
+    key = "auto:inst-1:BTCUSDT:5m:2026-09-13T10:00:00+00:00:buy"
+    payload = {"alert_id": key, "symbol": "BTCUSDT", "side": "BUY",
+               "entry": 100.0, "stop": 95.0}
+    ledger = SqliteLedger(":memory:")
+    scoped = InstanceLedger(ledger, "inst-1")
+
+    class _Exploding(PaperExecutionEngine):
+        def open(self, **_kwargs):
+            raise RuntimeError("ledger write failed mid-fill")
+
+    engine = {
+        "rejected_fill": lambda: PaperExecutionEngine(
+            scoped, 10_000, fill_model=RealisticFill(reject_prob=1.0)),
+        "exception": lambda: _Exploding(scoped, 10_000),
+        "gate_rejection": lambda: PaperExecutionEngine(scoped, 10_000),
+    }[outcome]()
+    pipeline = SignalPipeline(scoped, engine, TradingControl(), equity=10_000)
+    if outcome == "gate_rejection":
+        pipeline.controls.pause_all()
+
+    try:
+        pipeline.process(dict(payload))
+    except RuntimeError:
+        assert outcome == "exception"
+
+    assert _claim_rows(ledger, key, "claimed") == []
+
+    # ...and the candle is still tradeable once the condition clears.
+    pipeline.controls.resume()
+    pipeline.paper = PaperExecutionEngine(scoped, 10_000)
+    assert pipeline.process(dict(payload)).accepted is True
+
+
+def test_an_order_that_did_happen_leaves_one_row_and_blocks_its_replay():
+    from execution.paper_engine import PaperExecutionEngine
+    from services.controls import TradingControl
+    from services.signal_pipeline import SignalPipeline
+    from services.trading_instances import InstanceLedger
+
+    key = "auto:inst-1:BTCUSDT:5m:2026-09-13T10:00:00+00:00:buy"
+    payload = {"alert_id": key, "symbol": "BTCUSDT", "side": "BUY",
+               "entry": 100.0, "stop": 95.0}
+    ledger = SqliteLedger(":memory:")
+    scoped = InstanceLedger(ledger, "inst-1")
+    pipeline = SignalPipeline(scoped, PaperExecutionEngine(scoped, 10_000),
+                              TradingControl(), equity=10_000)
+
+    assert pipeline.process(dict(payload)).accepted is True
+    rows = _claim_rows(ledger, key)
+    assert len(rows) == 1 and rows[0]["status"] == "accepted"
+
+    # The replay must not trade again, and must not strand a claim either.
+    assert pipeline.process(dict(payload)).accepted is False
+    assert _claim_rows(ledger, key, "claimed") == []
+
+
+def test_the_capital_guard_never_binds_before_the_risk_gates():
+    """It exists for callers that bypass sizing, not for ordinary entries.
+
+    A guard that started refusing normal trades would stop the platform
+    silently, so what actually binds first is pinned here.
+    """
+    from execution.paper_engine import PaperExecutionEngine
+    from services.controls import TradingControl
+    from services.signal_pipeline import SignalPipeline
+    from services.trading_instances import InstanceLedger
+
+    ledger = SqliteLedger(":memory:")
+    scoped = InstanceLedger(ledger, "inst-1")
+    paper = PaperExecutionEngine(scoped, 1_000.0)
+    pipeline = SignalPipeline(scoped, paper, TradingControl(), equity=1_000.0,
+                              risk_per_trade_pct=0.005, exposure_limit_pct=0.05,
+                              max_open_positions=3)
+
+    # Ordinary entries open normally: the exposure cap keeps notional far
+    # inside the balance, so the capital guard is never reached.
+    for index, symbol in enumerate(("BTCUSDT", "ETHUSDT")):
+        result = pipeline.process({"alert_id": f"k{index}", "symbol": symbol,
+                                   "side": "BUY", "entry": 100.0, "stop": 95.0})
+        assert result.accepted is True, result.reason
+    assert paper.available_balance() > 0
+
+    # And when capital IS committed, an earlier risk gate refuses first --
+    # never the capital guard, whose refusal would read as an execution fault.
+    # A fresh ledger, so the no-pyramiding gate is not what answers.
+    fresh = InstanceLedger(SqliteLedger(":memory:"), "inst-2")
+    committed = PaperExecutionEngine(fresh, 1_000.0)
+    committed.open(symbol="XRPUSDT", side="BUY", size=9.9, entry=100.0,
+                   stop=95.0, alert_id="big")
+    blocked = SignalPipeline(fresh, committed, TradingControl(), equity=1_000.0,
+                             risk_per_trade_pct=0.005, exposure_limit_pct=0.05,
+                             max_open_positions=3)
+    refused = blocked.process({"alert_id": "next", "symbol": "BTCUSDT",
+                               "side": "BUY", "entry": 100.0, "stop": 95.0})
+    assert refused.accepted is False
+    assert refused.stage in ("portfolio_exposure", "correlation", "exposure")

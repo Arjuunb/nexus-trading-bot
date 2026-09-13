@@ -257,3 +257,76 @@ def test_a_context_channel_is_upgraded_when_a_consumer_needs_quotes():
     assert quotes_seen and quotes_seen[0]["bid"] == 1.0
     trader.stop()
     context.stop()
+
+
+def test_the_quotes_upgrade_survives_concurrent_detach_without_leaking():
+    """The upgrade path broke in three consecutive rounds.
+
+    Its failure mode is not an exception -- it is a channel removed from the
+    hub while the upgrade is in flight, leaving a live WebSocket that nothing
+    will ever close, or a quote consumer attached to a kline-only feed that can
+    never fill an order while reporting itself reliable.
+    """
+    import threading
+    import time
+
+    constructed = []
+
+    class _Tracked:
+        def __init__(self, _loader, *, bar_sink=None, quote_sink=None,
+                     event_sink=None, quotes_enabled=True, **_kw):
+            self.quotes_enabled, self.running, self.stopped = quotes_enabled, False, False
+            self.symbol = self.timeframe = ""
+            constructed.append(self)
+
+        def start(self, symbol, timeframe):
+            self.symbol, self.timeframe = symbol, timeframe
+            time.sleep(0.005)              # stands in for the REST bootstrap
+            self.running = True
+            return True
+
+        def stop(self):
+            self.running, self.stopped = False, True
+
+        def status(self):
+            return {"state": "SYNCHRONIZED", "transport_state": "CONNECTED",
+                    "reliable": True}
+
+        def snapshot(self):
+            return {"closed_bars": [], "forming": None, "quote": {},
+                    "connection": self.status()}
+
+    hub = ForwardPaperMarketDataHub(lambda *a, **k: [], stream_factory=_Tracked)
+    problems = []
+
+    def context(name):
+        subscription = hub.subscription(f"ctx-{name}")
+        subscription.start("BTCUSDT", "1h", quotes=False)
+        time.sleep(0.003)
+        subscription.stop()
+
+    def needs_quotes(name):
+        subscription = hub.subscription(f"q-{name}")
+        if subscription.start("BTCUSDT", "1h"):
+            channel = hub._for(subscription.consumer_id)
+            if channel is not None and not channel.stream.quotes_enabled:
+                problems.append("started on a quote-less channel")
+        time.sleep(0.003)
+        subscription.stop()
+
+    for round_number in range(10):
+        threads = ([threading.Thread(target=context, args=(f"{round_number}-{i}",))
+                    for i in range(3)]
+                   + [threading.Thread(target=needs_quotes, args=(f"{round_number}-{i}",))
+                      for i in range(3)])
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    hub.stop()
+    leaked = [stream for stream in constructed if stream.running and not stream.stopped]
+
+    assert problems == []
+    assert leaked == [], f"{len(leaked)} stream(s) left running with nothing to close them"
+    assert hub._channels == {}
