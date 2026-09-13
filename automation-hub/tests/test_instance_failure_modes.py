@@ -210,7 +210,7 @@ def test_deleting_an_instance_with_an_open_position_is_refused(tmp_path):
         symbol="BTCUSDT", side="long", size=0.01, entry=100.0, stop=95.0)
     manager.stop(instance.id)
 
-    with pytest.raises(ValueError, match="open positions"):
+    with pytest.raises(ValueError, match="open paper position"):
         manager.delete(instance.id)
 
     assert instance.id in manager._instances
@@ -324,4 +324,75 @@ def test_a_duplicate_subscription_request_reuses_one_channel_per_symbol(tmp_path
              if (row["symbol"], row["timeframe"]) == ("BTCUSDT", "5m")]
     assert len(entry) == 1
     assert entry[0]["consumer_count"] == 2
+    manager.shutdown()
+
+
+def test_a_refused_delete_offers_an_explicit_route_forward(tmp_path):
+    """Refusing is correct; refusing with no path forward is a dead end."""
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    manager._runtime[instance.id][1].ledger.open_position(
+        symbol="BTCUSDT", side="long", size=0.01, entry=100.0, stop=95.0)
+
+    disposition = manager.open_position_disposition(instance.id)
+
+    assert disposition["deletable"] is False
+    assert [row["symbol"] for row in disposition["open_positions"]] == ["BTCUSDT"]
+    assert disposition["resolution"]["action"] == "close_open_positions"
+    assert disposition["resolution"]["requires_confirmation"] is True
+    manager.shutdown()
+
+
+def test_closing_open_positions_unblocks_delete_and_records_the_pnl(tmp_path):
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    runtime = manager._runtime[instance.id]
+    # A forward-paper entry is an intent until a quote fills it, so park one
+    # and fill it the way the runtime would.
+    runtime[1].open(symbol="BTCUSDT", side="BUY", size=0.01, entry=100.0, stop=95.0,
+                    alert_id="dispose-1",
+                    sizing_context={"decision_timestamp": datetime.now(timezone.utc).isoformat()})
+    stamp = datetime.now(timezone.utc).isoformat()
+    runtime[1].process_quote({"symbol": "BTCUSDT", "last": 100.0, "bid": 99.9,
+                              "ask": 100.1, "mark": 100.0, "sequence": 1,
+                              "received_at": stamp, "event_timestamp": stamp,
+                              "quote_event_id": "dq1",
+                              "candle_id": "BINANCE_USDM:BTCUSDT:5m:1"})
+    assert len(runtime[1].positions()) == 1
+    runtime[0].last_prices["BTCUSDT"] = 110.0          # a real observed mark
+
+    result = manager.close_open_positions(instance.id)
+
+    assert [row["symbol"] for row in result["closed"]] == ["BTCUSDT"]
+    assert result["remaining"] == []
+    assert manager.open_position_disposition(instance.id)["deletable"] is True
+    # The P&L was realised into the history, not discarded with the instance.
+    closed = [row for row in _ledger.get_paper_trades(instance_id=instance.id)
+              if row["status"] == "closed"]
+    assert len(closed) == 1
+    # Near the mark, not exactly at it: the exit crosses the spread like any
+    # other fill, which is the realism the engine is supposed to apply.
+    assert closed[0]["exit"] == pytest.approx(110.0, rel=0.002)
+    assert closed[0]["exit"] < 110.0          # a long exits on the bid side
+    manager.stop(instance.id)
+    assert manager.delete(instance.id) == instance.id
+
+
+def test_an_unpriceable_position_is_reported_rather_than_closed_at_a_guess(tmp_path):
+    """Closing at an invented price would write a fabricated P&L into history."""
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "BTCUSDT")
+    manager.start(instance.id)
+    runtime = manager._runtime[instance.id]
+    runtime[1].ledger.open_position(symbol="BTCUSDT", side="long", size=0.01,
+                                    entry=100.0, stop=95.0)
+    runtime[0].last_prices.clear()                          # no mark available
+
+    result = manager.close_open_positions(instance.id)
+
+    assert result["closed"] == []
+    assert [row["reason"] for row in result["remaining"]] == ["no live mark available"]
+    assert manager.open_position_disposition(instance.id)["deletable"] is False
     manager.shutdown()

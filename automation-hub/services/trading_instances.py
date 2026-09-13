@@ -1443,6 +1443,95 @@ class TradingInstanceManager:
             self._instances[inst.id] = inst
             return inst
 
+    def open_position_disposition(self, instance_id: str,
+                                  owner_id: str | None = None) -> dict:
+        """What stands between this instance and deletion, and how to resolve it.
+
+        Refusing a delete is correct -- an open paper position carries risk,
+        P&L and a session the ledger still owns -- but a refusal with no route
+        forward is a dead end. This names the positions and the one explicit
+        action that resolves them, so the choice to realise them is made
+        deliberately rather than as a side effect of pressing Delete.
+        """
+        self.instance_for(instance_id, owner_id)
+        # Deliberately not session-scoped, so this lists exactly what the
+        # delete guard blocks on -- including a position left open by an
+        # earlier simulation session, which is the one most likely to be
+        # forgotten and the one whose P&L a silent delete would discard.
+        positions = InstanceLedger(self.ledger, instance_id).get_positions("open")
+        runtime = self._runtime.get(instance_id)
+        marks = (runtime[0].status().get("last_prices") or {}) if runtime else {}
+        rows = []
+        for position in positions:
+            symbol = str(position.get("symbol"))
+            mark = marks.get(symbol)
+            entry, size = float(position.get("entry") or 0), float(position.get("size") or 0)
+            unrealized = None
+            if mark is not None:
+                direction = 1 if position.get("side") == "long" else -1
+                unrealized = round(direction * (float(mark) - entry) * size, 2)
+            rows.append({
+                "position_id": position.get("id"), "symbol": symbol,
+                "side": position.get("side"), "size": size, "entry": entry,
+                "stop": position.get("stop"), "mark": mark,
+                "unrealized_pnl": unrealized,
+                "mark_available": mark is not None,
+                "opened_at": position.get("opened_at"),
+            })
+        return {
+            "instance_id": instance_id,
+            "deletable": not rows,
+            "open_positions": rows,
+            "resolution": (None if not rows else {
+                "action": "close_open_positions",
+                "endpoint": f"POST /instances/{instance_id}/close-open-positions",
+                "effect": ("Closes every open paper position at the worker's last "
+                           "observed mark and realises the P&L into this simulation "
+                           "session, then the instance can be deleted."),
+                "requires_confirmation": True,
+                "blocked_reason": (None if all(row["mark_available"] for row in rows)
+                                   else "No live mark is available for every open "
+                                        "position; start the instance so its feed "
+                                        "can price them, or wait for the market "
+                                        "worker to report a price."),
+            }),
+        }
+
+    def close_open_positions(self, instance_id: str, *, owner_id: str | None = None,
+                             initiated_by: str = "operator") -> dict:
+        """Realise every open paper position at the last observed mark.
+
+        The explicit handling path behind a refused delete. It never invents a
+        price: a position the runtime cannot price is left open and reported,
+        because closing it at a guessed number would write a fabricated P&L
+        into the trade history this platform exists to keep honest.
+        """
+        with self._lifecycle_lock(instance_id):
+            disposition = self.open_position_disposition(instance_id, owner_id)
+            if disposition["deletable"]:
+                return {"closed": [], "remaining": [], "instance_id": instance_id}
+            runtime = self._runtime.get(instance_id)
+            if runtime is None:
+                raise ValueError(
+                    "Start the Trading Instance so its market feed can price the open "
+                    "position(s) before closing them")
+            paper = runtime[1]
+            closed, remaining = [], []
+            for row in disposition["open_positions"]:
+                if not row["mark_available"]:
+                    remaining.append({**row, "reason": "no live mark available"})
+                    continue
+                fill = paper.close(symbol=row["symbol"], exit_price=float(row["mark"]),
+                                   execution_id=f"dispose:{instance_id}:{row['position_id']}")
+                closed.append({"symbol": row["symbol"], "exit": float(row["mark"]),
+                               "pnl": getattr(fill, "pnl", None), "action": fill.action})
+            from services.instance_telemetry import log_event
+            log_event(self, self._instances[instance_id], "ORDER_CREATED",
+                      status="disposed", initiated_by=initiated_by,
+                      detail=(f"{len(closed)} open paper position(s) closed at the last "
+                              f"observed mark before deletion; {len(remaining)} unpriced"))
+            return {"instance_id": instance_id, "closed": closed, "remaining": remaining}
+
     def delete(self, instance_id: str, *, owner_id: str | None = None) -> str:
         """Delete one stopped instance without touching any sibling worker."""
         with self._lifecycle_lock(instance_id), self._lock:
@@ -1452,7 +1541,11 @@ class TradingInstanceManager:
             if runtime and runtime[0].running:
                 raise ValueError("Stop the Trading Instance before deleting it")
             if InstanceLedger(self.ledger, instance_id).get_positions("open"):
-                raise ValueError("Close this instance's open positions before deleting it")
+                raise ValueError(
+                    "This Trading Instance still holds an open paper position. Close it "
+                    "explicitly first (GET /instances/{id}/open-positions shows what is "
+                    "open and POST /instances/{id}/close-open-positions realises it), so "
+                    "the P&L is recorded rather than discarded with the instance.")
             # Delete durable state first. If the database rejects the delete,
             # keep the in-memory worker intact so a transient persistence error
             # cannot silently stop an instance that still exists after restart.

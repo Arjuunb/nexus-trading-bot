@@ -148,3 +148,68 @@ def test_an_existing_instance_on_a_demoted_strategy_keeps_running(monkeypatch):
     assert row["strategy_lifecycle"] == registry.RESEARCH_ONLY
     assert manager._runtime[instance.id][0] is not None
     manager.stop(instance.id)
+
+
+def test_every_strategy_declares_its_warm_up_requirement():
+    """READY must mean a stated requirement was met.
+
+    Before this, most strategies declared nothing and relied on the engine's
+    generic 150-candle default happening to exceed their longest lookback.
+    """
+    for entry in registry.all_entries():
+        assert entry.warmup_candles > 0, entry.strategy_id
+        assert entry.warmup_basis, entry.strategy_id
+
+
+def test_the_engine_warms_up_to_at_least_what_each_strategy_declares():
+    """The declaration is checkable against the runtime, not taken on trust."""
+    from services.auto_engine import AutoStrategyEngine
+
+    engine = AutoStrategyEngine.__new__(AutoStrategyEngine)
+    engine.warmup = 150
+    for entry in registry.all_entries():
+        engine.timeframe = entry.supported_timeframes[0]
+        strategy = make_builtin_strategy(entry.strategy_id, "BTCUSDT")
+        required = AutoStrategyEngine._required_warmup(engine, strategy)
+        assert required >= entry.warmup_candles, (
+            f"{entry.strategy_id}: engine warms {required}, registry declares "
+            f"{entry.warmup_candles}")
+
+
+def test_a_declared_warm_up_covers_the_strategys_longest_lookback():
+    """The declared figure must actually exceed the indicator it names."""
+    for entry in registry.all_entries():
+        strategy = make_builtin_strategy(entry.strategy_id, "BTCUSDT")
+        lookbacks = [value for value in (getattr(strategy, "params", {}) or {}).values()
+                     if isinstance(value, (int, float))]
+        config = getattr(strategy, "config", None)
+        if config is not None:
+            lookbacks += [value for value in vars(config).values()
+                          if isinstance(value, (int, float))]
+        longest = max(lookbacks) if lookbacks else 0
+        assert entry.warmup_candles >= longest, (
+            f"{entry.strategy_id} declares {entry.warmup_candles} candles but has a "
+            f"{longest}-candle lookback")
+
+
+def test_the_options_endpoint_publishes_the_warm_up_contract(monkeypatch):
+    pytest.importorskip("fastapi")
+    from data.ledger import SqliteLedger
+    from routers import instances as instance_api
+    from services.trading_instances import TradingInstanceManager
+
+    def factory(_key, symbol):
+        from strategies.brain_strategy import DecisionBrain
+        return DecisionBrain(symbol)
+
+    manager = TradingInstanceManager(SqliteLedger(":memory:"), strategy_factory=factory,
+                                     live=False, live_poll_s=60)
+    monkeypatch.setattr(instance_api._wa, "instance_manager", manager)
+
+    registry_rows = {row["strategy_id"]: row
+                     for row in instance_api.instance_options()["strategy_registry"]}
+
+    for entry in registry.all_entries():
+        row = registry_rows[entry.strategy_id]
+        assert row["warmup_candles"] == entry.warmup_candles
+        assert row["required_data"] == list(entry.required_data)

@@ -62,6 +62,15 @@ class StrategyEntry:
     supported_markets: tuple[str, ...]
     supported_timeframes: tuple[str, ...]
     required_data: tuple[str, ...]
+    #: The entry-timeframe closed candles this strategy needs before its first
+    #: decision can be trusted, derived from its own longest lookback. Declared
+    #: rather than left to the engine's generic default so "READY" means a
+    #: stated requirement was met, not that a shared constant happened to be
+    #: large enough. The engine warms up to at least this many.
+    warmup_candles: int = 150
+    #: The longest indicator lookback behind that number, so the figure can be
+    #: checked against the strategy rather than taken on trust.
+    warmup_basis: str = "engine default"
     #: Why this entry is not PRODUCTION.  Empty for production strategies.
     lifecycle_reason: str = ""
     #: Test modules that specifically exercise this strategy.
@@ -89,6 +98,8 @@ class StrategyEntry:
             "supported_markets": list(self.supported_markets),
             "supported_timeframes": list(self.supported_timeframes),
             "required_data": list(self.required_data),
+            "warmup_candles": self.warmup_candles,
+            "warmup_basis": self.warmup_basis,
             "evidence": list(self.evidence),
         }
 
@@ -101,6 +112,7 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
+        warmup_candles=150, warmup_basis="trend EMA 50, slow EMA 26, RSI 14, ATR 14",
         evidence=("tests/test_builtin_strategy_versions.py", "tests/test_brain_mtf.py",
                   "tests/test_brain_profitability.py"),
     ),
@@ -110,6 +122,7 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles",),
+        warmup_candles=150, warmup_basis="Supertrend period 10, ATR 14",
         evidence=("tests/test_builtin_strategy_versions.py",),
     ),
     StrategyEntry(
@@ -118,6 +131,7 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles",),
+        warmup_candles=150, warmup_basis="Donchian channel 30, ATR 14",
         evidence=("tests/test_builtin_strategy_versions.py",),
     ),
     StrategyEntry(
@@ -127,6 +141,8 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=("5m",),
         required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
+        warmup_candles=150,
+        warmup_basis="slow EMA 50, structure lookback 30, ADX 14",
         evidence=("tests/test_adaptive_trend_pullback.py",
                   "tests/test_builtin_strategy_versions.py"),
     ),
@@ -138,6 +154,8 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=("5m",),
         required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
+        warmup_candles=400,
+        warmup_basis="S/R zone confirmation window; declared by the engine itself",
         evidence=("tests/test_price_action_instance_strategy.py",
                   "tests/test_native_price_action.py"),
     ),
@@ -149,6 +167,8 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=("5m",),
         required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
+        warmup_candles=400,
+        warmup_basis="flip zone history; declared by the engine itself",
         evidence=("tests/test_price_action_instance_strategy.py",
                   "tests/test_price_action_continuation.py"),
     ),
@@ -166,6 +186,7 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles", "native_primary_htf"),
+        warmup_candles=150, warmup_basis="internal warmup 120, pivot/sweep lookbacks",
         lifecycle_reason=("No immutable version in strategies.builtin_versions, so a paper "
                           "record cannot be attributed to a reproducible build. The "
                           "supported SMC research path is the SMC Strategy Lab."),
@@ -177,6 +198,7 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles",),
+        warmup_candles=150, warmup_basis="sweep lookback 20, internal warmup 30, ATR 14",
         lifecycle_reason=("No immutable version in strategies.builtin_versions; add a pinned "
                           "entry with a signal fixture to promote."),
         evidence=("tests/test_liquidity_sweep_strategy.py",),
@@ -187,6 +209,7 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles",),
+        warmup_candles=150, warmup_basis="slow EMA 26, ATR 14",
         lifecycle_reason=("No immutable version and no test module exercises EMAStrategy "
                           "directly; it is a baseline, not a production alpha."),
     ),
@@ -196,6 +219,8 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles",),
+        warmup_candles=150,
+        warmup_basis="widest member lookback: Donchian channel 30, slow EMA 26",
         lifecycle_reason=("No immutable version and only an incidental backtest reference; "
                           "one of its three members (EMA) is itself research-only."),
     ),

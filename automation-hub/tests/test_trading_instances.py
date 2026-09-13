@@ -949,7 +949,7 @@ def test_delete_refuses_open_position_and_preserves_instance_and_sibling():
     manager.store.save_market_state(first.id, last_processed_candle_timestamp="2026-08-09T00:05:00+00:00")
     manager.store.save_market_state(sibling.id, last_processed_candle_timestamp="2026-08-09T00:15:00+00:00")
 
-    with pytest.raises(ValueError, match="Close this instance's open positions"):
+    with pytest.raises(ValueError, match="open paper position"):
         manager.delete(first.id)
 
     assert {row["id"] for row in manager.list()} == {first.id, sibling.id}

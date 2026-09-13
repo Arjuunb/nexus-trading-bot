@@ -3,7 +3,7 @@ import AreaLine from "../components/chart/AreaLine";
 import Card from "../components/common/Card";
 import Icon from "../components/common/Icon";
 import { Badge, Field, PageHeader, StatCard } from "../components/common/ui";
-import { apiDelete, apiPatchJson, apiPost, apiPostJson, useLive } from "../lib/api";
+import { apiDelete, apiGet, apiPatchJson, apiPost, apiPostJson, useLive } from "../lib/api";
 import { useApp } from "../app-context";
 
 type Metric = Record<string, any>;
@@ -271,6 +271,29 @@ export default function TradingInstancesPage({ instanceId }: { instanceId?: stri
       app.toast("Trading instance deleted", "success");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not delete Trading Instance";
+      // A delete refused because the instance still holds an open paper
+      // position is not a dead end. Offer the one explicit action that
+      // resolves it, so realising that P&L stays a deliberate choice rather
+      // than a side effect of pressing Delete.
+      if (message.includes("open paper position")) {
+        try {
+          const blocking = await apiGet<{ open_positions: { symbol: string; side: string; size: number; unrealized_pnl: number | null; mark_available: boolean }[]; resolution: { blocked_reason: string | null } | null }>(`/instances/${instance.id}/open-positions`);
+          const rows = blocking.open_positions ?? [];
+          const summary = rows.map((row) => `${row.side} ${row.size} ${row.symbol}${row.unrealized_pnl === null ? " (no live mark)" : ` (${signedMoney(row.unrealized_pnl)} unrealised)`}`).join("\n");
+          if (blocking.resolution?.blocked_reason) {
+            const detail = `${blocking.resolution.blocked_reason}\n\n${summary}`;
+            setActionErrors((current) => ({ ...current, [instance.id]: detail }));
+            app.toast("Open positions cannot be priced yet", "error");
+            return;
+          }
+          if (window.confirm(`This instance still holds ${rows.length} open paper position(s):\n\n${summary}\n\nClose them at the last observed mark and realise the P&L into this simulation session? The instance can then be deleted.`)) {
+            await apiPostJson(`/instances/${instance.id}/close-open-positions`, { confirm: true });
+            app.toast("Open paper positions closed; delete again to remove the instance", "success");
+            await live.refetch();
+            return;
+          }
+        } catch { /* fall through to the plain refusal below */ }
+      }
       setActionErrors((current) => ({ ...current, [instance.id]: message }));
       app.toast(message, "error");
     } finally {

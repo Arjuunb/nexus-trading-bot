@@ -455,7 +455,15 @@ def delete_instance(instance_id: str, request: Request = None,  # noqa: B008
     except KeyError:
         raise HTTPException(404, "Trading instance not found")
     except ValueError as exc:
-        raise HTTPException(409, str(exc))
+        # A refused delete carries the route forward with it, so the dashboard
+        # can offer the explicit close rather than leaving a dead end.
+        detail = {"message": str(exc)}
+        try:
+            detail["open_positions"] = manager.open_position_disposition(
+                instance_id, _owner(request))
+        except Exception:  # noqa: BLE001 — the refusal reason is the point
+            pass
+        raise HTTPException(409, detail)
     except RuntimeError as exc:
         # Preserve an actionable persistence/backend reason for the dashboard
         # instead of collapsing a Supabase outage into an opaque HTTP 500.
@@ -659,6 +667,39 @@ def instance_logs(instance_id: str, limit: int = 100, request: Request = None): 
     # they were written for.
     return {"logs": _wa.ledger.get_logs(limit, instance_id=instance_id),
             "engine_events": manager.store.engine_logs(instance_id, limit)}
+
+
+@router.get("/instances/{instance_id}/open-positions")
+def instance_open_positions(instance_id: str, request: Request = None):  # noqa: B008
+    """What blocks deletion, and the one explicit action that resolves it."""
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    return manager.open_position_disposition(instance_id, _owner(request))
+
+
+@router.post("/instances/{instance_id}/close-open-positions")
+def close_instance_open_positions(instance_id: str, body: SimulationAccountRestart,
+                                  request: Request = None,  # noqa: B008
+                                  x_webhook_secret: Optional[str] = Header(default=None)):
+    """Realise every open paper position at the last observed mark.
+
+    Deliberately explicit and confirmed: it writes real P&L into this
+    instance's trade history, so it must never happen as a side effect of
+    pressing Delete.
+    """
+    _wa._check_secret(x_webhook_secret)
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    if not body.confirm:
+        raise HTTPException(400, "Explicit confirmation is required to close open "
+                                 "paper positions")
+    try:
+        return manager.close_open_positions(
+            instance_id, owner_id=_owner(request), initiated_by=_initiated_by(request))
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
 
 
 @router.get("/instances/{instance_id}/reconciliation")
