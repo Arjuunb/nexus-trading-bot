@@ -174,7 +174,37 @@ class ForwardPaperMarketDataHub:
             candle_notice=candle_notice,
         )
 
-    def _channel(self, key: tuple[str, str]) -> _Channel:
+    def channel_exists(self, symbol: str, timeframe: str) -> bool:
+        """Is a Binance connection for this symbol/timeframe already open?
+
+        Lets a caller record whether it created a venue connection or joined
+        one, without reaching into private state.
+        """
+        with self._lock:
+            return (normalize_symbol(symbol), timeframe) in self._channels
+
+    def channel_report(self) -> list[dict]:
+        """Every open channel, its consumers and its transport state."""
+        with self._lock:
+            channels = list(self._channels.items())
+        rows = []
+        for (symbol, timeframe), channel in channels:
+            try:
+                status = channel.stream.status()
+            except Exception as exc:  # a broken stream must still be listed
+                status = {"state": "ERROR", "health_reason": f"{type(exc).__name__}: {exc}"}
+            rows.append({
+                "symbol": symbol, "timeframe": timeframe,
+                "consumers": sorted(channel.consumers),
+                "consumer_count": len(channel.consumers),
+                "state": status.get("state"),
+                "transport_state": status.get("transport_state"),
+                "reliable": status.get("reliable"),
+                "quotes_enabled": bool(getattr(channel.stream, "quotes_enabled", True)),
+            })
+        return sorted(rows, key=lambda row: (row["symbol"], row["timeframe"]))
+
+    def _channel(self, key: tuple[str, str], *, quotes: bool = True) -> _Channel:
         with self._lock:
             existing = self._channels.get(key)
             if existing is not None:
@@ -260,22 +290,32 @@ class ForwardPaperMarketDataHub:
                     if consumer.event_sink:
                         self._notify(consumer, consumer.event_sink, event)
 
-            stream = self.stream_factory(
-                self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
-                event_sink=on_event,
-            )
+            try:
+                stream = self.stream_factory(
+                    self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
+                    event_sink=on_event, quotes_enabled=quotes,
+                )
+            except TypeError:
+                # Test doubles and any stream implementation that predates
+                # kline-only channels still construct with the original
+                # signature; they simply carry quotes as they always did.
+                stream = self.stream_factory(
+                    self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
+                    event_sink=on_event,
+                )
             channel = _Channel(stream=stream)
             holder["channel"] = channel
             self._channels[key] = channel
             return channel
 
-    def _start(self, consumer: _Consumer, symbol: str, timeframe: str) -> bool:
+    def _start(self, consumer: _Consumer, symbol: str, timeframe: str, *,
+               quotes: bool = True) -> bool:
         symbol = normalize_symbol(symbol)
         if timeframe not in TF_MS:
             raise ValueError(f"unsupported timeframe '{timeframe}'")
         key = (symbol, timeframe)
         self._detach(consumer.consumer_id, stop_empty=True)
-        channel = self._channel(key)
+        channel = self._channel(key, quotes=quotes)
         with self._lock:
             channel.consumers[consumer.consumer_id] = consumer
             self._consumer_keys[consumer.consumer_id] = key
@@ -361,8 +401,8 @@ class ForwardPaperSubscription:
     def consumer_id(self) -> str:
         return self.consumer.consumer_id
 
-    def start(self, symbol: str, timeframe: str) -> bool:
-        started = self.hub._start(self.consumer, symbol, timeframe)
+    def start(self, symbol: str, timeframe: str, *, quotes: bool = True) -> bool:
+        started = self.hub._start(self.consumer, symbol, timeframe, quotes=quotes)
         if started:
             self.symbol, self.timeframe = normalize_symbol(symbol), timeframe
             self._release_unneeded_natives(self.symbol, self.timeframe)
@@ -465,7 +505,12 @@ class ForwardPaperSubscription:
                         f"{self.consumer_id}:native:{requested[0]}:{requested[1]}"
                     )
                     self._native_fetch_subscriptions[requested] = source
-                if not source.running and not source.start(*requested):
+                # Context channels supply higher-timeframe candles only.
+                # markPrice and bookTicker are per-symbol, so subscribing to
+                # them again here duplicated the entry channel's quote streams
+                # once per higher timeframe -- two extra Binance subscriptions
+                # per symbol, for data no consumer of this channel reads.
+                if not source.running and not source.start(*requested, quotes=False):
                     raise RuntimeError(
                         f"Binance USD-M hub could not start {requested[0]} {requested[1]}"
                     )

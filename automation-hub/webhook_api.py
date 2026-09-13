@@ -842,46 +842,15 @@ class FillModelBody(BaseModel):
 
 
 
-from services.native_price_action import STRATEGY_VERSION as _NATIVE_PA_VERSION
-_STRATEGY_CATALOG = [
-    {"key": "brain", "label": "Decision Brain",
-     "version": builtin_strategy_version("brain"),
-     "desc": "Multi-factor trend: EMA trend + filter, momentum, RSI, regime; conviction-weighted sizing"},
-    {"key": "supertrend", "label": "Supertrend", "version": builtin_strategy_version("supertrend"),
-     "desc": "ATR trend-following indicator"},
-    {"key": "donchian", "label": "Donchian Breakout", "desc": "Classic Turtle channel breakout"},
-    {"key": "ensemble", "label": "Confirmation Ensemble",
-     "desc": "Trades only when 2 of 3 agree (EMA + Supertrend + Donchian)"},
-    {"key": "ema", "label": "EMA Crossover", "desc": "Simple fast/slow EMA cross"},
-    {"key": "smc", "label": "Supply/Demand",
-     "desc": "SMC supply/demand zones: liquidity sweep + CHoCH/BOS + FVG with higher-timeframe bias"},
-    {"key": "liquidity_sweep", "label": "Liquidity Sweep",
-     "desc": "Stop-hunt wick beyond a prior range, candle reclaim, ATR-defined invalidation"},
-    {"key": "adaptive_trend_pullback", "label": "Adaptive MTF Trend Pullback",
-     "version": builtin_strategy_version("adaptive_trend_pullback"),
-     "supported_timeframes": ["5m"],
-     "desc": "5m entry + native 1h regime gate + native 4h bias + 15m pullback context"},
-    # The Price Action lab's own engine, so its setup can run autonomously and
-    # be compared with SMC on the same feed. 5m only: that is the clock the
-    # engine's defaults are tuned for and the only one the shadow observatory
-    # measures, so anything else would not be comparable.
-    #
-    # The version is the engine's own STRATEGY_VERSION rather than a
-    # BUILTIN_STRATEGY_VERSIONS entry, because that is what actually identifies
-    # this alpha: the engine module is hash-frozen in
-    # data/pr6_real_paper_freeze.json, which pins its behaviour more tightly
-    # than a signal fixture, and the lab records the same string.
-    {"key": "price_action_rejection", "label": "Price Action S/R Rejection",
-     "version": _NATIVE_PA_VERSION,
-     "supported_timeframes": ["5m"],
-     "desc": "Price Action lab engine: confirmed S/R zone + closed-candle rejection, "
-             "rejection-extreme stop, native 1h gate and 4h bias"},
-    {"key": "price_action_flip_retest", "label": "Price Action Flip Retest",
-     "version": _NATIVE_PA_VERSION,
-     "supported_timeframes": ["5m"],
-     "desc": "Price Action lab engine: flipped zone retested after a break, "
-             "rejection-extreme stop, native 1h gate and 4h bias"},
-]
+from services.native_price_action import STRATEGY_VERSION as _NATIVE_PA_VERSION  # noqa: F401
+# Derived from services.strategy_registry, which is the single source of truth
+# for what a Trading Instance may run and for the immutable version that
+# attributes its paper records. The hand-maintained list this replaces had
+# drifted: Donchian has a pinned 1.0.0 in strategies.builtin_versions, but the
+# catalog omitted its ``version`` key, so the creation screen offered
+# "unversioned" for a strategy that is fully reproducible.
+from services.strategy_registry import catalog_rows as _strategy_catalog_rows  # noqa: E402
+_STRATEGY_CATALOG = _strategy_catalog_rows()
 
 # Reconcile the engine label with a persisted strategy choice: the overrides
 # loop (which restores auto_strategy across restarts) runs before this catalog
@@ -980,6 +949,16 @@ if ("PYTEST_CURRENT_TEST" not in _os.environ and
 # SMC and instances all consume the same Binance USD-M hub.
 instance_manager.market_hub = forward_paper_market_hub
 instance_manager.symbol_rules_provider = v2_market_data.usdm_symbol_rules
+
+# The process, not the browser, owns instance uptime. This supervisor is the
+# component that makes that true after the first minute: startup restoration
+# runs once, the legacy Watchdog only watches the singleton engine, and the
+# dashboard is a read-only poller, so before it existed a worker that died at
+# 02:00 stayed dead until a person opened the page and pressed Start.
+from services.instance_supervisor import InstanceSupervisor  # noqa: E402
+instance_supervisor = InstanceSupervisor(
+    instance_manager,
+    interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
 price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,

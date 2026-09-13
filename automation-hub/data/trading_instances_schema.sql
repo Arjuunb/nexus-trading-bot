@@ -240,6 +240,7 @@ CREATE TABLE IF NOT EXISTS instance_market_state (
  last_blocker TEXT,
  last_blocker_timestamp TIMESTAMPTZ,
  pending_orders_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+ worker_heartbeat TIMESTAMPTZ,
  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE instance_market_state ADD COLUMN IF NOT EXISTS last_processed_candle_timestamp TIMESTAMPTZ;
@@ -254,6 +255,10 @@ ALTER TABLE instance_market_state ADD COLUMN IF NOT EXISTS out_of_order_candles 
 ALTER TABLE instance_market_state ADD COLUMN IF NOT EXISTS last_blocker TEXT;
 ALTER TABLE instance_market_state ADD COLUMN IF NOT EXISTS last_blocker_timestamp TIMESTAMPTZ;
 ALTER TABLE instance_market_state ADD COLUMN IF NOT EXISTS pending_orders_json JSONB NOT NULL DEFAULT '{}'::jsonb;
+-- The worker's last proof of life. It lived only in the engine object, so
+-- after a crash or a container restart nothing could say whether an instance
+-- had been working an hour ago or had been dark since the previous day.
+ALTER TABLE instance_market_state ADD COLUMN IF NOT EXISTS worker_heartbeat TIMESTAMPTZ;
 ALTER TABLE instance_market_state ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
 DO $$
 BEGIN
@@ -275,7 +280,7 @@ BEGIN
   END IF;
 END $$;
 CREATE TABLE IF NOT EXISTS trading_instance_platform_settings (
- id TEXT PRIMARY KEY, max_active_slots INTEGER NOT NULL DEFAULT 1,
+ id TEXT PRIMARY KEY, max_active_slots INTEGER NOT NULL DEFAULT 3,
  max_global_risk_pct DOUBLE PRECISION NOT NULL DEFAULT 0.02,
  max_global_daily_loss_pct DOUBLE PRECISION NOT NULL DEFAULT 0.05,
  updated_at TIMESTAMPTZ NOT NULL
@@ -285,7 +290,15 @@ ALTER TABLE trading_instance_platform_settings
 ALTER TABLE trading_instance_platform_settings
  ADD COLUMN IF NOT EXISTS paper_account_capital DOUBLE PRECISION NOT NULL DEFAULT 10000;
 ALTER TABLE trading_instance_platform_settings
- ADD COLUMN IF NOT EXISTS max_active_slots INTEGER NOT NULL DEFAULT 1;
+ ADD COLUMN IF NOT EXISTS max_active_slots INTEGER NOT NULL DEFAULT 3;
+-- One-time capacity migration. The shipped default was a single active slot
+-- and the manager capped the configured value at three, so a persisted 1 was
+-- never an operator risk decision: it was the only value the platform ever
+-- wrote, and it meant only one Trading Instance could run. Lift exactly that
+-- value; any deliberate choice (2, or 4-10 after this release) is untouched.
+-- Re-running this statement is a no-op.
+UPDATE trading_instance_platform_settings SET max_active_slots = 3
+ WHERE max_active_slots <= 1;
 ALTER TABLE trading_instance_platform_settings
  ADD COLUMN IF NOT EXISTS max_global_risk_pct DOUBLE PRECISION NOT NULL DEFAULT 0.02;
 ALTER TABLE trading_instance_platform_settings

@@ -52,6 +52,31 @@ _ACTIVE_INSTANCE_STATES = {
 _REBOOT_RUNNING = "running"
 _REBOOT_TERMINAL = {"completed", "degraded", "failed"}
 
+# How many trading workers may run at once. The shipped platform row defaulted
+# to ONE and the manager additionally hard-capped the configured value at three,
+# so the platform could only ever run a single Trading Instance without an
+# operator first discovering and changing an undocumented setting. Three is the
+# supported concurrent configuration; the ceiling leaves headroom to 5-10 for
+# operators who have measured their own host. Each instance costs one entry
+# channel plus its two native HTF channels, so raising this is a capacity
+# decision, not a free one.
+DEFAULT_ACTIVE_SLOTS = 3
+MAX_ACTIVE_SLOTS_CEILING = 10
+
+#: Worker lifecycle state -> canonical telemetry event.
+_LIFECYCLE_EVENTS = {
+    "starting": "INSTANCE_STARTING",
+    "bootstrapping": "MARKET_CONNECTING",
+    "warming": "WARMUP_STARTED",
+    "syncing": "WARMUP_COMPLETE",
+    "ready": "STRATEGY_READY",
+    "running": "MARKET_CONNECTED",
+    "data_stale": "MARKET_STALE",
+    "recovering": "MARKET_DISCONNECTED",
+    "error": "INSTANCE_ERROR",
+    "stopped": "INSTANCE_STOPPED",
+}
+
 
 def _age_seconds(value: object) -> Optional[int]:
     if not value:
@@ -277,6 +302,7 @@ CREATE TABLE IF NOT EXISTS instance_engine_logs (
 );
 CREATE TABLE IF NOT EXISTS instance_market_state (
  instance_id TEXT PRIMARY KEY, last_processed_candle_timestamp TEXT,
+ worker_heartbeat TEXT,
  market_data_mode TEXT NOT NULL, market_data_status TEXT NOT NULL DEFAULT 'stopped',
  last_market_data_timestamp TEXT, data_source TEXT, warmup_bars INTEGER NOT NULL DEFAULT 0,
  duplicate_candles INTEGER NOT NULL DEFAULT 0, missing_candles INTEGER NOT NULL DEFAULT 0,
@@ -422,9 +448,24 @@ class InstanceStore:
                     ("default_fill_model", "TEXT NOT NULL DEFAULT 'RealisticFill'"),
                 ):
                     ensure_column(ledger._c, "trading_instance_platform_settings", name, definition)
+                # One-time capacity migration. The shipped row default was a
+                # single active slot and the manager additionally capped the
+                # configured value at three, so a persisted 1 was never an
+                # operator risk decision -- it was the only value the platform
+                # ever wrote. Lift exactly that value to the supported default;
+                # anything an operator has since chosen (2, or 4-10 after this
+                # release) is left alone.
+                ledger._c.execute(
+                    "UPDATE trading_instance_platform_settings SET max_active_slots=? "
+                    "WHERE max_active_slots<=1", (DEFAULT_ACTIVE_SLOTS,))
                 ensure_column(ledger._c, "instance_market_state",
                               "pending_orders_json", "TEXT NOT NULL DEFAULT '{}'")
                 ensure_column(ledger._c, "instance_market_state", "last_blocker", "TEXT")
+                # The worker's last proof of life, durably. It lived only in
+                # the engine object, so after a crash or restart nobody could
+                # tell whether an instance had been working an hour ago or had
+                # been dark since yesterday.
+                ensure_column(ledger._c, "instance_market_state", "worker_heartbeat", "TEXT")
                 ensure_column(ledger._c, "instance_market_state", "last_blocker_timestamp", "TEXT")
                 ledger._c.commit()
         if getattr(ledger, "read_only_degraded", False):
@@ -774,14 +815,15 @@ class InstanceStore:
                "last_market_data_timestamp": None, "data_source": None,
                "warmup_bars": 0, "duplicate_candles": 0, "missing_candles": 0,
                "out_of_order_candles": 0, "last_blocker": None,
-               "last_blocker_timestamp": None, "updated_at": _now(), **values}
+               "last_blocker_timestamp": None, "worker_heartbeat": None,
+               "updated_at": _now(), **values}
         if self.remote:
             remote_call_with_retry(lambda: self._table("instance_market_state").upsert(row).execute())
         else:
             with self.ledger._lock:
                 self.ledger._c.execute("""INSERT INTO instance_market_state
-                (instance_id,last_processed_candle_timestamp,market_data_mode,market_data_status,last_market_data_timestamp,data_source,warmup_bars,duplicate_candles,missing_candles,out_of_order_candles,last_blocker,last_blocker_timestamp,updated_at)
-                VALUES (:instance_id,:last_processed_candle_timestamp,:market_data_mode,:market_data_status,:last_market_data_timestamp,:data_source,:warmup_bars,:duplicate_candles,:missing_candles,:out_of_order_candles,:last_blocker,:last_blocker_timestamp,:updated_at)
+                (instance_id,last_processed_candle_timestamp,market_data_mode,market_data_status,last_market_data_timestamp,data_source,warmup_bars,duplicate_candles,missing_candles,out_of_order_candles,last_blocker,last_blocker_timestamp,worker_heartbeat,updated_at)
+                VALUES (:instance_id,:last_processed_candle_timestamp,:market_data_mode,:market_data_status,:last_market_data_timestamp,:data_source,:warmup_bars,:duplicate_candles,:missing_candles,:out_of_order_candles,:last_blocker,:last_blocker_timestamp,:worker_heartbeat,:updated_at)
                 ON CONFLICT(instance_id) DO UPDATE SET
                   last_processed_candle_timestamp=excluded.last_processed_candle_timestamp,
                   market_data_mode=excluded.market_data_mode,
@@ -794,6 +836,7 @@ class InstanceStore:
                   out_of_order_candles=excluded.out_of_order_candles,
                   last_blocker=excluded.last_blocker,
                   last_blocker_timestamp=excluded.last_blocker_timestamp,
+                  worker_heartbeat=excluded.worker_heartbeat,
                   updated_at=excluded.updated_at""", row)
                 self.ledger._c.commit()
 
@@ -836,8 +879,26 @@ class InstanceStore:
                     "VALUES (:id,:instance_id,:ts,:level,:message)", row)
                 self.ledger._c.commit()
 
+    def engine_logs(self, instance_id: str, limit: int = 200) -> list[dict]:
+        """Read back one instance's engine log, newest first.
+
+        Every lifecycle event is written here but nothing could read it: the
+        API served ``bot_logs`` instead, which is a different table, so the
+        structured instance timeline existed and was invisible.
+        """
+        limit = max(1, min(int(limit), 1000))
+        if self.remote:
+            return list(remote_call_with_retry(
+                lambda: self._table("instance_engine_logs").select("*")
+                .eq("instance_id", instance_id).order("ts", desc=True)
+                .limit(limit).execute()).data)
+        with self.ledger._lock:
+            return [dict(row) for row in self.ledger._c.execute(
+                "SELECT * FROM instance_engine_logs WHERE instance_id=? "
+                "ORDER BY ts DESC LIMIT ?", (instance_id, limit))]
+
     def platform_settings(self) -> dict:
-        defaults = {"max_active_slots": 1, "max_global_risk_pct": 0.02,
+        defaults = {"max_active_slots": DEFAULT_ACTIVE_SLOTS, "max_global_risk_pct": 0.02,
                     "max_global_daily_loss_pct": 0.05,
                     "max_instance_risk_per_trade_pct": 0.05,
                     "paper_account_capital": None, "default_symbol": "BTCUSDT",
@@ -884,7 +945,8 @@ class InstanceStore:
 
 class TradingInstanceManager:
     def __init__(self, ledger: Ledger, *, strategy_factory: Callable[[str, str], object],
-                 live: bool, live_poll_s: float, fetcher=None, max_slots: int = 1,
+                 live: bool, live_poll_s: float, fetcher=None,
+                 max_slots: int = DEFAULT_ACTIVE_SLOTS,
                  max_global_risk_pct: float = 0.02, max_global_daily_loss_pct: float = 0.05,
                  paper_account_capital: float = 10_000.0, decision_store=None,
                  decision_journal=None, trade_memory=None, skipped_store=None,
@@ -925,7 +987,8 @@ class TradingInstanceManager:
         from data.forward_market_data import fetch_forward_bars
         self.forward_fetcher = fetch_forward_bars
         configured = self.store.platform_settings() if self.store.available else {}
-        self.max_slots = min(3, max(1, int(configured.get("max_active_slots", max_slots))))
+        self.max_slots = min(MAX_ACTIVE_SLOTS_CEILING,
+                             max(1, int(configured.get("max_active_slots", max_slots))))
         self.max_global_risk_pct = min(1.0, max(0.001, float(configured.get("max_global_risk_pct", max_global_risk_pct))))
         self.max_global_daily_loss_pct = min(1.0, max(0.001, float(configured.get("max_global_daily_loss_pct", max_global_daily_loss_pct))))
         self.max_instance_risk_per_trade_pct = min(0.05, max(0.001, float(configured.get("max_instance_risk_per_trade_pct", 0.05))))
@@ -1098,6 +1161,9 @@ class TradingInstanceManager:
                 # immediately if the required cursor row cannot be initialized.
                 self.store.delete(inst.id, purge_sessions=True)
                 raise
+            from services.instance_telemetry import log_event
+            log_event(self, inst, "INSTANCE_CREATED", status="created",
+                      mode=inst.mode, capital_allocation=inst.capital_allocation)
             self._instances[inst.id] = inst
             return inst
 
@@ -1364,8 +1430,22 @@ class TradingInstanceManager:
                         f"INSTANCE:{instance_id}", quote_sink=on_quote,
                         candle_notice=on_candle_close)
                     holder["subscription"] = ws_feed
+                    from services.instance_telemetry import log_event
+                    # Whether this instance opened a Binance connection or
+                    # joined one another instance already owns is the single
+                    # most useful fact when reasoning about feed capacity, so
+                    # record which of the two happened.
+                    shared = self.market_hub.channel_exists(inst.symbol, inst.timeframe)
                     if not ws_feed.start(inst.symbol, inst.timeframe):
+                        log_event(self, inst, "SUBSCRIPTION_CREATED", status="failed",
+                                  detail="Binance USD-M hub refused the subscription")
                         raise RuntimeError("Binance USD-M market-data hub failed to start")
+                    log_event(self, inst,
+                              "SUBSCRIPTION_REUSED" if shared else "SUBSCRIPTION_CREATED",
+                              status="subscribed",
+                              channel=f"{inst.symbol}:{inst.timeframe}",
+                              consumer_id=ws_feed.consumer_id,
+                              shared_channel=bool(shared))
                     runtime_fetcher = ws_feed.make_fetcher()
                 else:
                     from data.ws_feed import WebSocketFeed
@@ -1388,6 +1468,7 @@ class TradingInstanceManager:
                 runtime_status = engine_ref["engine"].status() if "engine" in engine_ref else {}
                 self.store.save_market_state(instance_id,
                     last_processed_candle_timestamp=timestamp,
+                    worker_heartbeat=runtime_status.get("last_heartbeat") or _now(),
                     market_data_mode="paper_forward",
                     market_data_status=runtime_status.get("market_data_status", "healthy"),
                     last_market_data_timestamp=runtime_status.get("last_closed_candle") or timestamp,
@@ -1414,11 +1495,27 @@ class TradingInstanceManager:
                         elif state in ("data_stale", "recovering", "error"):
                             target.last_error = str(event.get("last_error") or event.get("reason") or "")[:500]
                         if state == "error":
-                            # Bounded automatic recovery has been exhausted.
-                            # Persist manual-recovery intent so a container
-                            # restart cannot resurrect the same broken worker
-                            # forever and produce an error loop on every boot.
-                            target.desired_running = False
+                            # The worker has exhausted its own in-thread
+                            # recovery. That is a reason to stop THIS worker,
+                            # not a reason to forget that the operator wants
+                            # this instance running.
+                            #
+                            # Clearing desired_running here was the single
+                            # largest reliability defect in the platform: five
+                            # consecutive feed failures (about 60s of Binance
+                            # being unreachable, the delays are 2+4+8+16+30s)
+                            # permanently un-desired the instance. Nothing then
+                            # restarted it -- not the next candle, not a page
+                            # load, and not the next container start, because
+                            # startup restores desired instances only. The
+                            # operator had to notice and press Start, which is
+                            # exactly the "it only works after I touch it"
+                            # symptom.
+                            #
+                            # The intent is durable now and InstanceSupervisor
+                            # owns the retry with its own bounded, observable
+                            # backoff. An instance is un-desired only by an
+                            # explicit operator Stop.
                             target.stopped_at = str(event.get("timestamp") or _now())
                         self.store.save(target)
                 if state in ("error", "stopped") and "engine" in engine_ref:
@@ -1442,6 +1539,15 @@ class TradingInstanceManager:
                     instance_id, level=level, timestamp=event.get("timestamp"),
                     message=(f"state={state} reason={event.get('reason') or ''} "
                              f"symbol={inst.symbol} timeframe={inst.timeframe}"))
+                # The same transition in the canonical structured shape, so a
+                # lifecycle timeline can be reconstructed by filtering on
+                # instance_id without parsing several ad-hoc formats.
+                from services.instance_telemetry import log_event
+                mapped = _LIFECYCLE_EVENTS.get(state)
+                if mapped:
+                    log_event(self, inst, mapped, status=state,
+                              detail=str(event.get("reason") or ""),
+                              lifecycle_state=state)
             engine = AutoStrategyEngine(pipeline, paper, scoped, symbols=[inst.symbol], timeframe=inst.timeframe,
                                         strategy_factory=lambda symbol: self.strategy_factory(inst.strategy_key, symbol),
                                         live=forward, live_poll_s=self.live_poll_s,
@@ -1501,7 +1607,12 @@ class TradingInstanceManager:
             ws_feed = getattr(runtime[0], "ws_feed", None)
             if ws_feed is not None:
                 ws_feed.stop()
-        inst.state, inst.desired_running, inst.stopped_at = "stopped", False, _now(); self.store.save(inst); return inst
+        inst.state, inst.desired_running, inst.stopped_at = "stopped", False, _now()
+        self.store.save(inst)
+        from services.instance_telemetry import log_event
+        log_event(self, inst, "INSTANCE_STOPPED", status="stopped",
+                  detail="stopped by operator; restart intent cleared")
+        return inst
 
     def shutdown(self, timeout_s: float = 15.0) -> dict:
         """Quiesce every worker without erasing durable restart intent.
@@ -1978,8 +2089,18 @@ class TradingInstanceManager:
                 inst.last_error = f"Pause acknowledgement failed: {type(exc).__name__}: {exc}"
                 self.store.save(inst)
                 raise RuntimeError(inst.last_error) from exc
-        inst.state, inst.desired_running = "paused", False
+        # Pause is an entry gate, not a shutdown: the worker stays alive to
+        # keep its durable candle cursor and its market subscription. Clearing
+        # desired_running contradicted that the moment the process restarted --
+        # the instance came back paused with no worker at all, so its feed
+        # stopped and its cursor froze until someone pressed Resume. The intent
+        # stays; restore_desired_instances() brings a paused instance back with
+        # its entry gate already closed.
+        inst.state, inst.desired_running = "paused", True
         self.store.save(inst)
+        from services.instance_telemetry import log_event
+        log_event(self, inst, "INSTANCE_PAUSED", status="paused",
+                  detail="entry gate closed by operator; market worker retained")
         return inst
 
     def resume(self, instance_id: str) -> TradingInstance:
@@ -2184,8 +2305,9 @@ class TradingInstanceManager:
         candidate_capital = self.paper_account_capital if paper_account_capital is None else float(paper_account_capital)
         candidate_defaults = {**self.instance_defaults, **(defaults or {})}
 
-        if not 1 <= candidate_slots <= 3:
-            raise ValueError("max_active_slots must be between 1 and 3")
+        if not 1 <= candidate_slots <= MAX_ACTIVE_SLOTS_CEILING:
+            raise ValueError(
+                f"max_active_slots must be between 1 and {MAX_ACTIVE_SLOTS_CEILING}")
         running = sum(1 for key, runtime in self._runtime.items()
                       if runtime[0].running and self._instances[key].mode == "trading")
         if candidate_slots < running:
@@ -2351,12 +2473,20 @@ class TradingInstanceManager:
                 self.store.save(inst)
                 continue
             try:
-                self.start(inst.id)
+                # A paused instance is desired-running with its entry gate
+                # closed. Restoring it without the gate would silently re-arm
+                # a strategy the operator deliberately disarmed.
+                self.start(inst.id, entry_gate_closed=inst.state == "paused")
                 restored.append(inst.id)
                 if inst.mode == "trading":
                     restored_trading += 1
             except Exception as exc:  # one broken instance cannot block others
-                inst.state, inst.desired_running = "error", False
+                # The intent survives a failed restore. Binance being
+                # unreachable at the exact moment the container boots is a
+                # transient condition, and treating it as "the operator no
+                # longer wants this instance" is what made a restart during an
+                # outage permanent. InstanceSupervisor retries with backoff.
+                inst.state = "error"
                 inst.last_error = str(exc)[:500]
                 inst.stopped_at = _now()
                 self.store.save(inst)
@@ -2488,11 +2618,15 @@ class TradingInstanceManager:
             market = _market_health(market, timeframe=inst.timeframe, worker_state=state)
         if engine and state in ("stopped", "error") and inst.state != state:
             # Persist terminal worker state so a stale UI can never claim a
-            # dead engine is live. Errors require explicit operator recovery;
-            # a clean replay completion likewise must not restart on deploy.
+            # dead engine is live.
             inst.state = state
             inst.last_error = engine.get("last_error") or engine.get("stop_reason") or ""
-            if state == "stopped":
+            if state == "stopped" and inst.mode != "trading":
+                # A research replay that reaches the end of its data is
+                # genuinely finished and must not restart on deploy. A forward
+                # trading worker has no end of data, so a stopped one is a
+                # fault for the supervisor to repair -- reading status must
+                # never be what decides an instance is no longer wanted.
                 inst.desired_running = False
             self.store.save(inst)
         metrics = self.metrics(instance_id, trades_snapshot=trades_snapshot)
@@ -2659,7 +2793,32 @@ class TradingInstanceManager:
         except ValueError as exc:
             instance_mtf_policy = {
                 "entry_timeframe": inst.timeframe, "label": str(exc), "evidence": {}}
-        return {**inst.to_dict(), "effective_exchange": effective_exchange,
+        # Four independent axes plus the market facts behind them. A single
+        # badge had to answer "is the worker alive", "is the feed fresh", "has
+        # the strategy warmed up" and "are entries armed" with one word, so it
+        # could not say which of the four had failed.
+        from services import instance_status as status_contract
+        from services.strategy_registry import entry as registry_entry
+        registry_row = registry_entry(inst.strategy_key)
+        requires_htf = bool(registry_row and any(
+            item.startswith("native_") for item in registry_row.required_data))
+        worker_thread = getattr(runtime[0], "_thread", None) if runtime else None
+        worker_alive = bool(runtime and runtime[0].running
+                            and worker_thread is not None and worker_thread.is_alive())
+        contract = status_contract.build(
+            instance=inst, engine=engine,
+            market={**market, "_worker_state": state,
+                    "exchange": effective_exchange,
+                    "market_type": ("perpetual" if effective_exchange == "binance_usdm"
+                                    else inst.instrument_type)},
+            timeframe_seconds=_TIMEFRAME_SECONDS.get(inst.timeframe, 300),
+            worker_alive=worker_alive,
+            entries_armed=controls_armed,
+            health_status=strategy_health.get("status"),
+            htf_policy={**instance_mtf_policy, "requires_htf": requires_htf})
+        return {**inst.to_dict(), **contract,
+                "strategy_lifecycle": (registry_row.lifecycle if registry_row else "UNKNOWN"),
+                "effective_exchange": effective_exchange,
                 "effective_instrument_type": ("perpetual" if effective_exchange == "binance_usdm"
                                               else inst.instrument_type),
                 "state": state, "engine": engine,

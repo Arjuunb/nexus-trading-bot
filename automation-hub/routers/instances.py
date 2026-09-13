@@ -6,6 +6,8 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 from typing import Optional
 
+from services.trading_instances import MAX_ACTIVE_SLOTS_CEILING
+
 router = APIRouter()
 
 
@@ -79,7 +81,12 @@ class InstanceUpdate(BaseModel):
 
 
 class PlatformConfig(BaseModel):
-    max_active_slots: Optional[int] = Field(default=None, ge=1, le=3)
+    # The API used to cap this at three, matching a manager that capped it at
+    # three, over a row that defaulted to one. Concurrency is a capacity
+    # decision an operator should be able to make; the manager still refuses
+    # anything above MAX_ACTIVE_SLOTS_CEILING.
+    max_active_slots: Optional[int] = Field(
+        default=None, ge=1, le=MAX_ACTIVE_SLOTS_CEILING)
     max_global_risk_pct: Optional[float] = Field(default=None, ge=0.001, le=1)
     max_global_daily_loss_pct: Optional[float] = Field(default=None, ge=0.001, le=1)
     paper_account_capital: Optional[float] = Field(default=None, gt=0)
@@ -107,6 +114,21 @@ def _catalog(key: str) -> dict:
     if not row:
         raise HTTPException(400, f"Unknown strategy '{key}'")
     return row
+
+
+def _assert_selectable(key: str) -> dict:
+    """Gate a NEW instance on the registry's lifecycle, not on file existence.
+
+    Deliberately not applied to an instance that already exists: demoting a
+    strategy must never stop a running worker or orphan its open paper
+    position. Only creation and re-pointing an instance at a different
+    strategy go through here.
+    """
+    from services.strategy_registry import selectable_for_new_instance
+    allowed, reason = selectable_for_new_instance(key)
+    if not allowed:
+        raise HTTPException(400, reason)
+    return _catalog(key)
 
 
 def _manager():
@@ -147,18 +169,29 @@ def instance_options():
             label = str(row.get("label") or row.get("version") or "")
             if key and label:
                 versions_by_strategy.setdefault(key, []).append(label)
+    # Only PRODUCTION strategies are offered. The dashboard has no list of its
+    # own, so this is the whole surface a new Trading Instance can be built
+    # from; anything else stays importable for research and for instances that
+    # already exist, but cannot be newly selected.
+    from services.strategy_registry import all_entries, production_entries
     strategies = []
-    for row in _wa._STRATEGY_CATALOG:
-        key = row["key"]
-        builtin = str(row.get("version") or "unversioned")
-        strategies.append({"key": key, "label": row["label"],
+    for entry in production_entries():
+        key = entry.strategy_id
+        builtin = str(entry.version or "unversioned")
+        strategies.append({"key": key, "label": entry.display_name,
+                           "status": entry.lifecycle,
                            "versions": list(dict.fromkeys([builtin, *versions_by_strategy.get(key, [])])),
-                           "supported_timeframes": row.get("supported_timeframes", timeframes)})
+                           "required_data": list(entry.required_data),
+                           "supported_markets": list(entry.supported_markets),
+                           "supported_timeframes": list(entry.supported_timeframes)})
     manager = _manager()
     defaults = manager.instance_defaults
     return {
         "symbols": list(SYMBOLS), "timeframes": timeframes,
         "strategies": strategies,
+        # The full registry, so an operator can see WHY something is absent
+        # from the selector instead of wondering whether it was lost.
+        "strategy_registry": [item.public() for item in all_entries()],
         # Execution choices are server-owned and persisted per instance. New
         # instances default to realistic costs; existing PerfectFill rows remain
         # valid so historical results and restore behaviour do not change.
@@ -227,7 +260,7 @@ def configure_platform(body: PlatformConfig, x_webhook_secret: Optional[str] = H
         _field_error("default_symbol", f"Unsupported pair '{candidate['default_symbol'].upper()}'")
     if candidate["default_timeframe"] not in timeframes:
         _field_error("default_timeframe", f"Unsupported timeframe '{candidate['default_timeframe']}'")
-    strategy = _catalog(candidate["default_strategy"])
+    strategy = _assert_selectable(candidate["default_strategy"])
     if candidate["default_timeframe"] not in strategy.get("supported_timeframes", timeframes):
         _field_error("default_timeframe", f"{strategy['label']} does not support {candidate['default_timeframe']}")
     if candidate["default_entry_mode"] not in ("limit", "market"):
@@ -286,7 +319,7 @@ def create_instance(body: InstanceCreate, x_webhook_secret: Optional[str] = Head
                           else defaults["default_max_open_positions"])
     entry_mode = body.entry_mode or defaults["default_entry_mode"]
     fill_model = body.fill_model or defaults["default_fill_model"]
-    strategy = _catalog(strategy_key)
+    strategy = _assert_selectable(strategy_key)
     from data.historical import SYMBOLS
     from services.mtf_policy import ENTRY_HTF
     timeframes = tuple(ENTRY_HTF)
@@ -361,7 +394,7 @@ def update_instance(instance_id: str, body: InstanceUpdate,
                          f"Risk exceeds the platform ceiling of {_manager().max_instance_risk_per_trade_pct}")
         from services.mtf_policy import ENTRY_HTF
         timeframes = tuple(ENTRY_HTF)
-        strategy = _catalog(body.strategy) if body.strategy is not None else None
+        strategy = _assert_selectable(body.strategy) if body.strategy is not None else None
         if body.timeframe is not None:
             if body.timeframe not in timeframes:
                 raise HTTPException(400, f"Unsupported timeframe '{body.timeframe}'")
@@ -442,17 +475,136 @@ def instance_action(instance_id: str, action: str, x_webhook_secret: Optional[st
     return {"instance": manager.status(inst.id)}
 
 
+@router.get("/instances/{instance_id}/status")
+def instance_status(instance_id: str):
+    """The truthful four-axis status for one instance.
+
+    Separated from the full detail payload so a status poll does not have to
+    pull metrics, performance and the decision journal with it.
+    """
+    try:
+        row = _manager().status(instance_id)
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+    return {key: row[key] for key in (
+        "id", "symbol", "strategy_key", "strategy_label", "strategy_version",
+        "strategy_lifecycle", "timeframe", "mode", "state", "ui_status",
+        "desired_running", "effective_exchange", "effective_instrument_type",
+        "runtime_status", "market_status", "market_status_reason",
+        "strategy_status", "strategy_status_reason",
+        "execution_status", "execution_status_reason",
+        "current_blocker", "feed", "subscription", "worker",
+    ) if key in row}
+
+
+@router.get("/instances/{instance_id}/positions")
+def instance_positions(instance_id: str):
+    manager = _manager()
+    try:
+        inst = manager._instances[instance_id]
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+    return {"instance_id": instance_id,
+            "positions": _wa.ledger.get_positions(
+                "open", instance_id=instance_id,
+                simulation_session_id=inst.simulation_session_id)}
+
+
+@router.get("/instances/{instance_id}/orders")
+def instance_orders(instance_id: str):
+    """Working forward-paper intents and resting strategy limits.
+
+    A forward-paper entry is an intent until a Binance quote fills it, so
+    "orders" here means exactly those unfilled intents -- no exchange order
+    exists or ever will.
+    """
+    manager = _manager()
+    try:
+        manager._instances[instance_id]
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+    pending = manager.store.market_state(instance_id).get("pending_orders_json") or {}
+    return {"instance_id": instance_id,
+            "forward_paper_intents": pending.get("forward_paper_intents") or {},
+            "strategy_limit_intents": pending.get("strategy_limit_intents") or {},
+            "quarantined_intents": pending.get("quarantined_intents") or {},
+            "execution_mode": "forward_paper", "exchange_routing": False}
+
+
+@router.get("/instances/{instance_id}/metrics")
+def instance_metrics(instance_id: str):
+    manager = _manager()
+    try:
+        row = manager.status(instance_id)
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+    return {"instance_id": instance_id, "metrics": row["metrics"],
+            "performance": row["performance"], "execution": row["execution"],
+            "risk": row["risk"], "worker_counts": row["worker_counts"]}
+
+
 @router.get("/instances/{instance_id}/trades")
 def instance_trades(instance_id: str):
     manager = _manager()
-    try: manager.status(instance_id)
-    except KeyError: raise HTTPException(404, "Trading instance not found")
-    return {"trades": _wa.ledger.get_paper_trades(instance_id=instance_id)}
+    try:
+        inst = manager._instances[instance_id]
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+    # Scoped to the instance AND its current simulation session. Without the
+    # session scope a restarted paper account still returned the previous
+    # session's trades, so the trade list disagreed with the balance and the
+    # metrics computed beside it.
+    return {"instance_id": instance_id,
+            "simulation_session_id": inst.simulation_session_id,
+            "trades": _wa.ledger.get_paper_trades(
+                instance_id=instance_id,
+                simulation_session_id=inst.simulation_session_id)}
 
 
 @router.get("/instances/{instance_id}/logs")
 def instance_logs(instance_id: str, limit: int = 100):
     manager = _manager()
-    try: manager.status(instance_id)
-    except KeyError: raise HTTPException(404, "Trading instance not found")
-    return {"logs": _wa.ledger.get_logs(max(1, min(limit, 500)), instance_id=instance_id)}
+    try:
+        manager._instances[instance_id]
+    except KeyError:
+        raise HTTPException(404, "Trading instance not found")
+    limit = max(1, min(limit, 500))
+    # Both halves of this instance's record: the trading log and the worker's
+    # own lifecycle timeline. The lifecycle events were written to
+    # instance_engine_logs and never served, so every structured
+    # MARKET_STALE / INSTANCE_RESTORED event was invisible to the operator
+    # they were written for.
+    return {"logs": _wa.ledger.get_logs(limit, instance_id=instance_id),
+            "engine_events": manager.store.engine_logs(instance_id, limit)}
+
+
+@router.get("/instances/runtime/health")
+def instance_runtime_health():
+    """Process-level answer to "is the backend running my instances?".
+
+    Deliberately not per-instance: the question an operator asks after a
+    restart or a login is whether the *runtime* is alive and what it is
+    subscribed to, and that cannot be answered by any one instance's row.
+    """
+    manager = _manager()
+    supervisor = getattr(_wa, "instance_supervisor", None)
+    hub = getattr(manager, "market_hub", None)
+    rows = []
+    for inst in manager._instances.values():
+        runtime = manager._runtime.get(inst.id)
+        thread = getattr(runtime[0], "_thread", None) if runtime else None
+        rows.append({
+            "instance_id": inst.id, "symbol": inst.symbol,
+            "timeframe": inst.timeframe, "strategy_id": inst.strategy_key,
+            "mode": inst.mode, "state": inst.state,
+            "desired_running": inst.desired_running,
+            "worker_alive": bool(runtime and runtime[0].running
+                                 and thread is not None and thread.is_alive()),
+        })
+    return {
+        "supervisor": supervisor.status() if supervisor is not None else
+                      {"running": False, "detail": "supervisor not configured"},
+        "max_active_slots": manager.max_slots,
+        "workers": sorted(rows, key=lambda row: row["symbol"]),
+        "market_data_channels": hub.channel_report() if hasattr(hub, "channel_report") else [],
+    }

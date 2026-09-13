@@ -159,9 +159,15 @@ def test_instances_api_returns_platform_status_and_validates_slot_change(monkeyp
     monkeypatch.setattr(instance_api._wa, "instance_manager", manager)
     monkeypatch.setattr(instance_api._wa, "_check_secret", lambda _secret: None)
     payload = instance_api.list_instances()
-    assert payload["max_active_slots"] == 1
-    updated = instance_api.configure_platform(instance_api.PlatformConfig(max_active_slots=3))
-    assert updated["max_active_slots"] == 3
+    # Three concurrent instances is the shipped default now. It used to be one,
+    # which is why the platform could only ever run a single Trading Instance
+    # until an operator found and changed an undocumented setting.
+    assert payload["max_active_slots"] == 3
+    updated = instance_api.configure_platform(instance_api.PlatformConfig(max_active_slots=5))
+    assert updated["max_active_slots"] == 5
+    with pytest.raises(Exception):
+        instance_api.configure_platform(
+            instance_api.PlatformConfig(max_active_slots=instance_api.MAX_ACTIVE_SLOTS_CEILING + 1))
 
 
 def test_delete_api_returns_actionable_service_unavailable_for_persistence_failure(monkeypatch):
@@ -477,7 +483,7 @@ def test_invalid_strategy_replacement_does_not_stop_healthy_worker(monkeypatch):
     assert manager.status(instance.id)["strategy_key"] == "brain"
 
 
-def test_terminal_worker_error_disables_automatic_restart_and_preserves_detail(monkeypatch):
+def test_terminal_worker_error_keeps_restart_intent_and_preserves_detail(monkeypatch):
     from services.auto_engine import AutoStrategyEngine
 
     ledger = SqliteLedger(":memory:")
@@ -500,13 +506,18 @@ def test_terminal_worker_error_disables_automatic_restart_and_preserves_detail(m
 
     saved = manager._instances[instance.id]
     assert saved.state == "error"
-    assert saved.desired_running is False
+    # A dead worker is a reason to replace THIS worker, not to forget that the
+    # operator wants this instance running. Clearing the intent here meant five
+    # consecutive feed failures permanently un-desired the instance and not
+    # even a container restart brought it back. InstanceSupervisor owns the
+    # bounded retry; only an explicit Stop clears the intent.
+    assert saved.desired_running is True
     assert saved.last_error == "StrategyExecutionError: indicator state corrupt"
     snapshot = manager.platform_status(runtime_states=[manager.status(instance.id)])
     assert snapshot["global_status"] != "critical"
 
 
-def test_restore_failure_is_not_retried_on_every_container_restart(monkeypatch):
+def test_restore_failure_records_the_error_but_keeps_restart_intent(monkeypatch):
     ledger = SqliteLedger(":memory:")
     manager = TradingInstanceManager(ledger, strategy_factory=_factory,
                                      live=False, live_poll_s=60)
@@ -517,12 +528,16 @@ def test_restore_failure_is_not_retried_on_every_container_restart(monkeypatch):
     instance.desired_running = True
     instance.state = "running"
     manager.store.save(instance)
-    monkeypatch.setattr(manager, "start", lambda _id: (_ for _ in ()).throw(
+    monkeypatch.setattr(manager, "start", lambda _id, **_kw: (_ for _ in ()).throw(
         RuntimeError("provider configuration invalid")))
 
     assert manager.restore_desired_instances() == []
     assert instance.state == "error"
-    assert instance.desired_running is False
+    # Binance being unreachable at the exact second the container boots is a
+    # transient condition. Treating a failed restore as "no longer wanted" is
+    # what made a restart during an outage permanent, so the intent survives
+    # and the supervisor retries it with backoff.
+    assert instance.desired_running is True
     assert "provider configuration invalid" in instance.last_error
 
 
@@ -549,7 +564,10 @@ def test_paused_instance_cannot_be_reactivated_by_worker_lifecycle_event(monkeyp
     engine._emit_lifecycle("running", "Fresh closed market data confirmed")
 
     assert manager._instances[instance.id].state == "paused"
-    assert manager._instances[instance.id].desired_running is False
+    # Pause is an entry gate, not a shutdown: the worker stays alive to hold
+    # its durable cursor and its market subscription, so the restart intent
+    # stays too and a restart brings it back paused rather than dark.
+    assert manager._instances[instance.id].desired_running is True
 
 
 def test_pause_waits_for_worker_acknowledgement_before_reporting_paused(monkeypatch):

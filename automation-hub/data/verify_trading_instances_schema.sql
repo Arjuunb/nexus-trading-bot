@@ -38,6 +38,7 @@ WITH required(table_name, column_name) AS (
     ('instance_market_state', 'missing_candles'),
     ('instance_market_state', 'out_of_order_candles'),
     ('instance_market_state', 'pending_orders_json'),
+    ('instance_market_state', 'worker_heartbeat'),
     ('instance_market_state', 'updated_at'),
     ('instance_metrics', 'instance_id'),
     ('instance_metrics', 'data_json'),
