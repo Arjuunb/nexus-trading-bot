@@ -208,12 +208,43 @@ def test_signals_manual_approval_duplicate_and_unreliable_feed_are_explicit(tmp_
     assert "unreliable" in rejected["payload"]["reason"]
 
 
-def test_new_price_action_session_defaults_to_signals_only_and_never_orders(tmp_path):
-    account = PriceActionPaperAccount(tmp_path / "signals-default.db")
+def test_new_price_action_session_is_armed_and_places_a_paper_order(tmp_path):
+    """A new session places on a valid setup, and cannot reach a venue.
+
+    The default was 'signals_only', which recorded a SIGNAL_ONLY candidate for
+    every valid setup and created no order -- a lab could run for weeks looking
+    healthy while never placing anything. It is now 'automatic'. What must stay
+    impossible is real execution, not simulated execution.
+    """
+    account = PriceActionPaperAccount(tmp_path / "armed-default.db")
     result = account.synchronize_strategy(
         visual(), contract_rules=RULES, candle=bar(1), feed_reliable=True,
     )
-    assert account.session()["operating_mode"] == "signals_only"
+    assert account.session()["operating_mode"] == "automatic"
+
+    assert len(result["created"]) == 1
+    created = result["created"][0]
+    assert created["accepted"] is True
+    order = created["order"]
+    assert order["symbol"] == "BTCUSDT"
+    assert order["strategy"] == "PA1_SR_REJECTION"
+    assert len(account.state()["orders"]) == 1
+
+    # Simulated, and provably only simulated.
+    assert order["execution_class"] == "REAL_PAPER"
+    assert created["configuration"]["execution_mode"] == "PAPER"
+    assert created["configuration"]["live_execution_allowed"] is False
+    assert not hasattr(PriceActionPaperAccount, "enable_live")
+
+
+def test_signals_only_still_records_a_candidate_without_ordering(tmp_path):
+    """The mode still exists and still suppresses orders when chosen."""
+    from services.price_action_lab import PaperExecutionConfig
+    account = PriceActionPaperAccount(tmp_path / "signals-only.db")
+    account.configure(execution_config=PaperExecutionConfig(operating_mode="signals_only"))
+    result = account.synchronize_strategy(
+        visual(), contract_rules=RULES, candle=bar(1), feed_reliable=True,
+    )
     assert result["created"] == []
     assert account.state()["candidates"][0]["status"] == "SIGNAL_ONLY"
     assert account.state()["orders"] == []

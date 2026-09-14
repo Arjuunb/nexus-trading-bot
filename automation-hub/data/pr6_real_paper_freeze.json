@@ -4,27 +4,64 @@
   "approved_delta": "Replace synthesized HTF clocks with services/mtf_policy.py native-candle evidence only.",
   "sha256": {
     "services/mtf_policy.py": "f54da90f2643152f9e9864f42ea77e9fc920c4b75aba19e3190fc3e86ac199a0",
-    "services/price_action_lab.py": "ba9754b7106c35149d0f5abd84c5278e1692a643af2360d0bdddea8baeff45d0",
-    "services/smc_strategy_lab.py": "9a229daacae006c27dff0cee1b759db61d91ad6261fe1ba89c302892cdb36c6f",
+    "services/price_action_lab.py": "85b06d105e025769cffd0c2234862a6d90772ab70813b15713f3c1df15657d6d",
+    "services/smc_strategy_lab.py": "009bd4f48caeb443adc9849b4708001e2414ad6119104c6916572f0169de1da1",
     "services/native_price_action.py": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",
     "services/native_smc.py": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
   },
   "subsequent_approved_deltas": [
     {
-      "commits": ["829ee22 (PR #11)", "b7779e9 (PR #12)"],
+      "commits": [
+        "829ee22 (PR #11)",
+        "b7779e9 (PR #12)"
+      ],
       "delta": "Unblock paper runtime hydration and execution: move native HTF loads to services/native_context_loader.py, serve lab status and live state from committed snapshots instead of request-thread provider I/O, and name the HTF_PRIMARY_UNAVAILABLE blocker explicitly.",
-      "files_rehashed": ["services/price_action_lab.py", "services/smc_strategy_lab.py"],
+      "files_rehashed": [
+        "services/price_action_lab.py",
+        "services/smc_strategy_lab.py"
+      ],
       "alpha_rules_changed": false,
       "fill_timing_changed": false,
       "verification": "services/native_price_action.py, services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline values, so entry conditions, stop model, target R and the native MTF policy are untouched. The delta in the two lab modules is hydration, status reporting and blocker naming only; no decision or fill-timing path was modified."
     },
     {
-      "commits": ["e824bfa"],
+      "commits": [
+        "e824bfa"
+      ],
       "delta": "Add SQLite indexes covering the one-session-newest-first reads that each lab's state() makes. Schema access paths only: no statement, threshold, rule or fill path was changed.",
-      "files_rehashed": ["services/price_action_lab.py", "services/smc_strategy_lab.py"],
+      "files_rehashed": [
+        "services/price_action_lab.py",
+        "services/smc_strategy_lab.py"
+      ],
       "alpha_rules_changed": false,
       "fill_timing_changed": false,
       "verification": "The diff in both files is additive CREATE INDEX IF NOT EXISTS statements inside the existing schema executescript, plus comments: 38 inserted lines and 0 deleted across the two. services/native_price_action.py, services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline values. An index changes how SQLite reaches rows, never which rows it returns or in what order, and the queries themselves are byte-identical; tests/test_lab_status_reads_are_indexed.py asserts both the new access paths and that state() still answers the same shape."
+    },
+    {
+      "commits": [
+        "pending (lab state() row bounds + PA hydration honesty)"
+      ],
+      "delta": "Bound the per-collection reads in each lab's state() and report exact totals from COUNT(*) alongside the returned window; call state() once rather than N+2 times in the SMC metrics summary; and stop PriceActionPaperAccount.live_state presenting a freshly constructed empty engine as though it were the worker's. Read-path, aggregation and reporting only.",
+      "files_rehashed": [
+        "services/price_action_lab.py",
+        "services/smc_strategy_lab.py"
+      ],
+      "alpha_rules_changed": false,
+      "fill_timing_changed": false,
+      "verification": "services/native_price_action.py, services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline values, so entry conditions, stop model, target R and the native MTF policy are untouched. 91 inserted and 20 deleted lines across the two lab modules. The queries are byte-identical apart from an appended LIMIT on four PA collections (pa_candidates, pa_order_meta, pa_funding_events, pa_position_remediations) and three SMC ones (smc_order_meta, smc_candidates, smc_funding_events); their siblings pa_activity, pa_evaluations, smc_activity and the broker fills were already capped the same way. Every caller that needs a whole collection passes limit=None, and counts that were previously len() of an unbounded read now come from COUNT(*), so orders_placed and target_1_hits are unchanged. No decision, proposal, sizing or fill path was modified. Motivation was a production incident: two lab sessions left open since 2026-08-24 and 2026-09-03 made state() re-materialise whole sessions on every tick and status poll, at ~30 MB/s memory growth with a core pegged, until the container reached its 11.4 GB ceiling."
+    },
+    {
+      "commits": [
+        "pending (default operating_mode -> automatic)"
+      ],
+      "delta": "Default a new lab session's operating_mode to 'automatic' instead of 'signals_only', in both the config dataclass and the sessions-table column default. Requested explicitly by the operator after observing that no lab had ever placed an order. Also make execution_armed mean configured-and-able rather than the configured mode alone, so a BLOCKED lab no longer reports execution_armed alongside session_state BLOCKED.",
+      "files_rehashed": [
+        "services/price_action_lab.py",
+        "services/smc_strategy_lab.py"
+      ],
+      "alpha_rules_changed": false,
+      "fill_timing_changed": false,
+      "verification": "A one-token change to two defaults plus comments. The three-branch dispatch on operating_mode is untouched, so what 'automatic' does -- call _place_proposal on a proposal that has already cleared every risk, attestation, persistence and feed-reliability gate ahead of it -- is unchanged; only which branch a NEW session starts on differs. Existing sessions keep their stored mode, and the read fallbacks for rows that predate the column (price_action_lab.py old.get(...) and session.get(...)) deliberately still resolve to signals_only so an old session is never silently armed. native_price_action.py, native_smc.py and mtf_policy.py still hash to their PR #6 baseline: entry conditions, stop model, target R and the native MTF policy are untouched. real_execution_allowed remains False and paper_only True in both labs, so this arms simulated fills only and cannot reach a venue."
     }
   ]
 }

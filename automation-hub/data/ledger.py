@@ -212,12 +212,18 @@ class SqliteLedger:
         try:
             self._c.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_alert_instance_unique "
-                "ON webhook_events(alert_id, instance_id, status)")
+                "ON webhook_events(alert_id, instance_id, status) "
+                # Instance-scoped rows only, matching trading_instances_schema.
+                # Legacy rows predate instances, carry instance_id = '' and may
+                # already hold duplicates; including them fails the index and
+                # leaves no durable guarantee anywhere.
+                "WHERE instance_id <> ''")
             return {"enforced": True}
         except sqlite3.IntegrityError as exc:
             duplicates = [dict(row) for row in self._c.execute(
                 "SELECT alert_id, instance_id, status, COUNT(*) AS copies "
-                "FROM webhook_events GROUP BY alert_id, instance_id, status "
+                "FROM webhook_events WHERE instance_id <> '' "
+                "GROUP BY alert_id, instance_id, status "
                 "HAVING copies > 1 LIMIT 20")]
             return {"enforced": False, "reason": f"{type(exc).__name__}: {exc}",
                     "duplicate_samples": duplicates}
@@ -718,9 +724,13 @@ class SupabaseLedger:
             "id": wid, "alert_id": alert_id, "symbol": symbol, "side": side,
             "entry": entry, "stop": stop, "payload_json": json.dumps(payload),
             "received_at": _now(), "status": status, "reason": reason,
+            # Always written, never omitted. The column is TEXT NOT NULL
+            # DEFAULT '' (trading_instances_schema.sql), so leaving the key out
+            # stored '' rather than NULL while the claim lookups below searched
+            # for NULL — every unscoped claim was therefore invisible to
+            # promote_webhook_event and release_webhook_claim, stranding it.
+            "instance_id": instance_id or "",
         }
-        if instance_id:
-            row["instance_id"] = instance_id
         try:
             self._t("webhook_events").insert(row).execute()
         except Exception as exc:
@@ -745,11 +755,12 @@ class SupabaseLedger:
             values["payload_json"] = json.dumps(payload)
 
         def update():
-            query = (self._t("webhook_events").update(values)
-                     .eq("alert_id", alert_id).eq("status", "claimed"))
-            query = (query.eq("instance_id", instance_id) if instance_id
-                     else query.is_("instance_id", "null"))
-            return query.execute()
+            # webhook_events.instance_id is NOT NULL DEFAULT '', so the
+            # unscoped sentinel is the empty string. eq("") matches it; the
+            # is_("null") this used to do matched nothing at all.
+            return (self._t("webhook_events").update(values)
+                    .eq("alert_id", alert_id).eq("status", "claimed")
+                    .eq("instance_id", instance_id or "").execute())
         try:
             return bool(getattr(remote_call_with_retry(update), "data", None))
         except Exception as exc:
@@ -777,15 +788,13 @@ class SupabaseLedger:
         exactly the deployment shape with no other recourse.
         """
         def drop():
-            query = (self._t("webhook_events").delete()
-                     .eq("alert_id", alert_id).eq("status", "claimed"))
-            # insert_webhook_event only sets instance_id when it is non-empty,
-            # so an unscoped claim lands as NULL. An eq("") comparison never
-            # matches NULL in PostgREST, which left exactly those claims
-            # stranded on the backend that has nothing to age them out.
-            query = (query.eq("instance_id", instance_id) if instance_id
-                     else query.is_("instance_id", "null"))
-            return query.execute()
+            # The column is NOT NULL DEFAULT '', so an unscoped claim is stored
+            # as '' and matches eq(""). The previous is_("null") matched no row
+            # on any schema, leaving unscoped claims stranded on the backend
+            # that has nothing to age them out.
+            return (self._t("webhook_events").delete()
+                    .eq("alert_id", alert_id).eq("status", "claimed")
+                    .eq("instance_id", instance_id or "").execute())
         return len(getattr(remote_call_with_retry(drop), "data", None) or [])
 
     def webhook_seen(self, alert_id, since_iso, instance_id=""):  # pragma: no cover

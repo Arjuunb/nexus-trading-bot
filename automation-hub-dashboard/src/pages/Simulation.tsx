@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ENTRY_TIMEFRAMES } from "../lib/timeframes";
 import Card from "../components/common/Card";
 import AreaLine from "../components/chart/AreaLine";
 import BarChart from "../components/chart/BarChart";
@@ -35,7 +36,7 @@ const SYMBOL_GROUPS: [string, string[]][] = [
               "ADAUSDT", "LINKUSDT", "AVAXUSDT", "DOTUSDT", "LTCUSDT", "MATICUSDT"]],
   ["Stocks (simulation)", ["AAPL", "MSFT", "NVDA", "TSLA", "AMZN", "GOOGL", "META", "SPY"]],
 ];
-const SIM_TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d"];
+const SIM_TIMEFRAMES = ENTRY_TIMEFRAMES;
 const BAR_CHOICES = [500, 1000, 2000, 3000, 5000, 8000, 10000];
 
 export default function SimulationPage() {

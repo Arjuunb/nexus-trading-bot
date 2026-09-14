@@ -93,6 +93,29 @@ class SupabaseAuth:
             raise SupabaseAuthError("Your TradeLogX profile is not ready. Please try again shortly.")
         return rows[0]
 
+    def refresh(self, refresh_token: str) -> dict[str, Any]:
+        """Exchange a refresh token for a new access token.
+
+        A Supabase access token is short-lived -- an hour by default, and
+        projects may set it far lower. The session cookie held one from sign-in
+        and was never renewed, so the cookie outlived the credential inside it
+        and users were returned to the sign-in page mid-session while their
+        refresh token was still perfectly valid.
+
+        Returns the provider payload; ``access_token`` and ``refresh_token``
+        are both rotated, so the caller must store whatever comes back.
+        """
+        if not refresh_token:
+            raise SupabaseAuthError("A refresh token is required.")
+        data = self._request(
+            "/auth/v1/token?grant_type=refresh_token",
+            token=self.anon_key, method="POST",
+            payload={"refresh_token": refresh_token},
+        )
+        if not isinstance(data, dict) or not data.get("access_token"):
+            raise SupabaseAuthError("Your session is invalid or has expired. Please sign in again.")
+        return data
+
     def principal(self, access_token: str) -> Principal:
         if not access_token:
             raise SupabaseAuthError("A session token is required.")

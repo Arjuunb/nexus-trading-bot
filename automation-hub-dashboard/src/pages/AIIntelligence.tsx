@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ENTRY_TIMEFRAMES } from "../lib/timeframes";
 import Card from "../components/common/Card";
 import Icon from "../components/common/Icon";
 import { Badge, PageHeader, StatCard } from "../components/common/ui";
@@ -19,7 +20,7 @@ const CONF_TONE: Record<string, string> = {
 };
 const DECISION_TONE: Record<string, string> = { BUY: "green", SELL: "red", WAIT: "amber", SKIP: "red" };
 const money = (n?: number | null) => (n == null ? "—" : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`);
-const TFS = ["15m", "1h", "4h", "1d"] as const;
+const TFS = ENTRY_TIMEFRAMES;
 const SIDES = [["", "Auto"], ["long", "Long"], ["short", "Short"]] as const;
 
 export default function AIIntelligencePage() {

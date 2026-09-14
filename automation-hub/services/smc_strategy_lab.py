@@ -35,6 +35,15 @@ def _iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+#: Rows returned per collection by :meth:`SMCPaperAccount.state`. smc_activity
+#: and the broker fills were already capped; smc_order_meta, smc_candidates and
+#: smc_funding_events were not, so each call read an entire session. A session
+#: left open from 2026-08-24 to 2026-09-13 made that a continuous full-table
+#: read on every lab tick and bot-status poll. Callers needing whole
+#: collections pass ``limit=None``; ``collection_totals`` stays exact either
+#: way because it comes from COUNT(*).
+STATE_ROW_LIMIT = 1000
+
 OPERATING_MODES = {"signals_only", "manual_approval", "automatic"}
 SESSION_MODES = {"LIVE_PAPER", "HISTORICAL"}
 ACTIVE_MODEL_IDS = {row.id for row in ENTRY_MODELS if row.status == "ACTIVE"}
@@ -54,7 +63,9 @@ def _configured_r(config: dict, target_key: str) -> float | None:
 
 @dataclass(frozen=True)
 class SMCPaperConfig:
-    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "signals_only"
+    #: See PaperExecutionConfig: new sessions arm automatic paper placement.
+    #: Paper-only; real_execution_allowed remains False.
+    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "automatic"
     model_id: str = "SMC_M1_SWEEP_REVERSAL"
     risk_pct: float = 0.5
     max_risk_pct: float = 1.0
@@ -93,7 +104,7 @@ class SMCPaperAccount:
                 starting_balance REAL NOT NULL, status TEXT NOT NULL, end_reason TEXT,
                 mode TEXT NOT NULL DEFAULT 'LIVE_PAPER', symbol TEXT NOT NULL DEFAULT 'BTCUSDT',
                 timeframe TEXT NOT NULL DEFAULT '5m', replay_cursor INTEGER NOT NULL DEFAULT 0,
-                operating_mode TEXT NOT NULL DEFAULT 'signals_only', model_id TEXT NOT NULL DEFAULT 'SMC_M1_SWEEP_REVERSAL',
+                operating_mode TEXT NOT NULL DEFAULT 'automatic', model_id TEXT NOT NULL DEFAULT 'SMC_M1_SWEEP_REVERSAL',
                 risk_pct REAL NOT NULL DEFAULT .5, state_json TEXT NOT NULL DEFAULT '{}',
                 metrics_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS smc_settings(
@@ -216,9 +227,11 @@ class SMCPaperAccount:
              _iso(), current["id"]),
         )
 
-    def state(self, marks: dict[str, float] | None = None) -> dict:
+    def state(self, marks: dict[str, float] | None = None, *,
+              limit: int | None = STATE_ROW_LIMIT) -> dict:
         current = self.session()
         sid = current.get("id", "")
+        window = "" if limit is None else f" LIMIT {int(limit)}"
         account = self.broker.account(marks, persist_metrics=False)
         positions = self._positions_with_protection()
         open_risk = 0.0
@@ -229,11 +242,16 @@ class SMCPaperAccount:
         activity = [{**dict(row), "payload": json.loads(row["payload"])} for row in self._db.execute(
             "SELECT * FROM smc_activity WHERE session_id=? ORDER BY created_at DESC LIMIT 1000", (sid,))]
         metadata = [{**dict(row), "config": json.loads(row["config_json"])} for row in self._db.execute(
-            "SELECT * FROM smc_order_meta WHERE session_id=? ORDER BY created_at DESC", (sid,))]
+            "SELECT * FROM smc_order_meta WHERE session_id=? ORDER BY created_at DESC" + window, (sid,))]
         candidates = [{**dict(row), "payload": json.loads(row["payload"])} for row in self._db.execute(
-            "SELECT * FROM smc_candidates WHERE session_id=? ORDER BY created_at DESC", (sid,))]
+            "SELECT * FROM smc_candidates WHERE session_id=? ORDER BY created_at DESC" + window, (sid,))]
         funding = [dict(row) for row in self._db.execute(
-            "SELECT * FROM smc_funding_events WHERE session_id=? ORDER BY funding_time DESC", (sid,))]
+            "SELECT * FROM smc_funding_events WHERE session_id=? ORDER BY funding_time DESC" + window, (sid,))]
+        totals = dict(self._db.execute(
+            "SELECT (SELECT COUNT(*) FROM smc_candidates WHERE session_id=?) AS candidates,"
+            "       (SELECT COUNT(*) FROM smc_order_meta WHERE session_id=?) AS order_metadata,"
+            "       (SELECT COUNT(*) FROM smc_funding_events WHERE session_id=?) AS funding_events",
+            (sid, sid, sid)).fetchone())
         evaluations = [{**dict(row),
                         "missing_conditions": json.loads(row["missing_conditions_json"]),
                         "payload": json.loads(row["payload_json"])}
@@ -248,6 +266,7 @@ class SMCPaperAccount:
             "positions": positions, "orders": self.broker.orders(), "trades": self.broker.fills(limit=1000),
             "candidates": candidates, "order_metadata": metadata, "activity": activity,
             "funding_events": funding, "evaluations": evaluations,
+            "collection_totals": totals, "collection_window": limit,
         }
 
     def record_evaluation(self, evaluation: dict, *, candle_time: str,
@@ -1352,13 +1371,22 @@ class SMCPaperAccount:
         gross_profit = sum(row["net_pnl"] for row in wins)
         gross_loss = abs(sum(row["net_pnl"] for row in losses))
         net = sum(row["net_pnl"] for row in completed)
+        # One read, not one per completed trade plus two. This was three
+        # separate state() calls with the first inside a comprehension over
+        # `completed`, so an N-trade session performed N+2 whole-session reads
+        # every time the metrics were requested. limit=None because
+        # target_1_hits must see every order, and orders_placed is the exact
+        # count rather than the length of a window.
+        snapshot = self.state(limit=None)
+        order_metadata = snapshot["order_metadata"]
         target_1_hits = sum(any(meta.get("ownership") == "strategy_target_1" and
                                 meta.get("proposal_id") == row["proposal_id"] and
                                 any(fill["order_id"] == meta["order_id"] for fill in row["fills"])
-                                for meta in self.state()["order_metadata"]) for row in completed)
-        funding = self.state()["funding_events"]
+                                for meta in order_metadata) for row in completed)
+        funding = snapshot["funding_events"]
         return {"session_id": self.session().get("id"), "detected_setups": len(journal),
-                "orders_placed": len(self.state()["order_metadata"]), "trades_with_fills": len(completed),
+                "orders_placed": snapshot["collection_totals"]["order_metadata"],
+                "trades_with_fills": len(completed),
                 "wins": len(wins), "win_rate": (len(wins) / len(completed) if completed else None),
                 "net_pnl": net, "expectancy": (net / len(completed) if completed else None),
                 "profit_factor": (gross_profit / gross_loss if gross_loss else None),
@@ -1706,12 +1734,16 @@ class SMCStrategyLabRuntime:
                                 datetime.now(timezone.utc)) if session else {})
         if session.get("mode") == "LIVE_PAPER" and not evidence.get("primary"):
             blockers.append("HTF_PRIMARY_UNAVAILABLE")
-        execution_armed = session.get("operating_mode") == "automatic"
+        mode_armed = session.get("operating_mode") == "automatic"
         operator_state = (
             "ERROR" if orphaned_exposure else
             "BLOCKED" if not session or blockers else
-            "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
+            "RUNNING_ARMED" if mode_armed else "RUNNING_UNARMED"
         )
+        # See PriceActionLabRuntime: armed means configured AND able, so a
+        # BLOCKED lab never reports execution_armed. operating_mode still
+        # carries the configured value.
+        execution_armed = mode_armed and operator_state.startswith("RUNNING")
         mtf_policy = (display_contract(session["timeframe"], evidence)
                       if session.get("timeframe") else None)
         return {

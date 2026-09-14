@@ -190,20 +190,29 @@ def test_restart_does_not_create_new_session_over_ended_session_exposure(tmp_pat
     assert resumed["positions"][0]["symbol"] == "BTCUSDT"
 
 
-def test_signals_only_is_default_and_live_execution_is_impossible(tmp_path):
+def test_a_new_session_is_armed_but_live_execution_stays_impossible(tmp_path):
+    """Arming the default changes which branch runs, not what is reachable.
+
+    The safety property is that neither lab can route to a venue. That is
+    asserted here independently of the operating mode, because the mode is a
+    behavioural choice and this is the boundary that must never move.
+    """
     account = SMCPaperAccount(tmp_path / "smc.db")
     state = account.state()
-    assert state["session"]["operating_mode"] == "signals_only"
+    assert state["session"]["operating_mode"] == "automatic"
     assert state["execution_mode"] == "PAPER"
     assert state["real_execution_allowed"] is False
     assert not hasattr(SMCPaperAccount, "enable_live")
+
     evaluation = evaluate(seeded_engine())
     result = account.synchronize_candidate(
         evaluation, rules=RULES,
         reference_price=evaluation["trade_plan"]["entry"], feed_reliable=True,
     )
-    assert result["candidate_status"] == "SIGNAL_ONLY"
-    assert account.broker.orders() == []
+    assert result["candidate_status"] == "APPROVED_AUTOMATIC"
+    assert len(account.broker.orders()) == 1
+    # Still paper after placing, not merely before.
+    assert account.state()["real_execution_allowed"] is False
 
 
 @pytest.mark.parametrize("mode,expected,orders", [

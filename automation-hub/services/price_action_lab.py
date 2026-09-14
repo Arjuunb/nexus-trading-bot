@@ -34,6 +34,23 @@ from services.lab_lifecycle import (
     paper_performance,
 )
 
+#: Rows returned per collection by :meth:`PriceActionPaperAccount.state`.
+#: pa_activity and pa_evaluations were already capped here; pa_candidates,
+#: pa_order_meta, pa_funding_events and pa_position_remediations were not, so
+#: every call materialised an entire session. A session left open from
+#: 2026-09-03 to 2026-09-13 grew price_action_paper.db to 572 MB, and state()
+#: runs on each lab tick and on every bot-status poll: the observed cost was
+#: ~500 MB read and ~500 MB written every 30 seconds with a core pegged, until
+#: the container reached its memory ceiling. Callers that genuinely need whole
+#: collections pass ``limit=None``; the totals are always exact because they
+#: come from COUNT(*) rather than from len() of the returned window.
+STATE_ROW_LIMIT = 500
+
+#: How long a chart hydration may wait for the worker's lock. Long enough to
+#: win the ordinary race against a tick, short enough that a slow tick returns
+#: a labelled detached snapshot instead of holding the request open.
+_HYDRATION_LOCK_WAIT_S = 0.25
+
 
 def _iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -51,7 +68,12 @@ OPEN_STRATEGY_ORDER_STATUSES = {"ORDER_PENDING", "PARTIALLY_FILLED", "ENTERED"}
 
 @dataclass(frozen=True)
 class PaperExecutionConfig:
-    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "signals_only"
+    #: New sessions arm automatic paper placement. This was "signals_only",
+    #: which recorded a SIGNAL_ONLY candidate on every valid setup and created
+    #: no order -- a lab could run for weeks looking healthy and never place
+    #: anything. Execution here is paper-only and real_execution_allowed stays
+    #: False, so arming by default risks simulated fills, never real ones.
+    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "automatic"
     strategy_id: str = "PA1_SR_REJECTION"
     risk_pct: float = 0.5
     max_risk_pct: float = 1.0
@@ -170,7 +192,7 @@ class PriceActionPaperAccount:
                 ("symbol", "TEXT NOT NULL DEFAULT 'BTCUSDT'"),
                 ("timeframe", "TEXT NOT NULL DEFAULT '5m'"),
                 ("replay_cursor", "INTEGER NOT NULL DEFAULT 0"),
-                ("operating_mode", "TEXT NOT NULL DEFAULT 'signals_only'"),
+                ("operating_mode", "TEXT NOT NULL DEFAULT 'automatic'"),
                 ("strategy_config_json", "TEXT NOT NULL DEFAULT '{}'"),
                 ("execution_config_json", "TEXT NOT NULL DEFAULT '{}'"),
                 ("state_json", "TEXT NOT NULL DEFAULT '{}'"),
@@ -735,31 +757,42 @@ class PriceActionPaperAccount:
                 "records_deleted": 0, "manual_orders_changed": manual_orders_changed,
                 "real_execution_allowed": False}
 
-    def state(self, marks: dict[str, float] | None = None) -> dict:
+    def state(self, marks: dict[str, float] | None = None, *,
+              limit: int | None = STATE_ROW_LIMIT) -> dict:
         current = self.session()
+        session_id = current.get("id", "")
+        window = "" if limit is None else f" LIMIT {int(limit)}"
         with self._lock:
             candidates = [dict(row) for row in self._db.execute(
-                "SELECT * FROM pa_candidates WHERE session_id=? ORDER BY created_at DESC", (current.get("id", ""),))]
+                "SELECT * FROM pa_candidates WHERE session_id=? ORDER BY created_at DESC" + window, (session_id,))]
             activity = [dict(row) for row in self._db.execute(
-                "SELECT * FROM pa_activity WHERE session_id=? ORDER BY created_at DESC LIMIT 500", (current.get("id", ""),))]
+                "SELECT * FROM pa_activity WHERE session_id=? ORDER BY created_at DESC LIMIT 500", (session_id,))]
             metadata = [dict(row) for row in self._db.execute(
-                "SELECT * FROM pa_order_meta WHERE session_id=? ORDER BY created_at DESC", (current.get("id", ""),))]
+                "SELECT * FROM pa_order_meta WHERE session_id=? ORDER BY created_at DESC" + window, (session_id,))]
             funding = [dict(row) for row in self._db.execute(
-                "SELECT * FROM pa_funding_events WHERE session_id=? ORDER BY funding_time DESC",
-                (current.get("id", ""),))]
+                "SELECT * FROM pa_funding_events WHERE session_id=? ORDER BY funding_time DESC" + window,
+                (session_id,))]
             evaluations = [{**dict(row),
                             "missing_conditions": json.loads(row["missing_conditions_json"]),
                             "payload": json.loads(row["payload_json"])}
                            for row in self._db.execute(
                 "SELECT * FROM pa_evaluations WHERE session_id=? ORDER BY candle_time DESC LIMIT 500",
-                (current.get("id", ""),))]
+                (session_id,))]
             remediations = [{**dict(row),
                              "original_position": json.loads(row["original_position_json"]),
                              "market_evidence": json.loads(row["market_evidence_json"]),
                              "close_result": json.loads(row["close_result_json"])}
                             for row in self._db.execute(
-                "SELECT * FROM pa_position_remediations WHERE session_id=? ORDER BY created_at DESC",
-                (current.get("id", ""),))]
+                "SELECT * FROM pa_position_remediations WHERE session_id=? ORDER BY created_at DESC" + window,
+                (session_id,))]
+            # Exact regardless of the window above, so a caller reading a
+            # capped collection can still report how many rows exist.
+            totals = dict(self._db.execute(
+                "SELECT (SELECT COUNT(*) FROM pa_candidates WHERE session_id=?) AS candidates,"
+                "       (SELECT COUNT(*) FROM pa_order_meta WHERE session_id=?) AS order_metadata,"
+                "       (SELECT COUNT(*) FROM pa_funding_events WHERE session_id=?) AS funding_events,"
+                "       (SELECT COUNT(*) FROM pa_position_remediations WHERE session_id=?) AS position_remediations",
+                (session_id, session_id, session_id, session_id)).fetchone())
         return {
             "account_scope": "PRICE_ACTION_VISUAL_LAB_ONLY",
             "currency": "USDT",
@@ -777,6 +810,8 @@ class PriceActionPaperAccount:
             "funding_events": funding,
             "evaluations": evaluations,
             "position_remediations": remediations,
+            "collection_totals": totals,
+            "collection_window": limit,
             "entry_control": self._runtime_control(),
             "persistence": self.persistence_status(),
             "order_audit": self.audit_pending_orders(),
@@ -1956,11 +1991,16 @@ class PriceActionLabRuntime:
                    request_id: str | None = None) -> dict:
         session = self._assert_session_identity(symbol, timeframe, "LIVE_PAPER")
         # Hydration is a read of the worker's snapshot. It must never start a
-        # stream, bootstrap REST history, or wait behind the worker's I/O lock.
-        acquired = self._lock.acquire(blocking=False)
+        # stream or bootstrap REST history. It may wait briefly for the lock,
+        # but never long enough to queue behind the worker's I/O: a purely
+        # non-blocking acquire lost the race whenever a tick was in flight and
+        # then rendered a freshly built, empty engine as though it were the
+        # live one -- a chart showing a single candle and "0 closed candles"
+        # with no indication anything was wrong.
+        acquired = self._lock.acquire(timeout=_HYDRATION_LOCK_WAIT_S)
         try:
-            engine = (self.engine if acquired and self.identity == (normalize_symbol(symbol), timeframe)
-                      else None)
+            live = acquired and self.identity == (normalize_symbol(symbol), timeframe)
+            engine = self.engine if live else None
             if engine is None:
                 engine = NativePriceActionEngine(self._engine_config(symbol, timeframe))
             state = engine.visual_state(candle_window=max(50, min(visible, 1500)))
@@ -1968,6 +2008,24 @@ class PriceActionLabRuntime:
         finally:
             if acquired:
                 self._lock.release()
+        # Say which engine produced this. A caller must be able to tell a
+        # genuinely empty session from a snapshot it could not reach.
+        if live:
+            reason = None
+        elif not acquired:
+            reason = "worker busy"
+        elif self.identity is None:
+            # No worker has claimed a symbol yet: the session is starting, not
+            # mismatched. Saying "busy" or naming a pair would both be wrong.
+            reason = "no worker attached yet"
+        else:
+            reason = (f"worker is on {self.identity[0]} {self.identity[1]}, "
+                      f"chart requested {normalize_symbol(symbol)} {timeframe}")
+        state["hydration"] = {
+            "source": "worker" if live else "detached",
+            "live": bool(live),
+            "reason": reason,
+        }
         from services.mtf_policy import evidence_at, display_contract
         evidence = evidence_at(symbol, timeframe, self._native_context(symbol, timeframe),
                                datetime.now(timezone.utc))
@@ -2077,12 +2135,17 @@ class PriceActionLabRuntime:
                                 datetime.now(timezone.utc)) if session else {})
         if session.get("mode") == "LIVE_PAPER" and not evidence.get("primary"):
             blockers.append("HTF_PRIMARY_UNAVAILABLE")
-        execution_armed = session.get("operating_mode") == "automatic"
+        mode_armed = session.get("operating_mode") == "automatic"
         operator_state = (
             "ERROR" if orphaned_exposure else
             "BLOCKED" if not session or blockers else
-            "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
+            "RUNNING_ARMED" if mode_armed else "RUNNING_UNARMED"
         )
+        # Armed means "configured to place AND able to place now", not merely
+        # the configured mode. Reporting the mode alone said execution_armed
+        # on a BLOCKED lab, contradicting session_state in the same payload.
+        # The configured mode is still visible as operating_mode.
+        execution_armed = mode_armed and operator_state.startswith("RUNNING")
         mtf_evidence = dict(self.engine._mtf_evidence) if self.engine is not None else {}
         mtf_policy = (display_contract(session["timeframe"], evidence)
                       if session.get("timeframe") else None)
