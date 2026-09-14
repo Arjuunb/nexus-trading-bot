@@ -30,15 +30,20 @@ sweep -> structure shift -> point of interest -> retest -> rejection sequence.
 Nothing here recomputes a level. Entry, stop, target and R:R are the engine's
 own numbers, carried through untouched.
 
-One consequence is worth stating plainly, because it answers "why have I never
-seen an SMC order": this path cannot place one, paper or live. The engine's
-ProposedTrade carries a single ``execution_allowed`` flag, fed from
-SMCConfig.execution_allowed (False) or the module constant EXECUTION_ALLOWED
-(also False), and ``generate`` refuses anything it does not set. Price Action's
-engine draws a second distinction -- ``paper_execution_allowed``, True -- which
-is why that strategy does reach the paper broker. The asymmetry lives in frozen
-alpha files and is documented, not resolved, here; see
-tests/test_native_execution_chain.py.
+On execution: this path trades on paper only. The engine's ProposedTrade now
+carries the same two permissions the native Price Action engine has --
+``execution_allowed`` (False, and the engine's constructor raises outright if
+it is ever set, so no live order can be routed from here) and
+``paper_execution_allowed`` (True), which is what ``generate`` gates on. That
+second flag was added as an approved, non-alpha delta: the state-machine hash
+and the engine's decision output are byte-identical across it, so the frozen
+visual attestation still binds. See data/native_smc_engine_freeze_manifest.json
+and tests/test_native_execution_chain.py.
+
+Reaching a Trading Instance is a separate question from being allowed to trade.
+The registry still lists this strategy RESEARCH_ONLY for want of an immutable
+build version, so ``selectable_for_new_instance("smc")`` remains False and the
+supported SMC surface is the Strategy Lab.
 """
 from __future__ import annotations
 
@@ -220,10 +225,15 @@ class SMCStrategy(HubStrategy):
 
         proposal = max(candidates, key=lambda row: (row.rr_ratio, row.id))
         self._emitted.add(proposal.id)
-        if not getattr(proposal, "execution_allowed", False):
+        # Paper, not live. ``paper_execution_allowed`` is the permission that
+        # lets a proposal be simulated; ``execution_allowed`` stays False and
+        # the engine's constructor refuses to start if it is ever set, so no
+        # path from here reaches a real exchange. Same gate the Price Action
+        # adapter uses, for the same reason.
+        if not getattr(proposal, "paper_execution_allowed", False):
             self.last_reason = (
                 f"engine proposal {proposal.id} is research-only "
-                f"({getattr(proposal, 'risk_status', None) or 'execution not allowed'})")
+                f"({getattr(proposal, 'risk_status', None) or 'paper execution not allowed'})")
             return None
         return self._as_signal(bar, proposal)
 

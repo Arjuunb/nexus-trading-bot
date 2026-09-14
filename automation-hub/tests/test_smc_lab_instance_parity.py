@@ -52,9 +52,14 @@ def _drive(strategy: SMCStrategy, bars) -> list:
 
 
 def _proposal(**overrides) -> ProposedTrade:
+    # Paper simulation is granted by ``paper_execution_allowed`` (True by
+    # default, as on the Price Action engine); ``execution_allowed`` is live
+    # routing and stays False -- the engine's constructor refuses to run at all
+    # if a config sets it, so a fixture that enabled it would describe a state
+    # the engine cannot be in.
     fields = dict(id="prop-1", setup_id="setup-1", direction="bullish",
                   entry=123.45, stop=118.20, target=136.50, risk_distance=5.25,
-                  rr_ratio=2.5, snapshot_id="snap-1", execution_allowed=True)
+                  rr_ratio=2.5, snapshot_id="snap-1")
     fields.update(overrides)
     return ProposedTrade(**fields)
 
@@ -140,8 +145,9 @@ def test_the_signal_carries_the_engine_provenance(primed):
 # ----------------------------------------------------------------- gating
 
 def test_a_research_only_proposal_is_refused_with_a_reason(primed):
+    """The gate is still a gate; the paper flag is what opens it."""
     strategy, bars = primed
-    proposal = _proposal(id="prop-3", execution_allowed=False)
+    proposal = _proposal(id="prop-3", paper_execution_allowed=False)
     strategy._engine.proposals[proposal.id] = proposal
 
     assert strategy.generate(bars[-1]) is None

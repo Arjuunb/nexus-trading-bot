@@ -7,7 +7,7 @@
     "services/price_action_lab.py": "85b06d105e025769cffd0c2234862a6d90772ab70813b15713f3c1df15657d6d",
     "services/smc_strategy_lab.py": "009bd4f48caeb443adc9849b4708001e2414ad6119104c6916572f0169de1da1",
     "services/native_price_action.py": "5307ce702564b0739673a093d0a24478ad49ae24391f02e16fa39c0c0ae70339",
-    "services/native_smc.py": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
+    "services/native_smc.py": "47c2b7e28fee15e3366ea5434092f13c99cb50cbf718e56a35becaf715c8c36d"
   },
   "subsequent_approved_deltas": [
     {
@@ -74,6 +74,19 @@
       "alpha_rules_changed": false,
       "fill_timing_changed": false,
       "verification": "first_touch_only is False by default and is documented in-code as an isolated experiment, so the production path never evaluated this condition before and does not now. It gated on zone.touch_count <= 1, but touch_count increments for every bar whose range overlaps the zone and the bars forming the confirming swing already overlap it before the zone is active: measured across every zone of a structured 900-bar run the minimum was 2 and the maximum 13, never 1, so the switch could only ever yield zero proposals. With visit_count the same run gives min 1 / max 5 and the switch returns 5 proposals, a strict subset of the 33 the strategy proposes with it off. The default path produces the identical 33 proposals before and after this change, and all 33 sit on a real support or resistance level. No swing, zone, rejection, entry, stop, target or fill rule was modified. services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline; tests/test_zone_first_visit.py pins both the unsatisfiability that motivated the change and the unchanged production count."
+    },
+    {
+      "commits": [
+        "pending (SMC paper execution permission)"
+      ],
+      "delta": "Add ProposedTrade.paper_execution_allowed (default True) to services/native_smc.py, and gate the SMC instance adapter on it instead of execution_allowed. This gives the SMC engine the same two-permission model the native Price Action engine already had, where paper simulation and live routing are separate grants. Requested explicitly by the repository owner after this audit established that the single-flag model was the reason no SMC order had ever been placed, in a lab or an instance.",
+      "files_rehashed": [
+        "services/native_smc.py"
+      ],
+      "alpha_rules_changed": false,
+      "fill_timing_changed": false,
+      "live_execution_changed": false,
+      "verification": "The change adds one defaulted dataclass field and one key to public_state(); no engine method was touched. Proof that no rule moved: state_machine_hash (SetupPhase plus the AST of process_closed_bar, _transition, _advance_setups and _propose) is byte-identical at c97491396aadb44e4a972b0eccfb2deb8d7e3aa6ad7e62d2512d25ac311bdd22, and configuration_hash is unchanged at 026919f59f4cddab0c3bc4332bcc579cd94a94da6aa0c5eec9c1b0b8a881b1eb. The engine's decision output -- setups, events, FVGs, transitions and proposals, excluding only the new permission field -- hashes identically before and after at 124427d4d5c4ca6e478c4bb2551e197ce15bed2b8e530e7880d2bec0e2c52e52 over three seeds of 900 candles each, so the frozen 82-item human visual attestation still binds to exactly the sample this engine produces; EXPECTED_ENGINE_SOURCE_HASH and data/native_smc_engine_freeze_manifest.json were re-attested on that evidence and the append-only data/native_smc_visual_verification_final.json record was deliberately left at its historical hashes. Live routing is unchanged and still impossible from this path: SMCConfig.execution_allowed and the module constant EXECUTION_ALLOWED both remain False, ProposedTrade.execution_allowed still defaults False, and SMCMarketStructureEngine.__init__ still raises if either is ever set -- asserted in tests/test_native_execution_chain.py, which also drives an SMC proposal through the real adapter, signal pipeline and paper broker to a position. The freeze manifest records live_trading_enabled and forward_paper_enabled still false; only paper_trading_enabled moved to true. services/native_price_action.py, services/price_action_lab.py, services/smc_strategy_lab.py and services/mtf_policy.py still hash to their existing baseline values."
     }
   ]
 }

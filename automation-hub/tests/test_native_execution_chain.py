@@ -10,10 +10,14 @@ paper broker (fill, fees), and the ledger. Every test here drives that whole
 chain and asserts on what came out the far end, because a passing unit test of
 the adapter proves nothing about whether an order was ever placed.
 
-The answer differs for the two strategies, and the difference is deliberate --
-see ``test_smc_cannot_place_even_a_paper_order_by_design``. Nothing here enables
-live routing: every order is placed against PaperExecutionEngine on an in-memory
-ledger, and the engines' shipped execution flags are read, never written.
+Both strategies now reach it. SMC did not until its engine gained the separate
+paper-execution permission the Price Action engine already had -- an approved
+non-alpha delta, recorded in data/native_smc_engine_freeze_manifest.json.
+
+Nothing here enables live routing, and several tests exist to keep it that way:
+every order is placed against PaperExecutionEngine on an in-memory ledger,
+``execution_allowed`` is asserted False on both engines, and the engine
+constructor is asserted to refuse a config that sets it.
 """
 from __future__ import annotations
 
@@ -144,9 +148,13 @@ def _primed_smc() -> tuple[SMCStrategy, list[Bar]]:
 
 
 def _smc_proposal(**overrides) -> ProposedTrade:
+    # execution_allowed stays False exactly as the engine ships it; paper
+    # simulation is granted by paper_execution_allowed, which is what the
+    # adapter gates on. A fixture that set the live flag would be testing a
+    # state the engine's constructor refuses to run in.
     fields = dict(id="prop-chain", setup_id="setup-chain", direction="bullish",
                   entry=123.45, stop=118.20, target=136.50, risk_distance=5.25,
-                  rr_ratio=2.5, snapshot_id="snap-chain", execution_allowed=True)
+                  rr_ratio=2.5, snapshot_id="snap-chain")
     fields.update(overrides)
     return ProposedTrade(**fields)
 
@@ -202,40 +210,69 @@ def test_the_journal_record_can_be_traced_back_to_the_engine_proposal():
 
 # ----------------------------------------------------- SMC: blocked by design
 
-def test_smc_cannot_place_even_a_paper_order_by_design():
-    """The documented Lab/Instance divergence, pinned rather than resolved.
+def test_both_engines_separate_paper_permission_from_live():
+    """Paper and live are two permissions, and only one of them is granted.
 
-    Price Action's ProposedTrade carries TWO flags -- ``execution_allowed``
-    (False: no live routing) and ``paper_execution_allowed`` (True) -- and its
-    adapter gates on the paper one, so a Price Action proposal can become a
-    paper order. native_smc.ProposedTrade has only ``execution_allowed``, fed
-    from SMCConfig.execution_allowed (False) or the module constant
-    EXECUTION_ALLOWED (also False, not env-driven). There is no paper/live
-    distinction, so an SMC proposal is refused for paper and live alike.
+    SMC used to carry a single ``execution_allowed`` flag with no paper/live
+    distinction, so its proposals were refused for simulation exactly as they
+    were for live routing -- which is why no SMC order had ever appeared. It
+    now carries the same pair the native Price Action engine has, as an
+    approved non-alpha delta recorded in the engine freeze manifest.
 
-    That is why no SMC order has ever appeared. It is not a wiring fault -- the
-    test below shows the chain carries an executable SMC proposal perfectly
-    well -- it is the shipped gate, in a frozen alpha file
-    (services/native_smc.py). Giving SMC a paper_execution_allowed flag to match
-    Price Action is a real and defensible change, but it is a change to frozen
-    execution policy and needs explicit approval, not a quiet edit inside a
-    refactor. Pinned here so the asymmetry is visible and cannot drift.
+    What must not drift is the other half: paper permission is not a foothold
+    for live execution. ``execution_allowed`` stays False on both engines, the
+    module constants stay False, and both constructors refuse outright if a
+    config ever sets it.
     """
     from services import native_price_action, native_smc
 
     assert native_smc.EXECUTION_ALLOWED is False
-    assert not hasattr(native_smc.ProposedTrade, "paper_execution_allowed"), (
-        "SMC gained a paper execution flag -- if that was intended, this test "
-        "and the freeze record should say so")
-    assert native_price_action.ProposedTrade.paper_execution_allowed is True, (
-        "Price Action lost its paper flag, which would silence it the way SMC "
-        "is silenced")
+    assert native_price_action.EXECUTION_ALLOWED is False
+    for model in (native_smc.ProposedTrade, native_price_action.ProposedTrade):
+        assert model.paper_execution_allowed is True
+        assert model.execution_allowed is False, (
+            "live execution was enabled by default on a research engine")
 
+    # The constructor guard is the real barrier, not the dataclass default.
+    with pytest.raises(ValueError):
+        native_smc.SMCMarketStructureEngine(
+            native_smc.SMCConfig(symbol="BTCUSDT", execution_allowed=True))
+
+
+def test_a_proposal_refused_for_paper_says_so_and_places_nothing():
+    """The gate still exists; it is the paper flag that opens it, not nothing."""
     strategy, bars = _primed_smc()
     strategy._engine.proposals["prop-research"] = _smc_proposal(
-        id="prop-research", execution_allowed=False)
+        id="prop-research", paper_execution_allowed=False)
+
     assert strategy.generate(bars[-1]) is None
     assert "research-only" in strategy.last_reason
+
+
+def test_an_smc_setup_now_reaches_the_paper_broker_end_to_end():
+    """The change the owner asked for, asserted on the far end of the chain.
+
+    Not a unit test of the flag: the proposal is carried by the real adapter,
+    the real pipeline and the real paper broker, and the assertion is that a
+    position exists holding the engine's own levels.
+    """
+    strategy, bars = _primed_smc()
+    proposal = _smc_proposal(id="prop-live-paper")
+    assert proposal.paper_execution_allowed is True
+    assert proposal.execution_allowed is False, "this must NOT be a live order"
+    strategy._engine.proposals[proposal.id] = proposal
+
+    signal = strategy.generate(bars[-1])
+    assert signal is not None, "an SMC setup must now produce a tradeable signal"
+
+    _ledger, paper, pipeline = _chain()
+    result = pipeline.process(_payload(signal, strategy="smc"))
+
+    assert result.accepted, f"refused at {result.stage}: {result.reason}"
+    position = paper.open_position("BTCUSDT")
+    assert position is not None, "SMC still placed no paper order"
+    assert position["entry"] == pytest.approx(proposal.entry)
+    assert position["stop"] == pytest.approx(proposal.stop)
 
 
 def test_an_executable_smc_proposal_would_traverse_the_whole_chain():
