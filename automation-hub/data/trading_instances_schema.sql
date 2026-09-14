@@ -323,8 +323,17 @@ CREATE INDEX IF NOT EXISTS idx_instance_owner ON trading_instances(owner_id, cre
 -- read-then-insert all produce the same key. status is part of the key because
 -- one order legitimately moves through pending and accepted; what must never
 -- happen twice is the same stage for the same key.
+-- Scoped to rows that belong to an instance. Idempotency keys are always
+-- instance-scoped ("auto:<instance_id>:<symbol>:<timeframe>:<candle>:<action>"),
+-- so that is the whole population this needs to constrain. Legacy rows from the
+-- pre-instance auto engine carry instance_id = '' and can already contain
+-- duplicates -- one production database held 84 such duplicate groups, all of
+-- them 'rejected' refusals -- and requiring uniqueness across them would fail
+-- the index outright, leaving the deployment with no durable guarantee at all
+-- rather than a guarantee over the rows that matter.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_webhook_alert_instance_unique
- ON webhook_events(alert_id, instance_id, status);
+ ON webhook_events(alert_id, instance_id, status)
+ WHERE instance_id <> '';
 CREATE INDEX IF NOT EXISTS idx_webhook_instance ON webhook_events(instance_id, received_at);
 CREATE INDEX IF NOT EXISTS idx_paper_trades_instance
  ON paper_trades(instance_id, simulation_session_id);

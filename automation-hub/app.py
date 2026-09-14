@@ -627,6 +627,11 @@ hub_events = HubEventHub()
 _sessions: dict[str, str] = {}
 COOKIE = "hub_session"
 SUPABASE_COOKIE = "hub_supabase_access"
+#: The refresh half of the Supabase session. The access cookie holds a
+#: short-lived JWT; without somewhere to keep its refresh token the server had
+#: no way to renew it, so the 30-day access cookie simply carried a dead
+#: credential and every request after expiry read as signed out.
+SUPABASE_REFRESH_COOKIE = "hub_supabase_refresh"
 SESSION_DAYS = 7
 
 
@@ -1209,6 +1214,7 @@ def auth_logout(request: Request):
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(COOKIE)
     resp.delete_cookie(SUPABASE_COOKIE)
+    resp.delete_cookie(SUPABASE_REFRESH_COOKIE)
     resp.delete_cookie(PENDING_2FA_COOKIE)
     return resp
 
@@ -1242,6 +1248,11 @@ async def supabase_session(request: Request):
     else:
         cookie.pop("max_age", None)  # browser-session cookie
     resp.set_cookie(SUPABASE_COOKIE, token, **cookie)
+    # Keep the refresh half when the SPA sends it, so an expired access token
+    # can be renewed server-side instead of bouncing the user to sign-in.
+    refresh_token = body.get("refresh_token") if isinstance(body, dict) else None
+    if refresh_token:
+        resp.set_cookie(SUPABASE_REFRESH_COOKIE, str(refresh_token), **cookie)
     try:
         supabase_auth.touch_last_login(token, principal.id)
     except SupabaseAuthError:
@@ -1250,6 +1261,45 @@ async def supabase_session(request: Request):
         pass
     supabase_auth.audit(actor_id=principal.id, event="session.created",
                         metadata={"remember": remember})
+    return resp
+
+
+@app.post("/auth/supabase/refresh")
+def supabase_refresh(request: Request):
+    """Renew the access cookie from the stored refresh token.
+
+    Without this the access cookie carried a JWT that expired on Supabase's
+    schedule -- an hour by default, less if the project is configured that way
+    -- while the cookie itself lived for thirty days. Every request after that
+    expiry read as signed out even though the session was still valid, which is
+    what made the dashboard demand a fresh sign-in every few minutes.
+    """
+    if settings.auth_mode != "supabase":
+        raise HTTPException(status_code=404, detail="Supabase Auth is not enabled.")
+    stored = request.cookies.get(SUPABASE_REFRESH_COOKIE, "")
+    if not stored:
+        raise HTTPException(status_code=401, detail="Sign in required.")
+    try:
+        data = supabase_auth.refresh(stored)
+        principal = supabase_auth.principal(str(data["access_token"]))
+    except SupabaseAuthError as exc:
+        # A refresh token that no longer works is a dead session, not a
+        # transient error. Clear both halves so the client stops retrying with
+        # a credential that cannot recover.
+        from fastapi.responses import JSONResponse
+        dead = JSONResponse({"ok": False, "detail": str(exc)}, status_code=401)
+        dead.delete_cookie(SUPABASE_COOKIE)
+        dead.delete_cookie(SUPABASE_REFRESH_COOKIE)
+        return dead
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True, "user": principal.id, "role": principal.role})
+    cookie = dict(_cookie_kwargs())
+    cookie["max_age"] = 30 * 86400
+    resp.set_cookie(SUPABASE_COOKIE, str(data["access_token"]), **cookie)
+    # Supabase rotates the refresh token on every exchange; storing the old one
+    # again would invalidate the session at the next renewal.
+    if data.get("refresh_token"):
+        resp.set_cookie(SUPABASE_REFRESH_COOKIE, str(data["refresh_token"]), **cookie)
     return resp
 
 
@@ -1300,6 +1350,7 @@ def delete_auth_me(request: Request):
     from fastapi.responses import JSONResponse
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(SUPABASE_COOKIE)
+    resp.delete_cookie(SUPABASE_REFRESH_COOKIE)
     return resp
 
 
