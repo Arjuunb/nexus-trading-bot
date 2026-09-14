@@ -370,6 +370,14 @@ class SMCStrategy(HubStrategy):
             entry=proposal.entry, stop_loss=proposal.stop,
             take_profit=proposal.target, reason=self.last_reason,
         )
+        # The structure that produced this trade, carried on the order itself:
+        # which liquidity sweep started the setup, which break of structure
+        # confirmed it, and which point of interest price returned to. Without
+        # these the journal records that SMC fired but not on what, which is
+        # the only question worth asking of an SMC entry.
+        engine = self._engine
+        setup = engine.setups.get(proposal.setup_id) if engine is not None else None
+        snapshot = engine.latest_snapshot if engine is not None else None
         signal.snapshot = {
             "mtf_evidence": dict(self._native_mtf_evidence),
             "research_id": NATIVE_SMC_ID,
@@ -378,5 +386,12 @@ class SMCStrategy(HubStrategy):
             "snapshot_id": proposal.snapshot_id,
             "rr_ratio": proposal.rr_ratio,
             "risk_distance": proposal.risk_distance,
+            "sweep_id": getattr(setup, "sweep_id", None),
+            "structure_id": getattr(setup, "structure_id", None),
+            "poi_id": getattr(setup, "poi_id", None),
+            "dealing_range_area": getattr(
+                getattr(snapshot, "dealing_range", None), "area", None),
+            "htf_bias": getattr(snapshot, "htf_bias", None),
+            "session": getattr(snapshot, "session", None),
         }
         return signal

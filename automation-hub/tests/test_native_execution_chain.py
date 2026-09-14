@@ -202,6 +202,11 @@ def test_the_journal_record_can_be_traced_back_to_the_engine_proposal():
     strategy, signal = _first_pa_signal()
     snapshot = signal.snapshot or {}
     assert snapshot, "the adapter emitted a signal carrying no provenance"
+    # Which level was retested, and what rejected off it -- not just that some
+    # setup fired. The Price Action lab shows this beside the fill.
+    assert snapshot["zone_id"], "the order does not name the S/R zone it traded"
+    assert snapshot["trigger_event_id"], "the order does not name the rejection"
+    assert snapshot["reasons"], "the order carries no stated reason"
     engine_levels = {(row.entry, row.stop, row.target)
                      for row in strategy._engine.proposals.values()}
     assert (signal.entry, signal.stop_loss, signal.take_profit) in engine_levels, (

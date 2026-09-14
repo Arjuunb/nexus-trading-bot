@@ -229,6 +229,12 @@ class PriceActionRejectionStrategy(HubStrategy):
         # proposal that caused it -- which is the very thing the registry means
         # when it says a paper record must be attributable. Metadata only: it
         # names what the engine already decided and moves no level.
+        # Which level, and what rejected off it. Carrying only setup_id would
+        # leave a journal entry that says a trade happened without saying which
+        # support or resistance caused it -- the one thing worth knowing when
+        # deciding whether to trust the setup.
+        setup = (self._engine.setups.get(proposal.setup_id)
+                 if self._engine is not None else None)
         signal.snapshot = {
             "mtf_evidence": dict(self._native_mtf_evidence),
             "research_id": proposal.strategy_id,
@@ -238,6 +244,9 @@ class PriceActionRejectionStrategy(HubStrategy):
             "entry_model": proposal.entry_model,
             "rr_ratio": proposal.rr_ratio,
             "risk_distance": proposal.risk_distance,
+            "zone_id": getattr(setup, "zone_id", None),
+            "trigger_event_id": getattr(setup, "trigger_event_id", None),
+            "reasons": list(getattr(setup, "reasons", ()) or ()),
         }
         return signal
 
