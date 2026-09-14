@@ -6,7 +6,7 @@
     "services/mtf_policy.py": "f54da90f2643152f9e9864f42ea77e9fc920c4b75aba19e3190fc3e86ac199a0",
     "services/price_action_lab.py": "85b06d105e025769cffd0c2234862a6d90772ab70813b15713f3c1df15657d6d",
     "services/smc_strategy_lab.py": "009bd4f48caeb443adc9849b4708001e2414ad6119104c6916572f0169de1da1",
-    "services/native_price_action.py": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",
+    "services/native_price_action.py": "5307ce702564b0739673a093d0a24478ad49ae24391f02e16fa39c0c0ae70339",
     "services/native_smc.py": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
   },
   "subsequent_approved_deltas": [
@@ -62,6 +62,18 @@
       "alpha_rules_changed": false,
       "fill_timing_changed": false,
       "verification": "A one-token change to two defaults plus comments. The three-branch dispatch on operating_mode is untouched, so what 'automatic' does -- call _place_proposal on a proposal that has already cleared every risk, attestation, persistence and feed-reliability gate ahead of it -- is unchanged; only which branch a NEW session starts on differs. Existing sessions keep their stored mode, and the read fallbacks for rows that predate the column (price_action_lab.py old.get(...) and session.get(...)) deliberately still resolve to signals_only so an old session is never silently armed. native_price_action.py, native_smc.py and mtf_policy.py still hash to their PR #6 baseline: entry conditions, stop model, target R and the native MTF policy are untouched. real_execution_allowed remains False and paper_only True in both labs, so this arms simulated fills only and cannot reach a venue."
+    },
+    {
+      "commits": [
+        "pending (first_touch_only made satisfiable)"
+      ],
+      "delta": "Count distinct visits to a support/resistance zone and gate first_touch_only on that instead of touch_count. Adds Zone.visit_count and Zone.inside_zone to services/native_price_action.py; no other behaviour is reached.",
+      "files_rehashed": [
+        "services/native_price_action.py"
+      ],
+      "alpha_rules_changed": false,
+      "fill_timing_changed": false,
+      "verification": "first_touch_only is False by default and is documented in-code as an isolated experiment, so the production path never evaluated this condition before and does not now. It gated on zone.touch_count <= 1, but touch_count increments for every bar whose range overlaps the zone and the bars forming the confirming swing already overlap it before the zone is active: measured across every zone of a structured 900-bar run the minimum was 2 and the maximum 13, never 1, so the switch could only ever yield zero proposals. With visit_count the same run gives min 1 / max 5 and the switch returns 5 proposals, a strict subset of the 33 the strategy proposes with it off. The default path produces the identical 33 proposals before and after this change, and all 33 sit on a real support or resistance level. No swing, zone, rejection, entry, stop, target or fill rule was modified. services/native_smc.py and services/mtf_policy.py still hash to their PR #6 baseline; tests/test_zone_first_visit.py pins both the unsatisfiability that motivated the change and the unchanged production count."
     }
   ]
 }

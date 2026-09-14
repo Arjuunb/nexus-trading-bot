@@ -98,6 +98,18 @@ class PriceZone:
     confirmed_at: datetime
     source_swing_ids: list[str]
     touch_count: int = 0
+    #: Distinct visits to the zone: price arrives, leaves, and comes back.
+    #: touch_count counts every bar whose range overlaps the zone, so a single
+    #: approach-reject-confirm sequence already registers several touches --
+    #: and the bars that formed the confirming swing overlap it before the zone
+    #: is even active. Measured across every zone of a structured run, the
+    #: minimum touch_count was 2 and the maximum 13; it was never 1. Any rule
+    #: phrased as "the first interaction with this level" therefore has to key
+    #: on visits, not on touches.
+    visit_count: int = 0
+    #: Whether the previous bar was inside the zone, so a re-entry can be told
+    #: apart from simply remaining there.
+    inside_zone: bool = False
     last_touch_at: datetime | None = None
     active: bool = True
     flipped: bool = False
@@ -628,6 +640,11 @@ class NativePriceActionEngine:
             if not zone.active or zone.confirmed_at > bar.timestamp:
                 continue
             touched = bar.low <= zone.high and bar.high >= zone.low
+            if touched and not zone.inside_zone:
+                # Price has arrived from outside: a new visit, not a further
+                # bar of the visit already in progress.
+                zone.visit_count += 1
+            zone.inside_zone = touched
             if touched:
                 zone.touch_count += 1
                 zone.last_touch_at = bar.timestamp
@@ -751,9 +768,13 @@ class NativePriceActionEngine:
                         "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
                     ))
                 if self.config.first_touch_only:
+                    # visit_count, not touch_count: the latter counts bars
+                    # overlapping the zone and is never below 2 by the time a
+                    # setup can exist, which made this switch unsatisfiable and
+                    # silently produced zero proposals whenever it was enabled.
                     conditions.append(self._condition(
-                        "first_touch_only", bool(zone and zone.touch_count <= 1),
-                        "experiment accepts only the first recorded interaction with the zone",
+                        "first_touch_only", bool(zone and zone.visit_count <= 1),
+                        "experiment accepts only the first distinct visit to the zone",
                         zone.id if zone else None))
                 missing = [row["key"] for row in conditions if row["status"] != "PASS"]
                 supporting = tuple(row["object_id"] for row in conditions if row.get("object_id"))
