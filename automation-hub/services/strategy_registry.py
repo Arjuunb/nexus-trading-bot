@@ -210,8 +210,11 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles",),
         warmup_candles=150, warmup_basis="slow EMA 26, ATR 14",
-        lifecycle_reason=("No immutable version and no test module exercises EMAStrategy "
-                          "directly; it is a baseline, not a production alpha."),
+        evidence=("tests/test_ema_and_ensemble_evidence.py",),
+        lifecycle_reason=("Behaviour is now pinned by a test module, but it remains a "
+                          "baseline rather than a production alpha: no immutable "
+                          "version, and evidence of what it does is not evidence that "
+                          "it should be traded."),
     ),
     StrategyEntry(
         strategy_id="ensemble", display_name="Confirmation Ensemble", lifecycle=RESEARCH_ONLY,
@@ -221,8 +224,10 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         required_data=("entry_candles",),
         warmup_candles=150,
         warmup_basis="widest member lookback: Donchian channel 30, slow EMA 26",
-        lifecycle_reason=("No immutable version and only an incidental backtest reference; "
-                          "one of its three members (EMA) is itself research-only."),
+        evidence=("tests/test_ema_and_ensemble_evidence.py",),
+        lifecycle_reason=("Behaviour is now pinned by a test module, but it stays "
+                          "research-only: there is no immutable version, and one of its "
+                          "three members (EMA) is itself research-only."),
     ),
 )
 
