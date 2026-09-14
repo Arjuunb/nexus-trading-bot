@@ -68,7 +68,12 @@ OPEN_STRATEGY_ORDER_STATUSES = {"ORDER_PENDING", "PARTIALLY_FILLED", "ENTERED"}
 
 @dataclass(frozen=True)
 class PaperExecutionConfig:
-    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "signals_only"
+    #: New sessions arm automatic paper placement. This was "signals_only",
+    #: which recorded a SIGNAL_ONLY candidate on every valid setup and created
+    #: no order -- a lab could run for weeks looking healthy and never place
+    #: anything. Execution here is paper-only and real_execution_allowed stays
+    #: False, so arming by default risks simulated fills, never real ones.
+    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "automatic"
     strategy_id: str = "PA1_SR_REJECTION"
     risk_pct: float = 0.5
     max_risk_pct: float = 1.0
@@ -187,7 +192,7 @@ class PriceActionPaperAccount:
                 ("symbol", "TEXT NOT NULL DEFAULT 'BTCUSDT'"),
                 ("timeframe", "TEXT NOT NULL DEFAULT '5m'"),
                 ("replay_cursor", "INTEGER NOT NULL DEFAULT 0"),
-                ("operating_mode", "TEXT NOT NULL DEFAULT 'signals_only'"),
+                ("operating_mode", "TEXT NOT NULL DEFAULT 'automatic'"),
                 ("strategy_config_json", "TEXT NOT NULL DEFAULT '{}'"),
                 ("execution_config_json", "TEXT NOT NULL DEFAULT '{}'"),
                 ("state_json", "TEXT NOT NULL DEFAULT '{}'"),
@@ -2130,12 +2135,17 @@ class PriceActionLabRuntime:
                                 datetime.now(timezone.utc)) if session else {})
         if session.get("mode") == "LIVE_PAPER" and not evidence.get("primary"):
             blockers.append("HTF_PRIMARY_UNAVAILABLE")
-        execution_armed = session.get("operating_mode") == "automatic"
+        mode_armed = session.get("operating_mode") == "automatic"
         operator_state = (
             "ERROR" if orphaned_exposure else
             "BLOCKED" if not session or blockers else
-            "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
+            "RUNNING_ARMED" if mode_armed else "RUNNING_UNARMED"
         )
+        # Armed means "configured to place AND able to place now", not merely
+        # the configured mode. Reporting the mode alone said execution_armed
+        # on a BLOCKED lab, contradicting session_state in the same payload.
+        # The configured mode is still visible as operating_mode.
+        execution_armed = mode_armed and operator_state.startswith("RUNNING")
         mtf_evidence = dict(self.engine._mtf_evidence) if self.engine is not None else {}
         mtf_policy = (display_contract(session["timeframe"], evidence)
                       if session.get("timeframe") else None)

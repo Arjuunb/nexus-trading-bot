@@ -350,8 +350,10 @@ def test_strategy_versions_hashes_blockers_and_defaults_are_explicit():
     assert len({row["strategy_id"] for row in registry["variants"]}) == 9
     assert len({row["config_hash"] for row in registry["variants"]}) == 9
     assert registry["execution_class"] == "SHADOW"
-    assert PaperExecutionConfig().operating_mode == "signals_only"
-    assert SMCPaperConfig().operating_mode == "signals_only"
+    # New sessions arm automatic paper placement by deliberate choice; the
+    # safety that matters is that neither lab can reach a real venue.
+    assert PaperExecutionConfig().operating_mode == "automatic"
+    assert SMCPaperConfig().operating_mode == "automatic"
 
 
 def test_pr6_real_paper_sources_match_the_declared_native_mtf_delta():

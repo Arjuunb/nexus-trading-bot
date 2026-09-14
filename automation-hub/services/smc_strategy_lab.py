@@ -63,7 +63,9 @@ def _configured_r(config: dict, target_key: str) -> float | None:
 
 @dataclass(frozen=True)
 class SMCPaperConfig:
-    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "signals_only"
+    #: See PaperExecutionConfig: new sessions arm automatic paper placement.
+    #: Paper-only; real_execution_allowed remains False.
+    operating_mode: Literal["signals_only", "manual_approval", "automatic"] = "automatic"
     model_id: str = "SMC_M1_SWEEP_REVERSAL"
     risk_pct: float = 0.5
     max_risk_pct: float = 1.0
@@ -102,7 +104,7 @@ class SMCPaperAccount:
                 starting_balance REAL NOT NULL, status TEXT NOT NULL, end_reason TEXT,
                 mode TEXT NOT NULL DEFAULT 'LIVE_PAPER', symbol TEXT NOT NULL DEFAULT 'BTCUSDT',
                 timeframe TEXT NOT NULL DEFAULT '5m', replay_cursor INTEGER NOT NULL DEFAULT 0,
-                operating_mode TEXT NOT NULL DEFAULT 'signals_only', model_id TEXT NOT NULL DEFAULT 'SMC_M1_SWEEP_REVERSAL',
+                operating_mode TEXT NOT NULL DEFAULT 'automatic', model_id TEXT NOT NULL DEFAULT 'SMC_M1_SWEEP_REVERSAL',
                 risk_pct REAL NOT NULL DEFAULT .5, state_json TEXT NOT NULL DEFAULT '{}',
                 metrics_json TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS smc_settings(
@@ -1732,12 +1734,16 @@ class SMCStrategyLabRuntime:
                                 datetime.now(timezone.utc)) if session else {})
         if session.get("mode") == "LIVE_PAPER" and not evidence.get("primary"):
             blockers.append("HTF_PRIMARY_UNAVAILABLE")
-        execution_armed = session.get("operating_mode") == "automatic"
+        mode_armed = session.get("operating_mode") == "automatic"
         operator_state = (
             "ERROR" if orphaned_exposure else
             "BLOCKED" if not session or blockers else
-            "RUNNING_ARMED" if execution_armed else "RUNNING_UNARMED"
+            "RUNNING_ARMED" if mode_armed else "RUNNING_UNARMED"
         )
+        # See PriceActionLabRuntime: armed means configured AND able, so a
+        # BLOCKED lab never reports execution_armed. operating_mode still
+        # carries the configured value.
+        execution_armed = mode_armed and operator_state.startswith("RUNNING")
         mtf_policy = (display_contract(session["timeframe"], evidence)
                       if session.get("timeframe") else None)
         return {
