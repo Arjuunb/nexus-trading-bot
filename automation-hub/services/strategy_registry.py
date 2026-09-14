@@ -181,16 +181,29 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
     # when creating a new one.
     StrategyEntry(
         strategy_id="smc", display_name="Supply/Demand", lifecycle=RESEARCH_ONLY,
-        description=("SMC supply/demand zones: liquidity sweep + CHoCH/BOS + FVG with "
-                     "higher-timeframe bias"),
+        description=("SMC supply/demand: the Strategy Lab's sequential state machine "
+                     "(liquidity sweep -> CHoCH/BOS -> point of interest -> retest -> "
+                     "rejection) under higher-timeframe bias"),
         supported_markets=(FORWARD_PAPER_MARKET,),
-        supported_timeframes=ALL_ENTRY_TIMEFRAMES,
+        # 5m only, matching the other two native-MTF strategies. The strategy
+        # object is built by make_builtin_strategy(key, symbol), which passes no
+        # timeframe, so it always reports the 5m decision timeframe -- and
+        # TradingInstanceManager refuses to start an instance whose timeframe
+        # differs from that. Offering 1m/15m/1h/4h here let the picker accept a
+        # selection that could never start. The adapter's constructor does take
+        # a timeframe, so widening this again is a matter of threading one
+        # through the factory, not of changing the engine.
+        supported_timeframes=("5m",),
         required_data=("entry_candles", "native_primary_htf"),
-        warmup_candles=150, warmup_basis="internal warmup 120, pivot/sweep lookbacks",
+        warmup_candles=150,
+        warmup_basis=("50-bar swing pivot confirmation plus the primary-HTF bias; "
+                      "measured first setup at bar 32-56 and first swing pivot by "
+                      "bar 135 over three seeds"),
         lifecycle_reason=("No immutable version in strategies.builtin_versions, so a paper "
                           "record cannot be attributed to a reproducible build. The "
                           "supported SMC research path is the SMC Strategy Lab."),
-        evidence=("tests/test_smc_strategy.py",),
+        evidence=("tests/test_smc_strategy.py",
+                  "tests/test_smc_lab_instance_parity.py"),
     ),
     StrategyEntry(
         strategy_id="liquidity_sweep", display_name="Liquidity Sweep", lifecycle=RESEARCH_ONLY,

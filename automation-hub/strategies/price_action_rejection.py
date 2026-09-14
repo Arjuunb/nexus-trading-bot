@@ -218,11 +218,28 @@ class PriceActionRejectionStrategy(HubStrategy):
             f"at {proposal.entry:.8f}, stop {proposal.stop:.8f} "
             f"({proposal.rr_ratio:.2f}R)"
         )
-        return Signal(
+        signal = Signal(
             timestamp=bar.timestamp, symbol=self.symbol, type=direction,
             entry=proposal.entry, stop_loss=proposal.stop,
             take_profit=proposal.target, reason=self.last_reason,
         )
+        # Provenance for the trade journal. services/auto_engine.py copies
+        # ``signal.snapshot`` into the pipeline payload, so without this a
+        # Price Action paper trade lands in the journal with no way back to the
+        # proposal that caused it -- which is the very thing the registry means
+        # when it says a paper record must be attributable. Metadata only: it
+        # names what the engine already decided and moves no level.
+        signal.snapshot = {
+            "mtf_evidence": dict(self._native_mtf_evidence),
+            "research_id": proposal.strategy_id,
+            "strategy_version": STRATEGY_VERSION,
+            "setup_id": proposal.setup_id,
+            "proposal_id": proposal.id,
+            "entry_model": proposal.entry_model,
+            "rr_ratio": proposal.rr_ratio,
+            "risk_distance": proposal.risk_distance,
+        }
+        return signal
 
 
 class PriceActionFlipRetestStrategy(PriceActionRejectionStrategy):
