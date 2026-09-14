@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ENTRY_TIMEFRAMES } from "../../lib/timeframes";
 import Card from "../common/Card";
 import Icon from "../common/Icon";
 import { Badge } from "../common/ui";
@@ -34,7 +35,7 @@ interface SweepResult {
 }
 
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "ADAUSDT", "BNBUSDT"];
-const TFS = ["15m", "1h", "4h", "1d"];
+const TFS = ENTRY_TIMEFRAMES;
 const n = (v: unknown, dp = 2) => (typeof v === "number" ? v.toFixed(dp) : "—");
 
 export default function StrategySweep({ spec, range, toast }: {

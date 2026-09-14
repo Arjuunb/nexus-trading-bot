@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ENTRY_TIMEFRAMES, DEFAULT_ENTRY_TIMEFRAME } from "../lib/timeframes";
 import Card from "../components/common/Card";
 import Icon from "../components/common/Icon";
 import { Badge, PageHeader, StatCard } from "../components/common/ui";
@@ -21,7 +22,7 @@ export default function OptimizationPage() {
   const [opt, setOpt] = useState<ControlOptions | null>(null);
   const [strategy, setStrategy] = useState("Decision Brain");
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [tf, setTf] = useState("4h");
+  const [tf, setTf] = useState<string>(DEFAULT_ENTRY_TIMEFRAME);
   const [bars, setBars] = useState(4000);
   const [res, setRes] = useState<ControlAutoTune | null>(null);
   const [busy, setBusy] = useState(false);
@@ -72,7 +73,7 @@ export default function OptimizationPage() {
           </label>
           <label className="dim" style={{ fontSize: 12 }}>Timeframe
             <select style={{ marginLeft: 6 }} value={tf} onChange={(e) => setTf(e.target.value)}>
-              {(opt?.timeframes ?? ["15m", "1h", "4h", "1d"]).map((t) => <option key={t}>{t}</option>)}
+              {(opt?.timeframes ?? ENTRY_TIMEFRAMES).map((t) => <option key={t}>{t}</option>)}
             </select>
           </label>
           <label className="dim" style={{ fontSize: 12 }}>Bars

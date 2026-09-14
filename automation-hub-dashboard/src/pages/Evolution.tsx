@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ENTRY_TIMEFRAMES, DEFAULT_ENTRY_TIMEFRAME } from "../lib/timeframes";
 import Card from "../components/common/Card";
 import Icon from "../components/common/Icon";
 import { Badge, PageHeader, StatCard } from "../components/common/ui";
@@ -226,6 +227,9 @@ function VersionsPanel({ data, onAdvance }: { data?: VersionCompare | null; onAd
 function ExperimentLab() {
   const app = useApp();
   const [symbol, setSymbol] = useState("BTCUSDT");
+  // Was hardcoded to 4h with no way to change it, so a preset could only
+  // ever be tested on a frame this system does not trade.
+  const [tf, setTf] = useState<string>(DEFAULT_ENTRY_TIMEFRAME);
   const [presetA, setPresetA] = useState("ema_20_50");
   const [presetB, setPresetB] = useState("ema_9_33");
   const [res, setRes] = useState<Experiment | null>(null);
@@ -237,7 +241,7 @@ function ExperimentLab() {
     score_75: { rules: [{ type: "ema_cross", fast: 20, slow: 50, dir: "above" }], min_score: 75, label: "Min score 75" },
     rsi_55: { rules: [{ type: "rsi", op: "above", value: 55 }], min_score: 60, label: "RSI > 55" },
   };
-  const spec = (p: any) => ({ symbol, timeframe: "4h", side: "long", entry: { op: "AND", rules: p.rules },
+  const spec = (p: any) => ({ symbol, timeframe: tf, side: "long", entry: { op: "AND", rules: p.rules },
     stop: { type: "atr", mult: 1.5, period: 14 }, target: { type: "rr", rr: 2.0 }, risk_per_trade_pct: 0.01, min_score: p.min_score });
 
   const run = async () => {
@@ -257,6 +261,7 @@ function ExperimentLab() {
     <Card title="Strategy Experiment Lab" subtitle="A/B with train/test split + overfitting guard">
       <div className="row-actions" style={{ justifyContent: "flex-start", gap: 8, flexWrap: "wrap" }}>
         <select value={symbol} onChange={(e) => setSymbol(e.target.value)}>{SYMBOLS.map((s) => <option key={s}>{s}</option>)}</select>
+        <select value={tf} onChange={(e) => setTf(e.target.value)} aria-label="Timeframe">{ENTRY_TIMEFRAMES.map((t) => <option key={t}>{t}</option>)}</select>
         <span className="dim">Base</span>
         <select value={presetA} onChange={(e) => setPresetA(e.target.value)}>{Object.entries(PRESETS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</select>
         <span className="dim">vs Variant</span>

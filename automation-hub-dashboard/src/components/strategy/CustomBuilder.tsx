@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ENTRY_TIMEFRAMES, DEFAULT_ENTRY_TIMEFRAME } from "../../lib/timeframes";
 import Card from "../common/Card";
 import Icon from "../common/Icon";
 import AreaLine from "../chart/AreaLine";
@@ -35,7 +36,7 @@ function newRule(type: string): CustomRule {
 }
 
 const DEFAULT: CustomSpec = {
-  name: "My Strategy", market: "crypto", symbol: "BTCUSDT", timeframe: "4h", side: "long",
+  name: "My Strategy", market: "crypto", symbol: "BTCUSDT", timeframe: DEFAULT_ENTRY_TIMEFRAME, side: "long",
   entry: { op: "AND", rules: [newRule("ema_cross"), newRule("rsi"), newRule("breakout")] },
   stop: { type: "atr", mult: 1.5, period: 14 }, target: { type: "rr", rr: 1.5 },
   risk_per_trade_pct: 0.01, max_trades_per_day: 0,
@@ -123,7 +124,7 @@ export default function CustomBuilder() {
           <Field label="Name"><input value={spec.name} onChange={(e) => patch({ name: e.target.value })} /></Field>
           <Field label="Market"><select value={spec.market} onChange={(e) => patch({ market: e.target.value })}><option>crypto</option><option>forex</option><option>stocks</option></select></Field>
           <Field label="Symbol / pair"><input value={spec.symbol} onChange={(e) => patch({ symbol: e.target.value.toUpperCase() })} /></Field>
-          <Field label="Timeframe"><select value={spec.timeframe} onChange={(e) => patch({ timeframe: e.target.value })}>{["5m", "15m", "1h", "4h", "1d"].map((t) => <option key={t}>{t}</option>)}</select></Field>
+          <Field label="Timeframe"><select value={spec.timeframe} onChange={(e) => patch({ timeframe: e.target.value })}>{ENTRY_TIMEFRAMES.map((t) => <option key={t}>{t}</option>)}</select></Field>
           <Field label="Direction"><select value={spec.side} onChange={(e) => patch({ side: e.target.value as "long" | "short" })}><option value="long">Long</option><option value="short">Short</option></select></Field>
         </div>
       </Card>

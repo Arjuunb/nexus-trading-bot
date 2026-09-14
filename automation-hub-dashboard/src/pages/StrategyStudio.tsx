@@ -1,4 +1,5 @@
 import { lazy, Suspense, useMemo, useState } from "react";
+import { ENTRY_TIMEFRAMES, DEFAULT_ENTRY_TIMEFRAME } from "../lib/timeframes";
 import Card from "../components/common/Card";
 import StrategyCollab from "../components/strategy/StrategyCollab";
 import StrategyLifecycle from "../components/strategy/StrategyLifecycle";
@@ -33,12 +34,12 @@ import AIStrategyAgent from "../components/strategy/AIStrategyAgent";
 import StrategyReviewDashboard from "../components/strategy/StrategyReviewDashboard";
 
 const StrategyCanvas = lazy(() => import("../components/strategy/StrategyCanvas"));
-const TFS = ["15m", "1h", "4h", "1d"];
+const TFS = ENTRY_TIMEFRAMES;
 const CONF_TONE: Record<string, string> = { "Very High": "green", High: "green", Medium: "amber", Low: "red", "Very Low": "red" };
 const WARN_TONE: Record<string, string> = { danger: "red", warning: "amber", ok: "green" };
 
 const EMPTY: CustomSpec = {
-  name: "My Strategy", market: "crypto", symbol: "BTCUSDT", timeframe: "4h", side: "long",
+  name: "My Strategy", market: "crypto", symbol: "BTCUSDT", timeframe: DEFAULT_ENTRY_TIMEFRAME, side: "long",
   entry: { op: "AND", rules: [] }, stop: { type: "atr", mult: 1.5, period: 14 },
   target: { type: "rr", rr: 2 }, risk_per_trade_pct: 0.01, max_trades_per_day: 0,
 };

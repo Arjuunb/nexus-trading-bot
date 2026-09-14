@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ENTRY_TIMEFRAMES, DEFAULT_ENTRY_TIMEFRAME } from "../lib/timeframes";
 import { usePref } from "../lib/prefs";
 import Card from "../components/common/Card";
 import Icon from "../components/common/Icon";
@@ -106,12 +107,12 @@ export default function MarketsPage() {
   );
 }
 
-const SCAN_TFS = ["15m", "4h", "1d"];
+const SCAN_TFS = ENTRY_TIMEFRAMES;
 const sideTone = (s: string) => (s === "long" ? "green" : s === "short" ? "red" : "default");
 const strColor = (n: number) => (n >= 70 ? "var(--green)" : n >= 50 ? "var(--gold)" : "var(--dim-2)");
 
 function OpportunityScanner({ symbols }: { symbols: string }) {
-  const [tf, setTf] = useState("4h");
+  const [tf, setTf] = useState<string>(DEFAULT_ENTRY_TIMEFRAME);
   const [data, setData] = useState<ScanResult | null>(null);
   const [busy, setBusy] = useState(false);
 

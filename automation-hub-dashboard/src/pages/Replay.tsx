@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ENTRY_TIMEFRAMES } from "../lib/timeframes";
 import Card from "../components/common/Card";
 import Icon from "../components/common/Icon";
 import { Badge, PageHeader } from "../components/common/ui";
@@ -154,7 +155,7 @@ export default function ReplayPage() {
               {(strategies.length ? strategies.map((s) => s.name) : [strategy]).map((s) => <option key={s}>{s}</option>)}
             </select></label>
           <select value={symbol} onChange={(e) => setSymbol(e.target.value)}>{SYMBOLS.map((s) => <option key={s}>{s}</option>)}</select>
-          <select value={tf} onChange={(e) => setTf(e.target.value)}>{["5m", "15m"].map((t) => <option key={t}>{t}</option>)}</select>
+          <select value={tf} onChange={(e) => setTf(e.target.value)}>{ENTRY_TIMEFRAMES.map((t) => <option key={t}>{t}</option>)}</select>
           <label className="row-actions" style={{ gap: 4 }}><span className="dim" style={{ fontSize: 11 }}>Data</span>
             <select value={src} onChange={(e) => setSrc(e.target.value)}>
               <option value="binance">Binance historical</option>

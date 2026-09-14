@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ENTRY_TIMEFRAMES, DEFAULT_ENTRY_TIMEFRAME } from "../lib/timeframes";
 import Card from "../components/common/Card";
 import AreaLine from "../components/chart/AreaLine";
 import FanChart from "../components/chart/FanChart";
@@ -226,7 +227,7 @@ function ExecutionRealism() {
 }
 
 const emaSpec = (fast: number, slow: number) => ({
-  symbol: "BTCUSDT", timeframe: "4h", side: "long",
+  symbol: "BTCUSDT", timeframe: DEFAULT_ENTRY_TIMEFRAME, side: "long",
   entry: { op: "AND", rules: [{ type: "ema_cross", fast, slow, dir: "above" }] },
   stop: { type: "atr", mult: 1.5, period: 14 }, target: { type: "rr", rr: 2.0 },
   risk_per_trade_pct: 0.01, min_score: 60,
@@ -286,7 +287,7 @@ const rt = (n: number) => (n > 0 ? "pos" : n < 0 ? "neg" : "");
 function RobustnessLab() {
   const [strategy, setStrategy] = useState("Decision Brain");
   const [symbol, setSymbol] = useState("BTCUSDT");
-  const [tf, setTf] = useState("4h");
+  const [tf, setTf] = useState<string>(DEFAULT_ENTRY_TIMEFRAME);
   const [busy, setBusy] = useState("");
   const [wf, setWf] = useState<WalkForward | null>(null);
   const [mc, setMc] = useState<MonteCarlo | null>(null);
@@ -318,7 +319,7 @@ function RobustnessLab() {
       right={<div className="row-actions" style={{ gap: 6 }}>
         <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>{LAB_STRATS.map((s) => <option key={s}>{s}</option>)}</select>
         <select value={symbol} onChange={(e) => setSymbol(e.target.value)}>{LAB_SYMS.map((s) => <option key={s}>{s}</option>)}</select>
-        <select value={tf} onChange={(e) => setTf(e.target.value)}>{["15m", "4h", "1d"].map((t) => <option key={t}>{t}</option>)}</select>
+        <select value={tf} onChange={(e) => setTf(e.target.value)}>{ENTRY_TIMEFRAMES.map((t) => <option key={t}>{t}</option>)}</select>
       </div>}>
       <div className="row-actions" style={{ justifyContent: "flex-start", gap: 8, flexWrap: "wrap" }}>
         <button className="btn btn-primary" disabled={!!busy} onClick={() => run("wf")}>{busy === "wf" ? "…" : "Walk-forward"}</button>
