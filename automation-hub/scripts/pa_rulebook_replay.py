@@ -178,7 +178,8 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
         if not rows:
             raise SystemExit(f"no {timeframe} candles for {symbol} (source: {source})")
 
-    print(f"Nexus PA rulebook v{RULEBOOK_VERSION} -- RESEARCH REPLAY, NO ORDERS")
+    print(f"Nexus PA rulebook v{RULEBOOK_VERSION} -- RESEARCH REPLAY, NO ORDERS",
+          flush=True)
     print(f"  symbol    {symbol}   strategies {engine.strategies}")
     print(f"  {CONTEXT_TF:>4} {len(context):>6} candles  {ctx_source}")
     print(f"  {SETUP_TF:>4} {len(setups):>6} candles  {setup_source}")
@@ -213,8 +214,13 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
         confirm_slice.append(bar)
 
         if progress and position % 5000 == 0 and position:
+            # flush=True because a run this long is normally redirected to a
+            # file, and Python block-buffers stdout when it is not a terminal.
+            # Without it the progress line exists only in an 8KB buffer, so a
+            # working 19-minute run is indistinguishable from a crashed one.
             print(f"    ... {position:>7}/{total} 5M candles "
-                  f"({boundary:%Y-%m-%d})  setups {raised}  confirmed {confirmed}")
+                  f"({boundary:%Y-%m-%d})  setups {raised}  confirmed {confirmed}",
+                  flush=True)
 
         if len(ctx_slice) < config.warmup_bars or len(setup_slice) < 2:
             continue
