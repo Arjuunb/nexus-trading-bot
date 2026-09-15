@@ -439,12 +439,32 @@ class PriceActionJournalStore:
 
         Quotes shown by the UI and current feed explanations are useful in a
         response, but are not new evidence about an already-created setup.
+
+        The bar counters belong here for a sharper reason: they are not stable.
+        native_price_action computes them as ``index - filled_index`` against a
+        rolling window, so both indices shift as the window slides and the
+        difference wobbles without anything happening to the trade -- observed
+        going *down*, 1254 to 1253, between two consecutive revisions. Since
+        the hash is what decides whether to append another copy of the record,
+        a counter that changes on its own writes a revision on its own.
+
+        It cost 59,560 of 72,443 revisions on the production lab -- 82% of them
+        recording no lifecycle event at all, at ~9.5 KB each, growing the
+        database by roughly 860 MB a day until journal writes began timing out
+        and the lab refused to place orders it could not durably record.
+
+        Excluding them here does not hide them: every stored payload still
+        carries its counters, and any revision written for a real reason
+        captures whatever they are at that moment.
         """
         material = _canonical(record)
         material.get("market_context", {}).pop("data_health_reason", None)
         order_risk = material.get("order_risk", {})
         order_risk.pop("bid_ask_decision", None)
         order_risk.pop("spread", None)
+        outcome = material.get("outcome", {})
+        outcome.pop("bars_in_trade", None)
+        outcome.pop("bars_to_entry", None)
         return material
 
     @classmethod
