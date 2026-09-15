@@ -449,9 +449,17 @@ class PriceActionJournalStore:
         a counter that changes on its own writes a revision on its own.
 
         It cost 59,560 of 72,443 revisions on the production lab -- 82% of them
-        recording no lifecycle event at all, at ~9.5 KB each, growing the
-        database by roughly 860 MB a day until journal writes began timing out
-        and the lab refused to place orders it could not durably record.
+        recording no lifecycle event at all, at ~9.5 KB each. That is about
+        570 MB of noise accumulated over roughly 12 days of session time, or
+        ~45 MB/day averaged, and it grew the journal until writes began timing
+        out and the lab refused to place orders it could not durably record.
+
+        Averaged, because the rate is bursty rather than steady: a revision is
+        only written per open setup, so an active trade with a drifting counter
+        produced hundreds in minutes while a quiet book produced almost none.
+        An early estimate of ~860 MB/day came from extrapolating one burst
+        across a gap that had not been measured, and a later observation of 36
+        revisions in 46 minutes disproved it.
 
         Excluding them here does not hide them: every stored payload still
         carries its counters, and any revision written for a real reason
