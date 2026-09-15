@@ -59,10 +59,12 @@ from bot.data.resample import TF_SECONDS as TIMEFRAME_SECONDS
 
 __all__ = [
     "FRESH", "STALE", "MISSING",
-    "STALE_CANDLES", "MISSING_HTF_CANDLE", "MARKET_DATA_DISCONNECTED",
+    "STALE_CANDLES", "STALE_HTF_CANDLE", "MISSING_HTF_CANDLE",
+    "FRESHNESS_UNVERIFIED", "MARKET_DATA_DISCONNECTED",
     "MARKET_DATA_GAP", "BACKFILL_IN_PROGRESS", "SUBSCRIPTION_UNHEALTHY",
     "Tolerance", "TimeframeFreshness", "FeedFreshness",
-    "tolerance_for", "grace_for_interval", "assess_timeframe", "assess_feed",
+    "tolerance_for", "grace_for_interval", "is_live_source",
+    "assess_timeframe", "assess_feed",
     "expected_next_close",
 ]
 
@@ -73,7 +75,16 @@ MISSING = "MISSING"
 #: Operator-facing blockers. These are the strings the API, the labs and the
 #: dashboard all report, so a blocker means the same thing everywhere.
 STALE_CANDLES = "STALE_CANDLES"
+#: A higher timeframe the strategy requires is late. Distinct from
+#: STALE_CANDLES so an operator can see at a glance whether the entry clock or
+#: the bias clock is the problem -- both block equally.
+STALE_HTF_CANDLE = "STALE_HTF_CANDLE"
 MISSING_HTF_CANDLE = "MISSING_HTF_CANDLE"
+#: The data may or may not be current: nothing proved it either way. Reached
+#: when a caller cannot attest that its candles came from a live provider read.
+#: Treated exactly like stale, because "unproven" and "stale" must cost the
+#: same -- that is what makes the gate fail closed rather than fail open.
+FRESHNESS_UNVERIFIED = "FRESHNESS_UNVERIFIED"
 MARKET_DATA_DISCONNECTED = "MARKET_DATA_DISCONNECTED"
 MARKET_DATA_GAP = "MARKET_DATA_GAP"
 BACKFILL_IN_PROGRESS = "BACKFILL_IN_PROGRESS"
@@ -128,6 +139,24 @@ class Tolerance:
     """
     grace_seconds: float
     silence_seconds: float = DEFAULT_SILENCE_SECONDS
+
+
+#: Source labels that attest a live provider read. data/market_data.py's
+#: get_bars degrades through "local store (real)", a bundled sample CSV and a
+#: deterministic synthetic generator -- all legitimate for charts, research and
+#: backtests, none of them a live read. Provenance is checked BEFORE freshness
+#: because a manufactured candle can carry a perfectly current timestamp.
+_LIVE_SOURCE_PREFIX = "live"
+
+
+def is_live_source(source: Optional[str]) -> bool:
+    """True only when this data is attested as a live provider read.
+
+    Deliberately a whitelist: an unrecognised label is not live. A new cache or
+    fallback added later is therefore refused by default rather than admitted
+    because nobody remembered to add it to a blacklist.
+    """
+    return str(source or "").strip().lower().startswith(_LIVE_SOURCE_PREFIX)
 
 
 def grace_for_interval(seconds: float) -> float:
@@ -327,6 +356,8 @@ def assess_feed(symbol: str,
                 subscribed: Optional[Mapping[str, bool]] = None,
                 tolerance: Optional[Tolerance] = None,
                 source: str = "",
+                entry_timeframe: str = "",
+                verified: bool = True,
                 reconnects: int = 0) -> FeedFreshness:
     """Judge a symbol's feed across every timeframe a strategy requires.
 
@@ -356,8 +387,13 @@ def assess_feed(symbol: str,
     state = (connection_state or "").upper()
     blocker, detail = "", ""
 
-    # 1. Transport first. A connected socket proves nothing on its own.
-    if state in _DEAD_STATES:
+    # 0. Provenance. A caller that cannot attest its candles came from a live
+    #    provider read gets the same answer as stale: unproven is not fresh.
+    if not verified:
+        blocker = FRESHNESS_UNVERIFIED
+        detail = "candle provenance was not attested as a live provider read"
+    # 1. Transport. A connected socket proves nothing on its own.
+    elif state in _DEAD_STATES:
         blocker = MARKET_DATA_DISCONNECTED
         detail = f"transport is {state or 'UNKNOWN'}"
     elif backfilling:
@@ -384,6 +420,11 @@ def assess_feed(symbol: str,
             hit = [row for row in rows if row.blocker == code]
             if hit:
                 blocker = code
+                # Name the bias clock separately from the entry clock. Both
+                # block; only the operator-facing code differs.
+                if (code == STALE_CANDLES and entry_timeframe
+                        and all(row.timeframe != entry_timeframe for row in hit)):
+                    blocker = STALE_HTF_CANDLE
                 detail = ", ".join(_reason(row, code) for row in hit)
                 break
 

@@ -29,7 +29,7 @@ from typing import Callable, Optional
 from bot.types import Signal, SignalType
 from data.ledger import Ledger
 from execution.paper_engine import PaperExecutionEngine
-from services.market_data_freshness import assess_timeframe
+from services.market_data_freshness import assess_timeframe, is_live_source
 from services.signal_pipeline import SignalPipeline, gate_blocker
 
 
@@ -911,7 +911,10 @@ class AutoStrategyEngine:
 
     def _forward_fetch_for_timeframe(self, symbol: str, timeframe: str, limit: int):
         bars, source = self._fetcher(symbol, timeframe, limit)
-        if not str(source or "").startswith("live"):
+        # Provenance before freshness: a cached, sampled or synthetic candle can
+        # carry a current timestamp, so the source is checked first and against
+        # the one shared whitelist rather than a local string test.
+        if not is_live_source(source):
             raise EngineFeedError(
                 f"forward paper requires live {timeframe} provider data, got {source or 'none'}")
         return bars, source
