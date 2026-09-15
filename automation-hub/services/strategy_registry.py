@@ -179,6 +179,53 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
     # evidence a production selection requires, so they stay available to
     # research, backtests and already-created instances but are not offered
     # when creating a new one.
+    # The Nexus Price Action rulebook v0.1. Research only by the document's own
+    # instruction, not by omission: "this is a research hypothesis, not a proven
+    # edge. Every threshold is an initial engineering choice. No backtest or
+    # forward experiment supports it." It also requires that "the design must
+    # not route exchange orders", which is what the forward-paper-only market
+    # and this lifecycle together enforce. A and B are listed separately because
+    # chapter 9 says to run them in independent books before combining.
+    StrategyEntry(
+        strategy_id="pa_rulebook_sr_rejection",
+        display_name="PA Rulebook S/R Rejection (v0.1 research)",
+        lifecycle=RESEARCH_ONLY,
+        description=("Nexus PA rulebook v0.1 Setup A: 1H regime, immutable 1H zone, "
+                     "15M rejection, 3x5M dominance confirmation, structural stop, "
+                     "target from a pre-existing opposing zone, net RR >= 2.5"),
+        supported_markets=(FORWARD_PAPER_MARKET,),
+        supported_timeframes=("5m",),
+        required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
+        warmup_candles=200,
+        warmup_basis="200 closed bars per timeframe, Wilder ATR 14 (rulebook ch.18)",
+        lifecycle_reason=("The rulebook states its own status: a research hypothesis, not a "
+                          "proven edge, whose thresholds are initial engineering choices with "
+                          "no backtest or forward experiment behind them. Chapters 19-21 "
+                          "require that evidence before promotion, and none exists yet."),
+        evidence=("tests/test_pa_rulebook_v01.py",
+                  "tests/test_pa_rulebook_engine.py",
+                  "tests/test_pa_rulebook_instance_strategy.py"),
+    ),
+    StrategyEntry(
+        strategy_id="pa_rulebook_flip_retest",
+        display_name="PA Rulebook Flip Retest (v0.1 research)",
+        lifecycle=RESEARCH_ONLY,
+        description=("Nexus PA rulebook v0.1 Setup B: 1H regime, 15M breakout of an "
+                     "immutable zone, flip retested within four bars, 3x5M dominance "
+                     "confirmation, structural stop, net RR >= 2.5"),
+        supported_markets=(FORWARD_PAPER_MARKET,),
+        supported_timeframes=("5m",),
+        required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
+        warmup_candles=200,
+        warmup_basis="200 closed bars per timeframe, Wilder ATR 14 (rulebook ch.18)",
+        lifecycle_reason=("The rulebook states its own status: a research hypothesis, not a "
+                          "proven edge, whose thresholds are initial engineering choices with "
+                          "no backtest or forward experiment behind them. Chapters 19-21 "
+                          "require that evidence before promotion, and none exists yet."),
+        evidence=("tests/test_pa_rulebook_v01.py",
+                  "tests/test_pa_rulebook_engine.py",
+                  "tests/test_pa_rulebook_instance_strategy.py"),
+    ),
     StrategyEntry(
         strategy_id="smc", display_name="Supply/Demand", lifecycle=RESEARCH_ONLY,
         description=("SMC supply/demand: the Strategy Lab's sequential state machine "
