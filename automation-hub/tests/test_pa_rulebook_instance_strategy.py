@@ -13,14 +13,15 @@ import pytest
 
 from bot.types import Bar, SignalType
 from services import strategy_registry
-from services.pa_rulebook_v01 import FLIP_RETEST_ID, SR_REJECTION_ID, RulebookConfig
+from services.pa_rulebook_v01 import (
+    FLIP_RETEST_ID, RULEBOOK_VERSION, SR_REJECTION_ID, RulebookConfig,
+)
 from services.strategy_factory import make_builtin_strategy
 from strategies.pa_rulebook_strategy import (
     CONTEXT_TF,
     SETUP_TF,
     WARMUP_CANDLES,
-    PriceActionRulebookFlipRetestStrategy,
-    PriceActionRulebookRejectionStrategy,
+    PriceActionRulebookStrategy,
 )
 from tests.test_pa_rulebook_engine import (
     ATR15,
@@ -70,7 +71,7 @@ def test_the_adapter_emits_the_engines_own_levels(series):
     taking, so re-deriving either downstream would invalidate the decision that
     produced the signal in the first place.
     """
-    strategy = PriceActionRulebookRejectionStrategy("BTCUSDT")
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
 
     quiet = _feed(strategy, context=series["context"], setup_bars=series["setup_bars"],
                   confirm_bars=series["filler"])
@@ -97,7 +98,7 @@ def test_the_adapter_emits_the_engines_own_levels(series):
 def test_the_signal_carries_the_evidence_back_to_the_zone(series):
     """A paper trade with no way back to the level that caused it is not
     research, it is an anecdote."""
-    strategy = PriceActionRulebookRejectionStrategy("BTCUSDT")
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
     _feed(strategy, context=series["context"], setup_bars=series["setup_bars"],
           confirm_bars=series["filler"])
     signal = _feed(strategy, context=series["context"],
@@ -118,7 +119,7 @@ def test_the_signal_carries_the_evidence_back_to_the_zone(series):
 
 def test_the_same_setup_is_never_emitted_twice(series):
     """The runtime may re-present a candle. One setup is one vote."""
-    strategy = PriceActionRulebookRejectionStrategy("BTCUSDT")
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
     _feed(strategy, context=series["context"], setup_bars=series["setup_bars"],
           confirm_bars=series["filler"])
     setup_bars = series["setup_bars"] + [series["rejection"]]
@@ -138,7 +139,7 @@ def test_short_history_warms_up_instead_of_trading(series):
     this guard is not a wrong trade -- it is a strategy that looks alive and
     silently never fires, which is much harder to notice.
     """
-    strategy = PriceActionRulebookRejectionStrategy("BTCUSDT")
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
     signal = _feed(strategy, context=series["context"][:WARMUP_CANDLES - 1],
                    setup_bars=series["setup_bars"],
                    confirm_bars=series["filler"])
@@ -146,38 +147,67 @@ def test_short_history_warms_up_instead_of_trading(series):
     assert "warming up" in strategy.last_reason
 
 
-def test_each_catalog_entry_runs_one_strategy_in_its_own_book():
+def test_one_strategy_runs_the_whole_rulebook_under_arbitration():
+    """Both identities in one engine, which is what makes chapter 9 apply.
+
+    Two catalog entries would put two engines on the same symbol with nothing
+    arbitrating between them -- each would raise its own setup and each would
+    think it held the one pending slot the rulebook allows per symbol.
+    """
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
+    assert strategy._engine.strategies == (SR_REJECTION_ID, FLIP_RETEST_ID)
+    assert strategy.required_timeframes == (CONFIRM_TF, SETUP_TF, CONTEXT_TF)
+
+
+@pytest.mark.parametrize("choice,expected", [
+    ("rejection", (SR_REJECTION_ID,)),
+    ("flip", (FLIP_RETEST_ID,)),
+    ("both", (SR_REJECTION_ID, FLIP_RETEST_ID)),
+])
+def test_a_single_setup_can_still_be_measured_on_its_own(monkeypatch, choice, expected):
     """Chapter 9: "Initially run A and B in independent books to measure each
     without arbitration effects."
 
-    Two instances of these must never arbitrate against each other, which is
-    exactly what one shared engine evaluating both identities would do.
+    That research mode survives the consolidation as a configuration of one
+    strategy rather than as a second catalog entry.
     """
-    rejection = PriceActionRulebookRejectionStrategy("BTCUSDT")
-    flip = PriceActionRulebookFlipRetestStrategy("BTCUSDT")
-    assert rejection._engine.strategies == (SR_REJECTION_ID,)
-    assert flip._engine.strategies == (FLIP_RETEST_ID,)
-    assert rejection._engine is not flip._engine
+    monkeypatch.setenv("HUB_PA_RB_SETUPS", choice)
+    assert PriceActionRulebookStrategy("BTCUSDT")._engine.strategies == expected
 
 
-@pytest.mark.parametrize("key,expected", [
-    ("pa_rulebook_sr_rejection", SR_REJECTION_ID),
-    ("pa_rulebook_flip_retest", FLIP_RETEST_ID),
-])
-def test_the_catalog_builds_them_and_keeps_them_research_only(key, expected):
-    """The rulebook's own status line: "a research hypothesis, not a proven
-    edge... The design must not route exchange orders."
+def test_an_unknown_setup_selection_fails_closed(monkeypatch):
+    """A typo must not silently run something other than what was asked for."""
+    monkeypatch.setenv("HUB_PA_RB_SETUPS", "rejektion")
+    with pytest.raises(ValueError, match="HUB_PA_RB_SETUPS"):
+        PriceActionRulebookStrategy("BTCUSDT")
 
-    RESEARCH_ONLY is that sentence expressed in the registry, and the market
-    list keeps it on forward paper. Promoting either is a deliberate, visible
-    edit that should require evidence the document says does not exist yet.
+
+def test_the_catalog_offers_it_for_a_new_instance_with_a_real_version():
+    """PRODUCTION here is a claim about reproducibility, not profitability.
+
+    builtin_versions is explicit that a pinned version "does *not* assert a
+    profitable historical run". This engine is versioned, hash-attested and
+    pure, so a paper record it makes can be reproduced exactly -- and the
+    description states the edge is unproven, which is the separate claim.
     """
-    strategy = make_builtin_strategy(key, "BTCUSDT")
-    assert strategy.rulebook_strategy_id == expected
-    assert strategy.required_timeframes == (CONFIRM_TF, SETUP_TF, CONTEXT_TF)
+    strategy = make_builtin_strategy("pa_rulebook", "BTCUSDT")
+    assert isinstance(strategy, PriceActionRulebookStrategy)
 
-    entry = strategy_registry.entry(key)
-    assert entry is not None and entry.lifecycle == strategy_registry.RESEARCH_ONLY
+    entry = strategy_registry.entry("pa_rulebook")
+    assert entry is not None and entry.lifecycle == strategy_registry.PRODUCTION
+    assert entry.version != "unversioned"
+    assert entry.version == RULEBOOK_VERSION, "a paper record must name the engine that made it"
     assert entry.supported_markets == (strategy_registry.FORWARD_PAPER_MARKET,)
-    selectable, reason = strategy_registry.selectable_for_new_instance(key)
-    assert selectable is False and "RESEARCH_ONLY" in reason
+
+    selectable, reason = strategy_registry.selectable_for_new_instance("pa_rulebook")
+    assert selectable is True, reason
+    assert entry.strategy_id in {e.strategy_id for e in strategy_registry.production_entries()}
+    assert "no backtest" in entry.description.lower()
+
+
+def test_the_split_entries_are_gone():
+    """The consolidation has to remove them, not shadow them."""
+    for retired in ("pa_rulebook_sr_rejection", "pa_rulebook_flip_retest"):
+        assert strategy_registry.entry(retired) is None
+        with pytest.raises(ValueError):
+            make_builtin_strategy(retired, "BTCUSDT")

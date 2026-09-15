@@ -109,7 +109,7 @@ def manifest():
         "reads_clock": False,
         "real_order_path": False,
         "live_execution_allowed": False,
-        "instance_strategy_ids": ["pa_rulebook_sr_rejection", "pa_rulebook_flip_retest"],
+        "instance_strategy_id": "pa_rulebook",
         "status_note": ("Research hypothesis, not a proven edge. Every threshold is an "
                         "initial engineering choice. No backtest or forward experiment "
                         "supports it yet."),

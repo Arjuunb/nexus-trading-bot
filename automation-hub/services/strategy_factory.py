@@ -46,10 +46,7 @@ def make_builtin_strategy(key: str, symbol: str, *,
     if key == "price_action_flip_retest":
         from strategies.price_action_rejection import PriceActionFlipRetestStrategy
         return PriceActionFlipRetestStrategy(symbol)
-    if key == "pa_rulebook_sr_rejection":
-        from strategies.pa_rulebook_strategy import PriceActionRulebookRejectionStrategy
-        return PriceActionRulebookRejectionStrategy(symbol)
-    if key == "pa_rulebook_flip_retest":
-        from strategies.pa_rulebook_strategy import PriceActionRulebookFlipRetestStrategy
-        return PriceActionRulebookFlipRetestStrategy(symbol)
+    if key == "pa_rulebook":
+        from strategies.pa_rulebook_strategy import PriceActionRulebookStrategy
+        return PriceActionRulebookStrategy(symbol)
     raise ValueError(f"unknown built-in strategy '{key}'")

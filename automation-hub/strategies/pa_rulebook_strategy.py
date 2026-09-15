@@ -8,18 +8,23 @@ because the rulebook's whole premise is that "the same pure strategy engine"
 runs in backtest and forward execution -- an adapter that made its own
 decisions would mean the thing being researched is not the thing being run.
 
-Two catalog entries, one per strategy identity, each running the engine with
-only its own setup enabled. That is the document's instruction rather than a
-packaging convenience: "Initially run A and B in independent books to measure
-each without arbitration effects. A combined-book study is a separate
-experiment with an explicit shared-risk policy." Two instances therefore never
-arbitrate against each other, and their statistics stay separable.
+One catalog entry running the whole rulebook: both Setup A and Setup B, with
+chapter 9's deterministic arbitration deciding between them when they fire on
+the same candle. Splitting them across two entries would put two engines on
+one symbol with no arbitration between them, which is a different system from
+the one the document describes.
 
-Research only, and it stays that way until there is evidence. The rulebook's
-own status line is "a research hypothesis, not a proven edge. Every threshold
-is an initial engineering choice. No backtest or forward experiment supports
-it", and it requires that "The design must not route exchange orders". The
-registry entries are RESEARCH_ONLY and the supported market is forward paper.
+The rulebook does ask for A and B to be measured in independent books first,
+so that stays available -- HUB_PA_RB_SETUPS narrows this one strategy to a
+single setup for a research run, without a second catalog entry and without
+two engines competing for the same symbol.
+
+Forward paper only. The rulebook's own status line is "a research hypothesis,
+not a proven edge. Every threshold is an initial engineering choice. No
+backtest or forward experiment supports it", and it requires that "The design
+must not route exchange orders". The engine is versioned and hash-attested, so
+a paper record made by it is reproducible; that is what the catalog entry
+claims, and it claims nothing about profitability.
 """
 from __future__ import annotations
 
@@ -75,6 +80,21 @@ def _float_env(name: str, fallback: float) -> float:
         return fallback
 
 
+#: Chapter 9 names both identities; the whole strategy runs both and lets the
+#: engine arbitrate. HUB_PA_RB_SETUPS narrows it for an independent-book run:
+#: "rejection", "flip", or "both" (the default).
+_SETUP_CHOICES = {"rejection": (SR_REJECTION_ID,), "flip": (FLIP_RETEST_ID,),
+                  "both": (SR_REJECTION_ID, FLIP_RETEST_ID)}
+
+
+def _setups_from_env() -> tuple:
+    choice = (os.environ.get("HUB_PA_RB_SETUPS") or "both").strip().lower()
+    if choice not in _SETUP_CHOICES:
+        raise ValueError(
+            f"HUB_PA_RB_SETUPS must be one of {sorted(_SETUP_CHOICES)}, got {choice!r}")
+    return _SETUP_CHOICES[choice]
+
+
 def _instance_config(symbol: str) -> RulebookInstanceConfig:
     """Read HUB_PA_RB_* overrides, defaulting to the document's own values.
 
@@ -100,9 +120,10 @@ def _instance_config(symbol: str) -> RulebookInstanceConfig:
 
 
 class PriceActionRulebookStrategy(HubStrategy):
-    """Base adapter. Subclasses bind one rulebook strategy identity."""
+    """The Nexus PA rulebook v0.1, whole: Setup A and Setup B under arbitration."""
 
-    rulebook_strategy_id = SR_REJECTION_ID
+    name = "pa_rulebook"
+    label = "Price Action Rulebook v0.1"
     strategy_version = RULEBOOK_VERSION
     decision_timeframe = DECISION_TIMEFRAME
     # All three are mandatory. Unlike the indicator strategies there is no
@@ -122,9 +143,10 @@ class PriceActionRulebookStrategy(HubStrategy):
         # own risk engine sizes the order. The net-RR gate that decides the
         # trade does not depend on it at all.
         self.sizing_equity = _float_env("HUB_PA_RB_EQUITY", 10_000.0)
+        self.rulebook_setups = _setups_from_env()
         self._engine = PriceActionRulebookEngine(
             self.config.rulebook, self.config.costs,
-            strategies=(self.rulebook_strategy_id,))
+            strategies=self.rulebook_setups)
         self._context: dict[str, list[Bar]] = {}
         self._last_context_close: Optional[object] = None
         self._last_setup_close: Optional[object] = None
@@ -234,18 +256,3 @@ class PriceActionRulebookStrategy(HubStrategy):
         }
         return signal
 
-
-class PriceActionRulebookRejectionStrategy(PriceActionRulebookStrategy):
-    """Setup A: a trend-aligned pullback rejects an existing zone."""
-
-    name = "pa_rulebook_sr_rejection"
-    label = "PA Rulebook S/R Rejection (v0.1 research)"
-    rulebook_strategy_id = SR_REJECTION_ID
-
-
-class PriceActionRulebookFlipRetestStrategy(PriceActionRulebookStrategy):
-    """Setup B: a trend-aligned breakout is followed by a retest of the flip."""
-
-    name = "pa_rulebook_flip_retest"
-    label = "PA Rulebook Flip Retest (v0.1 research)"
-    rulebook_strategy_id = FLIP_RETEST_ID

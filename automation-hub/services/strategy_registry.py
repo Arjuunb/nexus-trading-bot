@@ -82,6 +82,13 @@ class StrategyEntry:
         from services.native_price_action import STRATEGY_VERSION as PA_VERSION
         if self.strategy_id.startswith("price_action_"):
             return PA_VERSION
+        if self.strategy_id.startswith("pa_rulebook"):
+            # The rulebook engine carries its own version and its own sha256
+            # attestation (/research/pa-rulebook/manifest). Borrowing the
+            # native engine's 1.1.0 would attribute a paper record to code
+            # that did not produce it.
+            from services.pa_rulebook_v01 import RULEBOOK_VERSION
+            return RULEBOOK_VERSION
         return builtin_strategy_version(self.strategy_id)
 
     def public(self) -> dict:
@@ -179,52 +186,35 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
     # evidence a production selection requires, so they stay available to
     # research, backtests and already-created instances but are not offered
     # when creating a new one.
-    # The Nexus Price Action rulebook v0.1. Research only by the document's own
-    # instruction, not by omission: "this is a research hypothesis, not a proven
-    # edge. Every threshold is an initial engineering choice. No backtest or
-    # forward experiment supports it." It also requires that "the design must
-    # not route exchange orders", which is what the forward-paper-only market
-    # and this lifecycle together enforce. A and B are listed separately because
-    # chapter 9 says to run them in independent books before combining.
+    # The Nexus Price Action rulebook v0.1, whole: Setup A and Setup B under
+    # chapter 9's arbitration, in one entry. Two entries would put two engines
+    # on one symbol with nothing arbitrating between them, which is a different
+    # system from the one the document specifies. HUB_PA_RB_SETUPS narrows this
+    # entry to a single setup for the independent-book runs chapter 9 asks for.
+    #
+    # PRODUCTION here means reproducible, which builtin_versions is explicit
+    # about: a pinned version "does *not* assert a profitable historical run".
+    # This engine is versioned, hash-attested and pure, so a paper record it
+    # makes can be reproduced exactly. Its edge is unproven and the description
+    # says so; the market list keeps it on forward paper.
     StrategyEntry(
-        strategy_id="pa_rulebook_sr_rejection",
-        display_name="PA Rulebook S/R Rejection (v0.1 research)",
-        lifecycle=RESEARCH_ONLY,
-        description=("Nexus PA rulebook v0.1 Setup A: 1H regime, immutable 1H zone, "
-                     "15M rejection, 3x5M dominance confirmation, structural stop, "
-                     "target from a pre-existing opposing zone, net RR >= 2.5"),
+        strategy_id="pa_rulebook",
+        display_name="Price Action Rulebook v0.1",
+        lifecycle=PRODUCTION,
+        description=("Nexus PA rulebook v0.1: 1H regime, immutable 1H support/resistance "
+                     "zones, 15M rejection (Setup A) or breakout-and-retest (Setup B), "
+                     "3x5M dominance confirmation, structural stop, target from a "
+                     "pre-existing opposing zone, net RR >= 2.5 after costs. Research "
+                     "hypothesis with no backtest behind it yet; paper only."),
         supported_markets=(FORWARD_PAPER_MARKET,),
         supported_timeframes=("5m",),
         required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
         warmup_candles=200,
         warmup_basis="200 closed bars per timeframe, Wilder ATR 14 (rulebook ch.18)",
-        lifecycle_reason=("The rulebook states its own status: a research hypothesis, not a "
-                          "proven edge, whose thresholds are initial engineering choices with "
-                          "no backtest or forward experiment behind them. Chapters 19-21 "
-                          "require that evidence before promotion, and none exists yet."),
         evidence=("tests/test_pa_rulebook_v01.py",
                   "tests/test_pa_rulebook_engine.py",
-                  "tests/test_pa_rulebook_instance_strategy.py"),
-    ),
-    StrategyEntry(
-        strategy_id="pa_rulebook_flip_retest",
-        display_name="PA Rulebook Flip Retest (v0.1 research)",
-        lifecycle=RESEARCH_ONLY,
-        description=("Nexus PA rulebook v0.1 Setup B: 1H regime, 15M breakout of an "
-                     "immutable zone, flip retested within four bars, 3x5M dominance "
-                     "confirmation, structural stop, net RR >= 2.5"),
-        supported_markets=(FORWARD_PAPER_MARKET,),
-        supported_timeframes=("5m",),
-        required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
-        warmup_candles=200,
-        warmup_basis="200 closed bars per timeframe, Wilder ATR 14 (rulebook ch.18)",
-        lifecycle_reason=("The rulebook states its own status: a research hypothesis, not a "
-                          "proven edge, whose thresholds are initial engineering choices with "
-                          "no backtest or forward experiment behind them. Chapters 19-21 "
-                          "require that evidence before promotion, and none exists yet."),
-        evidence=("tests/test_pa_rulebook_v01.py",
-                  "tests/test_pa_rulebook_engine.py",
-                  "tests/test_pa_rulebook_instance_strategy.py"),
+                  "tests/test_pa_rulebook_instance_strategy.py",
+                  "tests/test_pa_rulebook_replay.py"),
     ),
     StrategyEntry(
         strategy_id="smc", display_name="Supply/Demand", lifecycle=RESEARCH_ONLY,
