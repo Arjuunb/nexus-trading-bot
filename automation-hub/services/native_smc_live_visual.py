@@ -16,6 +16,7 @@ from typing import Callable
 from bot.data.resample import TF_SECONDS
 from bot.types import Bar
 from data.forward_market_data import valid_closed_bars
+from services.market_data_freshness import assess_timeframe
 from services.native_smc import SMCConfig, SMCMarketStructureEngine
 
 
@@ -93,16 +94,25 @@ def reconcile_market_state(state: dict, quote: dict | None, *, timeframe: str,
                             abs(mark - reference)) / reference * 10_000
         last_closed = datetime.fromisoformat(
             str(state["data_provenance"]["last_closed_candle"]).replace("Z", "+00:00"))
-        closed_age = max(0.0, (observed - last_closed).total_seconds())
-        closed_limit = TF_SECONDS[timeframe] + 20
+        # ``last_closed`` is the candle's OPEN timestamp, which is how every
+        # provider and every store in this codebase stamps a candle. The old
+        # rule here compared that open against ``TF_SECONDS + 20`` and so
+        # declared a 5m candle STALE twenty seconds after it closed -- for the
+        # remaining 280 seconds of a perfectly current feed, which is 93% of
+        # the time. The shared authority measures from the CLOSE and keeps a
+        # completed candle fresh until the next one is actually due.
+        candle = assess_timeframe(str(state.get("symbol") or ""), timeframe,
+                                  last_closed, now=observed)
+        closed_age = candle.age_seconds if candle.age_seconds is not None else 0.0
+        closed_limit = candle.allowed_age_seconds
         if bid <= 0 or ask < bid:
             health, reason = "STALE_QUOTE", "public bid/ask snapshot is invalid"
         elif mark <= 0:
             health, reason = "STALE_MARK", "public mark-price snapshot is invalid"
         elif quote_age > 15:
             health, reason = "STALE_QUOTE", "public bid/ask and mark snapshot is stale"
-        elif closed_age > closed_limit:
-            health, reason = "STALE_CANDLES", "completed candle history is stale"
+        elif not candle.fresh:
+            health, reason = "STALE_CANDLES", candle.describe()
         elif deviation_bps > 100:
             health, reason = "QUOTE_MISMATCH", f"candle/quote deviation is {deviation_bps:.2f} bps"
         else:

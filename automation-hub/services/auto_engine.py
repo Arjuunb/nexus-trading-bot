@@ -29,6 +29,7 @@ from typing import Callable, Optional
 from bot.types import Signal, SignalType
 from data.ledger import Ledger
 from execution.paper_engine import PaperExecutionEngine
+from services.market_data_freshness import assess_timeframe
 from services.signal_pipeline import SignalPipeline, gate_blocker
 
 
@@ -887,9 +888,15 @@ class AutoStrategyEngine:
                 context[timeframe] = []
                 sources.append(f"{timeframe}:insufficient optional bias")
                 continue
-            age = ((datetime.now(timezone.utc) - closed[-1].timestamp).total_seconds()
-                   - (duration or 0))
-            if duration is None or max(0.0, age) > duration * 1.5:
+            # Each required timeframe is verified independently against the one
+            # platform-wide authority, so a fresh 5m entry candle can never
+            # carry a stale 1h bias into an entry. A mandatory clock that is
+            # stale fails closed; a policy secondary is bias only and degrades
+            # to "no bias" rather than becoming a second entry gate.
+            htf = assess_timeframe(symbol, timeframe, closed[-1].timestamp) \
+                if duration is not None else None
+            age = htf.age_seconds if htf and htf.age_seconds is not None else 0.0
+            if htf is None or not htf.fresh:
                 if mandatory:
                     raise EngineFeedError(
                         f"{symbol} {timeframe} context stale: age={max(0.0, age):.0f}s")
@@ -1064,12 +1071,17 @@ class AutoStrategyEngine:
         # minutes older than it is and could exhaust reconnects before the
         # next provider candle arrived.
         interval = _TF_SECONDS.get(self.timeframe, 3600)
-        raw_age = (datetime.now(timezone.utc) - newest.timestamp).total_seconds()
-        age = max(0.0, raw_age - interval)
-        allowed_age = interval * 1.5
-        if age > allowed_age:
+        # One rule, shared with both Strategy Labs and the dashboard. This path
+        # already measured from the close (see above); what it did not share was
+        # how much lateness to allow, so an instance would keep trading on a
+        # candle a lab had already called stale. The shared authority also
+        # reports the numbers it judged on, which land in the blocker text.
+        verdict = assess_timeframe(symbol, self.timeframe, newest.timestamp)
+        age = verdict.age_seconds if verdict.age_seconds is not None else 0.0
+        allowed_age = verdict.allowed_age_seconds
+        if not verdict.fresh:
             self.market_data_status = "stale"
-            self.last_blocker = "GATE_REJECTED: STALE_CANDLE"
+            self.last_blocker = f"GATE_REJECTED: {verdict.blocker or 'STALE_CANDLES'}"
             self.last_blocker_timestamp = newest.timestamp.isoformat()
             raise MarketDataStaleError(
                 f"{symbol} market data stale: age={age:.0f}s allowed={allowed_age:.0f}s")

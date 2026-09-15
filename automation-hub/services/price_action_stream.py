@@ -16,6 +16,7 @@ from typing import Callable
 
 from bot.types import Bar
 from data.market_data_v2 import TF_MS, normalize_symbol
+from services.market_data_freshness import grace_for_interval as freshness_grace
 
 
 CONNECTION_STATES = {"CONNECTING", "CONNECTED", "DELAYED", "RECONNECTING", "DISCONNECTED", "ERROR"}
@@ -529,8 +530,14 @@ class PriceActionPublicStream:
             mark_age = age_for(self.last_mark_update)
             closed_age = age_for(self.last_closed_update)
             timeframe_seconds = TF_MS.get(self.timeframe, 60_000) / 1000
-            completed_candle_threshold = timeframe_seconds + max(
-                self.stale_after_seconds, min(timeframe_seconds * .25, 300.0))
+            # One definition, shared with the SMC Lab, the Trading Instances
+            # and the dashboard: a completed candle is fresh until the next one
+            # is due, plus a small delivery tolerance. This module already
+            # measured from the close correctly; what it did not share was the
+            # tolerance, so the same candle could be fresh here and stale in a
+            # lab. services/market_data_freshness.py now owns both.
+            completed_candle_threshold = (
+                timeframe_seconds + freshness_grace(timeframe_seconds))
             connecting_age = age_for(self.started_at)
             unresolved = self._unresolved_gaps()
             bid, ask, mark, last = (self._quote.get(key) for key in ("bid", "ask", "mark", "last"))

@@ -1,5 +1,12 @@
 services:
   app:
+    # Tagged with the revision it was built from. Without this the built image
+    # inherits whatever tag the last build used, and a deploy can report
+    # "Built nexus-trading-bot-app:main-21d232f" while actually containing a
+    # different commit -- which it did. deploy.sh derives APP_IMAGE_TAG from
+    # the checked-out revision and sanitises the branch name, because a git
+    # branch may contain "/" and a Docker tag may not.
+    image: nexus-trading-bot-app:${APP_IMAGE_TAG:-dev}
     build:
       context: .
       args:
