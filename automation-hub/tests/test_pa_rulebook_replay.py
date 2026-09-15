@@ -78,10 +78,51 @@ def test_the_replay_refuses_anything_but_real_candles(replay_module):
                              loader=lambda *a: ([], "unavailable"))
 
 
-def test_each_timeframe_is_sliced_strictly_before_the_decision_boundary(replay_module):
-    """The classic replay bug is an off-by-one that leaks the forming candle."""
-    rows = _context_bars()[:5]
-    boundary = rows[3].timestamp
-    sliced = replay_module._slice_upto(rows, boundary)
-    assert [row.timestamp for row in sliced] == [row.timestamp for row in rows[:3]]
-    assert all(row.timestamp < boundary for row in sliced)
+def test_the_incremental_walk_matches_slicing_on_a_gappy_series(replay_module):
+    """The loop feeds candles by advancing pointers instead of re-slicing.
+
+    That is a performance change, so it has to be provably the same answer, not
+    a plausibly similar one. The reference is the obvious O(n^2) definition --
+    "every candle that had closed at this boundary" -- and the series here has
+    deliberate gaps, because an equal-cadence series would pass even with an
+    off-by-one that leaks the forming candle.
+    """
+    context = _context_bars()[:40]
+    del context[7:13]                       # a hole the pointer must step over
+    boundaries = [row.timestamp for row in _context_bars()[:40]]
+
+    walked, at = [], 0
+    for boundary in boundaries:
+        while at < len(context) and context[at].timestamp < boundary:
+            walked.append(context[at])
+            at += 1
+        reference = [row for row in context if row.timestamp < boundary]
+        assert [row.timestamp for row in walked] == [row.timestamp for row in reference]
+        assert all(row.timestamp < boundary for row in walked)
+
+
+def test_a_date_window_bounds_decisions_but_keeps_the_warm_up(replay_module, capsys):
+    """Chapter 18 needs 200 closed context bars before the first decision.
+
+    Truncating the context to the window would make the opening weeks of every
+    run decide on structure the engine had not seen, and no two windows would
+    agree on the same day. The window bounds which candles are *decided on*,
+    not which history exists.
+    """
+    data = _dataset()
+    seen = {}
+
+    def loader(symbol, timeframe, count):
+        seen[timeframe] = list(data[timeframe])
+        return list(data[timeframe]), "test fixture"
+
+    confirms = data[CONFIRM_TF]
+    cutoff = confirms[len(confirms) // 2].timestamp
+
+    replay_module.replay("BTCUSDT", bars=len(confirms), strategy="rejection",
+                         equity=100_000.0, verbose=False, loader=loader,
+                         start=cutoff.isoformat())
+    out = capsys.readouterr().out
+    # The context frame is still the full 240 bars, not the post-cutoff tail.
+    assert f"{len(data[CONTEXT_TF]):>6} candles" in out
+    assert "RESEARCH REPLAY" in out

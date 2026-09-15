@@ -53,9 +53,12 @@ def _load(symbol: str, timeframe: str, bars: int) -> list[Bar]:
     return list(rows), source
 
 
-def _slice_upto(rows: list[Bar], boundary) -> list[Bar]:
-    """Every candle that had closed at `boundary`. Causality, not convenience."""
-    return [row for row in rows if row.timestamp < boundary]
+def _at(value: str):
+    """Parse a window bound as UTC. A naive date means midnight UTC."""
+    from datetime import datetime, timezone
+
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
 def _candle(bar: Bar) -> dict:
@@ -138,7 +141,9 @@ def _audit_record(index, decision, engine, setup_rows, confirm_rows) -> dict:
 
 
 def replay(symbol: str, bars: int, strategy: str, equity: float,
-           verbose: bool, loader=_load, audit_path: Optional[str] = None) -> int:
+           verbose: bool, loader=_load, audit_path: Optional[str] = None,
+           start: Optional[str] = None, end: Optional[str] = None,
+           progress: bool = False) -> int:
     config = RulebookConfig(symbol=symbol)
     config.validate()
     chosen = STRATEGY_CHOICES[strategy]
@@ -148,6 +153,21 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
     context, ctx_source = loader(symbol, CONTEXT_TF, max(bars // 12, config.warmup_bars + 50))
     setups, setup_source = loader(symbol, SETUP_TF, max(bars // 3, config.warmup_bars + 50))
     confirms, confirm_source = loader(symbol, CONFIRM_TF, bars)
+
+    # A date window bounds the DECISIONS, not the history. The context and
+    # setup frames keep everything before the window so the regime and the zone
+    # registry are already warm when the first in-window candle closes --
+    # truncating them would mean the first weeks of any window decide on
+    # structure the engine had not seen yet, and no two windows would agree.
+    if start or end:
+        lower = _at(start) if start else None
+        upper = _at(end) if end else None
+        confirms = [row for row in confirms
+                    if (lower is None or row.timestamp >= lower)
+                    and (upper is None or row.timestamp < upper)]
+        if upper is not None:
+            context = [row for row in context if row.timestamp < upper]
+            setups = [row for row in setups if row.timestamp < upper]
 
     # An empty frame must stop the run, not produce a tidy "0 accepted" report.
     # A negative result and no data at all look identical once summarised, and
@@ -171,11 +191,31 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
     raised = confirmed = accepted = 0
     last_context = last_setup = None
 
-    for bar in confirms:
+    # Walk the three series together, appending as each candle closes, instead
+    # of re-deriving "everything before now" on every 5M bar. The slicing
+    # version is O(n^2): at fixture scale it is invisible, and at a year of 5M
+    # candles it is hours of rebuilding lists that only ever grow by one. The
+    # same trap already cost this repo a 141-second replay suite once.
+    ctx_slice: list[Bar] = []
+    setup_slice: list[Bar] = []
+    confirm_slice: list[Bar] = []
+    ctx_at = setup_at = 0
+    total = len(confirms)
+
+    for position, bar in enumerate(confirms):
         boundary = bar.timestamp
-        ctx_slice = _slice_upto(context, boundary)
-        setup_slice = _slice_upto(setups, boundary)
-        confirm_slice = _slice_upto(confirms, boundary) + [bar]
+        while ctx_at < len(context) and context[ctx_at].timestamp < boundary:
+            ctx_slice.append(context[ctx_at])
+            ctx_at += 1
+        while setup_at < len(setups) and setups[setup_at].timestamp < boundary:
+            setup_slice.append(setups[setup_at])
+            setup_at += 1
+        confirm_slice.append(bar)
+
+        if progress and position % 5000 == 0 and position:
+            print(f"    ... {position:>7}/{total} 5M candles "
+                  f"({boundary:%Y-%m-%d})  setups {raised}  confirmed {confirmed}")
+
         if len(ctx_slice) < config.warmup_bars or len(setup_slice) < 2:
             continue
 
@@ -263,9 +303,17 @@ def main() -> int:
     parser.add_argument("--audit", metavar="PATH",
                         help="write every confirmation, with its candles and its "
                              "reward-to-risk decomposition, as JSON for review")
+    parser.add_argument("--start", metavar="DATE",
+                        help="first decision candle, e.g. 2025-01-01 (UTC). "
+                             "History before it still warms the context.")
+    parser.add_argument("--end", metavar="DATE",
+                        help="exclusive upper bound, e.g. 2026-01-01 (UTC)")
+    parser.add_argument("--progress", action="store_true",
+                        help="print a line every 5000 candles on long runs")
     args = parser.parse_args()
     return replay(args.symbol, args.bars, args.strategy, args.equity,
-                  args.verbose, audit_path=args.audit)
+                  args.verbose, audit_path=args.audit, start=args.start,
+                  end=args.end, progress=args.progress)
 
 
 if __name__ == "__main__":
