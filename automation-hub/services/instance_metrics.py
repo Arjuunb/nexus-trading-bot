@@ -17,6 +17,30 @@ import threading
 from datetime import datetime, timezone
 
 
+def _closed_candle_age(value, timeframe: str) -> float | None:
+    """Seconds since the candle CLOSED, using the one shared definition."""
+    from services.market_data_freshness import assess_timeframe
+
+    stamp = _parse_stamp(value)
+    if stamp is None:
+        return None
+    try:
+        return assess_timeframe("", timeframe, stamp).age_seconds
+    except ValueError:
+        # An unknown timeframe must not fabricate an age; say nothing instead.
+        return None
+
+
+def _parse_stamp(value):
+    if not value:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return stamp.replace(tzinfo=timezone.utc) if stamp.tzinfo is None else stamp
+
+
 def _age_seconds(value) -> float | None:
     if not value:
         return None
@@ -74,7 +98,13 @@ def instance_metrics(manager, instance_id: str) -> dict:
         "missing_candles": status.get("missing_candles"),
         "out_of_order_candles": status.get("out_of_order_candles"),
         "market_message_age_seconds": _age_seconds(subscription.get("last_update")),
-        "closed_candle_age_seconds": _age_seconds(status.get("last_closed_candle")),
+        # Age from the candle's CLOSE, not its open. last_closed_candle stores
+        # the open (every provider and store in this codebase stamps a candle
+        # there), so measuring raw age reported a 1h candle that had just
+        # closed as 3600 seconds old -- a healthy feed looking a full interval
+        # behind on the instance dashboard.
+        "closed_candle_age_seconds": _closed_candle_age(
+            status.get("last_closed_candle"), inst.timeframe),
         "processing_latency_seconds": _age_seconds(status.get("last_heartbeat")),
         "queue_depth": delivery.get("queue_depth"),
         "peak_queue_depth": delivery.get("peak_queue_depth"),
@@ -92,9 +122,12 @@ def platform_metrics(manager, *, supervisor=None, owner_id: str | None = None) -
     rows = [instance_metrics(manager, item.id) for item in instances]
     hub = getattr(manager, "market_hub", None)
     channels = hub.channel_report() if hasattr(hub, "channel_report") else []
+    # Counted with the one shared rule, not a local interval * 1.5. This was
+    # the sixth independent definition of stale on the platform, and with the
+    # age above now measured from the close its old threshold no longer even
+    # meant what it used to.
     stale = sum(1 for row in rows
-                if row.get("worker_alive") and (row.get("closed_candle_age_seconds") or 0) >
-                _timeframe_seconds(manager, row.get("instance_id")) * 1.5)
+                if row.get("worker_alive") and _row_is_stale(row))
 
     def total(key):
         values = [row.get(key) for row in rows if isinstance(row.get(key), (int, float))]
@@ -128,6 +161,24 @@ def platform_metrics(manager, *, supervisor=None, owner_id: str | None = None) -
         "market_data_channels": channels,
         "instances": rows,
     }
+
+
+def _row_is_stale(row) -> bool:
+    """Is this instance's newest closed candle past its deadline?
+
+    Uses services/market_data_freshness.py so the count on the platform
+    dashboard can never disagree with the gate that blocks the trade.
+    """
+    from services.market_data_freshness import grace_for_interval
+    from bot.data.resample import TF_SECONDS
+
+    age = row.get("closed_candle_age_seconds")
+    if age is None:
+        return False          # unknown is not counted as stale; it is unknown
+    interval = TF_SECONDS.get(row.get("timeframe") or "", None)
+    if interval is None:
+        return False
+    return float(age) > interval + grace_for_interval(interval)
 
 
 def _timeframe_seconds(manager, instance_id) -> int:

@@ -29,7 +29,9 @@ from typing import Callable, Optional
 from bot.types import Signal, SignalType
 from data.ledger import Ledger
 from execution.paper_engine import PaperExecutionEngine
-from services.market_data_freshness import assess_timeframe, is_live_source
+from services.market_data_freshness import (
+    assess_timeframe, grace_for_interval, is_live_source,
+)
 from services.signal_pipeline import SignalPipeline, gate_blocker
 
 
@@ -1034,7 +1036,13 @@ class AutoStrategyEngine:
             # Some venues cap OHLCV below the requested 1000 rows. A short page
             # is therefore not proof that we reached the live edge; page until
             # freshness or until the provider makes no forward progress.
-            if age_after_close <= duration * 1.5:
+            #
+            # "Freshness" here must be the gate's definition, not a looser one.
+            # At duration * 1.5 this loop stopped paging while the candle was
+            # still too old for services/market_data_freshness.py to accept, so
+            # a backfill could finish "successfully" and leave the instance
+            # blocked on data one more page would have supplied.
+            if age_after_close <= duration + grace_for_interval(duration):
                 break
         return [merged[key] for key in sorted(merged)], source
 
