@@ -565,8 +565,8 @@ def build_trade_plan(*, direction: str, strategy_id: str, symbol: str,
                                             config.stop_distance_atr_max]}, **base)
 
     # Target from structure that is already known. Never move an obstacle.
-    target = _nearest_opposing_target(direction, entry_bound, zones, zone_index,
-                                      config)
+    target, target_zone = _nearest_opposing_target(direction, entry_bound, zones,
+                                                   zone_index, config)
     costs_loss = costs.loss_path(entry_bound, stop)
     if target is None:
         return TradePlan(accepted=False, target=None, net_rr=None,
@@ -579,13 +579,32 @@ def build_trade_plan(*, direction: str, strategy_id: str, symbol: str,
     reward = abs(target - entry_bound) - costs_win
     risk = distance + costs_loss
     net_rr = reward / risk if risk > 0 else None
+    # The decomposition, not just the verdict. net_RR is a ratio of four
+    # quantities, and "2.1, rejected" cannot distinguish a stop that is too
+    # wide from a nearby opposing level that caps the room -- which are
+    # different problems with different answers. Recording the parts costs
+    # nothing and is the only way the rejection is diagnosable after the fact.
+    decomposition = {
+        "gross_reward": abs(target - entry_bound),
+        "net_reward": reward,
+        "gross_risk": distance,
+        "net_risk": risk,
+        "costs_loss": costs_loss,
+        "costs_win": costs_win,
+        "cost_share_of_risk": (costs_loss / risk) if risk > 0 else None,
+        "target_zone_id": target_zone.id if target_zone else None,
+        "target_zone_bounds": ([target_zone.lower, target_zone.upper]
+                               if target_zone else None),
+        "target_room": abs(target - entry_bound),
+        "required_room_for_min_rr": config.min_net_rr * risk + costs_win,
+    }
     if net_rr is None or net_rr < config.min_net_rr:
         return TradePlan(accepted=False, target=target, net_rr=net_rr,
                          costs_loss=costs_loss, costs_win=costs_win,
                          quantity=0.0, planned_loss=0.0,
                          blocker=Blocker.NET_RR_TOO_LOW,
                          evidence={"net_rr": net_rr, "required": config.min_net_rr,
-                                   "gross_reward": abs(target - entry_bound)},
+                                   **decomposition},
                          **base)
 
     # Chapter 11 sizing. Never round a below-minimum quantity up past budget.
@@ -600,13 +619,15 @@ def build_trade_plan(*, direction: str, strategy_id: str, symbol: str,
                      quantity=quantity, planned_loss=planned_loss,
                      blocker=None if quantity > 0 else Blocker.STOP_DISTANCE_INVALID,
                      evidence={"net_rr": net_rr, "risk_budget": budget,
+                               **decomposition,
                                "raw_quantity": raw_quantity,
                                "gross_notional": quantity * entry_bound},
                      **base)
 
 
 def _nearest_opposing_target(direction: str, entry: float, zones: Sequence[Zone],
-                             index: int, config: RulebookConfig) -> Optional[float]:
+                             index: int, config: RulebookConfig
+                             ) -> tuple[Optional[float], Optional[Zone]]:
     """Chapter 10's target: the nearest unexpired ORIGINAL opposing zone.
 
     "Zones must already be known at decision time. If E is inside an opposing
@@ -620,13 +641,15 @@ def _nearest_opposing_target(direction: str, entry: float, zones: Sequence[Zone]
         above = [z for z in live if z.kind == "resistance" and z.lower > entry]
         inside = [z for z in live if z.kind == "resistance" and z.lower <= entry <= z.upper]
         if inside or not above:
-            return None
-        return _round_to_tick(min(z.lower for z in above) - tick, tick, down=True)
+            return None, None
+        chosen = min(above, key=lambda z: z.lower)
+        return _round_to_tick(chosen.lower - tick, tick, down=True), chosen
     below = [z for z in live if z.kind == "support" and z.upper < entry]
     inside = [z for z in live if z.kind == "support" and z.lower <= entry <= z.upper]
     if inside or not below:
-        return None
-    return _round_to_tick(max(z.upper for z in below) + tick, tick, down=False)
+        return None, None
+    chosen = max(below, key=lambda z: z.upper)
+    return _round_to_tick(chosen.upper + tick, tick, down=False), chosen
 
 
 # ---------------------------------------------------- chapters 7, 8, 9 & 14

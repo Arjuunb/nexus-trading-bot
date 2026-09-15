@@ -18,12 +18,15 @@ touches a broker, a session or a database; it prints.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from typing import Optional                                        # noqa: E402
 
 from bot.types import Bar                                          # noqa: E402
 from services.pa_rulebook_v01 import (                             # noqa: E402
@@ -55,8 +58,87 @@ def _slice_upto(rows: list[Bar], boundary) -> list[Bar]:
     return [row for row in rows if row.timestamp < boundary]
 
 
+def _candle(bar: Bar) -> dict:
+    return {"t": bar.timestamp.isoformat(), "o": float(bar.open),
+            "h": float(bar.high), "l": float(bar.low), "c": float(bar.close),
+            "v": float(bar.volume)}
+
+
+def _window(rows: list[Bar], centre, before: int, after: int) -> list[dict]:
+    """Candles around a timestamp, for drawing the setup on a chart."""
+    positions = [i for i, row in enumerate(rows) if row.timestamp == centre]
+    if not positions:
+        return [_candle(row) for row in rows[-(before + after):]]
+    at = positions[0]
+    return [_candle(row) for row in rows[max(0, at - before): at + after + 1]]
+
+
+def _zone_row(zone) -> dict:
+    return {"id": zone.id, "kind": zone.kind, "lower": zone.lower,
+            "upper": zone.upper, "origin": zone.origin, "retired": zone.retired,
+            "created_at": zone.created_at.isoformat()}
+
+
+def _audit_record(index, decision, engine, setup_rows, confirm_rows) -> dict:
+    """Everything needed to judge one confirmation on a chart, after the fact.
+
+    The decomposition matters as much as the verdict. "Rejected at 2.1R" does
+    not say whether the stop was too wide, the confirmation arrived too far
+    from the zone, or a nearby opposing level capped the room -- three
+    different problems with three different answers. Each is recorded as its
+    own number so the chart does not have to be squinted at.
+    """
+    setup, plan = decision.setup, decision.plan
+    rejection, confirmation = setup.rejection, setup.confirmation
+    record = {
+        "index": index,
+        "at": decision.at.isoformat(),
+        "strategy_id": setup.strategy_id,
+        "direction": setup.direction,
+        "regime": decision.regime.value,
+        "verdict": ("ACCEPTED" if plan is not None and plan.accepted
+                    else (plan.blocker.value if plan is not None and plan.blocker
+                          else (decision.blocker.value if decision.blocker else "NO_PLAN"))),
+        "zone": _zone_row(setup.zone),
+        "original_zone": _zone_row(setup.original_zone),
+        "setup_atr15": setup.setup_atr,
+        "confirm_slot": setup.confirm_slots_used,
+        "rejection": _candle(rejection) if rejection else None,
+        "confirmation": _candle(confirmation) if confirmation else None,
+        "breakout": _candle(setup.breakout) if setup.breakout else None,
+        "evidence": setup.evidence,
+        "candles": {
+            SETUP_TF: _window(setup_rows, rejection.timestamp, 40, 8) if rejection else [],
+            CONFIRM_TF: _window(confirm_rows, confirmation.timestamp, 24, 4) if confirmation else [],
+        },
+        "zones_in_view": [_zone_row(z) for z in engine.zones if not z.retired],
+    }
+    if plan is not None:
+        drift = ((plan.entry_bound - float(rejection.close)) if setup.direction == "long"
+                 else (float(rejection.close) - plan.entry_bound)) if rejection else None
+        record["plan"] = {
+            "accepted": plan.accepted,
+            "entry_bound": plan.entry_bound, "stop": plan.stop, "target": plan.target,
+            "stop_distance": plan.stop_distance,
+            "stop_distance_atr": plan.stop_distance_atr,
+            "net_rr": plan.net_rr, "costs_loss": plan.costs_loss,
+            "costs_win": plan.costs_win, "quantity": plan.quantity,
+            "planned_loss": plan.planned_loss,
+            "blocker": plan.blocker.value if plan.blocker else None,
+            "evidence": plan.evidence,
+            # How far the confirmation dragged the entry away from the candle
+            # that defined the setup. A late confirmation shows up here as a
+            # large drift, which widens the stop and eats the target room at
+            # the same time -- one cause, two symptoms.
+            "entry_drift": drift,
+            "entry_drift_atr": (drift / setup.setup_atr) if drift is not None
+                               and setup.setup_atr else None,
+        }
+    return record
+
+
 def replay(symbol: str, bars: int, strategy: str, equity: float,
-           verbose: bool, loader=_load) -> int:
+           verbose: bool, loader=_load, audit_path: Optional[str] = None) -> int:
     config = RulebookConfig(symbol=symbol)
     config.validate()
     chosen = STRATEGY_CHOICES[strategy]
@@ -85,6 +167,7 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
 
     blockers: Counter = Counter()
     regimes: Counter = Counter()
+    audit: list[dict] = []
     raised = confirmed = accepted = 0
     last_context = last_setup = None
 
@@ -121,6 +204,8 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
             blockers[decision.blocker.value] += 1
         if decision.state is SetupState.CONFIRMED:
             confirmed += 1
+            audit.append(_audit_record(len(audit) + 1, decision, engine,
+                                       setup_slice, confirm_slice))
             plan = decision.plan
             if plan is not None and plan.accepted:
                 accepted += 1
@@ -140,6 +225,26 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
     print("\n  why nothing traded, by count:")
     for reason, count in blockers.most_common(12):
         print(f"    {count:>7}  {reason}")
+    if audit_path:
+        payload = {
+            "meta": {"symbol": symbol, "rulebook_version": RULEBOOK_VERSION,
+                     "strategies": list(engine.strategies),
+                     "timeframes": {"context": CONTEXT_TF, "setup": SETUP_TF,
+                                    "confirm": CONFIRM_TF},
+                     "equity": equity, "confirm_bars_replayed": len(confirms),
+                     "sources": {CONTEXT_TF: ctx_source, SETUP_TF: setup_source,
+                                 CONFIRM_TF: confirm_source},
+                     "first_candle": confirms[0].timestamp.isoformat(),
+                     "last_candle": confirms[-1].timestamp.isoformat(),
+                     "execution": "RESEARCH REPLAY -- no orders"},
+            "summary": {"setups_raised": raised, "confirmations": confirmed,
+                        "accepted": accepted, "regimes": dict(regimes),
+                        "blockers": dict(blockers)},
+            "confirmations": audit,
+        }
+        Path(audit_path).write_text(json.dumps(payload, indent=2, default=str))
+        print(f"\n  audit written to {audit_path} ({len(audit)} confirmations)")
+
     print("\n  Research output. No order was placed and none may be derived "
           "retrospectively from this run.")
     return accepted
@@ -155,8 +260,12 @@ def main() -> int:
                         help="conservative equity for chapter 11 sizing")
     parser.add_argument("--verbose", action="store_true",
                         help="print each setup as it is raised")
+    parser.add_argument("--audit", metavar="PATH",
+                        help="write every confirmation, with its candles and its "
+                             "reward-to-risk decomposition, as JSON for review")
     args = parser.parse_args()
-    return replay(args.symbol, args.bars, args.strategy, args.equity, args.verbose)
+    return replay(args.symbol, args.bars, args.strategy, args.equity,
+                  args.verbose, audit_path=args.audit)
 
 
 if __name__ == "__main__":
