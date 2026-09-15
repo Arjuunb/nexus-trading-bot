@@ -300,31 +300,32 @@ def diagnosis(records: list) -> list:
 
     median_stop, median_drift = _median(stops), _median(drifts)
     median_short, median_cost = _median(shortfalls), _median(costs)
+    n = len(refused)
     out = []
     if median_short is not None:
         out.append(("Room to the next opposing level",
-                    f"median {median_short * 100:.0f}% of the room the gate needed",
+                    f"median {median_short * 100:.0f}% of the room the gate needed (target_room / required_room, n={n})",
                     "The nearest unexpired opposing zone caps the target. If this is "
                     "well under 100%, the structure simply did not offer 2.5R and no "
                     "stop tuning will change that.",
                     median_short < 0.8))
     if median_stop is not None:
         out.append(("Stop width",
-                    f"median {median_stop:.2f} ATR15 of a 2.50 ceiling",
+                    f"median {median_stop:.2f} ATR15 of a 2.50 ceiling (|E-S| / ATR15, n={n})",
                     "The stop clears the whole zone plus the sweep plus the buffer, so "
                     "a wide zone forces a wide stop and the target has to be that much "
                     "further away.",
                     median_stop > 1.6))
     if median_drift is not None:
         out.append(("Entry drift from the rejection",
-                    f"median {median_drift:.2f} ATR15 past the rejection close",
+                    f"median {median_drift:.2f} ATR15 past the rejection close ((E - rejection close) / ATR15, n={n})",
                     "How far the confirming 5M candle dragged the entry away from the "
                     "candle that defined the setup. A late confirmation widens the stop "
                     "and eats the target room at the same time.",
                     median_drift > 0.5))
     if median_cost is not None:
         out.append(("Cost share of risk",
-                    f"median {median_cost * 100:.0f}% of net risk is fees",
+                    f"median {median_cost * 100:.0f}% of net risk is fees (costs_loss / (|E-S| + costs_loss), n={n})",
                     "Fees are charged on notional, so a tight stop on an expensive "
                     "symbol is uneconomic before the chart is consulted.",
                     median_cost > 0.25))
@@ -356,7 +357,9 @@ p{margin:0 0 12px;color:var(--ink2)}
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin:0 0 8px}
 .stat{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
 .stat b{display:block;font-size:24px;font-weight:600;letter-spacing:-.02em}
-.stat span{font-size:12px;color:var(--muted)}
+.stat span{font-size:12px;color:var(--ink2);display:block}
+.stat em{font-size:10.5px;color:var(--muted);font-style:normal;display:block;margin-top:3px;
+ line-height:1.35}
 .chart{width:100%;height:auto;display:block;overflow:visible}
 text{font:11px system-ui,-apple-system,sans-serif}
 .cat{fill:var(--ink2);font-size:12px}
@@ -401,15 +404,27 @@ def render(audit: dict) -> str:
     stops = [(r.get("plan") or {}).get("stop_distance_atr") for r in records]
     drifts = [(r.get("plan") or {}).get("entry_drift_atr") for r in records]
 
+    def _count(values: list) -> int:
+        return len([v for v in values if v is not None])
+
+    # Every figure carries its own definition and its own n. A median over
+    # three setups and a median over twenty-five are different claims, and a
+    # tile that shows only the number invites them to be read as the same one.
     stats = [
-        (len(records), "confirmations"),
-        (len(accepted), "reached a plan"),
-        (_num(_median(rrs)) if _median(rrs) is not None else "&mdash;", "median net RR"),
-        (_num(_median(stops)) if _median(stops) is not None else "&mdash;", "median stop, ATR15"),
-        (_num(_median(drifts)) if _median(drifts) is not None else "&mdash;", "median entry drift"),
+        (len(records), "confirmations",
+         "setups that reached CONFIRMED"),
+        (len(accepted), "reached a plan",
+         f"accepted / {len(records)} confirmed"),
+        (_num(_median(rrs)), "median net RR",
+         f"(|T&minus;E| &minus; costs_win) / (|E&minus;S| + costs_loss), n={_count(rrs)}"),
+        (_num(_median(stops)), "median stop, ATR15",
+         f"|E&minus;S| / ATR15, n={_count(stops)}"),
+        (_num(_median(drifts)), "median entry drift",
+         f"(E &minus; rejection close) / ATR15, n={_count(drifts)}"),
     ]
-    stat_html = "".join(f'<div class="stat"><b>{value}</b><span>{label}</span></div>'
-                        for value, label in stats)
+    stat_html = "".join(
+        f'<div class="stat"><b>{value}</b><span>{label}</span>'
+        f'<em>{formula}</em></div>' for value, label, formula in stats)
 
     why_html = ""
     for title, figure, note, leading in diagnosis(records):
@@ -489,7 +504,9 @@ def render(audit: dict) -> str:
 
 <h2>Why net reward-to-risk failed</h2>
 <p>Three causes produce the same rejected ratio and have different answers.
-Each is measured in its own units below; the charts decide between them.</p>
+Each is measured in its own units below, with the count it was computed over;
+the charts decide between them. E is the entry bound, S the stop, T the target,
+and ATR15 the previous Wilder ATR on the setup timeframe.</p>
 <div class="card">{why_html or '<p class="empty">nothing was refused on net RR</p>'}</div>
 <div class="card">{room_bars(records)}</div>
 
