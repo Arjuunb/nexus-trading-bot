@@ -1239,6 +1239,7 @@ import routers.forward_validation  # noqa: E402
 import routers.native_smc  # noqa: E402
 import routers.price_action  # noqa: E402
 import routers.pa_rulebook  # noqa: E402
+import routers.instance_visual_lab  # noqa: E402
 import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 router.include_router(routers.analytics.router)
@@ -1259,6 +1260,7 @@ router.include_router(routers.forward_validation.router)
 router.include_router(routers.native_smc.router)
 router.include_router(routers.price_action.router)
 router.include_router(routers.pa_rulebook.router)
+router.include_router(routers.instance_visual_lab.router)
 router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 

@@ -1862,3 +1862,99 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 @media (max-width: 560px) {
   .instance-axes { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Instance Visual Lab ────────────────────────────────────────────────────
+   One page for every instance strategy. The colour language is deliberately
+   narrow: a gate is passed, failed or waiting, and a failed gate is the only
+   thing on the page allowed to shout. */
+.ivl { display: grid; gap: 14px; }
+.ivl-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.ivl-head h1 { margin: 0 0 4px; font-size: 18px; }
+.ivl-head .lede { margin: 0; max-width: 68ch; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.ivl-head select { min-width: 280px; padding: 8px 10px; }
+
+.ivl-identity { display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 12px 14px;
+  border: 1px solid var(--border, #222a35); border-radius: 10px; background: #0d1117; }
+.ivl-identity span { display: grid; gap: 2px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-dim); }
+.ivl-identity b { font-size: 12.5px; text-transform: none; letter-spacing: 0; color: #e6edf3; }
+.ivl-identity small { font-size: 10px; text-transform: none; letter-spacing: 0; color: #6b7787; }
+
+.ivl-state { display: grid; gap: 6px; padding: 14px 16px; border-radius: 10px;
+  border: 1px solid #1f6f43; background: #0c1a12; }
+.ivl-state.is-blocked { border-color: #7a3030; background: #1a0f0f; }
+.ivl-state b { font-size: 16px; letter-spacing: .04em; }
+.ivl-state span, .ivl-state em, .ivl-state small { font-size: 12px; color: var(--text-dim); font-style: normal; }
+.ivl-state em { color: #e6c07b; }
+.ivl-code { font-family: ui-monospace, monospace; font-size: 11px; color: #ff9b9b; }
+
+.ivl-pipeline { display: flex; flex-wrap: wrap; gap: 4px; }
+.ivl-pipeline span { padding: 5px 10px; border-radius: 999px; font-size: 10.5px;
+  border: 1px solid var(--border, #222a35); color: var(--text-dim); }
+.ivl-pipeline .is-current { border-color: #e6c07b; color: #e6c07b; background: #1b1710; }
+
+.ivl-chart { width: 100%; height: 320px; background: #0b0e13; border-radius: 10px;
+  border: 1px solid var(--border, #222a35); }
+.ivl-chart g.up line, .ivl-chart g.up rect { stroke: #3d8bff; fill: #3d8bff; stroke-width: .8; }
+.ivl-chart g.down line, .ivl-chart g.down rect { stroke: #ff6b6b; fill: #ff6b6b; stroke-width: .8; }
+.ivl-marker line { stroke-width: 1; stroke-dasharray: 3 3; }
+.ivl-marker.accepted line, .ivl-marker.accepted circle { stroke: #4ec9a0; fill: #4ec9a0; }
+.ivl-marker.rejected line, .ivl-marker.rejected circle { stroke: #e6c07b; fill: none; }
+.ivl-marker.is-focus circle { stroke-width: 2; }
+.ivl-provenance { font-size: 10.5px; color: var(--text-dim); }
+
+.ivl-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .ivl-grid { grid-template-columns: 1fr; } }
+.ivl-panel { padding: 14px 16px; border-radius: 10px; background: #0d1117;
+  border: 1px solid var(--border, #222a35); }
+.ivl-panel h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.ivl-panel h3 { margin: 12px 0 6px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--text-dim); }
+.ivl-panel small { display: block; margin-top: 10px; font-size: 10.5px; line-height: 1.5; color: #6b7787; }
+
+.ivl-gates { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ivl-gate { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start;
+  font-size: 12px; }
+.ivl-gate b { font-weight: 500; }
+.ivl-gate em { display: block; font-style: normal; font-size: 10.5px; color: #6b7787; line-height: 1.45; }
+.ivl-mark { font-family: ui-monospace, monospace; }
+.ivl-gate.is-pass .ivl-mark { color: #4ec9a0; }
+.ivl-gate.is-fail .ivl-mark { color: #ff6b6b; }
+.ivl-gate.is-waiting .ivl-mark, .ivl-gate.is-waiting b { color: #6b7787; }
+.ivl-blocker { display: block; margin-top: 3px; font-size: 10.5px; font-weight: 400; color: #ff9b9b; }
+
+.ivl-features { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.ivl-features li { padding: 3px 8px; border-radius: 999px; font-size: 10.5px;
+  border: 1px solid #2a3442; color: #9fb0c3; }
+.ivl-panel dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 11.5px; }
+.ivl-panel dt { color: var(--text-dim); }
+.ivl-panel dd { margin: 0; }
+.ivl-note { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: #e6c07b; }
+
+.ivl-focus { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ivl-focus button { padding: 5px 11px; font-size: 11px; }
+.ivl-focus button.active { border-color: #e6c07b; color: #e6c07b; }
+.ivl-evidence { display: grid; gap: 3px; padding: 10px 12px; margin-bottom: 10px;
+  border-radius: 8px; background: #11161d; font-size: 11.5px; }
+.ivl-evidence span { color: var(--text-dim); }
+
+.ivl-table-wrap { overflow: auto; max-height: 420px; }
+.ivl-table { width: 100%; border-collapse: collapse; font: 10px/1.4 ui-monospace, monospace; }
+.ivl-table th { position: sticky; top: 0; padding: 7px 9px; background: #10141a;
+  color: #8693a6; text-align: left; text-transform: uppercase; letter-spacing: .05em; }
+.ivl-table td { padding: 6px 9px; border-top: 1px solid #1a212b; }
+.ivl-table tbody tr { cursor: pointer; }
+.ivl-table tbody tr:hover { background: #141a22; }
+.ivl-table tr.is-accepted td:nth-child(4) { color: #4ec9a0; }
+.ivl-table tr.is-rejected td:nth-child(4) { color: #e6c07b; }
+.ivl-table tr.is-focus { background: #1b2230; }
+
+.ivl-alert { display: grid; gap: 4px; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid #7a3030; background: #1a0f0f; font-size: 12px; }
+.ivl-alert span, .ivl-alert small { color: #d9a5a5; }
+.ivl-empty { padding: 20px; text-align: center; font-size: 12px; color: var(--text-dim); }
+.ivl-foot { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center;
+  padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border, #222a35);
+  font-size: 11px; }
+.ivl-foot b { letter-spacing: .06em; }
+.ivl-foot span { color: var(--text-dim); }
