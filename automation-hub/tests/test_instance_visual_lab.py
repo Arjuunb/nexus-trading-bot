@@ -380,9 +380,136 @@ def test_real_candles_are_returned_with_their_source(lab, monkeypatch):
                         lambda *a, **k: (bars, "local store (real)"))
     client = lab([_instance()])
     body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
-    assert body["source"] == "local store (real)"
+    assert body["source"] == "provider history · local store (real)"
     assert body["candles"][0]["c"] == 100.5
     assert body["symbol"] == "BTCUSDT" and body["timeframe"] == "5m"
+    # No worker is running here, so this is the second-choice series and the
+    # response has to say so: overlays read from a strategy would not be
+    # guaranteed to line up with it.
+    assert body["aligned_with_overlays"] is False
+
+
+# -------------------------------------------------- candles the strategy holds
+
+class _MtfStrategy:
+    """A multi-timeframe strategy the way the two real ones are shaped."""
+    decision_timeframe = "5m"
+
+    def __init__(self, context):
+        self._context = {tf: list(rows) for tf, rows in context.items()}
+        self.bars = list(self._context.get(self.decision_timeframe, ()))
+
+
+def _bars(n, *, start_hour=3, close=100.0):
+    from datetime import datetime, timedelta, timezone
+
+    from bot.types import Bar
+
+    origin = datetime(2026, 9, 16, start_hour, tzinfo=timezone.utc)
+    return [Bar(origin + timedelta(minutes=5 * i), close, close + 1,
+                close - 1, close + 0.5, 10.0) for i in range(n)]
+
+
+def test_candles_come_from_the_running_strategy_not_a_second_fetch(monkeypatch):
+    """The series the overlays were read from is the series they get drawn on.
+    A separately fetched provider history can be a candle ahead and put every
+    zone in the wrong place, which looks like a drawing bug and is not one."""
+    import data.market_data as market_data
+
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_bars(3, start_hour=9), "provider"))
+    client = _with_runtime(monkeypatch, [_instance()],
+                           {"BTCUSDT": _MtfStrategy({"5m": _bars(40)})})
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+
+    assert body["source"] == "instance strategy state · 5m"
+    assert body["aligned_with_overlays"] is True
+    assert len(body["candles"]) == 40
+    assert body["candles"][0]["t"].startswith("2026-09-16T03:00")
+
+
+def test_the_strategys_other_timeframes_are_selectable(monkeypatch):
+    """SMC's chart lets you change frame. This one does too -- but only to
+    frames the strategy actually holds, so the chart never shows a frame the
+    decision never saw."""
+    client = _with_runtime(monkeypatch, [_instance()],
+                           {"BTCUSDT": _MtfStrategy({"5m": _bars(10), "15m": _bars(20),
+                                                     "1h": _bars(30)})})
+    listed = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+    assert listed["strategy_timeframes"] == ["5m", "15m", "1h"]
+
+    hourly = client.get(
+        "/research/instance-visual/candles?instance_id=inst-1&timeframe=1h").json()
+    assert hourly["timeframe"] == "1h"
+    assert hourly["source"] == "instance strategy state · 1h"
+    assert len(hourly["candles"]) == 30
+    assert hourly["instance_timeframe"] == "5m"
+
+
+def test_a_frame_the_strategy_does_not_hold_falls_back_to_real_history(monkeypatch):
+    """Still real, still validated -- and labelled as the second choice."""
+    import data.market_data as market_data
+
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_bars(12), "binance_usdm (real)"))
+    client = _with_runtime(monkeypatch, [_instance()],
+                           {"BTCUSDT": _MtfStrategy({"5m": _bars(10)})})
+    body = client.get(
+        "/research/instance-visual/candles?instance_id=inst-1&timeframe=4h").json()
+    assert body["source"] == "provider history · binance_usdm (real)"
+    assert body["aligned_with_overlays"] is False
+
+
+def test_the_limit_trims_the_strategy_series_from_the_right(monkeypatch):
+    """The newest candles are the ones worth drawing."""
+    client = _with_runtime(monkeypatch, [_instance()],
+                           {"BTCUSDT": _MtfStrategy({"5m": _bars(200)})})
+    body = client.get(
+        "/research/instance-visual/candles?instance_id=inst-1&limit=20").json()
+    assert len(body["candles"]) == 20
+    assert body["candles"][-1]["t"] == _bars(200)[-1].timestamp.isoformat()
+
+
+def test_an_unknown_timeframe_is_refused_rather_than_fetched(monkeypatch):
+    client = _with_runtime(monkeypatch, [_instance()],
+                           {"BTCUSDT": _MtfStrategy({"5m": _bars(10)})})
+    response = client.get(
+        "/research/instance-visual/candles?instance_id=inst-1&timeframe=7m")
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "UNKNOWN_TIMEFRAME"
+
+
+def test_a_refusal_still_carries_the_context_the_chart_needs(monkeypatch):
+    """The chart frame stays on screen through an outage, so the refusal has to
+    carry enough to keep its header honest rather than blanking the page."""
+    import data.market_data as market_data
+
+    def _no_data(*_a, **_k):
+        raise RuntimeError("no real closed candles for BTCUSDT 5m")
+
+    monkeypatch.setattr(market_data, "get_bars", _no_data)
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    response = client.get("/research/instance-visual/candles?instance_id=inst-1")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "NO_REAL_MARKET_DATA"
+    assert detail["symbol"] == "BTCUSDT" and detail["timeframe"] == "5m"
+    assert detail["instance_timeframe"] == "5m"
+    assert "synthetic" in detail["note"]
+
+
+def test_a_strategy_holding_no_bars_does_not_pretend_to(monkeypatch):
+    """An empty strategy series is not a series. Fall through to real history
+    rather than returning zero candles labelled as the strategy's own."""
+    import data.market_data as market_data
+
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_bars(5), "binance_usdm (real)"))
+    client = _with_runtime(monkeypatch, [_instance()],
+                           {"BTCUSDT": _MtfStrategy({"5m": []})})
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+    assert body["source"] == "provider history · binance_usdm (real)"
+    assert len(body["candles"]) == 5
 
 
 # ------------------------------------------------------------ live overlays
@@ -511,3 +638,19 @@ def test_a_missing_quote_does_not_invent_a_spread(lab):
     client = lab([row])
     feed = client.get("/research/instance-visual/state?instance_id=inst-1").json()["feed"]
     assert feed["spread"] is None
+
+
+def test_the_refusal_carries_the_reason_the_data_layer_gave(monkeypatch):
+    """get_bars answers an empty series with its reason in the source string.
+    Dropping it leaves an operator with a refusal and no next step."""
+    import data.market_data as market_data
+
+    monkeypatch.setattr(
+        market_data, "get_bars",
+        lambda *a, **k: ([], "unavailable (real data required — run /data/sync)"))
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    response = client.get("/research/instance-visual/candles?instance_id=inst-1")
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert "run /data/sync" in detail["message"]
+    assert detail["source"] == "unavailable (real data required — run /data/sync)"

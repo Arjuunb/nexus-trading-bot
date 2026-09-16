@@ -2010,3 +2010,57 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .ivl-note-inline { margin-left: auto; font-size: 10px; color: #6b7787; }
 .ivl-alert-soft { border-color: #6b5a30; background: #17130c; }
 .ivl-alert-soft span, .ivl-alert-soft small { color: #d9c9a5; }
+
+/* Instance Visual Lab — the chart shell.
+   The frame, its controls and its scale stay on screen through an outage; the
+   reason is written across the plot instead of replacing it. */
+.ivl-chartwrap { border: 1px solid var(--border, #222a35); border-radius: 10px;
+  background: #0b0e13; overflow: hidden; }
+.ivl-chartbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid #1a212b; background: #0d1117; }
+.ivl-chartsym { display: flex; align-items: baseline; gap: 7px; }
+.ivl-chartsym b { font-size: 12.5px; letter-spacing: .04em; }
+.ivl-chartsym em { font-style: normal; font-size: 11px; color: #e6c07b; }
+.ivl-offframe { font-style: normal; font-size: 9.5px; color: #6b7787; }
+.ivl-frames, .ivl-view, .ivl-layers { display: flex; flex-wrap: wrap; gap: 4px;
+  align-items: center; font-size: 10px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: .06em; }
+.ivl-layers { margin-left: auto; }
+.ivl-frames button, .ivl-view button, .ivl-layers button {
+  padding: 3px 9px; font-size: 10.5px; opacity: .45; text-transform: none;
+  letter-spacing: 0; }
+.ivl-frames button.active, .ivl-view button.active, .ivl-layers button.active {
+  opacity: 1; border-color: #3d8bff; color: #9ec5ff; }
+/* A frame the running strategy is actually holding is worth telling apart from
+   one the chart would have to fetch separately. */
+.ivl-frames button.is-held { opacity: .8; border-color: #4a6a4a; }
+.ivl-frames button.is-held.active { border-color: #4ec9a0; color: #7fe0bd; }
+.ivl-view select { padding: 3px 6px; font-size: 10.5px; }
+
+.ivl-chartnote { display: grid; gap: 3px; padding: 8px 12px;
+  border-bottom: 1px solid #1a212b; font-size: 11.5px; }
+.ivl-chartnote b { letter-spacing: .06em; }
+.ivl-chartnote.is-bad { background: #1a0f0f; color: #ffb3b3; }
+.ivl-chartnote.is-bad span, .ivl-chartnote.is-bad small { color: #d9a5a5; }
+.ivl-chartnote.is-warn { background: #17130c; color: #e6c07b; }
+.ivl-chartnote.is-warn span, .ivl-chartnote.is-warn small { color: #d9c9a5; }
+
+.ivl-chartwrap .ivl-chart { border: 0; border-radius: 0; display: block; }
+.ivl-grid > rect { fill: none; stroke: #1a212b; stroke-width: .6; }
+.ivl-grid line { stroke: #161c25; stroke-width: .5; }
+.ivl-grid text { font-size: 8px; fill: #6b7787; }
+.ivl-time-tick { font-size: 8px; fill: #6b7787; }
+.ivl-chart-void { font-size: 13px; fill: #8693a6; letter-spacing: .1em; }
+.ivl-chart-void-sub { font-size: 9px; fill: #6b7787; }
+.ivl-chart.is-empty { background: #0b0e13; }
+
+.ivl-chartfoot { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center;
+  padding: 8px 12px; border-top: 1px solid #1a212b; background: #0d1117;
+  font-variant-numeric: tabular-nums; }
+.ivl-chartfoot span { display: grid; gap: 1px; font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); }
+.ivl-chartfoot b { font-size: 11.5px; text-transform: none; letter-spacing: 0;
+  color: #e6edf3; font-weight: 500; }
+.ivl-chartfoot small { font-size: 9px; text-transform: none; letter-spacing: 0;
+  color: #6b7787; }
+.ivl-foot-right { margin-left: auto; color: #6b7787; letter-spacing: .08em; }

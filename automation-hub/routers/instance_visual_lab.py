@@ -313,49 +313,124 @@ def features(instance_id: str = Query(..., min_length=1)):
     }
 
 
+def _strategy_series(strategy, timeframe: str) -> list:
+    """The candles this strategy is actually holding for ``timeframe``.
+
+    A multi-timeframe strategy keeps every frame it was given in ``_context``;
+    every strategy keeps its decision stream in ``bars``. Both are the exact
+    objects the last decision saw, which is what makes them the right series
+    to draw the overlays on -- overlays come from this same strategy, so a
+    separately fetched provider series can disagree with them by a candle and
+    put a zone in the wrong place.
+    """
+    if strategy is None or not timeframe:
+        return []
+    context = getattr(strategy, "_context", None)
+    if isinstance(context, dict):
+        rows = context.get(timeframe) or context.get(str(timeframe).lower())
+        if rows:
+            return list(rows)
+    decision_tf = str(getattr(strategy, "decision_timeframe", "") or "")
+    if decision_tf and decision_tf != timeframe:
+        return []
+    return list(getattr(strategy, "bars", None) or [])
+
+
+def _strategy_timeframes(strategy, fallback: str) -> list[str]:
+    """Which frames this strategy actually holds, in chart order."""
+    frames: set[str] = set()
+    context = getattr(strategy, "_context", None)
+    if isinstance(context, dict):
+        frames |= {str(key) for key, rows in context.items() if rows}
+    if getattr(strategy, "bars", None):
+        decision_tf = str(getattr(strategy, "decision_timeframe", "") or fallback)
+        if decision_tf:
+            frames.add(decision_tf)
+    order = list(_TIMEFRAME_SECONDS)
+    return sorted(frames, key=lambda tf: order.index(tf) if tf in order else len(order))
+
+
+def _candle_rows(rows) -> list[dict]:
+    return [{"t": bar.timestamp.isoformat(), "o": float(bar.open),
+             "h": float(bar.high), "l": float(bar.low),
+             "c": float(bar.close), "v": float(bar.volume)} for bar in rows]
+
+
 @router.get("/candles")
 def candles(instance_id: str = Query(..., min_length=1),
+            timeframe: Optional[str] = Query(None),
             limit: int = Query(300, ge=20, le=1500)):
     """The closed candles this instance decides on, or a refusal saying why.
 
-    ``require_real=True`` is the whole point. The bundled sample series and the
-    synthetic generator are legitimate for fixtures and must never reach a
-    forward-paper decision or a chart that claims to show one -- an operator
-    reading manufactured candles to explain a real refusal is worse off than
-    one shown an error. If the real series is unavailable this returns 503
-    rather than a plausible-looking fallback.
+    The running strategy's own series is asked first. It is the same object the
+    overlays are read from, so the zones, pivots and EMAs land on the candle
+    that produced them; the shared provider series is a second opinion that can
+    be one candle ahead or behind and silently shift them. When no worker is
+    running there is no such series, and the provider history is the honest
+    second choice -- it is still real, validated data, and the response says
+    which of the two the operator is looking at.
+
+    ``require_real=True`` on that fallback is the whole point. The bundled
+    sample series and the synthetic generator are legitimate for fixtures and
+    must never reach a forward-paper decision or a chart that claims to show
+    one -- an operator reading manufactured candles to explain a real refusal
+    is worse off than one shown an error. If neither real series is available
+    this returns 503 rather than a plausible-looking fallback.
     """
     status = _status(instance_id)
     symbol = str(status.get("symbol") or "")
-    timeframe = str(status.get("timeframe") or "")
-    if not symbol or not timeframe:
+    instance_tf = str(status.get("timeframe") or "")
+    requested = str(timeframe or instance_tf or "")
+    if not symbol or not requested:
         raise HTTPException(503, {"code": "NO_MARKET", "retryable": False,
                                   "message": "the instance declares no symbol/timeframe"})
-    try:
-        from data.market_data import get_bars
+    if requested not in _TIMEFRAME_SECONDS:
+        raise HTTPException(400, {"code": "UNKNOWN_TIMEFRAME", "timeframe": requested,
+                                  "message": f"unsupported timeframe '{requested}'"})
 
-        rows, source = get_bars(symbol, n=limit, timeframe=timeframe, require_real=True)
-    except (ValueError, RuntimeError) as exc:
-        raise HTTPException(503, {
-            "code": "NO_REAL_MARKET_DATA", "retryable": True, "symbol": symbol,
-            "timeframe": timeframe, "message": str(exc),
-            "note": "The Visual Lab will not substitute sample or synthetic candles."},
-        ) from exc
-    if not rows:
-        raise HTTPException(503, {
-            "code": "NO_REAL_MARKET_DATA", "retryable": True, "symbol": symbol,
-            "timeframe": timeframe, "message": f"no real closed candles for {symbol} {timeframe}"})
+    strategy = _live_strategy(instance_id, symbol)
     market = status.get("market") or {}
-    return {
-        "instance_id": instance_id, "symbol": symbol, "timeframe": timeframe,
-        "source": source,
-        "candles": [{"t": bar.timestamp.isoformat(), "o": float(bar.open),
-                     "h": float(bar.high), "l": float(bar.low),
-                     "c": float(bar.close), "v": float(bar.volume)} for bar in rows],
+    frames = _strategy_timeframes(strategy, instance_tf)
+    envelope = {
+        "instance_id": instance_id, "symbol": symbol, "timeframe": requested,
+        "instance_timeframe": instance_tf,
+        "strategy_timeframes": frames,
         "market_data_state": market.get("market_data_status"),
         "last_closed_candle": market.get("last_market_data_timestamp"),
         "real_execution_allowed": False,
     }
+
+    rows = _strategy_series(strategy, requested)
+    if rows:
+        trimmed = rows[-limit:]
+        return {**envelope, "candles": _candle_rows(trimmed),
+                "source": f"instance strategy state · {requested}",
+                "aligned_with_overlays": True}
+
+    try:
+        from data.market_data import get_bars
+
+        rows, source = get_bars(symbol, n=limit, timeframe=requested, require_real=True)
+    except (ValueError, RuntimeError) as exc:
+        raise HTTPException(503, {
+            **envelope, "code": "NO_REAL_MARKET_DATA", "retryable": True,
+            "message": str(exc),
+            "note": "The Visual Lab will not substitute sample or synthetic candles."},
+        ) from exc
+    if not rows:
+        # get_bars answers an empty series with the reason in its source string
+        # ("unavailable (real data required -- run /data/sync)"). Dropping that
+        # leaves the operator with a refusal and no next step.
+        raise HTTPException(503, {
+            **envelope, "code": "NO_REAL_MARKET_DATA", "retryable": True,
+            "source": source,
+            "message": f"no real closed candles for {symbol} {requested}: {source}",
+            "note": "The Visual Lab will not substitute sample or synthetic candles."})
+    return {**envelope, "candles": _candle_rows(rows),
+            "source": f"provider history · {source}",
+            # Said out loud because it decides whether an overlay landing one
+            # candle off is a drawing bug or the two series disagreeing.
+            "aligned_with_overlays": False}
 
 
 @router.get("/timeline")

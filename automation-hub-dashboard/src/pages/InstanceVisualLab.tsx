@@ -81,7 +81,14 @@ interface Timeline {
            last_trade: TimelineEvent | null };
 }
 interface Candle { t: string; o: number; h: number; l: number; c: number; v?: number }
-interface Candles { candles: Candle[]; source: string; symbol: string; timeframe: string }
+interface Candles {
+  candles: Candle[]; source: string; symbol: string; timeframe: string;
+  instance_timeframe?: string; strategy_timeframes?: string[];
+  aligned_with_overlays?: boolean; market_data_state?: string | null;
+}
+/** Offered in the chart header. A frame the strategy holds is marked as such. */
+const TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
+const VIEWS = [60, 120, 240, 480];
 
 const STAGE_LABEL: Record<string, string> = {
   MARKET_DATA: "Market data", FEATURES: "Features", CONTEXT: "Context",
@@ -146,20 +153,58 @@ function FeedPanel({ feed, forming }: { feed: Feed; forming: Candle | null }) {
     <span>Source<b>{feed.data_source || "—"}</b></span>
   </div>;
 }
-
 interface ChartProps {
   candles: Candle[]; forming: Candle | null; overlays: Overlay[];
   events: TimelineEvent[]; position: Position | null; enabled: Set<string>;
-  showDecisionMarkers: boolean; focus: string | null;
+  showDecisionMarkers: boolean; focus: string | null; view: number; fit: boolean;
+  unavailable: string | null;
   onPick: (event: TimelineEvent) => void; onPickOverlay: (overlay: Overlay) => void;
 }
 
+const W = 1400, H = 460, PAD = 10, RIGHT = 74, BOTTOM = 18;
+
+/** The grid and axes, drawn whether or not there is anything to plot.
+ *
+ * A chart that disappears when its feed drops tells an operator nothing about
+ * why. The frame stays, the scale goes blank, and the reason is written across
+ * it -- the same way the instance itself fails closed and says so. */
+function Frame({ ticks }: { ticks: { y: number; label: string }[] }) {
+  return <g className="ivl-grid">
+    <rect x={PAD} y={PAD} width={W - PAD - RIGHT} height={H - PAD * 2 - BOTTOM} />
+    {(ticks.length ? ticks : [0.2, 0.4, 0.6, 0.8].map((f) => ({
+      y: PAD + f * (H - PAD * 2 - BOTTOM), label: "" }))).map((tick, i) => (
+      <g key={`${tick.label}-${i}`}>
+        <line x1={PAD} x2={W - RIGHT} y1={tick.y} y2={tick.y} />
+        {tick.label ? <text x={W - RIGHT + 4} y={tick.y + 3}>{tick.label}</text> : null}
+      </g>
+    ))}
+  </g>;
+}
+
 function Chart({ candles, forming, overlays, events, position, enabled,
-                 showDecisionMarkers, focus, onPick, onPickOverlay }: ChartProps) {
-  if (!candles.length) return <div className="ivl-empty">No real candles to draw.</div>;
-  const series = forming && candles[candles.length - 1]?.t !== forming.t
+                 showDecisionMarkers, focus, view, fit, unavailable,
+                 onPick, onPickOverlay }: ChartProps) {
+  const all = forming && candles[candles.length - 1]?.t !== forming.t
     ? [...candles, forming] : candles;
-  const W = 1400, H = 460, PAD = 10, RIGHT = 74;
+  const series = fit ? all : all.slice(-view);
+
+  if (!series.length) {
+    return <svg className="ivl-chart is-empty" viewBox={`0 0 ${W} ${H}`} role="img"
+                aria-label="Instance chart — no candles available">
+      <Frame ticks={[]} />
+      <text className="ivl-chart-void" x={(W - RIGHT) / 2} y={H / 2 - 4}
+            textAnchor="middle">
+        {unavailable ? "NO REAL CANDLES — FAILING CLOSED" : "WAITING FOR CLOSED CANDLES"}
+      </text>
+      <text className="ivl-chart-void-sub" x={(W - RIGHT) / 2} y={H / 2 + 18}
+            textAnchor="middle">
+        {unavailable
+          ? "The Visual Lab will not substitute sample or synthetic candles."
+          : "The chart draws only candles the instance has actually closed."}
+      </text>
+    </svg>;
+  }
+
   // Shape first, feature second, and bounds required. An overlay whose feature
   // looks zone-ish but carries no bounds would render as NaN geometry and take
   // the whole chart with it, so it is never treated as a rectangle.
@@ -185,12 +230,25 @@ function Chart({ candles, forming, overlays, events, position, enabled,
   if (position?.target) prices.push(position.target);
   const top = Math.max(...prices), bottom = Math.min(...prices);
   const span = (top - bottom) || 1;
+  const PLOT = H - PAD * 2 - BOTTOM;
   const step = (W - PAD - RIGHT) / series.length;
-  const y = (p: number) => PAD + ((top - p) / span) * (H - PAD * 2);
+  const y = (p: number) => PAD + ((top - p) / span) * PLOT;
   const x = (i: number) => PAD + i * step + step / 2;
   const key = (t: string) => t.slice(0, 16);
   const at = new Map(series.map((c, i) => [key(c.t), i]));
   const nearest = (t?: string) => (t ? at.get(key(t)) : undefined);
+
+  // A price scale on the right and a time scale underneath: without them a
+  // candle chart is a picture, not a reading.
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => {
+    const price = top - f * span;
+    return { y: y(price), label: num(price, span > 100 ? 0 : 2) };
+  });
+  const timeTicks = series.length < 2 ? [] :
+    [0, 0.25, 0.5, 0.75, 1]
+      .map((f) => Math.min(series.length - 1, Math.round(f * (series.length - 1))))
+      .filter((index, i, arr) => arr.indexOf(index) === i)
+      .map((index) => ({ x: x(index), label: series[index].t.slice(5, 16).replace("T", " ") }));
 
   const level = (price: number, cls: string, label: string, from?: number) =>
     <g className={`ivl-level ${cls}`} key={`${cls}-${label}-${price}`}>
@@ -200,6 +258,12 @@ function Chart({ candles, forming, overlays, events, position, enabled,
 
   return <svg className="ivl-chart" viewBox={`0 0 ${W} ${H}`} role="img"
               aria-label="Instance chart with runtime strategy overlays">
+    <Frame ticks={ticks} />
+    {timeTicks.map((tick) => (
+      <text key={tick.label} className="ivl-time-tick" x={tick.x} y={H - 4}
+            textAnchor="middle">{tick.label}</text>
+    ))}
+
     {/* Zones first, so candles and markers sit on top of them. */}
     {zoneLines.map((zone) => {
       const start = nearest(zone.created_at) ?? 0;
@@ -263,7 +327,7 @@ function Chart({ candles, forming, overlays, events, position, enabled,
       return <g key={event.id}
                 className={`ivl-decision ${accepted ? "accepted" : "rejected"}${isFocus ? " is-focus" : ""}`}
                 onClick={() => onPick(event)}>
-        <line x1={x(index)} x2={x(index)} y1={PAD} y2={H - PAD} />
+        <line x1={x(index)} x2={x(index)} y1={PAD} y2={H - PAD - BOTTOM} />
         <text x={x(index) + 3} y={PAD + 10}>{accepted ? "ACCEPTED" : `✗ ${event.blocker ?? "REJECTED"}`}</text>
       </g>;
     }) : null}
@@ -285,6 +349,10 @@ export default function InstanceVisualLab() {
   const [picked, setPicked] = useState<TimelineEvent | Overlay | null>(null);
   const [disabled, setDisabled] = useState<Set<string>>(new Set());
   const [showDecisionMarkers, setShowDecisionMarkers] = useState(true);
+  // "" means the instance's own decision timeframe, whatever that is.
+  const [frame, setFrame] = useState("");
+  const [view, setView] = useState(120);
+  const [fit, setFit] = useState(false);
   const formingRef = useRef<Candle | null>(null);
 
   useEffect(() => {
@@ -297,6 +365,10 @@ export default function InstanceVisualLab() {
   }, []);
 
   const current = instances.find((row) => row.instance_id === selected);
+  const instanceFrame = current?.timeframe || "";
+  // "" means "whatever the instance decides on", resolved here once so the
+  // chart, the footer and the websocket subscription cannot disagree.
+  const shownFrame = frame || instanceFrame;
 
   /** State + timeline: the decision evidence. Polled often, small payloads. */
   const loadState = useCallback(async (instanceId: string) => {
@@ -328,29 +400,41 @@ export default function InstanceVisualLab() {
   }, []);
 
   /** Closed candles: the heaviest payload, so the least frequent. */
-  const loadCandles = useCallback(async (instanceId: string) => {
+  const loadCandles = useCallback(async (instanceId: string, timeframe: string) => {
     if (!instanceId) return;
+    const query = `instance_id=${encodeURIComponent(instanceId)}`
+      + (timeframe ? `&timeframe=${encodeURIComponent(timeframe)}` : "");
     try {
-      setCandles(await apiGet<Candles>(
-        `/research/instance-visual/candles?instance_id=${encodeURIComponent(instanceId)}`));
+      setCandles(await apiGet<Candles>(`/research/instance-visual/candles?${query}`));
       setDataError(null);
     } catch (exc) {
+      // The chart frame stays up either way; only the series is dropped, so a
+      // stale one is never left on screen pretending to be current.
       setCandles(null);
       setDataError(exc instanceof Error ? exc.message : String(exc));
     }
   }, []);
 
   useEffect(() => {
-    setFocus(null); setPicked(null); setForming(null);
-    void loadState(selected); void loadFeatures(selected); void loadCandles(selected);
-    // Three cadences rather than one: re-fetching several hundred candles every
-    // few seconds to watch a blocker change would be most of the traffic for
-    // none of the information.
+    setFocus(null); setPicked(null); setForming(null); setFrame("");
+    void loadState(selected); void loadFeatures(selected);
+    // Two cadences rather than one: re-fetching the feature state every few
+    // seconds to watch a blocker change would be most of the traffic for none
+    // of the information.
     const s = setInterval(() => void loadState(selected), 4000);
     const f = setInterval(() => void loadFeatures(selected), 15000);
-    const c = setInterval(() => void loadCandles(selected), 60000);
-    return () => { clearInterval(s); clearInterval(f); clearInterval(c); };
-  }, [selected, loadState, loadFeatures, loadCandles]);
+    return () => { clearInterval(s); clearInterval(f); };
+  }, [selected, loadState, loadFeatures]);
+
+  /** Candles are the heaviest payload, so the least frequent -- and they are
+   *  their own effect because changing the displayed frame must refetch them
+   *  without resetting the selection or restarting the other pollers. */
+  useEffect(() => {
+    formingRef.current = null; setForming(null);
+    void loadCandles(selected, frame);
+    const c = setInterval(() => void loadCandles(selected, frame), 60000);
+    return () => clearInterval(c);
+  }, [selected, frame, loadCandles]);
 
   /**
    * The forming candle, straight from the venue the instance trades.
@@ -361,7 +445,7 @@ export default function InstanceVisualLab() {
    * until the backend says the candle closed and the engine judged it.
    */
   useEffect(() => {
-    if (!current?.symbol || !current?.timeframe) return;
+    if (!current?.symbol || !shownFrame) return;
     if (current.market_data_mode === "replay") return;
     let socket: WebSocket | null = null;
     let closedByUs = false, attempts = 0;
@@ -373,7 +457,7 @@ export default function InstanceVisualLab() {
     const connect = () => {
       try {
         socket = new WebSocket(
-          `wss://fstream.binance.com/ws/${current.symbol.toLowerCase()}@kline_${current.timeframe}`);
+          `wss://fstream.binance.com/ws/${current.symbol.toLowerCase()}@kline_${shownFrame}`);
       } catch { schedule(); return; }
       socket.onopen = () => { attempts = 0; };
       socket.onclose = () => { if (!closedByUs) schedule(); };
@@ -400,7 +484,7 @@ export default function InstanceVisualLab() {
       formingRef.current = null;
       try { socket?.close(); } catch { /* noop */ }
     };
-  }, [current?.symbol, current?.timeframe, current?.market_data_mode]);
+  }, [current?.symbol, shownFrame, current?.market_data_mode]);
 
   const groups = useMemo(() => {
     const declared = features?.declared_features ?? state?.strategy.overlays ?? [];
@@ -468,39 +552,97 @@ export default function InstanceVisualLab() {
         ))}
       </div>
 
-      <div className="ivl-toggles">
-        {groups.map((group) => (
-          <button key={group} className={enabled.has(group) ? "active" : ""}
-                  onClick={() => toggle(group)}>{group}</button>
-        ))}
-        <button className={showDecisionMarkers ? "active" : ""}
-                onClick={() => setShowDecisionMarkers((v) => !v)}>Decision markers</button>
-        {forming ? <span className="ivl-forming-tag">FORMING candle · display only</span> : null}
+      <div className="ivl-chartwrap">
+        <div className="ivl-chartbar">
+          <span className="ivl-chartsym">
+            <b>{current?.symbol || "—"}</b>
+            <em>{shownFrame || "—"}</em>
+            {shownFrame && shownFrame !== instanceFrame
+              ? <i className="ivl-offframe">context frame · this instance decides on {instanceFrame}</i>
+              : null}
+          </span>
+
+          <span className="ivl-frames">
+            {TIMEFRAMES.map((tf) => {
+              const held = candles?.strategy_timeframes?.includes(tf);
+              return <button key={tf}
+                             className={`${shownFrame === tf ? "active" : ""}${held ? " is-held" : ""}`}
+                             title={held ? "the running strategy holds this frame"
+                                         : "drawn from real provider history"}
+                             onClick={() => setFrame(tf === instanceFrame ? "" : tf)}>{tf}</button>;
+            })}
+          </span>
+
+          <span className="ivl-view">
+            View
+            <select aria-label="Bars in view" value={view}
+                    onChange={(e) => { setView(Number(e.target.value)); setFit(false); }}>
+              {VIEWS.map((n) => <option key={n} value={n}>{n} bars</option>)}
+            </select>
+            <button className={fit ? "active" : ""} onClick={() => setFit(true)}>Fit</button>
+            <button className={fit ? "" : "active"} onClick={() => setFit(false)}>Latest</button>
+          </span>
+
+          <span className="ivl-layers">
+            {groups.map((group) => (
+              <button key={group} className={enabled.has(group) ? "active" : ""}
+                      onClick={() => toggle(group)}>{group}</button>
+            ))}
+            <button className={showDecisionMarkers ? "active" : ""}
+                    onClick={() => setShowDecisionMarkers((v) => !v)}>Decisions</button>
+          </span>
+        </div>
+
+        {/* Notes sit above the chart, never instead of it. An operator whose
+            feed has dropped needs to see the frame, the scale and the reason
+            together -- a page that replaces the chart with an error box hides
+            exactly the context that makes the error readable. */}
+        {dataError ? <div className="ivl-chartnote is-bad">
+          <b>DATA STALE · FAILING CLOSED</b>
+          <span>{dataError}</span>
+          <small>The Visual Lab will not substitute sample or synthetic candles.</small>
+        </div> : null}
+        {featureError ? <div className="ivl-chartnote is-warn">
+          <b>Strategy overlays unavailable</b><span>{featureError}</span>
+          <small>Candles and decision markers are still drawn. Overlays come from
+            runtime evidence only, never invented.</small>
+        </div> : null}
+        {candles && candles.aligned_with_overlays === false && !featureError
+          ? <div className="ivl-chartnote is-warn">
+              <b>Overlays may sit a candle off</b>
+              <span>These candles are provider history, not the running strategy&rsquo;s own
+                series, so an overlay read from the strategy can land on a neighbouring bar.</span>
+            </div> : null}
+
+        <Chart candles={candles?.candles ?? []} forming={forming}
+               overlays={features?.overlays ?? []}
+               events={timeline?.events ?? []} position={state.position}
+               enabled={enabled} showDecisionMarkers={showDecisionMarkers}
+               focus={focus} view={view} fit={fit} unavailable={dataError}
+               onPick={(event) => { setFocus(event.timestamp); setPicked(event); }}
+               onPickOverlay={(overlay) => setPicked(overlay)} />
+
+        <div className="ivl-chartfoot">
+          <span>Last closed candle
+            <b>{stamp(candles?.candles[candles.candles.length - 1]?.t
+                      ?? state.last_closed_candle)}</b>
+            <small>{candles ? `${candles.candles.length} closed ${candles.timeframe} candles loaded`
+                            : "0 closed candles loaded"}</small></span>
+          <span>Forming candle · display only
+            <b>{forming ? num(forming.c) : "Not available"}</b>
+            <small>excluded from every decision</small></span>
+          <span>Candle source<b>{candles?.source || "—"}</b>
+            <small>{!candles ? "no series loaded"
+              : candles.aligned_with_overlays
+                ? "the strategy\u2019s own series \u2014 overlays align by construction"
+                : "second-choice real history"}</small></span>
+          <span>Runtime overlays<b>{features ? features.overlays.length : "—"}</b>
+            <small>{features?.withheld_features?.length
+              ? `withheld (not declared): ${features.withheld_features.join(", ")}`
+              : "declared features only"}</small></span>
+          <span className="ivl-foot-right">PAPER · NO LIVE EXECUTION</span>
+        </div>
       </div>
-
-      {dataError ? <div className="ivl-alert">
-        <b>Market data unavailable — failing closed</b>
-        <span>{dataError}</span>
-        <small>The Visual Lab will not substitute sample or synthetic candles.</small>
-      </div> : <Chart candles={candles?.candles ?? []} forming={forming}
-                      overlays={features?.overlays ?? []}
-                      events={timeline?.events ?? []} position={state.position}
-                      enabled={enabled} showDecisionMarkers={showDecisionMarkers}
-                      focus={focus}
-                      onPick={(event) => { setFocus(event.timestamp); setPicked(event); }}
-                      onPickOverlay={(overlay) => setPicked(overlay)} />}
-
-      {featureError ? <div className="ivl-alert ivl-alert-soft">
-        <b>Strategy overlays unavailable</b><span>{featureError}</span>
-        <small>Candles and decisions are still shown. Overlays are drawn only from
-          runtime evidence, never invented.</small>
-      </div> : null}
-      {candles ? <div className="ivl-provenance">
-        {candles.candles.length} closed {candles.timeframe} candles · source {candles.source}
-        {features ? ` · ${features.overlays.length} runtime overlays` : ""}
-        {features?.withheld_features.length
-          ? ` · withheld (not declared by this strategy): ${features.withheld_features.join(", ")}` : ""}
-      </div> : null}
 
       {picked ? <div className="ivl-evidence">
         <button className="ivl-close" onClick={() => setPicked(null)}>close</button>

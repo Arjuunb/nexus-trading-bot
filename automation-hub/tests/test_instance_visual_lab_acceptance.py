@@ -185,8 +185,73 @@ def test_unavailable_overlays_do_not_blank_the_decision_panels():
     trading -- that is the panel the operator came for."""
     page = _page()
     assert "featureError" in page
-    assert "ivl-alert-soft" in page
-    assert "Candles and decisions are still shown" in page
+    assert "ivl-chartnote is-warn" in page
+    assert "Candles and decision markers are still drawn" in page
+
+
+def test_a_data_outage_never_replaces_the_chart_with_an_error_box():
+    """The frame, its controls and its scale stay on screen through an outage.
+
+    This is the difference between a chart that failed and a page that lost
+    its chart: an operator looking at a refusal needs the frame, the timeframe
+    and the last candle it did have in the same view as the reason. The
+    renderer is therefore called unconditionally, and the outage is passed to
+    it rather than around it.
+    """
+    page = _page()
+    chart = page[page.index("<Chart candles="):]
+    chart = chart[:chart.index("/>") + 2]
+    assert "unavailable={dataError}" in chart, "the chart must be told, not bypassed"
+    # The old shape was `dataError ? <div .../> : <Chart .../>`. Any ternary
+    # that still makes the chart an alternative to the error brings the blank
+    # page back, so the else-branch spelling is refused outright.
+    assert ": <Chart" not in page, "the chart must not be the else-branch of an outage"
+    # The exact shape that was there before, not the class name -- ivl-empty is
+    # also the timeline's legitimate "no recorded decisions" state.
+    assert "No real candles to draw." not in page, \
+        "an outage must not collapse the chart to a sentence"
+    # The frame around it stays too: controls above, provenance below.
+    assert 'className="ivl-chartbar"' in page
+    assert 'className="ivl-chartfoot"' in page
+    # And the renderer itself draws a frame rather than a sentence.
+    assert "function Frame(" in page
+    assert "NO REAL CANDLES" in page
+    assert "will not substitute sample or synthetic candles" in page
+
+
+def test_the_chart_frame_offers_the_controls_a_chart_needs():
+    """Timeframe, bars in view, fit/latest and layers -- the same controls the
+    SMC lab has, because the complaint that produced them was that this page
+    had none of them."""
+    page = _page()
+    assert "const TIMEFRAMES =" in page and "const VIEWS =" in page
+    assert 'className="ivl-frames"' in page
+    assert "setFrame(" in page and "setView(" in page and "setFit(" in page
+    assert "view={view}" in page and "fit={fit}" in page
+
+
+def test_a_context_frame_is_labelled_as_one():
+    """Viewing 1H on a 5M instance must never read as "this is what it trades"."""
+    page = _page()
+    assert "this instance decides on" in page
+    assert "shownFrame !== instanceFrame" in page
+
+
+def test_the_forming_candle_follows_the_displayed_frame():
+    """A 5M forming candle appended to an hourly chart is a false statement
+    about what just happened, so the socket subscribes to what is on screen and
+    the previous frame's candle is dropped the moment the frame changes."""
+    page = _page()
+    assert "@kline_${shownFrame}" in page
+    assert "formingRef.current = null; setForming(null);" in page
+
+
+def test_candle_provenance_is_visible_without_leaving_the_page():
+    """Which of the two real series is being drawn decides whether an overlay
+    landing a candle off is a bug or the series disagreeing."""
+    page = _page()
+    assert "aligned_with_overlays" in page
+    assert "Candle source" in page
 
 
 def test_toggles_are_built_from_the_declared_features():
@@ -201,7 +266,7 @@ def test_the_chart_is_not_polled_at_one_cadence():
     page = _page()
     assert "loadState(selected), 4000" in page
     assert "loadFeatures(selected), 15000" in page
-    assert "loadCandles(selected), 60000" in page
+    assert "loadCandles(selected, frame), 60000" in page
 
 
 def test_the_socket_reconnects_with_backoff_and_does_not_duplicate():
