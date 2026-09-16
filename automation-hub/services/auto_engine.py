@@ -1275,10 +1275,21 @@ class AutoStrategyEngine:
                 blocker = "GATE_REJECTED: POSITION_MANAGED"
             else:
                 decision_reason = str((strategy_decision or {}).get("reason") or "")
-                blocker = (gate_blocker("strategy", decision_reason)
-                           if any(word in decision_reason.upper()
-                                  for word in ("WARM", "STALE", "R:R", "RR ", "REWARD"))
-                           else "GATE_REJECTED: NO_SETUP")
+                # A strategy that reports a structured code is believed. The
+                # alternative below sniffs prose for keywords, which cannot
+                # name a veto the vocabulary never anticipated -- and silently
+                # calls it NO_SETUP, so "nothing set up" and "a setup was
+                # confirmed and refused on reward" look identical on the board.
+                reported = str((strategy_decision or {}).get("blocker_code") or "").strip()
+                if reported:
+                    blocker = f"GATE_REJECTED: {reported.upper()}"
+                elif any(word in decision_reason.upper()
+                         # "RR_" was in gate_blocker's own vocabulary but not in
+                         # this guard, so NET_RR_TOO_LOW never reached it.
+                         for word in ("WARM", "STALE", "R:R", "RR ", "RR_", "REWARD")):
+                    blocker = gate_blocker("strategy", decision_reason)
+                else:
+                    blocker = "GATE_REJECTED: NO_SETUP"
         self.last_blocker = blocker
         self.last_blocker_timestamp = bar.timestamp.isoformat()
         if outcome is None:

@@ -151,6 +151,7 @@ class PriceActionRulebookStrategy(HubStrategy):
         self._last_context_close: Optional[object] = None
         self._last_setup_close: Optional[object] = None
         self._emitted: set = set()
+        self._last_decision: Optional[Decision] = None
         self.last_reason = "Awaiting multi-timeframe context"
 
     # ---------------------------------------------------------------- context
@@ -200,6 +201,7 @@ class PriceActionRulebookStrategy(HubStrategy):
         return self.generate(bar, decision=decision)
 
     def generate(self, bar: Bar, *, decision: Decision | None = None) -> Optional[Signal]:
+        self._last_decision = decision
         if decision is None:
             self.last_reason = "no closed-candle decision for this bar"
             return None
@@ -214,6 +216,46 @@ class PriceActionRulebookStrategy(HubStrategy):
             return None
         self._emitted.add(decision.setup.id)
         return self._as_signal(bar, decision)
+
+    def decision_report(self) -> dict:
+        """What the engine concluded on the last closed candle, structured.
+
+        Without this the runtime has only ``last_reason`` -- a sentence -- and
+        it names the veto by sniffing that text for keywords. This strategy
+        never supplied one at all, so every refusal it makes reached the
+        dashboard as "GATE_REJECTED: NO_SETUP", including NET_RR_TOO_LOW,
+        TARGET_UNAVAILABLE and STOP_DISTANCE_INVALID.
+
+        That is the one distinction the rulebook exists to make. A setup that
+        never appeared and a setup that appeared, was confirmed, and was
+        refused because the nearest opposing zone left it 15% of the room it
+        needed are different problems with different answers, and both of them
+        read as "no setup" on the board.
+
+        ``blocker_code`` is the engine's own closed vocabulary, passed through
+        rather than re-derived, so the runtime never has to guess.
+        """
+        decision = self._last_decision
+        if decision is None:
+            return {"decision": "WAIT", "reason": self.last_reason,
+                    "blocker_code": "WARMUP", "state": None, "regime": None}
+        plan = decision.plan
+        # A plan's own blocker is the more specific of the two: reaching a plan
+        # means the setup passed every earlier gate.
+        blocker = (plan.blocker if plan is not None and plan.blocker
+                   else decision.blocker)
+        accepted = plan is not None and plan.accepted
+        return {
+            "decision": "ENTER" if accepted else "WAIT",
+            "reason": self.last_reason,
+            "blocker_code": None if accepted else (blocker.value if blocker else "NO_SETUP"),
+            "state": decision.state.value if decision.state else None,
+            "regime": decision.regime.value,
+            "net_rr": plan.net_rr if plan is not None else None,
+            "target_room": (plan.evidence or {}).get("target_room") if plan else None,
+            "required_room_for_min_rr": (
+                (plan.evidence or {}).get("required_room_for_min_rr") if plan else None),
+        }
 
     def _as_signal(self, bar: Bar, decision: Decision) -> Signal:
         """Carry the engine's own numbers through unchanged.

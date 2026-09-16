@@ -211,3 +211,83 @@ def test_the_split_entries_are_gone():
         assert strategy_registry.entry(retired) is None
         with pytest.raises(ValueError):
             make_builtin_strategy(retired, "BTCUSDT")
+
+
+def _decision(*, state, plan=None, blocker=None, regime=None):
+    """A Decision shaped like the engine's own: state is derived from the setup."""
+    from services.pa_rulebook_v01 import CONFIRM_TF, Decision, Regime
+
+    class _Setup:
+        pass
+
+    setup = _Setup()
+    setup.state = state
+    return Decision(timeframe=CONFIRM_TF, at=None, regime=regime or Regime.BULL,
+                    setup=setup, plan=plan, blocker=blocker, evidence={})
+
+
+def test_a_refusal_reaches_the_dashboard_as_its_own_blocker():
+    """"No setup" and "a setup was confirmed and refused on reward" are
+    different problems, and the board showed both as GATE_REJECTED: NO_SETUP.
+
+    The runtime names a veto from decision_report(); this strategy supplied
+    none, so every refusal it made fell through to the catch-all. The 2025
+    replay refused 32 of 55 confirmations on net RR and 14 more for want of a
+    target -- none of which were visible.
+    """
+    from services.pa_rulebook_v01 import Blocker, SetupState
+    from strategies.pa_rulebook_strategy import PriceActionRulebookStrategy
+
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
+
+    # Nothing evaluated yet: warming up, not "no setup".
+    assert strategy.decision_report()["blocker_code"] == "WARMUP"
+
+    class _Plan:
+        accepted = False
+        blocker = Blocker.NET_RR_TOO_LOW
+        net_rr = 0.21
+        evidence = {"target_room": 120.0, "required_room_for_min_rr": 800.0}
+
+    strategy.generate(None, decision=_decision(
+        state=SetupState.CONFIRMED, plan=_Plan()))
+    report = strategy.decision_report()
+
+    assert report["blocker_code"] == "NET_RR_TOO_LOW"
+    assert report["decision"] == "WAIT"
+    assert report["state"] == "CONFIRMED"
+    assert report["regime"] == "BULL"
+    # The two numbers that say whether the threshold or the structure refused it.
+    assert report["target_room"] == 120.0
+    assert report["required_room_for_min_rr"] == 800.0
+
+
+def test_an_earlier_gate_is_reported_when_no_plan_was_reached():
+    """A plan's blocker is more specific, but there is not always a plan."""
+    from services.pa_rulebook_v01 import Blocker, Regime, SetupState
+    from strategies.pa_rulebook_strategy import PriceActionRulebookStrategy
+
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
+    strategy.generate(None, decision=_decision(
+        state=SetupState.WAIT_CONFIRM, blocker=Blocker.REGIME_NOT_ALIGNED,
+        regime=Regime.BEAR))
+    report = strategy.decision_report()
+    assert report["blocker_code"] == "REGIME_NOT_ALIGNED"
+    assert report["regime"] == "BEAR"
+
+
+def test_an_accepted_plan_reports_no_blocker():
+    from services.pa_rulebook_v01 import SetupState
+    from strategies.pa_rulebook_strategy import PriceActionRulebookStrategy
+
+    class _Accepted:
+        accepted = True
+        blocker = None
+        net_rr = 3.87
+        evidence = {}
+
+    strategy = PriceActionRulebookStrategy("BTCUSDT")
+    strategy._last_decision = _decision(state=SetupState.CONFIRMED, plan=_Accepted())
+    report = strategy.decision_report()
+    assert report["decision"] == "ENTER"
+    assert report["blocker_code"] is None

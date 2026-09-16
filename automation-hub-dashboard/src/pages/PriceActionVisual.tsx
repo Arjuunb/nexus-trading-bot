@@ -259,6 +259,12 @@ const BLOCKER_NOTES: Record<string, string> = {
   CONFIRMATION_EXPIRED: "The rejection was never confirmed inside its three 5M candles.",
   ZONE_CONSUMED: "This zone has already produced its setup and may not produce another.",
   NO_ELIGIBLE_ZONE: "No zone was in reach of price on this candle.",
+  WARMING_UP: "Fewer than 200 closed 1H candles. The regime classifier refuses to leave UNKNOWN below that, so nothing can be decided yet.",
+  HTF_NOT_READY: "The 1H or 15M frame has not closed a candle the engine has not already seen.",
+  MISSING_CANDLE: "A gap in the closed-candle series. The engine will not decide across one.",
+  STALE_HTF_CANDLE: "The higher-timeframe candle is too old to be treated as current.",
+  NON_REAL_DATA: "The candles offered were not from a validated real provider. Chapter 2 forbids deciding on them.",
+  EXISTING_EXPOSURE: "A position is already open for this symbol.",
 };
 
 function RulebookPanel({ state, manifest, error, loading, onReload, symbol }: {
