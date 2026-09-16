@@ -105,3 +105,53 @@ def test_it_cannot_write_to_the_ledger(attribution, tmp_path):
     before = path.read_bytes()
     _run(attribution, path)
     assert path.read_bytes() == before
+
+
+def test_a_filter_that_matches_nothing_says_what_the_ledger_holds(attribution, tmp_path):
+    """The real case: the card reports 24 trades, --symbol BNBUSDT returns
+    zero. A bare "trades 0" reads as "no trades exist", which is a different
+    claim entirely. Name the symbols that are actually there."""
+    rows = [(f"t{n}", "ETHUSDT", "closed", "pa_rulebook:0.1.0", "inst-1", 1.0)
+            for n in range(24)]
+    totals, text = _run(attribution, _ledger(tmp_path, rows), symbol="BNBUSDT")
+    assert totals["matched"] is False
+    assert "FILTER MATCHED NOTHING" in text
+    assert "24 paper trades" in text
+    assert "ETHUSDT" in text
+    assert "inst-1" in text
+    assert "attribution is correct" not in text   # no verdict from zero rows
+
+
+def test_an_empty_ledger_is_not_reported_as_a_bad_filter(attribution, tmp_path):
+    totals, text = _run(attribution, _ledger(tmp_path, []), symbol="BNBUSDT")
+    assert totals["matched"] is False
+    assert "NO TRADES" in text
+    assert "FILTER MATCHED NOTHING" not in text
+
+
+def test_an_empty_ledger_with_no_filter_says_so(attribution, tmp_path):
+    totals, text = _run(attribution, _ledger(tmp_path, []))
+    assert totals["matched"] is False
+    assert "NO TRADES" in text
+    assert "no paper trades at all" in text
+
+
+def test_a_matching_filter_still_reports_normally(attribution, tmp_path):
+    rows = [("t1", "BNBUSDT", "closed", "pa_rulebook:0.1.0", "inst-1", 1.0),
+            ("t2", "ETHUSDT", "closed", "donchian_breakout:1.0.0", "inst-2", -1.0)]
+    totals, text = _run(attribution, _ledger(tmp_path, rows), symbol="BNBUSDT")
+    assert totals["matched"] is True
+    assert totals["trades"] == 1
+    assert "FILTER MATCHED NOTHING" not in text
+    assert "attribution is correct" in text
+
+
+def test_the_reported_total_is_not_capped_by_the_listing_limit(attribution, tmp_path):
+    """The listing shows the top few symbols; the total must still count all
+    of them, or the tool reports a smaller ledger than the one it read."""
+    rows = [(f"t{n}", f"SYM{n}USDT", "closed", "pa_rulebook:0.1.0", f"inst-{n}", 1.0)
+            for n in range(30)]
+    _, text = _run(attribution, _ledger(tmp_path, rows), symbol="BNBUSDT")
+    assert "the ledger holds 30 paper trades" in text
+    assert "symbols present (top 20 of 30)" in text
+    assert "instances present (top 20 of 30)" in text

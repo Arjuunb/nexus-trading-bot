@@ -26,6 +26,7 @@ from collections import defaultdict
 from pathlib import Path
 
 DB = "/var/lib/tradexa/ledger.db"
+_LIST_LIMIT = 20
 
 
 def _pnl(row: dict) -> float:
@@ -50,6 +51,22 @@ def attribute(db_path: str, *, symbol: str | None, instance: str | None, out) ->
         params.append(instance)
     clause = (" WHERE " + " AND ".join(where)) if where else ""
     rows = [dict(r) for r in db.execute(f"SELECT * FROM paper_trades{clause}", params)]
+    # An empty filtered result has two very different meanings and the caller
+    # cannot tell them apart from a bare "trades 0". Ask the unfiltered table
+    # what it actually holds before closing the connection.
+    present: dict = {}
+    held = 0
+    if not rows and clause:
+        held = int(db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0])
+        for column in ("symbol", "instance_id"):
+            distinct = int(db.execute(
+                f"SELECT COUNT(DISTINCT {column}) FROM paper_trades").fetchone()[0])
+            listed = [
+                (str(r[0] or "(blank)"), int(r[1]))
+                for r in db.execute(
+                    f"SELECT {column}, COUNT(*) FROM paper_trades "
+                    f"GROUP BY {column} ORDER BY COUNT(*) DESC LIMIT {_LIST_LIMIT}")]
+            present[column] = (listed, distinct)
     db.close()
 
     by_instance: dict = defaultdict(lambda: defaultdict(list))
@@ -61,6 +78,32 @@ def attribute(db_path: str, *, symbol: str | None, instance: str | None, out) ->
     if symbol or instance:
         print(f"  filter  {symbol or ''} {instance or ''}".rstrip(), file=out)
     print(f"  trades  {len(rows)}\n", file=out)
+
+    if not rows:
+        if not clause:
+            print("NO TRADES: this ledger holds no paper trades at all.", file=out)
+            print("  Nothing has been recorded here -- check that this is the"
+                  " ledger the instance writes to.", file=out)
+            return {"trades": 0, "instances": 0, "mixed": [], "matched": False}
+        if not held:
+            print("NO TRADES: this ledger holds no paper trades at all, so the"
+                  " filter is not what excluded them.", file=out)
+            return {"trades": 0, "instances": 0, "mixed": [], "matched": False}
+        print(f"FILTER MATCHED NOTHING: the ledger holds {held} paper trades,"
+              " none of them under this filter.", file=out)
+        for column, label in (("symbol", "symbols"), ("instance_id", "instances")):
+            listed, distinct = present.get(column) or ([], 0)
+            if not listed:
+                continue
+            more = distinct - len(listed)
+            suffix = f" (top {len(listed)} of {distinct})" if more > 0 else ""
+            print(f"  {label} present{suffix}:", file=out)
+            for value, count in listed:
+                print(f"    {count:>6}  {value}", file=out)
+        print("  Re-run with one of the values above. A dashboard card that"
+              " reports trades this ledger does not hold is the finding, not"
+              " a typo.", file=out)
+        return {"trades": 0, "instances": 0, "mixed": [], "matched": False}
 
     mixed = []
     for instance_id, strategies in sorted(by_instance.items()):
@@ -101,7 +144,8 @@ def attribute(db_path: str, *, symbol: str | None, instance: str | None, out) ->
     elif by_instance:
         print("Every instance's trades come from a single strategy: the dashboard's"
               " attribution is correct.", file=out)
-    return {"trades": len(rows), "instances": len(by_instance), "mixed": mixed}
+    return {"trades": len(rows), "instances": len(by_instance), "mixed": mixed,
+            "matched": True}
 
 
 def main(argv=None) -> int:
