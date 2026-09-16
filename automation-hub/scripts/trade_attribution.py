@@ -136,16 +136,45 @@ def attribute(db_path: str, *, symbol: str | None, instance: str | None, out) ->
             mixed.append(instance_id)
         print(file=out)
 
+    # A ledger where nothing is attributed satisfies "one strategy per instance"
+    # trivially -- one group, named (unattributed), under one instance, named
+    # (no instance) -- and the all-clear below would be printed over exactly
+    # the situation this tool exists to catch. Count it before concluding.
+    unowned = sum(len(rows) for strategies in by_instance.values()
+                  for key, rows in strategies.items()
+                  if key == "(unattributed)")
+    no_instance = sum(len(v) for v in by_instance.get("(no instance)", {}).values())
+    orphaned = max(unowned, no_instance)
+
     if mixed:
         print("MIXED ATTRIBUTION: the instances above hold trades from more than one"
               " strategy.", file=out)
         print("  The dashboard reports all of them under whichever strategy is"
               " configured now.", file=out)
+    elif orphaned == len(rows) and rows:
+        print(f"NOTHING IS ATTRIBUTED: all {len(rows)} trades carry no instance and"
+              " no strategy.", file=out)
+        print("  This is not a clean bill of health. Every per-instance card and"
+              " every per-strategy", file=out)
+        print("  statistic scopes by instance_id, so these trades are invisible to"
+              " all of them --", file=out)
+        print("  a real record that no page can report and no strategy can be"
+              " credited or blamed for.", file=out)
+        print("  Trades written by the global webhook paper engine carry no"
+              " instance; per-instance", file=out)
+        print("  workers write through a scoped ledger and do. A table that is"
+              " entirely unscoped", file=out)
+        print("  means the instance workers have recorded nothing here.", file=out)
+    elif orphaned:
+        print(f"PARTIALLY ATTRIBUTED: {orphaned} of {len(rows)} trades carry no"
+              " instance or no strategy.", file=out)
+        print("  Those are invisible to the per-instance cards, which scope by"
+              " instance_id.", file=out)
     elif by_instance:
         print("Every instance's trades come from a single strategy: the dashboard's"
               " attribution is correct.", file=out)
     return {"trades": len(rows), "instances": len(by_instance), "mixed": mixed,
-            "matched": True}
+            "unattributed": orphaned, "matched": True}
 
 
 def main(argv=None) -> int:

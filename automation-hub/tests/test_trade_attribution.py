@@ -155,3 +155,37 @@ def test_the_reported_total_is_not_capped_by_the_listing_limit(attribution, tmp_
     assert "the ledger holds 30 paper trades" in text
     assert "symbols present (top 20 of 30)" in text
     assert "instances present (top 20 of 30)" in text
+
+
+def test_a_wholly_unattributed_ledger_is_not_a_clean_bill_of_health(attribution, tmp_path):
+    """The defect this caught in the field: 2804 trades, every one with no
+    instance and no strategy, reported as "attribution is correct" -- because
+    one group called (unattributed) under one instance called (no instance)
+    trivially satisfies "one strategy per instance". That is the exact
+    situation the tool exists to find."""
+    rows = [(f"t{n}", "BTCUSDT", "closed", "", "", 1.0) for n in range(2804)]
+    totals, text = _run(attribution, _ledger(tmp_path, rows))
+    assert totals["unattributed"] == 2804
+    assert "NOTHING IS ATTRIBUTED" in text
+    assert "not a clean bill of health" in text
+    assert "attribution is correct" not in text
+
+
+def test_a_partly_unattributed_ledger_says_how_many(attribution, tmp_path):
+    rows = [("t1", "BTCUSDT", "closed", "pa_rulebook:0.1.0", "inst-1", 1.0),
+            ("t2", "BTCUSDT", "closed", "", "", -1.0),
+            ("t3", "BTCUSDT", "closed", "", "", -1.0)]
+    totals, text = _run(attribution, _ledger(tmp_path, rows))
+    assert totals["unattributed"] == 2
+    assert "PARTIALLY ATTRIBUTED: 2 of 3" in text
+    assert "attribution is correct" not in text
+
+
+def test_a_fully_attributed_ledger_still_gets_the_all_clear(attribution, tmp_path):
+    """The all-clear must survive -- it just has to mean something now."""
+    rows = [(f"t{n}", "BTCUSDT", "closed", "pa_rulebook:0.1.0", "inst-1", 1.0)
+            for n in range(5)]
+    totals, text = _run(attribution, _ledger(tmp_path, rows))
+    assert totals["unattributed"] == 0
+    assert "attribution is correct" in text
+    assert "NOTHING IS ATTRIBUTED" not in text
