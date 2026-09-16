@@ -38,12 +38,19 @@ def pearson(a: list[float], b: list[float]) -> float | None:
     return round(cov / (va * vb), 3)
 
 
+def _r(trade: dict) -> float:
+    try:
+        return float(trade.get("r") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _daily_r(trades: list[dict]) -> dict[str, float]:
     out: dict[str, float] = {}
     for t in trades:
         day = (t.get("exit_time") or "")[:10]
         if day:
-            out[day] = out.get(day, 0.0) + float(t.get("r") or 0.0)
+            out[day] = out.get(day, 0.0) + _r(t)
     return out
 
 
@@ -68,7 +75,7 @@ def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 25
     for strat in strategies:
         agg_trades: list[dict] = []
         wins = total = 0
-        net = gp = gl = dd = 0.0
+        net = dd = 0.0
         for sym, (rows, _src) in data.items():
             res = _run_on(strat, sym, timeframe, {}, None, rows)
             if "error" in res:
@@ -79,9 +86,15 @@ def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 25
             total += n
             wins += round(res.get("win_rate", 0) / 100 * n)
             net += res.get("net_r", 0.0)
-            gp += res.get("gross_profit_r", 0.0) or 0.0
-            gl += abs(res.get("gross_loss_r", 0.0) or 0.0)
             dd = max(dd, res.get("max_drawdown_pct", 0.0) or 0.0)
+        # Profit factor comes from the trades themselves. It used to read
+        # gross_profit_r / gross_loss_r off the simulator result, and the
+        # simulator has never produced either key -- so the column rendered a
+        # dash for every strategy in every league, which reads as "not
+        # applicable" rather than "never computed". The per-trade R is already
+        # aggregated here for the correlation stream; this is the same number.
+        gp = sum(_r(t) for t in agg_trades if _r(t) > 0)
+        gl = abs(sum(_r(t) for t in agg_trades if _r(t) < 0))
         expectancy = round(net / total, 3) if total else None
         if total < MIN_TRADES:
             verdict = "insufficient-sample"

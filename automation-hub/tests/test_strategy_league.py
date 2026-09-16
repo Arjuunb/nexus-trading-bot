@@ -1,5 +1,7 @@
 """Strategy League: ranked by expectancy (not raw win rate), daily-return
 correlations, honest no-data verdict, actionable best pairing."""
+from pathlib import Path
+
 import pytest
 
 from services.strategy_league import _daily_r, league, pearson
@@ -74,3 +76,62 @@ def test_league_endpoint():
     client = TestClient(app)
     body = client.get("/strategy/league", params={"symbols": "BTCUSDT", "bars": 800}).json()
     assert "available" in body
+
+# ────────────────────────── profit factor ──────────────────────────
+def test_profit_factor_is_computed_from_the_trades_not_a_key_nobody_writes():
+    """It used to read gross_profit_r / gross_loss_r off the simulator result.
+
+    Neither key exists anywhere in the codebase, so the column rendered a dash
+    for every strategy in every league that has ever run -- which reads as "not
+    applicable" and is really "never computed". This pins it to the per-trade R
+    the league already aggregates for the correlation stream.
+    """
+    import ast
+
+    from services import strategy_league as module
+
+    # An AST walk, not a substring scan: the comment explaining this fix names
+    # both dead keys, and a text search would match its own explanation. What
+    # must not exist is a *read* of them.
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    read = {node.args[0].value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+            and node.args and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)}
+    assert "gross_profit_r" not in read, "the simulator has never written this key"
+    assert "gross_loss_r" not in read, "the simulator has never written this key"
+
+    rep = league(symbols=("ZZZUSDT",), timeframe="1h", bars=2000,
+                 strategies=["Decision Brain", "EMA 8/30", "EMA 20/50"],
+                 require_real=False)
+    judged = [r for r in rep["table"] if r["verdict"] != "insufficient-sample"]
+    assert judged, "the fixture must judge at least one strategy"
+    assert any(r["profit_factor"] is not None for r in judged), \
+        "a judged strategy with losses must report a profit factor"
+
+
+def test_profit_factor_agrees_with_the_sign_of_the_result():
+    """PF above 1 and a losing verdict cannot both be true."""
+    rep = league(symbols=("ZZZUSDT",), timeframe="1h", bars=2000,
+                 strategies=["Decision Brain", "EMA 8/30", "EMA 20/50"],
+                 require_real=False)
+    for row in rep["table"]:
+        if row["profit_factor"] is None or row["verdict"] == "insufficient-sample":
+            continue
+        if row["verdict"] == "earning":
+            assert row["profit_factor"] > 1
+        elif row["verdict"] == "losing":
+            assert row["profit_factor"] < 1
+
+
+def test_a_strategy_with_no_losing_trade_reports_no_profit_factor():
+    """Dividing by zero gross loss is not a profit factor of infinity, and
+    printing one would be the most flattering number on the page."""
+    from services.strategy_league import _r
+
+    assert _r({"r": None}) == 0.0
+    assert _r({}) == 0.0
+    assert _r({"r": "bad"}) == 0.0
+    assert _r({"r": "1.5"}) == 1.5
