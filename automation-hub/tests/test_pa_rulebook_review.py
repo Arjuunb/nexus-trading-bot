@@ -7,6 +7,7 @@ and that the escaping holds.
 """
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 from datetime import timedelta
@@ -257,3 +258,22 @@ def test_the_text_reconciliation_admits_a_partial_run(review, audit):
     out = io.StringIO()
     review.summarise(partial, out=out)
     assert "PARTIAL" in out.getvalue()
+
+
+def test_the_text_reconciliation_contains_no_markup(review, audit):
+    """It shipped once printing the literal text "&mdash;" in a column of
+    numbers, because the page's formatter was reused without changing the
+    placeholder. Plain text output must be plain text."""
+    import io
+    refused = copy.deepcopy(audit)
+    for record in refused["confirmations"]:
+        record["plan"] = {**(record.get("plan") or {}), "net_rr": None,
+                          "stop_distance_atr": None, "entry_drift_atr": None}
+    out = io.StringIO()
+    review.summarise(refused, out=out)
+    text = out.getvalue()
+
+    assert "&mdash;" not in text
+    assert "&" not in text.replace("&&", "")      # no entity of any kind
+    assert "<" not in text and ">" not in text.replace("->", "")
+    assert " -- " in text                          # the plain-text stand-in

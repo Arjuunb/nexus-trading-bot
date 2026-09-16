@@ -65,10 +65,20 @@ def _e(value) -> str:
     return html.escape(str(value), quote=True)
 
 
-def _num(value, digits: int = 2) -> str:
+def _num(value, digits: int = 2, blank: str = "&mdash;") -> str:
+    """Format for the page. ``blank`` is what stands in for a missing number.
+
+    It is a parameter because the same formatter feeds the plain-text
+    reconciliation, where the HTML entity is not a dash, it is the literal
+    text "&mdash;" in the middle of a column of numbers.
+    """
     if value is None:
-        return "&mdash;"
+        return blank
     return f"{value:,.{digits}f}"
+
+
+def _txt(value, digits: int = 2) -> str:
+    return _num(value, digits, blank="--")
 
 
 def _when(iso: str) -> str:
@@ -402,7 +412,7 @@ def summarise(audit: dict, out=sys.stdout) -> None:
              f"|E-S| / ATR15, n={len(clean(stops))}"),
             (_median(drifts), "median entry drift, ATR15",
              f"(E - rejection close) / ATR15, n={len(clean(drifts))}")):
-        line(f"  {_num(value):>8}  {label:<28} {formula}")
+        line(f"  {_txt(value):>8}  {label:<28} {formula}")
     if clean(rrs):
         values = sorted(clean(rrs))
         line(f"  {values[0]:>8.2f}  lowest net RR")
@@ -428,8 +438,8 @@ def summarise(audit: dict, out=sys.stdout) -> None:
         plan = record.get("plan") or {}
         line(f"  {record['index']:>3}  {_when(record['at']):<16} "
              f"{record['strategy_id']:<22} {record['direction']:<5} "
-             f"{_num(plan.get('net_rr')):>6} {_num(plan.get('stop_distance_atr')):>7} "
-             f"{_num(plan.get('entry_drift_atr')):>8}  {record['verdict']}")
+             f"{_txt(plan.get('net_rr')):>6} {_txt(plan.get('stop_distance_atr')):>7} "
+             f"{_txt(plan.get('entry_drift_atr')):>8}  {record['verdict']}")
 
 
 def _vars(palette: dict) -> str:
