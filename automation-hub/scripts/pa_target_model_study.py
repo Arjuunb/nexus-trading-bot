@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Does the rulebook's target model, or the 2.5R gate, cost it every trade?
 
-The 2025 BTCUSDT replay produced 1,730 setups, 55 confirmations and 1 accepted
-plan. The rejections were not spread evenly: 32 of 55 were NET_RR_TOO_LOW, the
-median net RR was 0.21R against a 2.5R gate, and the room from entry to the
-chosen target was a median 15% of what that gate required. The stop was not the
-cause -- corr(net_rr, stop_ATR) was -0.02.
+The 2025 BTCUSDT replay produced 1,664 setups, 57 confirmations and 1 accepted
+plan. The rejections were not spread evenly: most were NET_RR_TOO_LOW, the
+median net RR was a fraction of the 2.5R gate, and the room from entry to the
+chosen target was a small fraction of what that gate required. The stop was not
+the cause -- corr(net_rr, stop_ATR) was ~0.
 
-That points at the target model, so this measures the target model. For each
+That pointed at the target model, so this measures the target model. For each
 confirmation the replay already recorded, it recomputes the plan under several
 candidate targets on identical terms -- same entry, same stop, same cost model,
 same gate -- and then walks the real 5M candles forward to see which came
@@ -30,6 +30,16 @@ Candidates:
                  entries, does the market ever travel the distance the 2.5R
                  gate demands before the stop? If it does not, no target model
                  can rescue this strategy and the gate itself is the subject.
+
+WHAT IT ANSWERED, on 2025 BTCUSDT 5M (104,242 venue candles, 57
+confirmations): no. Every variant that resolved at least MIN_RESOLVED trades
+lost money, each with negative expectancy, so every extra plan a looser target
+admitted was a losing trade in expectation. 'gate_exact' -- the gate stated
+as a price -- cleared all 57, paid ~2.5R on a win, needed >28.6% of them to
+reach target and reached 21%. Loosening the target converts refusals into
+losses. The binding constraint is the gate and the entries, not the target
+model. One symbol, one year: a direction to test next, not a conclusion about
+money.
 
 RESEARCH ONLY. It reads a replay audit and closed candles and prints. It places
 no order, writes to no database, and changes no strategy: services/
@@ -58,6 +68,10 @@ R_MULTIPLES = (2.5, 3.0, 4.0)
 #: Reported separately from wins and losses: a trade that never resolved is not
 #: a scratch, and folding it into either would flatter or punish arbitrarily.
 DEFAULT_MAX_HOLD = 288
+#: Resolved trades a variant needs before the summary will compare it to
+#: anything. Below this the R total is one or two outcomes wearing a decimal
+#: point, and a search over ten variants will always surface one of them.
+MIN_RESOLVED = 5
 
 
 def _live_opposing(zones: list[dict], direction: str, entry: float) -> list[dict]:
@@ -238,6 +252,46 @@ def _covers(bars, records, max_hold: int) -> dict:
     }
 
 
+def _resolved(bucket: dict) -> int:
+    """Trades that reached an outcome. A timeout is not one: it is neither a
+    win nor a loss, and folding it into either would flatter or punish."""
+    return bucket["target"] + bucket["stop"] + bucket["ambiguous"]
+
+
+def _breakeven(bucket: dict):
+    """The win rate this variant's average reward needs, to break even.
+
+    A win pays its net RR, a loss costs 1R, so p x reward = (1 - p) x 1 and
+    p = 1 / (1 + reward). Printed beside the observed win rate because a
+    variant with a big target and a low hit rate reads as promising right up
+    until the two numbers are put next to each other.
+    """
+    nets = bucket.get("pass_nets") or []
+    if not nets:
+        return None
+    reward = sum(nets) / len(nets)
+    if reward <= -1.0:
+        return None
+    return 100.0 / (1.0 + reward)
+
+
+def _candidate(results: dict, names):
+    """The one variant, if any, worth calling a hypothesis.
+
+    Three bars, not one. Enough resolved trades to be a sample, a POSITIVE
+    realised R, and more of it than the shipped model. Ranking on realised R
+    alone named the least-bad loser: every variant can be under water and one
+    of them is still the maximum.
+    """
+    control = results["control"]
+    sized = [n for n in names
+             if n != "control" and _resolved(results[n]) >= MIN_RESOLVED]
+    candidates = [n for n in sized if results[n]["r_sum"] > 0
+                  and results[n]["r_sum"] > control["r_sum"]]
+    best = max(candidates, key=lambda n: results[n]["r_sum"]) if candidates else None
+    return best, sized
+
+
 def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
           costs, out) -> dict:
     from datetime import datetime
@@ -249,8 +303,8 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
     names += [f"r_{k:g}" for k in R_MULTIPLES]
     names.append("gate_exact")
     results = {name: {"priced": 0, "undefined": 0, "passed": 0, "net_rrs": [],
-                      "target": 0, "stop": 0, "ambiguous": 0, "timeout": 0,
-                      "unresolved": 0, "r_sum": 0.0, "holds": []}
+                      "pass_nets": [], "target": 0, "stop": 0, "ambiguous": 0,
+                      "timeout": 0, "unresolved": 0, "r_sum": 0.0, "holds": []}
                for name in names}
 
     for record in records:
@@ -275,6 +329,10 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
             if net < min_net_rr:
                 continue                      # the gate refused it; no trade
             bucket["passed"] += 1
+            # Reward on the plans that became trades, which is what the
+            # break-even win rate is computed from. net_rrs includes the ones
+            # the gate refused, so it would understate what a win pays.
+            bucket["pass_nets"].append(net)
             verdict, held = _outcome(bars, at, direction, entry, stop,
                                      float(target), max_hold)
             bucket[verdict] += 1
@@ -309,8 +367,8 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
     print(file=out)
 
     head = (f"  {'variant':<16}{'priced':>7}{'n/a':>5}{'pass':>6}{'median':>8}"
-            f"{'hit':>6}{'stop':>6}{'amb':>5}{'t/o':>5}{'win%':>7}{'exp R':>8}"
-            f"{'net R':>8}")
+            f"{'hit':>6}{'stop':>6}{'amb':>5}{'t/o':>5}{'win%':>7}{'b/e%':>7}"
+            f"{'exp R':>8}{'net R':>8}")
     print(head, file=out)
     print("  " + "-" * (len(head) - 2), file=out)
     for name in names:
@@ -319,10 +377,12 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
         median = statistics.median(b["net_rrs"]) if b["net_rrs"] else None
         win = (100.0 * b["target"] / resolved) if resolved else None
         exp = (b["r_sum"] / resolved) if resolved else None
+        breakeven = _breakeven(b)
         print(f"  {name:<16}{b['priced']:>7}{b['undefined']:>5}{b['passed']:>6}"
               f"{(f'{median:.2f}' if median is not None else '--'):>8}"
               f"{b['target']:>6}{b['stop']:>6}{b['ambiguous']:>5}{b['timeout']:>5}"
               f"{(f'{win:.0f}' if win is not None else '--'):>7}"
+              f"{(f'{breakeven:.0f}' if breakeven is not None else '--'):>7}"
               f"{(f'{exp:+.2f}' if exp is not None else '--'):>8}"
               f"{b['r_sum']:>+8.2f}", file=out)
 
@@ -331,38 +391,80 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
     print("  n/a     confirmations it could not -- counted, never skipped.", file=out)
     print("  pass    priced plans that cleared the net RR gate, so would trade.", file=out)
     print("  median  median net RR across every priced plan, gate or no gate.", file=out)
+    print("  b/e%    win rate this variant's average reward needs, to break even.", file=out)
+    print("          win% under b/e% is a losing variant however green it looks.", file=out)
     print("  amb     one bar spanned target AND stop; resolved as a LOSS.", file=out)
     print("  t/o     open past the max hold; counted in neither win nor loss.", file=out)
     print(file=out)
 
-    control, best = results["control"], None
-    for name in names:
-        b = results[name]
-        resolved = b["target"] + b["stop"] + b["ambiguous"]
-        if resolved >= 5 and (best is None or b["r_sum"] > results[best]["r_sum"]):
-            best = name
+    control = results["control"]
+    best, sized = _candidate(results, names)
+    losers = [n for n in sized if results[n]["r_sum"] < 0]
+    # Positive, and too thin to mean it. Named rather than left in the table
+    # to be read as a winner: across this many variants it is the cell a
+    # search is likeliest to produce by chance.
+    thin = [n for n in names if n != "control" and results[n]["r_sum"] > 0
+            and 0 < _resolved(results[n]) < MIN_RESOLVED]
+
     print("  READING THIS TABLE", file=out)
     print(f"    The shipped model priced {control['priced']} of {len(records)} "
           f"confirmations and {control['passed']} cleared the gate.", file=out)
-    if best and best != "control":
+    if best:
         b = results[best]
         print(f"    '{best}' cleared it {b['passed']} times for {b['r_sum']:+.2f}R "
-              f"across {b['target'] + b['stop'] + b['ambiguous']} resolved trades.",
-              file=out)
+              f"across {_resolved(b)} resolved trades.", file=out)
         print("    That is a HYPOTHESIS, not a result: one symbol, one year, one"
               " parameter set,", file=out)
         print("    chosen after seeing the outcomes. It needs an out-of-sample"
               " window and then", file=out)
         print("    forward paper before it means anything about money.", file=out)
-    elif best == "control":
-        print("    No variant beat the shipped model on realised R. The target"
-              " model is not", file=out)
-        print("    the binding constraint it looked like.", file=out)
+    elif sized:
+        print("    No variant beat the shipped model on realised R.", file=out)
+        if losers and len(losers) == len(sized):
+            # Every sized variant has negative expectancy, so this holds
+            # per trade and not merely in total -- which a "traded most,
+            # lost most" ranking would not, the moment two variants tied.
+            print(f"    All {len(sized)} variants that resolved at least "
+                  f"{MIN_RESOLVED} trades lost money, so every extra", file=out)
+            print("    plan a looser target admits is a losing trade in"
+                  " expectation. Loosening the", file=out)
+            print("    target converts refusals into losses -- the failure an"
+                  " acceptance count", file=out)
+            print("    alone would have scored as a win.", file=out)
+        elif losers:
+            print(f"    {len(losers)} of the {len(sized)} variants that resolved "
+                  f"at least {MIN_RESOLVED} trades lost money,", file=out)
+            print("    so on this window a looser target mostly bought losing"
+                  " trades.", file=out)
+        print("    The target model is not the binding constraint it looked"
+              " like.", file=out)
     else:
         print("    No variant resolved enough trades to compare. The sample is"
               " the finding:", file=out)
         print("    this strategy does not trade often enough to measure at this"
               " window size.", file=out)
+
+    gate = results.get("gate_exact")
+    if gate and _resolved(gate) >= MIN_RESOLVED and gate["pass_nets"]:
+        reward = sum(gate["pass_nets"]) / len(gate["pass_nets"])
+        breakeven = _breakeven(gate)
+        win = 100.0 * gate["target"] / _resolved(gate)
+        if breakeven is not None:
+            print(f"    'gate_exact' is the {min_net_rr}R gate stated as a price."
+                  f" It pays {reward:.2f}R on a win,", file=out)
+            print(f"    so it needs {breakeven:.1f}% of its trades to reach "
+                  f"target to break even. It reached {win:.0f}%.", file=out)
+            print("    That is a question about the gate and the entries, not"
+                  " about the target model.", file=out)
+
+    for name in thin:
+        b = results[name]
+        print(f"    '{name}' shows {b['r_sum']:+.2f}R, but on {_resolved(b)} "
+              f"resolved trades. That is not a", file=out)
+        print(f"    finding -- it is the cell a search across {len(names)} "
+              "variants is likeliest to", file=out)
+        print("    produce by chance, and it is the one most likely to be"
+              " mistaken for one.", file=out)
     return {"variants": results, "confirmations": len(records)}
 
 

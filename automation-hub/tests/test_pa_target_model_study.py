@@ -212,6 +212,85 @@ def test_a_winning_variant_is_reported_as_a_hypothesis(study):
         assert banned not in text.lower()
 
 
+def test_a_losing_variant_is_never_presented_as_a_hypothesis(study):
+    """The regression this test exists for: ranking on realised R alone named
+    the least-bad LOSER as a candidate. Every variant can be under water and
+    one of them is still the maximum."""
+    # Every plan that clears the gate is stopped out on the first bar.
+    records = [_record() for _ in range(6)]
+    result, text = _run(study, records, _bars([(100.1, 98.5)] * 3))
+
+    traded = {n: b for n, b in result["variants"].items() if b["passed"]}
+    assert traded, "the scenario must produce trades, or it proves nothing"
+    assert all(b["r_sum"] < 0 for b in traded.values())
+
+    assert "HYPOTHESIS" not in text
+    assert "No variant beat the shipped model" in text
+    assert "lost money" in text
+
+
+def _bucket(r_sum, resolved, **kw):
+    return {"target": resolved, "stop": 0, "ambiguous": 0, "timeout": 0,
+            "priced": resolved, "passed": resolved, "undefined": 0,
+            "net_rrs": [], "pass_nets": [], "holds": [], "unresolved": 0,
+            "r_sum": float(r_sum), **kw}
+
+
+def test_the_least_bad_loser_is_not_a_candidate(study):
+    """Straight at the selection: the exact shape the full-year run produced,
+    where every sized variant lost and the maximum was merely the smallest
+    loss."""
+    names = ["control", "r_3", "r_4", "gate_exact"]
+    results = {"control": _bucket(-1.0, 1), "r_3": _bucket(-6.45, 10),
+               "r_4": _bucket(-19.80, 50), "gate_exact": _bucket(-13.50, 52)}
+    best, sized = study._candidate(results, names)
+    assert best is None
+    assert set(sized) == {"r_3", "r_4", "gate_exact"}
+
+
+def test_a_variant_only_counts_if_it_also_beats_the_shipped_model(study):
+    """Positive is not enough. A variant that earns less than the model it
+    would replace is not an improvement, however green its cell."""
+    names = ["control", "rival"]
+    results = {"control": _bucket(20.0, 9), "rival": _bucket(5.0, 9)}
+    assert study._candidate(results, names)[0] is None
+    results["rival"]["r_sum"] = 25.0
+    assert study._candidate(results, names)[0] == "rival"
+
+
+def test_a_thin_winner_is_not_a_candidate_however_large(study):
+    """Four resolved trades at +40R is still four trades."""
+    names = ["control", "lucky"]
+    results = {"control": _bucket(1.0, 9),
+               "lucky": _bucket(40.0, study.MIN_RESOLVED - 1)}
+    assert study._candidate(results, names)[0] is None
+
+
+def test_a_positive_variant_below_the_sample_floor_is_named_as_noise(study):
+    """The +0.72R on three trades that a ten-variant search will always throw
+    up somewhere. Leaving it in the table unremarked is how it gets shipped."""
+    records = [_record() for _ in range(3)]
+    result, text = _run(study, records, _bars([(120.0, 99.5)] * 3))
+
+    winners = [n for n, b in result["variants"].items()
+               if b["r_sum"] > 0 and 0 < study._resolved(b) < study.MIN_RESOLVED]
+    assert winners, "the scenario must produce a thin winner"
+    assert "HYPOTHESIS" not in text
+    assert "likeliest to" in text and "by chance" in text
+    for name in winners:
+        assert f"'{name}' shows" in text
+
+
+def test_the_break_even_win_rate_is_printed_beside_the_observed_one(study):
+    """A 2.5R target needs better than 28.6% to pay. Without that number on
+    the page, a 21% hit rate reads as 'nearly there'."""
+    records = [_record() for _ in range(6)]
+    _, text = _run(study, records, _bars([(100.1, 98.5)] * 3), min_net_rr=2.5)
+    assert "b/e%" in text
+    assert "to break even" in text
+    assert "28." in text and "It reached 0%" in text
+
+
 def test_too_few_resolved_trades_says_so_rather_than_ranking(study):
     """One or two trades is not a comparison, and printing a winner from it
     would be the same thin-sample error the league makes at 13."""
