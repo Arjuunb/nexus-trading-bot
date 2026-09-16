@@ -69,7 +69,8 @@ def reset_cache() -> None:
 
 
 def _fetch_pages(symbol: str, timeframe: str, venue: str, wanted: int,
-                 fetcher: Callable, now: datetime) -> list:
+                 fetcher: Callable, now: datetime, *,
+                 max_pages: int = MAX_PAGES) -> list:
     """Walk forward from the start of the window until it reaches the present.
 
     Forward rather than backward because that is the direction ``since`` takes
@@ -85,7 +86,7 @@ def _fetch_pages(symbol: str, timeframe: str, venue: str, wanted: int,
     since_ms = int(start.timestamp() * 1000)
     collected: dict[datetime, object] = {}
 
-    for _ in range(MAX_PAGES):
+    for _ in range(max_pages):
         page = fetcher(symbol, timeframe, venue, PAGE_CANDLES, since_ms=since_ms)
         if not page:
             break
@@ -102,9 +103,15 @@ def _fetch_pages(symbol: str, timeframe: str, venue: str, wanted: int,
     return [collected[key] for key in sorted(collected)]
 
 
+def pages_for(limit: int) -> int:
+    """Pages a window of ``limit`` candles needs, plus one for the boundary."""
+    return max(1, -(-limit // PAGE_CANDLES) + 1)
+
+
 def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
                 limit: int = 300, now: Optional[datetime] = None,
-                fetcher: Optional[Callable] = None) -> list:
+                fetcher: Optional[Callable] = None,
+                max_pages: int = MAX_PAGES, use_cache: bool = True) -> list:
     """Closed candles from the venue, newest last, at most ``limit`` of them.
 
     A held series is reused only while its newest candle is still FRESH and it
@@ -112,6 +119,12 @@ def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
     authority's own rule a closed candle is current until the next one of that
     timeframe is due, so reusing a fresh series cannot serve stale data, and
     the moment it could the next call refetches.
+
+    ``max_pages`` bounds the walk. The default suits a chart or a strategy
+    comparison; a research replay wanting a year of 5M candles must raise it
+    deliberately and say so, rather than silently receiving a short window and
+    reporting a year. ``use_cache=False`` is for exactly that caller: a year of
+    candles is not something to leave resident in a serving process.
     """
     from bot.data.resample import TF_SECONDS
     from data.forward_market_data import valid_closed_bars
@@ -128,7 +141,7 @@ def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
     key = (symbol, timeframe, venue)
 
     with _LOCK:
-        held = _SERIES.get(key)
+        held = _SERIES.get(key) if use_cache else None
         failed_at, reason = _FAILURES.get(key, (0.0, ""))
     # Current enough AND fetched for a window at least this wide. The second
     # half matters: a series cached for a 300-candle chart must not be handed
@@ -148,7 +161,8 @@ def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
         if limit <= PAGE_CANDLES:
             raw = fetcher(symbol, timeframe, venue, min(limit + 2, PAGE_CANDLES))
         else:
-            raw = _fetch_pages(symbol, timeframe, venue, limit, fetcher, observed)
+            raw = _fetch_pages(symbol, timeframe, venue, limit, fetcher, observed,
+                               max_pages=max_pages)
     except (NativeSMCLiveDataUnavailable, KeyError, ValueError) as exc:
         with _LOCK:
             _FAILURES[key] = (monotonic(), str(exc))
@@ -163,7 +177,8 @@ def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
 
     with _LOCK:
         _FAILURES.pop(key, None)
-        _SERIES[key] = (rows, limit)
-        while len(_SERIES) > MAX_CACHED_SERIES:
-            _SERIES.pop(next(iter(_SERIES)))
+        if use_cache:
+            _SERIES[key] = (rows, limit)
+            while len(_SERIES) > MAX_CACHED_SERIES:
+                _SERIES.pop(next(iter(_SERIES)))
     return rows[-limit:]

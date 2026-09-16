@@ -173,3 +173,61 @@ def test_an_interrupted_run_still_leaves_a_readable_partial_audit(
     progress = payload["meta"]["progress"]
     assert 0 < progress["candles_judged"] < progress["candles_total"]
     assert progress["through"]
+
+
+# ─────────────────────── the window it actually measured ───────────────────────
+
+def _rows(first, count, minutes=5):
+    return [Bar(first + timedelta(minutes=minutes * i), 100.0, 101.0, 99.0, 100.5, 1.0)
+            for i in range(count)]
+
+
+def test_a_short_window_is_reported_as_short(replay_module):
+    """The defect this exists for: the local store had lost nine months, and
+    the replay still produced a tidy funnel labelled 2025. Every count in that
+    report described a quarter."""
+    from datetime import datetime, timezone
+
+    rows = _rows(datetime(2025, 10, 1, tzinfo=timezone.utc), 500)
+    coverage = replay_module._coverage(rows, "2025-01-01", "2026-01-01")
+    assert coverage["short"] is True
+    assert coverage["held"].startswith("2025-10-01")
+    assert coverage["asked"] == "2025-01-01 -> 2026-01-01"
+
+
+def test_a_covered_window_is_not_flagged(replay_module):
+    from datetime import datetime, timezone
+
+    rows = _rows(datetime(2025, 1, 1, tzinfo=timezone.utc), 105_120)
+    coverage = replay_module._coverage(rows, "2025-01-01", "2026-01-01")
+    assert coverage["short"] is False
+
+
+def test_one_candle_of_slack_at_each_edge_is_not_a_short_window(replay_module):
+    """The first bar opens at the boundary and the last closes before it, so an
+    exact-match requirement would flag every correct run."""
+    from datetime import datetime, timezone
+
+    rows = _rows(datetime(2025, 1, 1, 0, 5, tzinfo=timezone.utc), 105_119)
+    coverage = replay_module._coverage(rows, "2025-01-01", "2026-01-01")
+    assert coverage["short"] is False
+
+
+def test_an_open_ended_request_is_never_short(replay_module):
+    from datetime import datetime, timezone
+
+    rows = _rows(datetime(2025, 10, 1, tzinfo=timezone.utc), 500)
+    assert replay_module._coverage(rows, None, None)["short"] is False
+
+
+def test_the_venue_is_asked_before_the_local_store(replay_module):
+    """The store is only as deep as the last /data/sync left it, so it cannot
+    be what decides how much history a year-long replay gets."""
+    import inspect
+
+    source = inspect.getsource(replay_module._load)
+    assert source.index("live_series") < source.index("get_bars"), \
+        "the venue must be tried first"
+    assert "use_cache=False" in source, "a year of candles must not stay resident"
+    assert "require_real=True" in source, "the fallback still refuses fixtures"
+    assert "venue unavailable" in source, "a fallback must say why it fell back"

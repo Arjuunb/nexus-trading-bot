@@ -254,6 +254,15 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
     print(f"  source      {meta.get('sources', {})}", file=out)
     if not meta.get("complete", True):
         print("  WARNING     the replay audit is a PARTIAL checkpoint", file=out)
+    window = meta.get("window") or {}
+    if window.get("short"):
+        # The audit knows its own window fell short. Carrying that here matters
+        # more than in the replay: by this point the numbers have been through
+        # two tools and look like a year's worth of evidence.
+        print(f"  WARNING     the replay covered {window.get('held')}, "
+              f"not the {window.get('asked')} it was asked for", file=out)
+        print("              every count below is over that shorter window",
+              file=out)
     print(f"  confirmations {len(records)}   gate {min_net_rr}R   "
           f"max hold {max_hold} bars", file=out)
     print(file=out)

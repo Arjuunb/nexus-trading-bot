@@ -278,3 +278,30 @@ def test_gate_exact_is_priced_for_every_confirmation(study):
     assert result["variants"]["gate_exact"]["priced"] == 4
     assert result["variants"]["gate_exact"]["undefined"] == 0
     assert result["variants"]["gate_exact"]["passed"] == 4
+
+
+def test_a_short_replay_window_is_carried_through_to_the_study(study):
+    """By this point the numbers have passed through two tools and look like a
+    year of evidence. The audit knows its window fell short; say so here too."""
+    from services.pa_rulebook_v01 import CostModel
+
+    out = io.StringIO()
+    study.study({"meta": {"symbol": "BTCUSDT", "complete": True,
+                          "window": {"short": True, "held": "2025-10-01 -> 2025-12-31",
+                                     "asked": "2025-01-01 -> 2026-01-01"}},
+                 "confirmations": []}, _bars([(100.0, 100.0)]),
+                max_hold=288, min_net_rr=2.5, tick=0.1, costs=CostModel(), out=out)
+    text = out.getvalue()
+    assert "the replay covered 2025-10-01 -> 2025-12-31" in text
+    assert "not the 2025-01-01 -> 2026-01-01 it was asked for" in text
+
+
+def test_a_covered_window_prints_no_warning(study):
+    from services.pa_rulebook_v01 import CostModel
+
+    out = io.StringIO()
+    study.study({"meta": {"symbol": "BTCUSDT", "complete": True,
+                          "window": {"short": False}}, "confirmations": []},
+                _bars([(100.0, 100.0)]), max_hold=288, min_net_rr=2.5,
+                tick=0.1, costs=CostModel(), out=out)
+    assert "WARNING" not in out.getvalue()

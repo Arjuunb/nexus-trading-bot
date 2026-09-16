@@ -31,9 +31,9 @@ from typing import Optional                                        # noqa: E402
 
 from bot.types import Bar                                          # noqa: E402
 from services.pa_rulebook_v01 import (                             # noqa: E402
-    CONFIRM_TF, CONTEXT_TF, FLIP_RETEST_ID, RULEBOOK_VERSION, SETUP_TF,
-    SR_REJECTION_ID, CostModel, PriceActionRulebookEngine, RulebookConfig,
-    SetupState,
+    CONFIRM_SECONDS, CONFIRM_TF, CONTEXT_TF, FLIP_RETEST_ID, RULEBOOK_VERSION,
+    SETUP_TF, SR_REJECTION_ID, CostModel, PriceActionRulebookEngine,
+    RulebookConfig, SetupState,
 )
 
 STRATEGY_CHOICES = {"rejection": SR_REJECTION_ID, "flip": FLIP_RETEST_ID,
@@ -41,17 +41,43 @@ STRATEGY_CHOICES = {"rejection": SR_REJECTION_ID, "flip": FLIP_RETEST_ID,
 
 
 def _load(symbol: str, timeframe: str, bars: int) -> list[Bar]:
-    """Closed candles for one timeframe, real data only.
+    """Closed candles for one timeframe, real data only, venue first.
 
-    ``require_real=True`` is not caution, it is the rulebook's rule: the
-    bundled sample and the synthetic generator are legitimate for charts and
-    fixtures and must never reach a strategy decision, even a replayed one --
-    a research result measured on manufactured candles is worse than no result.
+    The local store is only as deep as the last /data/sync left it. On this
+    deployment that turned a year of 5M candles into three months without
+    saying so: the replay still printed a summary, still called it 2025, and
+    the funnel underneath it described a quarter. A window that silently
+    shrinks is worse than one that fails, because the number it produces looks
+    exactly like the number it should have produced.
+
+    So the venue is asked first and paged to the full depth, with the store as
+    the fallback. Both are real; the printed source says which one answered, and
+    the candle count next to it says how deep it went.
+
+    ``require_real=True`` on that fallback is not caution, it is the rulebook's
+    rule: the bundled sample and the synthetic generator are legitimate for
+    charts and fixtures and must never reach a strategy decision, even a
+    replayed one -- a research result measured on manufactured candles is worse
+    than no result.
     """
+    from services.live_candle_source import (
+        LiveCandlesUnavailable,
+        live_series,
+        pages_for,
+    )
+
+    try:
+        rows = live_series(symbol, timeframe, limit=bars,
+                           max_pages=pages_for(bars), use_cache=False)
+    except LiveCandlesUnavailable as exc:
+        venue_error = str(exc)
+    else:
+        return list(rows), "venue binance_usdm (live)"
+
     from data.market_data import get_bars
 
     rows, source = get_bars(symbol, n=bars, timeframe=timeframe, require_real=True)
-    return list(rows), source
+    return list(rows), f"{source} [venue unavailable: {venue_error}]"
 
 
 def _at(value: str):
@@ -81,6 +107,33 @@ def _zone_row(zone) -> dict:
     return {"id": zone.id, "kind": zone.kind, "lower": zone.lower,
             "upper": zone.upper, "origin": zone.origin, "retired": zone.retired,
             "created_at": zone.created_at.isoformat()}
+
+
+def _coverage(rows, start, end) -> dict:
+    """What was asked for, what is held, and whether the second covers the first.
+
+    A missing day at either edge is not pedantry here: the funnel is a count
+    over the window, so a window that quietly halved halves every number in the
+    report while the heading still names the year.
+    """
+    from datetime import timedelta
+
+    first, last = rows[0].timestamp, rows[-1].timestamp
+    lower = _at(start) if start else None
+    upper = _at(end) if end else None
+    # One candle of slack at each edge: the first bar of a window opens at the
+    # boundary, and the last closes before it.
+    slack = timedelta(seconds=CONFIRM_SECONDS)
+    short = bool((lower is not None and first > lower + slack)
+                 or (upper is not None and last < upper - slack))
+    fmt = "%Y-%m-%d"
+    return {
+        "first": first.strftime(fmt), "last": last.strftime(fmt),
+        "asked": (f"{lower.strftime(fmt) if lower else 'any'} -> "
+                  f"{upper.strftime(fmt) if upper else 'any'}"),
+        "held": f"{first.strftime(fmt)} -> {last.strftime(fmt)}",
+        "short": short,
+    }
 
 
 def _audit_record(index, decision, engine, setup_rows, confirm_rows) -> dict:
@@ -179,12 +232,27 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
         if not rows:
             raise SystemExit(f"no {timeframe} candles for {symbol} (source: {source})")
 
+    # The window ASKED FOR against the window actually held. This is the check
+    # that was missing: a store that had lost nine months still produced a
+    # tidy funnel labelled 2025, and nothing in the output contradicted it.
+    coverage = _coverage(confirms, start, end)
+
     print(f"Nexus PA rulebook v{RULEBOOK_VERSION} -- RESEARCH REPLAY, NO ORDERS",
           flush=True)
     print(f"  symbol    {symbol}   strategies {engine.strategies}")
     print(f"  {CONTEXT_TF:>4} {len(context):>6} candles  {ctx_source}")
     print(f"  {SETUP_TF:>4} {len(setups):>6} candles  {setup_source}")
     print(f"  {CONFIRM_TF:>4} {len(confirms):>6} candles  {confirm_source}")
+    print(f"  window    {coverage['first']} -> {coverage['last']}")
+    if coverage["short"]:
+        print()
+        print("  !! WINDOW NOT COVERED "
+              f"-- asked for {coverage['asked']}, holds {coverage['held']}",
+              flush=True)
+        print("     Every count below describes the window that was HELD, not the "
+              "one requested.", flush=True)
+        print("     Read it as a replay of that shorter period, or re-run when the "
+              "candles exist.", flush=True)
     print()
 
     blockers: Counter = Counter()
@@ -220,6 +288,7 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
                      "first_candle": confirms[0].timestamp.isoformat(),
                      "last_candle": confirms[-1].timestamp.isoformat(),
                      "complete": complete,
+                     "window": coverage,
                      "progress": {"candles_judged": done,
                                   "candles_total": len(confirms),
                                   "through": through.isoformat()},
