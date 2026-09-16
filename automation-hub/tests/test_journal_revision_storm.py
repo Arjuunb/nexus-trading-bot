@@ -2,14 +2,19 @@
 
 On the production Price Action lab, 59,560 of 72,443 revisions carried the
 reason code MATERIAL_EVIDENCE_CHANGED while recording no lifecycle event at
-all. Each was a ~9.5 KB copy of the previous one, appended roughly once a
-second, growing the database about 860 MB a day until journal writes started
-timing out and the lab correctly refused to place orders it could not durably
-record.
+all. Each was a ~9.5 KB copy of the previous one, and together they grew the
+database until journal writes started timing out and the lab correctly refused
+to place orders it could not durably record.
 
-The cause was the dedupe hash, not the journal: it covered two bar counters
-that move on their own. These tests pin the difference between a change that
-justifies a revision and one that does not.
+The cause was the dedupe hash, not the journal: it covered three numbers that
+are positions in the runtime's rolling candle buffer rather than facts about
+the setup -- two bar counters and the entry expiry index. All three move as the
+window slides and jump when it is re-seeded. Excluding the counters alone left
+7,833 revisions still being written, and scripts/pa_journal_churn.py convicted
+the expiry index of 5,212 of them as the sole differing field.
+
+These tests pin the difference between a change that justifies a revision and
+one that does not.
 """
 from __future__ import annotations
 
@@ -27,6 +32,7 @@ def _record() -> dict:
         "market_context": {"regime": "BULL", "data_health_reason": "candles fresh"},
         "setup": {"id": "setup-1", "direction": "long", "invalidation_price": 100.0},
         "order_risk": {"order_id": "o-1", "actual_simulated_fill": 101.0,
+                       "expiry_index": 1242,
                        "spread": 0.0999999, "bid_ask_decision": {"bid": 78478.8, "ask": 78478.9}},
         "outcome": {"status": "OPEN", "result": None, "bars_in_trade": 1254,
                     "bars_to_entry": 12, "maximum_adverse_excursion": -0.4},
@@ -49,6 +55,31 @@ def test_a_drifting_bar_counter_does_not_justify_a_revision():
     before = _record()
     after = copy.deepcopy(before)
     after["outcome"]["bars_in_trade"] = 1253        # went DOWN, on its own
+    after["outcome"]["bars_to_entry"] = 11
+    assert _hash(before) == _hash(after)
+
+
+def test_a_drifting_entry_expiry_index_does_not_justify_a_revision():
+    """The field the churn measurement convicted.
+
+    expiry_index is ``len(bars) - 1 + entry_expiry_bars``, so it is wherever
+    the rolling buffer happens to end, not when the proposal expires. Re-seed
+    the buffer with fewer bars and it drops: 1242 to 235, observed between two
+    consecutive revisions of a setup nothing had happened to.
+    """
+    before = _record()
+    after = copy.deepcopy(before)
+    after["order_risk"]["expiry_index"] = 235       # the buffer was re-seeded
+    assert _hash(before) == _hash(after)
+
+
+def test_the_three_unstable_numbers_do_not_justify_a_revision_together():
+    """They were observed moving in the same capture; no combination of them
+    is a lifecycle event, so no combination may append a copy of the record."""
+    before = _record()
+    after = copy.deepcopy(before)
+    after["order_risk"]["expiry_index"] = 380
+    after["outcome"]["bars_in_trade"] = 1253
     after["outcome"]["bars_to_entry"] = 11
     assert _hash(before) == _hash(after)
 
@@ -95,4 +126,7 @@ def test_the_counters_are_still_recorded_even_though_they_are_not_hashed():
     record = _record()
     projection = PriceActionJournalStore._material_projection(record)
     assert "bars_in_trade" not in projection["outcome"]
+    assert "bars_to_entry" not in projection["outcome"]
+    assert "expiry_index" not in projection["order_risk"]
     assert record["outcome"]["bars_in_trade"] == 1254, "the caller's record was mutated"
+    assert record["order_risk"]["expiry_index"] == 1242, "the caller's record was mutated"

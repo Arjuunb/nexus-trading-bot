@@ -440,29 +440,42 @@ class PriceActionJournalStore:
         Quotes shown by the UI and current feed explanations are useful in a
         response, but are not new evidence about an already-created setup.
 
-        The bar counters belong here for a sharper reason: they are not stable.
-        native_price_action computes them as ``index - filled_index`` against a
-        rolling window, so both indices shift as the window slides and the
-        difference wobbles without anything happening to the trade -- observed
-        going *down*, 1254 to 1253, between two consecutive revisions. Since
-        the hash is what decides whether to append another copy of the record,
-        a counter that changes on its own writes a revision on its own.
+        The bar counters and the entry expiry belong here for a sharper reason:
+        they are not facts about the setup at all, they are positions in the
+        runtime's rolling candle buffer. ``bars_in_trade`` is ``index -
+        filled_index``, and ``expiry_index`` is ``len(bars) - 1 +
+        entry_expiry_bars`` (native_price_action.py). Both shift as the window
+        slides and jump outright when it is re-seeded by a restart or a
+        re-sync -- observed going *down*, 1254 to 1253 for the counter and 1242
+        to 235 for the expiry. Since the hash is what decides whether to append
+        another copy of the record, a number that changes on its own writes a
+        revision on its own.
 
-        It cost 59,560 of 72,443 revisions on the production lab -- 82% of them
-        recording no lifecycle event at all, at ~9.5 KB each. That is about
-        570 MB of noise accumulated over roughly 12 days of session time, or
-        ~45 MB/day averaged, and it grew the journal until writes began timing
-        out and the lab refused to place orders it could not durably record.
+        Between them they cost 59,560 of 72,443 revisions on the production
+        lab -- 82% of them recording no lifecycle event at all, at ~9.5 KB each
+        -- and grew the journal until writes began timing out and the lab
+        refused to place orders it could not durably record.
 
-        Averaged, because the rate is bursty rather than steady: a revision is
-        only written per open setup, so an active trade with a drifting counter
-        produced hundreds in minutes while a quiet book produced almost none.
+        The split between the two was measured, not assumed, by
+        scripts/pa_journal_churn.py, after excluding the counters alone turned
+        out not to be enough. Of the 7,833 revisions still being written on the
+        counters-only build, ``expiry_index`` was the ONLY field that differed
+        in 5,212 of them (50.0 MB of 75.0 MB) and appeared in 99.8% of all
+        differing pairs. The excursions, which were the standing hypothesis at
+        the time, accounted for 10 revisions and 0.1 MB and are deliberately
+        still hashed: a real move in MFE or MAE is evidence.
+
+        Any rate quoted for this is an average over a bursty process, not a
+        steady drip: a revision is only written per open setup, so an active
+        trade with a drifting number produced hundreds in minutes while a quiet
+        book produced almost none.
         An early estimate of ~860 MB/day came from extrapolating one burst
         across a gap that had not been measured, and a later observation of 36
         revisions in 46 minutes disproved it.
 
         Excluding them here does not hide them: every stored payload still
-        carries its counters, and any revision written for a real reason
+        carries its counters and its expiry index, and any revision written
+        for a real reason
         captures whatever they are at that moment.
         """
         material = _canonical(record)
@@ -470,6 +483,7 @@ class PriceActionJournalStore:
         order_risk = material.get("order_risk", {})
         order_risk.pop("bid_ask_decision", None)
         order_risk.pop("spread", None)
+        order_risk.pop("expiry_index", None)
         outcome = material.get("outcome", {})
         outcome.pop("bars_in_trade", None)
         outcome.pop("bars_to_entry", None)
