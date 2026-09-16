@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from pathlib import Path
@@ -143,7 +144,7 @@ def _audit_record(index, decision, engine, setup_rows, confirm_rows) -> dict:
 def replay(symbol: str, bars: int, strategy: str, equity: float,
            verbose: bool, loader=_load, audit_path: Optional[str] = None,
            start: Optional[str] = None, end: Optional[str] = None,
-           progress: bool = False) -> int:
+           progress: bool = False, checkpoint_every: int = 5000) -> int:
     config = RulebookConfig(symbol=symbol)
     config.validate()
     chosen = STRATEGY_CHOICES[strategy]
@@ -192,6 +193,47 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
     raised = confirmed = accepted = 0
     last_context = last_setup = None
 
+    def checkpoint(done: int, through, *, complete: bool) -> None:
+        """Write the audit as it stands, atomically, part-way through the run.
+
+        A year of 5M candles is a long run, and three earlier attempts at this
+        one were killed by a deploy or a restart before the end. Writing only
+        on completion meant each of those produced nothing at all, although the
+        engine had already judged thousands of candles. Checkpointing turns a
+        killed run into a shorter run: ``complete`` says which it was, so a
+        partial file can never be mistaken for a finished one.
+
+        The write goes to a sibling temp file and is then renamed, because
+        rename is atomic on POSIX -- a kill during the write leaves the last
+        good checkpoint intact rather than a truncated JSON file.
+        """
+        if not audit_path:
+            return
+        payload = {
+            "meta": {"symbol": symbol, "rulebook_version": RULEBOOK_VERSION,
+                     "strategies": list(engine.strategies),
+                     "timeframes": {"context": CONTEXT_TF, "setup": SETUP_TF,
+                                    "confirm": CONFIRM_TF},
+                     "equity": equity, "confirm_bars_replayed": len(confirms),
+                     "sources": {CONTEXT_TF: ctx_source, SETUP_TF: setup_source,
+                                 CONFIRM_TF: confirm_source},
+                     "first_candle": confirms[0].timestamp.isoformat(),
+                     "last_candle": confirms[-1].timestamp.isoformat(),
+                     "complete": complete,
+                     "progress": {"candles_judged": done,
+                                  "candles_total": len(confirms),
+                                  "through": through.isoformat()},
+                     "execution": "RESEARCH REPLAY -- no orders"},
+            "summary": {"setups_raised": raised, "confirmations": confirmed,
+                        "accepted": accepted, "regimes": dict(regimes),
+                        "blockers": dict(blockers)},
+            "confirmations": audit,
+        }
+        target = Path(audit_path)
+        temp = target.with_name(target.name + ".part")
+        temp.write_text(json.dumps(payload, indent=2, default=str))
+        os.replace(temp, target)
+
     # Walk the three series together, appending as each candle closes, instead
     # of re-deriving "everything before now" on every 5M bar. The slicing
     # version is O(n^2): at fixture scale it is invisible, and at a year of 5M
@@ -213,7 +255,7 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
             setup_at += 1
         confirm_slice.append(bar)
 
-        if progress and position % 5000 == 0 and position:
+        if progress and position % checkpoint_every == 0 and position:
             # flush=True because a run this long is normally redirected to a
             # file, and Python block-buffers stdout when it is not a terminal.
             # Without it the progress line exists only in an 8KB buffer, so a
@@ -221,6 +263,7 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
             print(f"    ... {position:>7}/{total} 5M candles "
                   f"({boundary:%Y-%m-%d})  setups {raised}  confirmed {confirmed}",
                   flush=True)
+            checkpoint(position, boundary, complete=False)
 
         if len(ctx_slice) < config.warmup_bars or len(setup_slice) < 2:
             continue
@@ -272,23 +315,7 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
     for reason, count in blockers.most_common(12):
         print(f"    {count:>7}  {reason}")
     if audit_path:
-        payload = {
-            "meta": {"symbol": symbol, "rulebook_version": RULEBOOK_VERSION,
-                     "strategies": list(engine.strategies),
-                     "timeframes": {"context": CONTEXT_TF, "setup": SETUP_TF,
-                                    "confirm": CONFIRM_TF},
-                     "equity": equity, "confirm_bars_replayed": len(confirms),
-                     "sources": {CONTEXT_TF: ctx_source, SETUP_TF: setup_source,
-                                 CONFIRM_TF: confirm_source},
-                     "first_candle": confirms[0].timestamp.isoformat(),
-                     "last_candle": confirms[-1].timestamp.isoformat(),
-                     "execution": "RESEARCH REPLAY -- no orders"},
-            "summary": {"setups_raised": raised, "confirmations": confirmed,
-                        "accepted": accepted, "regimes": dict(regimes),
-                        "blockers": dict(blockers)},
-            "confirmations": audit,
-        }
-        Path(audit_path).write_text(json.dumps(payload, indent=2, default=str))
+        checkpoint(len(confirms), confirms[-1].timestamp, complete=True)
         print(f"\n  audit written to {audit_path} ({len(audit)} confirmations)")
 
     print("\n  Research output. No order was placed and none may be derived "
@@ -314,12 +341,15 @@ def main() -> int:
                              "History before it still warms the context.")
     parser.add_argument("--end", metavar="DATE",
                         help="exclusive upper bound, e.g. 2026-01-01 (UTC)")
+    parser.add_argument("--checkpoint-every", type=int, default=5000,
+                        help="candles between progress lines and audit checkpoints")
     parser.add_argument("--progress", action="store_true",
                         help="print a line every 5000 candles on long runs")
     args = parser.parse_args()
     return replay(args.symbol, args.bars, args.strategy, args.equity,
                   args.verbose, audit_path=args.audit, start=args.start,
-                  end=args.end, progress=args.progress)
+                  end=args.end, progress=args.progress,
+                  checkpoint_every=max(1, args.checkpoint_every))
 
 
 if __name__ == "__main__":

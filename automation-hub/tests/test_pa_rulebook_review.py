@@ -86,6 +86,23 @@ def test_a_synthetic_run_says_so_on_the_page(review, audit):
     assert "Synthetic candles" not in review.render(real)
 
 
+def test_a_partial_replay_cannot_pass_for_the_whole_window(review, audit):
+    """A checkpointed audit is honest about a shorter period; the page has to
+    say so, or 25 setups "in 2025" may really be 25 setups in five weeks."""
+    partial = {**audit, "meta": {**audit["meta"], "complete": False,
+                                 "progress": {"candles_judged": 4100,
+                                              "candles_total": 105_000,
+                                              "through": "2025-02-12T00:00:00+00:00"}}}
+    page = review.render(partial)
+    assert "Partial replay" in page
+    assert "4100 of 105000 candles" in page
+    assert "shorter period" in page
+
+    assert "Partial replay" not in review.render(audit)     # no key: written at the end
+    finished = {**audit, "meta": {**audit["meta"], "complete": True}}
+    assert "Partial replay" not in review.render(finished)
+
+
 def test_the_rejection_reason_reaches_the_page(review, audit):
     """A refused setup must carry its cause, not just a red badge."""
     refused = json.loads(json.dumps(audit))

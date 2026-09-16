@@ -126,3 +126,50 @@ def test_a_date_window_bounds_decisions_but_keeps_the_warm_up(replay_module, cap
     # The context frame is still the full 240 bars, not the post-cutoff tail.
     assert f"{len(data[CONTEXT_TF]):>6} candles" in out
     assert "RESEARCH REPLAY" in out
+
+
+def test_a_completed_run_marks_its_audit_complete(replay_module, tmp_path):
+    data = _dataset()
+    audit = tmp_path / "audit.json"
+    replay_module.replay("BTCUSDT", bars=len(data[CONFIRM_TF]), strategy="rejection",
+                         equity=100_000.0, verbose=False,
+                         loader=lambda s, tf, n: (list(data[tf]), "test fixture"),
+                         audit_path=str(audit))
+    import json
+    meta = json.loads(audit.read_text())["meta"]
+    assert meta["complete"] is True
+    assert meta["progress"]["candles_judged"] == meta["progress"]["candles_total"]
+    assert not list(tmp_path.glob("*.part"))       # the temp file is renamed, not left
+
+
+def test_an_interrupted_run_still_leaves_a_readable_partial_audit(
+        replay_module, tmp_path, monkeypatch):
+    """Three earlier year-long runs were killed and produced nothing at all,
+    because the audit was only written at the end. A checkpoint has to survive
+    the kill, and has to admit that it is not the whole window."""
+    import json
+
+    data = _dataset()
+    audit = tmp_path / "audit.json"
+    real_replace = replay_module.os.replace
+    calls = {"n": 0}
+
+    def replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise KeyboardInterrupt("deploy restarted the container")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(replay_module.os, "replace", replace)
+    with pytest.raises(KeyboardInterrupt):
+        replay_module.replay(
+            "BTCUSDT", bars=len(data[CONFIRM_TF]), strategy="rejection",
+            equity=100_000.0, verbose=False,
+            loader=lambda s, tf, n: (list(data[tf]), "test fixture"),
+            audit_path=str(audit), progress=True, checkpoint_every=1)
+
+    payload = json.loads(audit.read_text())          # parses: the write was atomic
+    assert payload["meta"]["complete"] is False
+    progress = payload["meta"]["progress"]
+    assert 0 < progress["candles_judged"] < progress["candles_total"]
+    assert progress["through"]

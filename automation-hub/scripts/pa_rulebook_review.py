@@ -484,6 +484,18 @@ def render(audit: dict) -> str:
     synthetic = any(word in sources for word in ("fixture", "synthetic", "sample"))
     banner = ('<span class="flag danger">Synthetic candles &middot; shape demonstration '
               'only, these numbers measure nothing</span><br>' if synthetic else "")
+    # A checkpointed audit measures a shorter period honestly; it is only
+    # misleading if the page lets it pass for the whole window that was asked
+    # for. An audit written before checkpointing existed has no "complete" key
+    # and was, by construction, only ever written at the end.
+    progress = meta.get("progress") or {}
+    if meta.get("complete", True) is False:
+        reach = _when(str(progress.get("through", ""))) or "an unrecorded point"
+        banner += ('<span class="flag danger">Partial replay &middot; interrupted after '
+                   f'{_e(str(progress.get("candles_judged", "?")))} of '
+                   f'{_e(str(progress.get("candles_total", "?")))} candles, through '
+                   f'{_e(reach)}. Every count below covers that shorter period '
+                   'only.</span><br>')
     style = (STYLE.replace("%LIGHT%", _vars(LIGHT)).replace("%DARK%", _vars(DARK)))
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
