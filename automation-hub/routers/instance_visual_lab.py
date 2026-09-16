@@ -21,8 +21,6 @@ structurally so a later "just one POST to arm it" has to change the test.
 from __future__ import annotations
 
 import importlib
-from threading import RLock
-from time import monotonic
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -358,7 +356,7 @@ def _candle_rows(rows) -> list[dict]:
              "c": float(bar.close), "v": float(bar.volume)} for bar in rows]
 
 
-def _judge(symbol: str, timeframe: str, rows) -> "object":
+def _judge(symbol: str, timeframe: str, rows) -> object:
     """The platform's one verdict on how current a series is.
 
     services/market_data_freshness.py is the single authority every consumer
@@ -366,10 +364,9 @@ def _judge(symbol: str, timeframe: str, rows) -> "object":
     a second opinion about the same candle. Ages are measured from the close,
     and a series is fresh only until the next candle of that timeframe is due.
     """
-    from services.market_data_freshness import assess_timeframe
+    from services.live_candle_source import judge
 
-    newest = rows[-1].timestamp if rows else None
-    return assess_timeframe(symbol, timeframe, newest)
+    return judge(symbol, timeframe, rows)
 
 
 def _venue_key(status: dict) -> str:
@@ -383,71 +380,6 @@ def _venue_key(status: dict) -> str:
         if key in LIVE_VENUES:
             return key
     return "binance_usdm"
-
-
-class _LiveSeriesUnavailable(RuntimeError):
-    """The venue read did not yield usable closed candles."""
-
-
-_LIVE_SERIES: dict[tuple[str, str, str], list] = {}
-_LIVE_FAILURES: dict[tuple[str, str, str], tuple[float, str]] = {}
-_LIVE_SERIES_LOCK = RLock()
-#: How long a failed venue read is remembered. An unreachable exchange takes
-#: the ccxt timeout to say so, and every poller would otherwise pay it on every
-#: tick. Short enough that recovery is noticed within one cycle, and it never
-#: suppresses the error -- the remembered reason is raised again.
-_LIVE_FAILURE_COOLDOWN_SECONDS = 15.0
-
-
-def _live_exchange_series(symbol: str, timeframe: str, venue: str, limit: int) -> list:
-    """Closed candles read straight from the venue, the way the SMC labs read them.
-
-    Same fetch, same structural validation, same freshness authority -- so the
-    Instance Lab cannot end up a different age from the rest of the platform
-    while looking at the same market.
-
-    The result is reused only while its newest candle is still FRESH. That is
-    not a timer: by the authority's own rule a closed candle is current until
-    the next one of that timeframe is due, so reusing a fresh series cannot
-    show stale data, and the moment it could the next call refetches.
-    """
-    from bot.data.resample import TF_SECONDS
-    from data.forward_market_data import valid_closed_bars
-    from services.native_smc_live_visual import (
-        NativeSMCLiveDataUnavailable,
-        fetch_venue_ohlcv,
-    )
-
-    key = (symbol.upper(), timeframe, venue)
-    with _LIVE_SERIES_LOCK:
-        cached = _LIVE_SERIES.get(key)
-        failed_at, reason = _LIVE_FAILURES.get(key, (0.0, ""))
-    if cached and _judge(symbol, timeframe, cached).fresh:
-        return cached[-limit:]
-    if reason and monotonic() - failed_at < _LIVE_FAILURE_COOLDOWN_SECONDS:
-        raise _LiveSeriesUnavailable(f"{reason} (retried within {int(_LIVE_FAILURE_COOLDOWN_SECONDS)}s)")
-
-    try:
-        raw = fetch_venue_ohlcv(symbol, timeframe, venue, max(limit + 2, 50))
-    except (NativeSMCLiveDataUnavailable, KeyError, ValueError) as exc:
-        with _LIVE_SERIES_LOCK:
-            _LIVE_FAILURES[key] = (monotonic(), str(exc))
-        raise _LiveSeriesUnavailable(str(exc)) from exc
-    rows = valid_closed_bars(raw, TF_SECONDS[timeframe])
-    if not rows:
-        message = f"{venue} returned no closed {symbol} {timeframe} candles"
-        with _LIVE_SERIES_LOCK:
-            _LIVE_FAILURES[key] = (monotonic(), message)
-        raise _LiveSeriesUnavailable(message)
-    with _LIVE_SERIES_LOCK:
-        _LIVE_FAILURES.pop(key, None)
-        _LIVE_SERIES[key] = rows
-        # Bounded: one entry per symbol/timeframe/venue an operator has looked
-        # at, and the oldest goes first. This is a display cache, never a store.
-        while len(_LIVE_SERIES) > 32:
-            _LIVE_SERIES.pop(next(iter(_LIVE_SERIES)))
-    return rows[-limit:]
-
 
 
 @router.get("/candles")
@@ -519,9 +451,11 @@ def candles(instance_id: str = Query(..., min_length=1),
                     "freshness": verdict.to_dict(), "attempts": attempts}
 
     # 2. A direct venue read -- the same path the SMC labs use.
+    from services.live_candle_source import LiveCandlesUnavailable, live_series
+
     try:
-        live = _live_exchange_series(symbol, requested, venue, limit)
-    except _LiveSeriesUnavailable as exc:
+        live = live_series(symbol, requested, venue, limit=limit)
+    except LiveCandlesUnavailable as exc:
         attempts.append({"source": f"venue {venue}", "error": str(exc)})
     else:
         verdict = _judge(symbol, requested, live)

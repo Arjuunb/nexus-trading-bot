@@ -412,11 +412,11 @@ def _stale(n=40, minutes=5):
 @pytest.fixture(autouse=True)
 def _no_carried_over_series():
     """The venue cache is a display cache, not shared test state."""
-    import routers.instance_visual_lab as module
+    from services.live_candle_source import reset_cache
 
-    module._LIVE_SERIES.clear(); module._LIVE_FAILURES.clear()
+    reset_cache()
     yield
-    module._LIVE_SERIES.clear(); module._LIVE_FAILURES.clear()
+    reset_cache()
 
 
 def _venue(monkeypatch, bars):
@@ -469,10 +469,11 @@ def test_a_lagging_worker_does_not_decide_what_the_chart_shows(monkeypatch):
 
 def test_the_venue_read_is_the_same_one_the_smc_labs_use(monkeypatch):
     """Not a second fetch path with its own idea of what a closed candle is."""
-    import routers.instance_visual_lab as module
     import services.native_smc_live_visual as live
 
-    source = inspect.getsource(module._live_exchange_series)
+    import services.live_candle_source as shared
+
+    source = inspect.getsource(shared.live_series)
     assert "fetch_venue_ohlcv" in source
     assert "valid_closed_bars" in source
     assert hasattr(live, "fetch_venue_ohlcv")
@@ -528,7 +529,10 @@ def test_every_served_series_carries_the_platforms_own_verdict(monkeypatch):
     """One freshness authority, not a second opinion formed in this router."""
     import routers.instance_visual_lab as module
 
-    assert "assess_timeframe" in inspect.getsource(module._judge)
+    import services.live_candle_source as shared
+
+    assert "assess_timeframe" in inspect.getsource(shared.judge)
+    assert "live_candle_source" in inspect.getsource(module._judge)
     _venue(monkeypatch, _fresh(10))
     client = _with_runtime(monkeypatch, [_instance()], {})
     body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
@@ -557,7 +561,7 @@ def test_a_fresh_venue_series_is_reused_rather_than_refetched(monkeypatch):
 
 def test_a_stale_cached_series_is_refetched(monkeypatch):
     """The other half of the same rule."""
-    import routers.instance_visual_lab as module
+    import services.live_candle_source as shared
     import services.native_smc_live_visual as live
 
     calls = []
@@ -565,7 +569,7 @@ def test_a_stale_cached_series_is_refetched(monkeypatch):
                         lambda *a, **k: (calls.append(a), _fresh(20))[1])
     client = _with_runtime(monkeypatch, [_instance()], {})
     client.get("/research/instance-visual/candles?instance_id=inst-1")
-    module._LIVE_SERIES[("BTCUSDT", "5m", "binance_usdm")] = _stale(20)
+    shared._SERIES[("BTCUSDT", "5m", "binance_usdm")] = (_stale(20), 300)
     client.get("/research/instance-visual/candles?instance_id=inst-1")
     assert len(calls) == 2
 
@@ -801,7 +805,7 @@ def test_an_unreachable_venue_is_not_retried_on_every_poll(monkeypatch):
 
 def test_a_recovered_venue_is_used_again(monkeypatch):
     """The cooldown must not become a lockout."""
-    import routers.instance_visual_lab as module
+    import services.live_candle_source as shared
     import services.native_smc_live_visual as live
 
     state = {"down": True}
@@ -819,6 +823,6 @@ def test_a_recovered_venue_is_used_again(monkeypatch):
     client.get("/research/instance-visual/candles?instance_id=inst-1")
 
     state["down"] = False
-    module._LIVE_FAILURES.clear()          # the cooldown elapsing
+    shared._FAILURES.clear()               # the cooldown elapsing
     body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
     assert body["source"] == "venue binance_usdm · live closed candles"

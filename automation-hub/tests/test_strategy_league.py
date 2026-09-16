@@ -1,8 +1,41 @@
 """Strategy League: ranked by expectancy (not raw win rate), daily-return
 correlations, honest no-data verdict, actionable best pairing."""
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+
+from bot.types import Bar
+
+
+@pytest.fixture(autouse=True)
+def _offline_live_source(monkeypatch):
+    """No test reaches an exchange. The venue is stubbed unreachable unless a
+    test says otherwise, and the shared series cache never leaks between them."""
+    import services.native_smc_live_visual as live
+    from services.live_candle_source import reset_cache
+
+    def _down(*_a, **_k):
+        raise live.NativeSMCLiveDataUnavailable("offline in tests")
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", _down)
+    reset_cache()
+    yield
+    reset_cache()
+
+
+def _venue_candles(n, *, timeframe_minutes=60, fresh=True):
+    step = timedelta(minutes=timeframe_minutes)
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    newest = now - step if fresh else now - step - timedelta(days=9)
+    price = 100.0
+    rows = []
+    for i in range(n):
+        # A drifting series so strategies actually take trades on it.
+        price += (1.0 if (i // 7) % 2 == 0 else -1.0)
+        rows.append(Bar(newest - step * (n - 1 - i), price, price + 1.5,
+                        price - 1.5, price + 0.5, 100.0))
+    return rows
 
 from services.strategy_league import _daily_r, league, pearson
 
@@ -135,3 +168,102 @@ def test_a_strategy_with_no_losing_trade_reports_no_profit_factor():
     assert _r({}) == 0.0
     assert _r({"r": "bad"}) == 0.0
     assert _r({"r": "1.5"}) == 1.5
+
+
+# ─────────────────────── live candles, not the cache ───────────────────────
+def test_the_league_measures_live_candles_before_the_cache(monkeypatch):
+    """The point of the change. The cache is only as current as the last manual
+    /data/sync; a league run on it ranks strategies on an older market than the
+    one being traded, while labelling itself real data."""
+    import data.market_data as market_data
+    import services.native_smc_live_visual as live
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv",
+                        lambda *a, **k: _venue_candles(900))
+
+    def _never(*_a, **_k):
+        raise AssertionError("the cache must not be read when the venue answers")
+
+    monkeypatch.setattr(market_data, "get_bars", _never)
+    rep = league(symbols=("BTCUSDT",), timeframe="1h", bars=800,
+                 strategies=["EMA 8/30"])
+    assert rep["available"] is True
+    assert rep["live"] is True
+    assert rep["data_source"] == "venue binance_usdm (live)"
+    assert rep["provenance"]["BTCUSDT"]["freshness"]["status"] == "FRESH"
+
+
+def test_the_cache_is_the_fallback_and_is_named_as_one(monkeypatch):
+    """Unreachable venue is not a reason to show nothing -- but it is a reason
+    to say which series the ranking came from."""
+    import data.market_data as market_data
+
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_venue_candles(800), "local store (real)"))
+    rep = league(symbols=("BTCUSDT",), timeframe="1h", bars=800,
+                 strategies=["EMA 8/30"])
+    assert rep["available"] is True
+    assert rep["live"] is False
+    assert rep["data_source"] == "local store (real)"
+    attempts = rep["provenance"]["BTCUSDT"]["attempts"]
+    assert attempts[0]["source"] == "venue binance_usdm"
+    assert "offline in tests" in attempts[0]["error"]
+
+
+def test_a_stale_ranking_says_so_in_its_own_guidance(monkeypatch):
+    """A table ranking strategies on a nine-day-old market must not read the
+    same as one ranking them on this morning's."""
+    import data.market_data as market_data
+
+    monkeypatch.setattr(
+        market_data, "get_bars",
+        lambda *a, **k: (_venue_candles(800, fresh=False), "local store (real)"))
+    rep = league(symbols=("BTCUSDT",), timeframe="1h", bars=800,
+                 strategies=["EMA 8/30"])
+    assert rep["provenance"]["BTCUSDT"]["freshness"]["status"] == "STALE"
+    assert any("describes an older market" in g for g in rep["guidance"])
+
+
+def test_a_dropped_symbol_is_reported_rather_than_vanishing(monkeypatch):
+    """A league labelled BTCUSDT + ETHUSDT that silently measured one of them
+    is the bug this reports: the badge said both, the numbers were one."""
+    import data.market_data as market_data
+    import services.native_smc_live_visual as live
+
+    def _by_symbol(symbol, *_a, **_k):
+        if symbol.upper() == "BTCUSDT":
+            return _venue_candles(900)
+        return _venue_candles(50)          # far short of MIN_BARS
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", _by_symbol)
+    monkeypatch.setattr(market_data, "get_bars", lambda *a, **k: ([], "empty"))
+    rep = league(symbols=("BTCUSDT", "ETHUSDT"), timeframe="1h", bars=800,
+                 strategies=["EMA 8/30"])
+    assert rep["symbols"] == ["BTCUSDT"]
+    assert [row["symbol"] for row in rep["dropped"]] == ["ETHUSDT"]
+    assert rep["dropped"][0]["candles"] == 50
+    assert any("Not measured: ETHUSDT" in g for g in rep["guidance"])
+
+
+def test_the_measured_window_is_reported(monkeypatch):
+    """Which candles produced these verdicts, without having to trust a badge."""
+    import services.native_smc_live_visual as live
+
+    rows = _venue_candles(900)
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", lambda *a, **k: rows)
+    rep = league(symbols=("BTCUSDT",), timeframe="1h", bars=800,
+                 strategies=["EMA 8/30"])
+    assert rep["window"]["bars_requested"] == 800
+    assert rep["window"]["last"] == rows[-1].timestamp.isoformat()
+    assert rep["window"]["first"] < rep["window"]["last"]
+
+
+def test_nothing_reachable_refuses_rather_than_inventing_a_ranking(monkeypatch):
+    import data.market_data as market_data
+
+    monkeypatch.setattr(market_data, "get_bars", lambda *a, **k: ([], "empty cache"))
+    rep = league(symbols=("BTCUSDT",), timeframe="1h", bars=800,
+                 strategies=["EMA 8/30"])
+    assert rep["available"] is False
+    assert rep["dropped"][0]["symbol"] == "BTCUSDT"
+    assert "venue was unreachable" in rep["detail"]
