@@ -216,3 +216,59 @@ def test_too_few_bars_is_reported_rather_than_drawn():
     with pytest.raises(FeatureUnavailable) as exc:
         extract("ema", _Strategy(bars=_bars(3), params={"fast": 8, "slow": 30}))
     assert "nothing to draw yet" in str(exc.value)
+
+
+def test_reading_survives_the_run_loop_mutating_its_state():
+    """The engines hold plain dicts and the run loop adds to them every candle.
+
+    Iterating one from a request thread raised "dictionary keys changed during
+    iteration" -- reproducibly, on any busy instance, as a 500. Nothing is
+    locked, because a slow reader must never be able to stall the bot.
+    """
+    import threading
+
+    zones = {f"z{i}": _Stub(id=f"z{i}", role="support", original_role="support",
+                            low=1.0, high=2.0, created_at=NOW, confirmed_at=NOW,
+                            touch_count=0, active=True, source_swing_ids=[])
+             for i in range(200)}
+    strategy = _Strategy(_Stub(zones=zones, swings={}, events={}))
+
+    stop = threading.Event()
+
+    def churn():
+        index = 10_000
+        while not stop.is_set():
+            zones[f"z{index}"] = zones["z0"]
+            index += 1
+            zones.pop(f"z{index - 40}", None)
+
+    worker = threading.Thread(target=churn, daemon=True)
+    worker.start()
+    try:
+        for _ in range(300):
+            # Either it reads, or it raises the retryable FeatureUnavailable.
+            # What it must never do is leak a RuntimeError as a 500.
+            try:
+                extract("price_action_rejection", strategy)
+            except FeatureUnavailable:
+                pass
+    finally:
+        stop.set()
+        worker.join(timeout=2)
+
+
+def test_a_persistent_race_is_reported_as_retryable():
+    """If the retries genuinely cannot get a clean read, say so plainly."""
+    class _Hostile(dict):
+        def values(self):
+            raise RuntimeError("dictionary keys changed during iteration")
+
+    # Non-empty on purpose: an empty mapping is falsy and never reaches the
+    # retry path at all, which is how the first draft of this test passed
+    # without exercising anything.
+    hostile = _Hostile()
+    hostile["z0"] = object()
+    strategy = _Strategy(_Stub(zones=hostile, swings={}, events={}))
+    with pytest.raises(FeatureUnavailable) as exc:
+        extract("price_action_rejection", strategy)
+    assert "retry in a moment" in str(exc.value)

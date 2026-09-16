@@ -49,6 +49,29 @@ class FeatureUnavailable(RuntimeError):
     """
 
 
+def _snapshot(mapping) -> list:
+    """Take the values out of a dict the run loop is still mutating.
+
+    The engines hold their zones, pivots and events in plain dicts, and the run
+    loop adds to them on every closed candle. Iterating one from a request
+    thread while that happens raises "dictionary keys changed during iteration"
+    -- reproducibly, not theoretically, on any busy instance.
+
+    A short retry is the honest fix. Nothing is locked, because taking a lock
+    on the engine's own state from an observability endpoint would let a slow
+    reader stall the bot, which is the one thing this page must never do. If
+    the race persists the caller is told to try again rather than handed a 500.
+    """
+    for _ in range(4):
+        try:
+            return list((mapping or {}).values())
+        except RuntimeError:
+            continue
+    raise FeatureUnavailable(
+        "the strategy engine is mutating its state faster than it can be read; "
+        "retry in a moment")
+
+
 def _engine_of(strategy) -> Any:
     engine = getattr(strategy, "_engine", None)
     if engine is None:
@@ -66,7 +89,7 @@ def _price_action_overlays(strategy, strategy_id: str) -> list[Overlay]:
     module = "services.native_price_action"
     out: list[Overlay] = []
 
-    for zone in getattr(engine, "zones", {}).values():
+    for zone in _snapshot(getattr(engine, "zones", {})):
         out.append(Overlay(
             kind="zone",
             feature="support" if zone.role == "support" else "resistance",
@@ -88,7 +111,7 @@ def _price_action_overlays(strategy, strategy_id: str) -> list[Overlay]:
                 "label": ("Flip " if zone.role != zone.original_role else "") + zone.role.title(),
             }))
 
-    for swing in getattr(engine, "swings", {}).values():
+    for swing in _snapshot(getattr(engine, "swings", {})):
         out.append(Overlay(
             kind="marker", feature="swing_high_low", id=swing.id,
             provenance={"strategy_id": strategy_id, "module": module,
@@ -98,7 +121,7 @@ def _price_action_overlays(strategy, strategy_id: str) -> list[Overlay]:
                      "confirmed_at": _iso(swing.confirmed_at),
                      "direction": "high" if swing.kind == "high" else "low"}))
 
-    for event in getattr(engine, "events", {}).values():
+    for event in _snapshot(getattr(engine, "events", {})):
         out.append(Overlay(
             kind="marker", feature="rejection_candle", id=event.id,
             provenance={"strategy_id": strategy_id, "module": module,
@@ -119,7 +142,7 @@ def _smc_overlays(strategy, strategy_id: str) -> list[Overlay]:
     module = "services.native_smc"
     out: list[Overlay] = []
 
-    for block in getattr(engine, "obs", {}).values():
+    for block in _snapshot(getattr(engine, "obs", {})):
         bullish = str(block.direction).lower() in ("bullish", "long", "up")
         out.append(Overlay(
             kind="zone", feature="demand" if bullish else "supply", id=block.id,
@@ -136,7 +159,7 @@ def _smc_overlays(strategy, strategy_id: str) -> list[Overlay]:
                      "source_structure_id": block.source_structure_id,
                      "label": "Demand" if bullish else "Supply"}))
 
-    for gap in getattr(engine, "fvgs", {}).values():
+    for gap in _snapshot(getattr(engine, "fvgs", {})):
         out.append(Overlay(
             kind="box", feature="fvg", id=gap.id,
             provenance={"strategy_id": strategy_id, "module": module,
@@ -151,7 +174,7 @@ def _smc_overlays(strategy, strategy_id: str) -> list[Overlay]:
                      "mitigation_at": _iso(gap.mitigation_at),
                      "label": f"FVG {gap.direction}"}))
 
-    for pivot in getattr(engine, "pivots", {}).values():
+    for pivot in _snapshot(getattr(engine, "pivots", {})):
         out.append(Overlay(
             kind="marker", feature="swing_high_low", id=pivot.id,
             provenance={"strategy_id": strategy_id, "module": module,
@@ -162,7 +185,7 @@ def _smc_overlays(strategy, strategy_id: str) -> list[Overlay]:
                      "scope": getattr(pivot, "scope", "internal"),
                      "direction": "high" if pivot.kind in ("high", "swing_high") else "low"}))
 
-    for event in getattr(engine, "events", {}).values():
+    for event in _snapshot(getattr(engine, "events", {})):
         # The same dict holds structure breaks and sweeps; they are told apart
         # by shape rather than by a flag, because that is how the engine stores
         # them and guessing from the id would be a second source of truth.
@@ -211,7 +234,7 @@ def _rulebook_overlays(strategy, strategy_id: str) -> list[Overlay]:
     module = "services.pa_rulebook_v01"
     out: list[Overlay] = []
     consumed = set(getattr(engine, "consumed_zone_ids", ()) or ())
-    for zone in getattr(engine, "zones", []) or []:
+    for zone in list(getattr(engine, "zones", []) or []):
         out.append(Overlay(
             kind="zone",
             feature="support" if zone.kind == "support" else "resistance",

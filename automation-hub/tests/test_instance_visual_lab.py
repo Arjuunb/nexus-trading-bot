@@ -301,10 +301,32 @@ def test_the_router_declares_execution_is_not_allowed(lab):
 
 
 def test_the_router_is_mounted_on_the_production_api():
-    """A router nobody included is a file, not an endpoint."""
-    source = (Path(__file__).resolve().parents[1] / "webhook_api.py").read_text()
-    assert "import routers.instance_visual_lab" in source
-    assert "router.include_router(routers.instance_visual_lab.router)" in source
+    """A router nobody included is a file, not an endpoint.
+
+    Read from the app's OpenAPI schema, which is the only reliable witness
+    here. Grepping webhook_api proves an include line exists, not that a route
+    resolves. Counting router.routes is misleading because this project wraps
+    includes in an _IncludedRouter. And requesting the path proves nothing
+    either: the auth middleware answers 401 for everything under /research,
+    including paths that do not exist -- which is exactly how a missing mount
+    would hide.
+    """
+    import os
+
+    os.environ.setdefault("HUB_DATA_DIR", "/tmp/ivl-mount-check")
+    os.makedirs("/tmp/ivl-mount-check", exist_ok=True)
+    import app as application
+
+    paths = application.app.openapi().get("paths", {})
+    for route in ("strategies", "instances", "state", "features", "candles", "timeline"):
+        path = f"/research/instance-visual/{route}"
+        assert path in paths, f"{path} is not mounted on the production app"
+        assert set(paths[path]) == {"get"}, f"{path} exposes {sorted(paths[path])}"
+
+    # Controls: a known-mounted router is present, and an invented path is not,
+    # so a schema that simply contained everything could not pass this.
+    assert any("pa-rulebook" in path for path in paths)
+    assert "/research/instance-visual/not-a-route" not in paths
 
 
 # --------------------------------------------------------------- market data

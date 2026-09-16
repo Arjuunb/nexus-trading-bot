@@ -160,15 +160,26 @@ function Chart({ candles, forming, overlays, events, position, enabled,
   const series = forming && candles[candles.length - 1]?.t !== forming.t
     ? [...candles, forming] : candles;
   const W = 1400, H = 460, PAD = 10, RIGHT = 74;
-  const zoneLines = overlays.filter((o) => ZONE_FEATURES.has(o.feature)
+  // Shape first, feature second, and bounds required. An overlay whose feature
+  // looks zone-ish but carries no bounds would render as NaN geometry and take
+  // the whole chart with it, so it is never treated as a rectangle.
+  const zoneLines = overlays.filter((o) =>
+    (o.kind === "zone" || o.kind === "box")
+    && ZONE_FEATURES.has(o.feature)
+    && Number.isFinite(o.lower) && Number.isFinite(o.upper)
     && enabled.has(TOGGLE_GROUP[o.feature]));
   const lines = overlays.filter((o) => o.kind === "line" && enabled.has(TOGGLE_GROUP[o.feature]));
   const markers = overlays.filter((o) => o.kind === "marker"
+    && Number.isFinite(o.price)
     && enabled.has(TOGGLE_GROUP[o.feature]));
 
   const prices: number[] = [];
   series.forEach((c) => { prices.push(c.h, c.l); });
-  zoneLines.forEach((z) => { if (z.lower !== undefined) prices.push(z.lower, z.upper!); });
+  zoneLines.forEach((z) => { prices.push(z.lower as number, z.upper as number); });
+  markers.forEach((m) => prices.push(m.price as number));
+  lines.forEach((l) => (l.points ?? []).forEach((pt) => {
+    if (Number.isFinite(pt.v)) prices.push(pt.v);
+  }));
   if (position?.entry) prices.push(position.entry);
   if (position?.stop) prices.push(position.stop);
   if (position?.target) prices.push(position.target);
