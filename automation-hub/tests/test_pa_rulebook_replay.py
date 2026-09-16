@@ -52,7 +52,7 @@ def _dataset():
 def test_the_replay_reaches_the_trade_the_engine_found(replay_module, capsys):
     data = _dataset()
 
-    def loader(symbol, timeframe, count):
+    def loader(symbol, timeframe, count, *, until=None):
         return list(data[timeframe]), "test fixture"
 
     accepted = replay_module.replay("BTCUSDT", bars=len(data[CONFIRM_TF]),
@@ -75,7 +75,7 @@ def test_the_replay_refuses_anything_but_real_candles(replay_module):
     with pytest.raises(SystemExit):
         replay_module.replay("NOSUCHPAIR", bars=10, strategy="both",
                              equity=1000.0, verbose=False,
-                             loader=lambda *a: ([], "unavailable"))
+                             loader=lambda *a, **k: ([], "unavailable"))
 
 
 def test_the_incremental_walk_matches_slicing_on_a_gappy_series(replay_module):
@@ -112,7 +112,7 @@ def test_a_date_window_bounds_decisions_but_keeps_the_warm_up(replay_module, cap
     data = _dataset()
     seen = {}
 
-    def loader(symbol, timeframe, count):
+    def loader(symbol, timeframe, count, *, until=None):
         seen[timeframe] = list(data[timeframe])
         return list(data[timeframe]), "test fixture"
 
@@ -133,7 +133,7 @@ def test_a_completed_run_marks_its_audit_complete(replay_module, tmp_path):
     audit = tmp_path / "audit.json"
     replay_module.replay("BTCUSDT", bars=len(data[CONFIRM_TF]), strategy="rejection",
                          equity=100_000.0, verbose=False,
-                         loader=lambda s, tf, n: (list(data[tf]), "test fixture"),
+                         loader=lambda s, tf, n, **k: (list(data[tf]), "test fixture"),
                          audit_path=str(audit))
     import json
     meta = json.loads(audit.read_text())["meta"]
@@ -165,7 +165,7 @@ def test_an_interrupted_run_still_leaves_a_readable_partial_audit(
         replay_module.replay(
             "BTCUSDT", bars=len(data[CONFIRM_TF]), strategy="rejection",
             equity=100_000.0, verbose=False,
-            loader=lambda s, tf, n: (list(data[tf]), "test fixture"),
+            loader=lambda s, tf, n, **k: (list(data[tf]), "test fixture"),
             audit_path=str(audit), progress=True, checkpoint_every=1)
 
     payload = json.loads(audit.read_text())          # parses: the write was atomic
@@ -231,3 +231,46 @@ def test_the_venue_is_asked_before_the_local_store(replay_module):
     assert "use_cache=False" in source, "a year of candles must not stay resident"
     assert "require_real=True" in source, "the fallback still refuses fixtures"
     assert "venue unavailable" in source, "a fallback must say why it fell back"
+
+
+def test_a_dated_window_fetches_that_window_not_the_newest_candles(replay_module):
+    """The flaw the first real run exposed: asking the venue for a year of 5M
+    candles returned the year ending TODAY, and only its first months fell
+    inside the 2025 window being studied. The window's end has to reach the
+    fetch."""
+    import inspect
+
+    source = inspect.getsource(replay_module.replay)
+    assert "until = _at(end) if end else None" in source
+    for call in ("loader(symbol, CONTEXT_TF", "loader(symbol, SETUP_TF",
+                 "loader(symbol, CONFIRM_TF"):
+        start = source.index(call)
+        assert "until=until" in source[start:start + 200], f"{call} must be anchored"
+
+
+def test_the_shared_source_anchors_a_historical_window(replay_module):
+    """And it must never treat one as the current series."""
+    from datetime import datetime, timedelta, timezone
+
+    import services.live_candle_source as shared
+
+    seen = {}
+
+    def _fetcher(symbol, timeframe, venue, limit, since_ms=None):
+        seen.setdefault("first_since", since_ms)
+        base = datetime.fromtimestamp(since_ms / 1000, tz=timezone.utc)
+        return [Bar(base + timedelta(minutes=5 * i), 100.0, 101.0, 99.0, 100.5, 1.0)
+                for i in range(limit)]
+
+    shared.reset_cache()
+    until = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rows = shared.live_series("BTCUSDT", "5m", limit=2000, until=until,
+                              max_pages=shared.pages_for(2000), fetcher=_fetcher,
+                              now=datetime(2026, 9, 16, tzinfo=timezone.utc))
+    assert rows, "the historical window must return candles"
+    # The walk starts a window's width before `until`, not before now.
+    began = datetime.fromtimestamp(seen["first_since"] / 1000, tz=timezone.utc)
+    assert abs((until - began).total_seconds() - 2002 * 300) < 300
+    # A dated fetch is never left in the cache as if it were current.
+    assert ("BTCUSDT", "5m", "binance_usdm") not in shared._SERIES
+    shared.reset_cache()

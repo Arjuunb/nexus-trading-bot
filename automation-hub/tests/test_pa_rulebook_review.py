@@ -57,7 +57,7 @@ def audit(tmp_path_factory):
     out = tmp_path_factory.mktemp("audit") / "audit.json"
     replay.replay("BTCUSDT", bars=len(confirms), strategy="rejection",
                   equity=100_000.0, verbose=False,
-                  loader=lambda s, tf, n: (list(data[tf]), "synthetic fixture"),
+                  loader=lambda s, tf, n, **k: (list(data[tf]), "synthetic fixture"),
                   audit_path=str(out))
     return json.loads(out.read_text())
 

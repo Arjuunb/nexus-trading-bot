@@ -40,7 +40,7 @@ STRATEGY_CHOICES = {"rejection": SR_REJECTION_ID, "flip": FLIP_RETEST_ID,
                     "both": None}
 
 
-def _load(symbol: str, timeframe: str, bars: int) -> list[Bar]:
+def _load(symbol: str, timeframe: str, bars: int, *, until=None) -> list[Bar]:
     """Closed candles for one timeframe, real data only, venue first.
 
     The local store is only as deep as the last /data/sync left it. On this
@@ -67,7 +67,7 @@ def _load(symbol: str, timeframe: str, bars: int) -> list[Bar]:
     )
 
     try:
-        rows = live_series(symbol, timeframe, limit=bars,
+        rows = live_series(symbol, timeframe, limit=bars, until=until,
                            max_pages=pages_for(bars), use_cache=False)
     except LiveCandlesUnavailable as exc:
         venue_error = str(exc)
@@ -204,9 +204,12 @@ def replay(symbol: str, bars: int, strategy: str, equity: float,
     engine = PriceActionRulebookEngine(
         config, CostModel(), strategies=(chosen,) if chosen else None)
 
-    context, ctx_source = loader(symbol, CONTEXT_TF, max(bars // 12, config.warmup_bars + 50))
-    setups, setup_source = loader(symbol, SETUP_TF, max(bars // 3, config.warmup_bars + 50))
-    confirms, confirm_source = loader(symbol, CONFIRM_TF, bars)
+    until = _at(end) if end else None
+    context, ctx_source = loader(symbol, CONTEXT_TF,
+                                 max(bars // 12, config.warmup_bars + 50), until=until)
+    setups, setup_source = loader(symbol, SETUP_TF,
+                                  max(bars // 3, config.warmup_bars + 50), until=until)
+    confirms, confirm_source = loader(symbol, CONFIRM_TF, bars, until=until)
 
     # A date window bounds the DECISIONS, not the history. The context and
     # setup frames keep everything before the window so the regime and the zone

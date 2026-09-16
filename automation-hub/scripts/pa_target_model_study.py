@@ -189,12 +189,53 @@ def _outcome(bars, start_at, direction: str, entry: float, stop: float,
     return "unresolved", seen
 
 
-def _load_confirm_bars(symbol: str, bars: int):
-    """Closed 5M candles, real only -- the same rule the replay itself follows."""
+def _load_confirm_bars(symbol: str, bars: int, until=None):
+    """Closed 5M candles for outcome resolution, venue first, real only.
+
+    Anchored at ``until`` so the window walked is the one the confirmations
+    live in, not the newest candles: outcomes resolved on a series that does
+    not reach them come back "unresolved", and a study that quietly resolved
+    nothing looks identical to one where nothing hit its target.
+    """
+    from services.live_candle_source import (
+        LiveCandlesUnavailable,
+        live_series,
+        pages_for,
+    )
+
+    try:
+        rows = live_series(symbol, "5m", limit=bars, until=until,
+                           max_pages=pages_for(bars), use_cache=False)
+    except LiveCandlesUnavailable as exc:
+        venue_error = str(exc)
+    else:
+        return list(rows), "venue binance_usdm (live)"
+
     from data.market_data import get_bars
 
     rows, source = get_bars(symbol, n=bars, timeframe="5m", require_real=True)
-    return list(rows), source
+    return list(rows), f"{source} [venue unavailable: {venue_error}]"
+
+
+def _covers(bars, records, max_hold: int) -> dict:
+    """Whether the outcome series reaches every confirmation it must judge."""
+    from datetime import datetime, timedelta
+
+    stamps = [datetime.fromisoformat(r["at"]) for r in records if r.get("at")]
+    if not bars or not stamps:
+        return {"ok": not stamps, "missing": len(stamps)}
+    first, last = bars[0].timestamp, bars[-1].timestamp
+    needed_end = max(stamps) + timedelta(minutes=5 * max_hold)
+    # Unreachable in either direction: a confirmation before the series begins
+    # has no candles to be judged on, and one at or after its last bar has no
+    # candles AFTER it -- which is the half that decides the outcome.
+    unreachable = [s for s in stamps if s < first or s >= last]
+    return {
+        "ok": not unreachable and last >= min(needed_end, datetime.now(last.tzinfo)),
+        "missing": len(unreachable),
+        "series": f"{first:%Y-%m-%d} -> {last:%Y-%m-%d}",
+        "needed": f"{min(stamps):%Y-%m-%d} -> {needed_end:%Y-%m-%d}",
+    }
 
 
 def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
@@ -344,7 +385,16 @@ def main(argv=None) -> int:
     audit = json.loads(path.read_text())
     symbol = (audit.get("meta") or {}).get("symbol") or "BTCUSDT"
 
-    bars, source = _load_confirm_bars(symbol, args.bars)
+    from datetime import datetime, timedelta
+
+    records = audit.get("confirmations") or []
+    stamps = [datetime.fromisoformat(r["at"]) for r in records if r.get("at")]
+    # Resolve forward from the last confirmation by the hold, so the series
+    # covers the trades it has to judge rather than ending among them.
+    until = (max(stamps) + timedelta(minutes=5 * (args.max_hold + 5))) if stamps else None
+    if until is not None and until > datetime.now(until.tzinfo):
+        until = None
+    bars, source = _load_confirm_bars(symbol, args.bars, until)
     if not bars:
         print(f"no real 5M candles for {symbol} ({source}) -- outcomes cannot be "
               "resolved, and a study that skipped them would be arithmetic only",
@@ -354,7 +404,15 @@ def main(argv=None) -> int:
     config = RulebookConfig(symbol=symbol)
     study(audit, bars, max_hold=args.max_hold, min_net_rr=config.min_net_rr,
           tick=config.tick_size, costs=CostModel(), out=sys.stdout)
+    coverage = _covers(bars, records, args.max_hold)
     print(f"\n  outcomes resolved on {len(bars)} real 5M candles ({source})")
+    if not coverage["ok"]:
+        print(f"  !! OUTCOME SERIES DOES NOT COVER THE CONFIRMATIONS", file=sys.stderr)
+        print(f"     series {coverage.get('series')} · needed "
+              f"{coverage.get('needed')}", file=sys.stderr)
+        print(f"     {coverage['missing']} confirmations start before the series "
+              "begins; their outcomes could not be resolved and are NOT losses.",
+              file=sys.stderr)
     print("  Research output. No order was placed and none may be derived "
           "retrospectively from this run.")
     return 0

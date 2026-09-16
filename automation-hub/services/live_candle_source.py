@@ -69,9 +69,9 @@ def reset_cache() -> None:
 
 
 def _fetch_pages(symbol: str, timeframe: str, venue: str, wanted: int,
-                 fetcher: Callable, now: datetime, *,
+                 fetcher: Callable, anchor: datetime, *,
                  max_pages: int = MAX_PAGES) -> list:
-    """Walk forward from the start of the window until it reaches the present.
+    """Walk forward across the window of ``wanted`` candles ending at ``anchor``.
 
     Forward rather than backward because that is the direction ``since`` takes
     on every venue: ask for the oldest candle wanted, then keep asking from the
@@ -82,7 +82,7 @@ def _fetch_pages(symbol: str, timeframe: str, venue: str, wanted: int,
     from bot.data.resample import TF_SECONDS
 
     step = TF_SECONDS[timeframe]
-    start = now - timedelta(seconds=step * (wanted + 2))
+    start = anchor - timedelta(seconds=step * (wanted + 2))
     since_ms = int(start.timestamp() * 1000)
     collected: dict[datetime, object] = {}
 
@@ -96,7 +96,7 @@ def _fetch_pages(symbol: str, timeframe: str, venue: str, wanted: int,
             collected[bar.timestamp] = bar
         if len(collected) == before:
             break                       # no new candles: the venue is repeating
-        if len(collected) >= wanted + 2 or newest + timedelta(seconds=step) >= now:
+        if len(collected) >= wanted + 2 or newest + timedelta(seconds=step) >= anchor:
             break
         since_ms = int((newest + timedelta(seconds=step)).timestamp() * 1000)
 
@@ -110,6 +110,7 @@ def pages_for(limit: int) -> int:
 
 def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
                 limit: int = 300, now: Optional[datetime] = None,
+                until: Optional[datetime] = None,
                 fetcher: Optional[Callable] = None,
                 max_pages: int = MAX_PAGES, use_cache: bool = True) -> list:
     """Closed candles from the venue, newest last, at most ``limit`` of them.
@@ -125,6 +126,12 @@ def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
     deliberately and say so, rather than silently receiving a short window and
     reporting a year. ``use_cache=False`` is for exactly that caller: a year of
     candles is not something to leave resident in a serving process.
+
+    ``until`` anchors the window's END. Without it the walk returns the newest
+    ``limit`` candles, which is right for a chart and wrong for a dated replay:
+    asking for a year of 5M candles to study 2025 would return the year ending
+    today, and only its first months would fall inside the window. A historical
+    fetch is never cached -- it is not "the current series" for anything.
     """
     from bot.data.resample import TF_SECONDS
     from data.forward_market_data import valid_closed_bars
@@ -138,6 +145,9 @@ def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
     symbol = symbol.upper()
     fetcher = fetcher or fetch_venue_ohlcv
     observed = now or datetime.now(timezone.utc)
+    anchor = until or observed
+    if until is not None:
+        use_cache = False
     key = (symbol, timeframe, venue)
 
     with _LOCK:
@@ -158,10 +168,10 @@ def live_series(symbol: str, timeframe: str, venue: str = "binance_usdm", *,
             f"{reason} (retried within {int(FAILURE_COOLDOWN_SECONDS)}s)")
 
     try:
-        if limit <= PAGE_CANDLES:
+        if limit <= PAGE_CANDLES and until is None:
             raw = fetcher(symbol, timeframe, venue, min(limit + 2, PAGE_CANDLES))
         else:
-            raw = _fetch_pages(symbol, timeframe, venue, limit, fetcher, observed,
+            raw = _fetch_pages(symbol, timeframe, venue, limit, fetcher, anchor,
                                max_pages=max_pages)
     except (NativeSMCLiveDataUnavailable, KeyError, ValueError) as exc:
         with _LOCK:

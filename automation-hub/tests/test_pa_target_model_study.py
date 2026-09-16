@@ -40,7 +40,8 @@ def _record(**kw):
     zones = kw.pop("zones", [])
     plan = {"entry_bound": 100.0, "stop": 99.0, "target": 102.0}
     plan.update(kw.pop("plan", {}))
-    return {"index": 1, "at": START.isoformat(), "direction": kw.pop("direction", "long"),
+    at = kw.pop("at", START.isoformat())
+    return {"index": 1, "at": at, "direction": kw.pop("direction", "long"),
             "setup_atr15": kw.pop("atr", 1.0), "zones_in_view": zones,
             "plan": plan, **kw}
 
@@ -305,3 +306,37 @@ def test_a_covered_window_prints_no_warning(study):
                 _bars([(100.0, 100.0)]), max_hold=288, min_net_rr=2.5,
                 tick=0.1, costs=CostModel(), out=out)
     assert "WARNING" not in out.getvalue()
+
+
+def test_an_outcome_series_that_misses_the_confirmations_is_flagged(study):
+    """An unresolved outcome is not a loss, and a study that resolved nothing
+    looks identical to one where nothing reached its target."""
+    from datetime import timedelta
+
+    # After the series ends: no candles follow it, so nothing can resolve.
+    late = study._covers(_bars([(100.0, 100.0)] * 5),
+                         [_record(at=(START + timedelta(days=200)).isoformat())], 288)
+    assert late["ok"] is False and late["missing"] == 1
+    # Before it begins: same verdict, different edge.
+    early = study._covers(_bars([(100.0, 100.0)] * 5),
+                          [_record(at=(START - timedelta(days=200)).isoformat())], 288)
+    assert early["ok"] is False and early["missing"] == 1
+
+
+def test_a_covering_series_is_not_flagged(study):
+    from datetime import timedelta
+
+    records = [{"at": (START + timedelta(minutes=10)).isoformat()}]
+    bars = _bars([(100.0, 100.0)] * 400)
+    assert study._covers(bars, records, 5)["ok"] is True
+
+
+def test_outcome_candles_are_anchored_at_the_window_not_today(study):
+    """Same flaw as the replay had: the newest N candles are the wrong N when
+    the trades being judged are months back."""
+    import inspect
+
+    source = inspect.getsource(study._load_confirm_bars)
+    assert "until=until" in source
+    assert "live_series" in source
+    assert source.index("live_series") < source.index("get_bars")
