@@ -21,6 +21,8 @@ structurally so a later "just one POST to arm it" has to change the test.
 from __future__ import annotations
 
 import importlib
+from threading import RLock
+from time import monotonic
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -356,26 +358,127 @@ def _candle_rows(rows) -> list[dict]:
              "c": float(bar.close), "v": float(bar.volume)} for bar in rows]
 
 
+def _judge(symbol: str, timeframe: str, rows) -> "object":
+    """The platform's one verdict on how current a series is.
+
+    services/market_data_freshness.py is the single authority every consumer
+    on the platform already answers to, so the Lab asks it rather than forming
+    a second opinion about the same candle. Ages are measured from the close,
+    and a series is fresh only until the next candle of that timeframe is due.
+    """
+    from services.market_data_freshness import assess_timeframe
+
+    newest = rows[-1].timestamp if rows else None
+    return assess_timeframe(symbol, timeframe, newest)
+
+
+def _venue_key(status: dict) -> str:
+    """The live-visual venue this instance trades, defaulting to Binance USD-M."""
+    from services.native_smc_live_visual import LIVE_VENUES
+
+    market = status.get("market") or {}
+    for candidate in (market.get("data_source"), status.get("exchange"),
+                      status.get("venue")):
+        key = str(candidate or "").strip().lower().replace(" ", "_")
+        if key in LIVE_VENUES:
+            return key
+    return "binance_usdm"
+
+
+class _LiveSeriesUnavailable(RuntimeError):
+    """The venue read did not yield usable closed candles."""
+
+
+_LIVE_SERIES: dict[tuple[str, str, str], list] = {}
+_LIVE_FAILURES: dict[tuple[str, str, str], tuple[float, str]] = {}
+_LIVE_SERIES_LOCK = RLock()
+#: How long a failed venue read is remembered. An unreachable exchange takes
+#: the ccxt timeout to say so, and every poller would otherwise pay it on every
+#: tick. Short enough that recovery is noticed within one cycle, and it never
+#: suppresses the error -- the remembered reason is raised again.
+_LIVE_FAILURE_COOLDOWN_SECONDS = 15.0
+
+
+def _live_exchange_series(symbol: str, timeframe: str, venue: str, limit: int) -> list:
+    """Closed candles read straight from the venue, the way the SMC labs read them.
+
+    Same fetch, same structural validation, same freshness authority -- so the
+    Instance Lab cannot end up a different age from the rest of the platform
+    while looking at the same market.
+
+    The result is reused only while its newest candle is still FRESH. That is
+    not a timer: by the authority's own rule a closed candle is current until
+    the next one of that timeframe is due, so reusing a fresh series cannot
+    show stale data, and the moment it could the next call refetches.
+    """
+    from bot.data.resample import TF_SECONDS
+    from data.forward_market_data import valid_closed_bars
+    from services.native_smc_live_visual import (
+        NativeSMCLiveDataUnavailable,
+        fetch_venue_ohlcv,
+    )
+
+    key = (symbol.upper(), timeframe, venue)
+    with _LIVE_SERIES_LOCK:
+        cached = _LIVE_SERIES.get(key)
+        failed_at, reason = _LIVE_FAILURES.get(key, (0.0, ""))
+    if cached and _judge(symbol, timeframe, cached).fresh:
+        return cached[-limit:]
+    if reason and monotonic() - failed_at < _LIVE_FAILURE_COOLDOWN_SECONDS:
+        raise _LiveSeriesUnavailable(f"{reason} (retried within {int(_LIVE_FAILURE_COOLDOWN_SECONDS)}s)")
+
+    try:
+        raw = fetch_venue_ohlcv(symbol, timeframe, venue, max(limit + 2, 50))
+    except (NativeSMCLiveDataUnavailable, KeyError, ValueError) as exc:
+        with _LIVE_SERIES_LOCK:
+            _LIVE_FAILURES[key] = (monotonic(), str(exc))
+        raise _LiveSeriesUnavailable(str(exc)) from exc
+    rows = valid_closed_bars(raw, TF_SECONDS[timeframe])
+    if not rows:
+        message = f"{venue} returned no closed {symbol} {timeframe} candles"
+        with _LIVE_SERIES_LOCK:
+            _LIVE_FAILURES[key] = (monotonic(), message)
+        raise _LiveSeriesUnavailable(message)
+    with _LIVE_SERIES_LOCK:
+        _LIVE_FAILURES.pop(key, None)
+        _LIVE_SERIES[key] = rows
+        # Bounded: one entry per symbol/timeframe/venue an operator has looked
+        # at, and the oldest goes first. This is a display cache, never a store.
+        while len(_LIVE_SERIES) > 32:
+            _LIVE_SERIES.pop(next(iter(_LIVE_SERIES)))
+    return rows[-limit:]
+
+
+
 @router.get("/candles")
 def candles(instance_id: str = Query(..., min_length=1),
             timeframe: Optional[str] = Query(None),
             limit: int = Query(300, ge=20, le=1500)):
-    """The closed candles this instance decides on, or a refusal saying why.
+    """The closed candles this instance decides on, freshest real source first.
 
-    The running strategy's own series is asked first. It is the same object the
-    overlays are read from, so the zones, pivots and EMAs land on the candle
-    that produced them; the shared provider series is a second opinion that can
-    be one candle ahead or behind and silently shift them. When no worker is
-    running there is no such series, and the provider history is the honest
-    second choice -- it is still real, validated data, and the response says
-    which of the two the operator is looking at.
+    Three real sources, tried in order, each judged by the one freshness
+    authority the whole platform answers to:
 
-    ``require_real=True`` on that fallback is the whole point. The bundled
+      1. the running strategy's own series -- the same object the overlays are
+         read from, so zones, pivots and EMAs land on the candle that produced
+         them. Used only while that series is FRESH; a worker that has fallen
+         behind must not decide what the chart shows.
+      2. a direct venue read, exactly the fetch and validation the SMC labs
+         use. Fresh by construction, and on the same exchange candle grid, so
+         overlays still align by timestamp.
+      3. the local real-candle cache, which is only as current as the last
+         /data/sync and is therefore the last thing tried, never the first.
+
+    ``require_real=True`` on that last one is the whole point. The bundled
     sample series and the synthetic generator are legitimate for fixtures and
     must never reach a forward-paper decision or a chart that claims to show
     one -- an operator reading manufactured candles to explain a real refusal
-    is worse off than one shown an error. If neither real series is available
-    this returns 503 rather than a plausible-looking fallback.
+    is worse off than one shown an error. If no real series is available this
+    returns 503 rather than a plausible-looking fallback.
+
+    Every response carries the verdict, the age and the tolerance that produced
+    it, so nothing downstream has to assume the data is current -- or can
+    quietly claim it is.
     """
     status = _status(instance_id)
     symbol = str(status.get("symbol") or "")
@@ -390,47 +493,77 @@ def candles(instance_id: str = Query(..., min_length=1),
 
     strategy = _live_strategy(instance_id, symbol)
     market = status.get("market") or {}
-    frames = _strategy_timeframes(strategy, instance_tf)
+    venue = _venue_key(status)
     envelope = {
         "instance_id": instance_id, "symbol": symbol, "timeframe": requested,
         "instance_timeframe": instance_tf,
-        "strategy_timeframes": frames,
+        "strategy_timeframes": _strategy_timeframes(strategy, instance_tf),
+        "venue": venue,
         "market_data_state": market.get("market_data_status"),
         "last_closed_candle": market.get("last_market_data_timestamp"),
         "real_execution_allowed": False,
     }
 
-    rows = _strategy_series(strategy, requested)
-    if rows:
-        trimmed = rows[-limit:]
-        return {**envelope, "candles": _candle_rows(trimmed),
-                "source": f"instance strategy state · {requested}",
-                "aligned_with_overlays": True}
+    attempts: list[dict] = []
 
+    # 1. The strategy's own series, while it is current.
+    own = _strategy_series(strategy, requested)
+    if own:
+        verdict = _judge(symbol, requested, own)
+        attempts.append({"source": "instance strategy state",
+                         "freshness": verdict.to_dict()})
+        if verdict.fresh:
+            return {**envelope, "candles": _candle_rows(own[-limit:]),
+                    "source": f"instance strategy state · {requested}",
+                    "aligned_with_overlays": True,
+                    "freshness": verdict.to_dict(), "attempts": attempts}
+
+    # 2. A direct venue read -- the same path the SMC labs use.
+    try:
+        live = _live_exchange_series(symbol, requested, venue, limit)
+    except _LiveSeriesUnavailable as exc:
+        attempts.append({"source": f"venue {venue}", "error": str(exc)})
+    else:
+        verdict = _judge(symbol, requested, live)
+        attempts.append({"source": f"venue {venue}", "freshness": verdict.to_dict()})
+        return {**envelope, "candles": _candle_rows(live),
+                "source": f"venue {venue} · live closed candles",
+                # Same exchange grid, so an overlay still lands on its own
+                # candle; this series can simply run ahead of a lagging worker.
+                "aligned_with_overlays": True,
+                "strategy_series_behind": bool(own) and not _judge(
+                    symbol, requested, own).fresh,
+                "freshness": verdict.to_dict(), "attempts": attempts}
+
+    # 3. The local cache of real candles, last and clearly labelled.
     try:
         from data.market_data import get_bars
 
         rows, source = get_bars(symbol, n=limit, timeframe=requested, require_real=True)
     except (ValueError, RuntimeError) as exc:
+        attempts.append({"source": "local real-candle cache", "error": str(exc)})
         raise HTTPException(503, {
             **envelope, "code": "NO_REAL_MARKET_DATA", "retryable": True,
-            "message": str(exc),
+            "message": str(exc), "attempts": attempts,
             "note": "The Visual Lab will not substitute sample or synthetic candles."},
         ) from exc
     if not rows:
         # get_bars answers an empty series with the reason in its source string
         # ("unavailable (real data required -- run /data/sync)"). Dropping that
         # leaves the operator with a refusal and no next step.
+        attempts.append({"source": "local real-candle cache", "error": source})
         raise HTTPException(503, {
             **envelope, "code": "NO_REAL_MARKET_DATA", "retryable": True,
-            "source": source,
+            "source": source, "attempts": attempts,
             "message": f"no real closed candles for {symbol} {requested}: {source}",
             "note": "The Visual Lab will not substitute sample or synthetic candles."})
+    verdict = _judge(symbol, requested, rows)
+    attempts.append({"source": "local real-candle cache",
+                     "freshness": verdict.to_dict()})
     return {**envelope, "candles": _candle_rows(rows),
-            "source": f"provider history · {source}",
-            # Said out loud because it decides whether an overlay landing one
-            # candle off is a drawing bug or the two series disagreeing.
-            "aligned_with_overlays": False}
+            "source": f"local real-candle cache · {source}",
+            "aligned_with_overlays": False,
+            "freshness": verdict.to_dict(), "attempts": attempts}
 
 
 @router.get("/timeline")

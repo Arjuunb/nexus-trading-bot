@@ -9,6 +9,7 @@ blocked instance is never drawn as a clean one.
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
 
 import pytest
@@ -345,6 +346,7 @@ def test_synthetic_candles_cannot_reach_the_lab(lab, monkeypatch):
         raise RuntimeError("no verified real candles; refusing sample fallback")
 
     monkeypatch.setattr(market_data, "get_bars", _refuse)
+    _venue_down(monkeypatch)
     client = lab([_instance()])
     response = client.get("/research/instance-visual/candles?instance_id=inst-1")
     assert response.status_code == 503
@@ -360,36 +362,14 @@ def test_an_empty_real_series_fails_closed_rather_than_rendering_nothing(lab, mo
 
     monkeypatch.setattr(market_data, "get_bars",
                         lambda *a, **k: ([], "local store (real)"))
+    _venue_down(monkeypatch)
     client = lab([_instance()])
     response = client.get("/research/instance-visual/candles?instance_id=inst-1")
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "NO_REAL_MARKET_DATA"
 
 
-def test_real_candles_are_returned_with_their_source(lab, monkeypatch):
-    """Provenance travels with the data: an operator can see which series the
-    chart is drawing without leaving the page."""
-    import data.market_data as market_data
-    from datetime import datetime, timezone
-
-    from bot.types import Bar
-
-    bars = [Bar(datetime(2026, 9, 16, 3, 0, tzinfo=timezone.utc),
-                100.0, 101.0, 99.0, 100.5, 12.0)]
-    monkeypatch.setattr(market_data, "get_bars",
-                        lambda *a, **k: (bars, "local store (real)"))
-    client = lab([_instance()])
-    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
-    assert body["source"] == "provider history · local store (real)"
-    assert body["candles"][0]["c"] == 100.5
-    assert body["symbol"] == "BTCUSDT" and body["timeframe"] == "5m"
-    # No worker is running here, so this is the second-choice series and the
-    # response has to say so: overlays read from a strategy would not be
-    # guaranteed to line up with it.
-    assert body["aligned_with_overlays"] is False
-
-
-# -------------------------------------------------- candles the strategy holds
+# --------------------------------------------------------- candles, and their age
 
 class _MtfStrategy:
     """A multi-timeframe strategy the way the two real ones are shaped."""
@@ -400,41 +380,204 @@ class _MtfStrategy:
         self.bars = list(self._context.get(self.decision_timeframe, ()))
 
 
-def _bars(n, *, start_hour=3, close=100.0):
-    from datetime import datetime, timedelta, timezone
+def _bar_series(n, *, newest, minutes=5, close=100.0):
+    from datetime import timedelta
 
     from bot.types import Bar
 
-    origin = datetime(2026, 9, 16, start_hour, tzinfo=timezone.utc)
-    return [Bar(origin + timedelta(minutes=5 * i), close, close + 1,
-                close - 1, close + 0.5, 10.0) for i in range(n)]
+    step = timedelta(minutes=minutes)
+    return [Bar(newest - step * i, close, close + 1, close - 1, close + 0.5, 10.0)
+            for i in range(n)][::-1]
 
 
-def test_candles_come_from_the_running_strategy_not_a_second_fetch(monkeypatch):
-    """The series the overlays were read from is the series they get drawn on.
-    A separately fetched provider history can be a candle ahead and put every
-    zone in the wrong place, which looks like a drawing bug and is not one."""
-    import data.market_data as market_data
+def _last_closed_open(minutes=5):
+    """The open of the newest candle that has actually closed, right now."""
+    from datetime import datetime, timedelta, timezone
 
-    monkeypatch.setattr(market_data, "get_bars",
-                        lambda *a, **k: (_bars(3, start_hour=9), "provider"))
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    return now - timedelta(minutes=now.minute % minutes) - timedelta(minutes=minutes)
+
+
+def _fresh(n=40, minutes=5):
+    return _bar_series(n, newest=_last_closed_open(minutes), minutes=minutes)
+
+
+def _stale(n=40, minutes=5):
+    from datetime import timedelta
+
+    return _bar_series(n, newest=_last_closed_open(minutes) - timedelta(days=2),
+                       minutes=minutes)
+
+
+@pytest.fixture(autouse=True)
+def _no_carried_over_series():
+    """The venue cache is a display cache, not shared test state."""
+    import routers.instance_visual_lab as module
+
+    module._LIVE_SERIES.clear(); module._LIVE_FAILURES.clear()
+    yield
+    module._LIVE_SERIES.clear(); module._LIVE_FAILURES.clear()
+
+
+def _venue(monkeypatch, bars):
+    import services.native_smc_live_visual as live
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", lambda *a, **k: list(bars))
+
+
+def _venue_down(monkeypatch, message="venue unreachable"):
+    import services.native_smc_live_visual as live
+
+    def _raise(*_a, **_k):
+        raise live.NativeSMCLiveDataUnavailable(message)
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", _raise)
+
+
+def test_a_fresh_strategy_series_is_what_the_chart_draws(monkeypatch):
+    """The series the overlays were read from is the series they get drawn on,
+    so long as it is current."""
+    _venue(monkeypatch, _fresh(5))
     client = _with_runtime(monkeypatch, [_instance()],
-                           {"BTCUSDT": _MtfStrategy({"5m": _bars(40)})})
+                           {"BTCUSDT": _MtfStrategy({"5m": _fresh(40)})})
     body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
 
     assert body["source"] == "instance strategy state · 5m"
     assert body["aligned_with_overlays"] is True
+    assert body["freshness"]["status"] == "FRESH"
     assert len(body["candles"]) == 40
-    assert body["candles"][0]["t"].startswith("2026-09-16T03:00")
+
+
+def test_a_lagging_worker_does_not_decide_what_the_chart_shows(monkeypatch):
+    """The point of the change. A strategy that has fallen behind still holds a
+    real series -- it is just old, and drawing it silently is how a chart ends
+    up two days stale while claiming to show a running instance."""
+    _venue(monkeypatch, _fresh(30))
+    client = _with_runtime(monkeypatch, [_instance()],
+                           {"BTCUSDT": _MtfStrategy({"5m": _stale(40)})})
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+
+    assert body["source"] == "venue binance_usdm · live closed candles"
+    assert body["freshness"]["status"] == "FRESH"
+    assert body["strategy_series_behind"] is True
+    # ...and the rejected series is still reported, because "the bot is behind"
+    # is information, not noise.
+    first = body["attempts"][0]
+    assert first["source"] == "instance strategy state"
+    assert first["freshness"]["status"] == "STALE"
+
+
+def test_the_venue_read_is_the_same_one_the_smc_labs_use(monkeypatch):
+    """Not a second fetch path with its own idea of what a closed candle is."""
+    import routers.instance_visual_lab as module
+    import services.native_smc_live_visual as live
+
+    source = inspect.getsource(module._live_exchange_series)
+    assert "fetch_venue_ohlcv" in source
+    assert "valid_closed_bars" in source
+    assert hasattr(live, "fetch_venue_ohlcv")
+
+
+def test_a_forming_candle_from_the_venue_is_never_charted_as_closed(monkeypatch):
+    """valid_closed_bars decides closure by timestamp, not list position."""
+    from datetime import timedelta
+
+    forming = _bar_series(1, newest=_last_closed_open() + timedelta(minutes=5))
+    _venue(monkeypatch, _fresh(20) + forming)
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+
+    assert forming[0].timestamp.isoformat() not in [c["t"] for c in body["candles"]]
+    assert len(body["candles"]) == 20
+
+
+def test_the_local_cache_is_the_last_source_tried_not_the_first(monkeypatch):
+    """It is only as current as the last /data/sync, which is exactly how a
+    chart ends up stale while every other page is live."""
+    import data.market_data as market_data
+
+    _venue_down(monkeypatch, "binance unreachable")
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_fresh(12), "local store (real)"))
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+
+    assert body["source"] == "local real-candle cache · local store (real)"
+    assert body["aligned_with_overlays"] is False
+    assert [a["source"] for a in body["attempts"]][:1] == ["venue binance_usdm"]
+    assert "binance unreachable" in body["attempts"][0]["error"]
+
+
+def test_a_stale_cache_is_served_labelled_stale_never_as_current(monkeypatch):
+    """When it is genuinely the only real data left, it is shown -- with the
+    authority's verdict attached, so nothing downstream can call it fresh."""
+    import data.market_data as market_data
+
+    _venue_down(monkeypatch)
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_stale(12), "local store (real)"))
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+
+    assert body["freshness"]["status"] == "STALE"
+    assert body["freshness"]["blocker"] == "STALE_CANDLES"
+    assert body["freshness"]["age_seconds"] > body["freshness"]["allowed_age_seconds"]
+
+
+def test_every_served_series_carries_the_platforms_own_verdict(monkeypatch):
+    """One freshness authority, not a second opinion formed in this router."""
+    import routers.instance_visual_lab as module
+
+    assert "assess_timeframe" in inspect.getsource(module._judge)
+    _venue(monkeypatch, _fresh(10))
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+    for field in ("status", "age_seconds", "allowed_age_seconds",
+                  "interval_seconds", "last_close", "blocker"):
+        assert field in body["freshness"]
+
+
+def test_a_fresh_venue_series_is_reused_rather_than_refetched(monkeypatch):
+    """Reuse is bounded by the authority's rule, not a timer: a closed candle
+    is current until the next one is due, so this cannot serve stale data."""
+    import services.native_smc_live_visual as live
+
+    calls = []
+
+    def _count(*a, **k):
+        calls.append(a)
+        return _fresh(20)
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", _count)
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    for _ in range(3):
+        client.get("/research/instance-visual/candles?instance_id=inst-1")
+    assert len(calls) == 1
+
+
+def test_a_stale_cached_series_is_refetched(monkeypatch):
+    """The other half of the same rule."""
+    import routers.instance_visual_lab as module
+    import services.native_smc_live_visual as live
+
+    calls = []
+    monkeypatch.setattr(live, "fetch_venue_ohlcv",
+                        lambda *a, **k: (calls.append(a), _fresh(20))[1])
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    client.get("/research/instance-visual/candles?instance_id=inst-1")
+    module._LIVE_SERIES[("BTCUSDT", "5m", "binance_usdm")] = _stale(20)
+    client.get("/research/instance-visual/candles?instance_id=inst-1")
+    assert len(calls) == 2
 
 
 def test_the_strategys_other_timeframes_are_selectable(monkeypatch):
-    """SMC's chart lets you change frame. This one does too -- but only to
-    frames the strategy actually holds, so the chart never shows a frame the
-    decision never saw."""
+    """SMC's chart lets you change frame. This one does too -- and a frame the
+    strategy holds is marked, so the chart never implies the decision saw one
+    it did not."""
+    _venue(monkeypatch, _fresh(5))
     client = _with_runtime(monkeypatch, [_instance()],
-                           {"BTCUSDT": _MtfStrategy({"5m": _bars(10), "15m": _bars(20),
-                                                     "1h": _bars(30)})})
+                           {"BTCUSDT": _MtfStrategy({"5m": _fresh(10), "15m": _fresh(20, 15),
+                                                     "1h": _fresh(30, 60)})})
     listed = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
     assert listed["strategy_timeframes"] == ["5m", "15m", "1h"]
 
@@ -446,48 +589,36 @@ def test_the_strategys_other_timeframes_are_selectable(monkeypatch):
     assert hourly["instance_timeframe"] == "5m"
 
 
-def test_a_frame_the_strategy_does_not_hold_falls_back_to_real_history(monkeypatch):
-    """Still real, still validated -- and labelled as the second choice."""
-    import data.market_data as market_data
-
-    monkeypatch.setattr(market_data, "get_bars",
-                        lambda *a, **k: (_bars(12), "binance_usdm (real)"))
-    client = _with_runtime(monkeypatch, [_instance()],
-                           {"BTCUSDT": _MtfStrategy({"5m": _bars(10)})})
-    body = client.get(
-        "/research/instance-visual/candles?instance_id=inst-1&timeframe=4h").json()
-    assert body["source"] == "provider history · binance_usdm (real)"
-    assert body["aligned_with_overlays"] is False
-
-
 def test_the_limit_trims_the_strategy_series_from_the_right(monkeypatch):
     """The newest candles are the ones worth drawing."""
+    _venue(monkeypatch, _fresh(5))
+    series = _fresh(200)
     client = _with_runtime(monkeypatch, [_instance()],
-                           {"BTCUSDT": _MtfStrategy({"5m": _bars(200)})})
+                           {"BTCUSDT": _MtfStrategy({"5m": series})})
     body = client.get(
         "/research/instance-visual/candles?instance_id=inst-1&limit=20").json()
     assert len(body["candles"]) == 20
-    assert body["candles"][-1]["t"] == _bars(200)[-1].timestamp.isoformat()
+    assert body["candles"][-1]["t"] == series[-1].timestamp.isoformat()
 
 
 def test_an_unknown_timeframe_is_refused_rather_than_fetched(monkeypatch):
     client = _with_runtime(monkeypatch, [_instance()],
-                           {"BTCUSDT": _MtfStrategy({"5m": _bars(10)})})
+                           {"BTCUSDT": _MtfStrategy({"5m": _fresh(10)})})
     response = client.get(
         "/research/instance-visual/candles?instance_id=inst-1&timeframe=7m")
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "UNKNOWN_TIMEFRAME"
 
 
-def test_a_refusal_still_carries_the_context_the_chart_needs(monkeypatch):
+def test_a_refusal_names_every_source_it_tried(monkeypatch):
     """The chart frame stays on screen through an outage, so the refusal has to
     carry enough to keep its header honest rather than blanking the page."""
     import data.market_data as market_data
 
-    def _no_data(*_a, **_k):
-        raise RuntimeError("no real closed candles for BTCUSDT 5m")
-
-    monkeypatch.setattr(market_data, "get_bars", _no_data)
+    _venue_down(monkeypatch, "binance unreachable")
+    monkeypatch.setattr(
+        market_data, "get_bars",
+        lambda *a, **k: ([], "unavailable (real data required — run /data/sync)"))
     client = _with_runtime(monkeypatch, [_instance()], {})
     response = client.get("/research/instance-visual/candles?instance_id=inst-1")
     assert response.status_code == 503
@@ -495,20 +626,19 @@ def test_a_refusal_still_carries_the_context_the_chart_needs(monkeypatch):
     assert detail["code"] == "NO_REAL_MARKET_DATA"
     assert detail["symbol"] == "BTCUSDT" and detail["timeframe"] == "5m"
     assert detail["instance_timeframe"] == "5m"
+    assert "run /data/sync" in detail["message"]
+    assert [a["source"] for a in detail["attempts"]] == [
+        "venue binance_usdm", "local real-candle cache"]
     assert "synthetic" in detail["note"]
 
 
 def test_a_strategy_holding_no_bars_does_not_pretend_to(monkeypatch):
-    """An empty strategy series is not a series. Fall through to real history
-    rather than returning zero candles labelled as the strategy's own."""
-    import data.market_data as market_data
-
-    monkeypatch.setattr(market_data, "get_bars",
-                        lambda *a, **k: (_bars(5), "binance_usdm (real)"))
+    """An empty strategy series is not a series."""
+    _venue(monkeypatch, _fresh(5))
     client = _with_runtime(monkeypatch, [_instance()],
                            {"BTCUSDT": _MtfStrategy({"5m": []})})
     body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
-    assert body["source"] == "provider history · binance_usdm (real)"
+    assert body["source"] == "venue binance_usdm · live closed candles"
     assert len(body["candles"]) == 5
 
 
@@ -640,17 +770,55 @@ def test_a_missing_quote_does_not_invent_a_spread(lab):
     assert feed["spread"] is None
 
 
-def test_the_refusal_carries_the_reason_the_data_layer_gave(monkeypatch):
-    """get_bars answers an empty series with its reason in the source string.
-    Dropping it leaves an operator with a refusal and no next step."""
-    import data.market_data as market_data
 
-    monkeypatch.setattr(
-        market_data, "get_bars",
-        lambda *a, **k: ([], "unavailable (real data required — run /data/sync)"))
+
+def test_an_unreachable_venue_is_not_retried_on_every_poll(monkeypatch):
+    """An exchange that is down takes the ccxt timeout to say so, and every
+    poller would otherwise pay it on every tick. The failure is remembered
+    briefly -- and re-raised, never swallowed."""
+    import data.market_data as market_data
+    import services.native_smc_live_visual as live
+
+    calls = []
+
+    def _down(*a, **k):
+        calls.append(a)
+        raise live.NativeSMCLiveDataUnavailable("binance unreachable")
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", _down)
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_fresh(6), "local store (real)"))
     client = _with_runtime(monkeypatch, [_instance()], {})
-    response = client.get("/research/instance-visual/candles?instance_id=inst-1")
-    assert response.status_code == 503
-    detail = response.json()["detail"]
-    assert "run /data/sync" in detail["message"]
-    assert detail["source"] == "unavailable (real data required — run /data/sync)"
+    bodies = [client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+              for _ in range(3)]
+
+    assert len(calls) == 1, "the dead venue must not be dialled on every poll"
+    # Every response still reports the failure, with the original reason.
+    for body in bodies:
+        assert body["source"].startswith("local real-candle cache")
+        assert "binance unreachable" in body["attempts"][0]["error"]
+
+
+def test_a_recovered_venue_is_used_again(monkeypatch):
+    """The cooldown must not become a lockout."""
+    import routers.instance_visual_lab as module
+    import services.native_smc_live_visual as live
+
+    state = {"down": True}
+
+    def _flaky(*a, **k):
+        if state["down"]:
+            raise live.NativeSMCLiveDataUnavailable("binance unreachable")
+        return _fresh(10)
+
+    monkeypatch.setattr(live, "fetch_venue_ohlcv", _flaky)
+    import data.market_data as market_data
+    monkeypatch.setattr(market_data, "get_bars",
+                        lambda *a, **k: (_fresh(6), "local store (real)"))
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    client.get("/research/instance-visual/candles?instance_id=inst-1")
+
+    state["down"] = False
+    module._LIVE_FAILURES.clear()          # the cooldown elapsing
+    body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
+    assert body["source"] == "venue binance_usdm · live closed candles"

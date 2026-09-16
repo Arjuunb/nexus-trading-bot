@@ -2064,3 +2064,11 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .ivl-chartfoot small { font-size: 9px; text-transform: none; letter-spacing: 0;
   color: #6b7787; }
 .ivl-foot-right { margin-left: auto; color: #6b7787; letter-spacing: .08em; }
+
+/* The freshness verdict, as the backend reported it. */
+.ivl-fresh { font-style: normal; font-size: 9.5px; letter-spacing: .07em;
+  padding: 2px 7px; border-radius: 999px; border: 1px solid; }
+.ivl-fresh.is-fresh { color: #4ec9a0; border-color: #2f5f4d; background: #0e1a15; }
+.ivl-fresh.is-stale, .ivl-fresh.is-missing { color: #ff9b9b; border-color: #7a3030;
+  background: #1a0f0f; }
+.ivl-fresh.is-unknown { color: #8693a6; border-color: #2a3442; }

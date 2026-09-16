@@ -266,7 +266,62 @@ def test_the_chart_is_not_polled_at_one_cadence():
     page = _page()
     assert "loadState(selected), 4000" in page
     assert "loadFeatures(selected), 15000" in page
-    assert "loadCandles(selected, frame), 60000" in page
+    # Candles are refetched on a cadence derived from the frame on screen, not
+    # a flat minute: a 1m chart a minute behind is a stale chart.
+    assert "cadence(frame || instanceFrame)" in page
+    assert "const cadence = (frame: string) =>" in page
+
+
+def test_the_candle_cadence_is_bounded_and_follows_the_frame():
+    """Fast enough that a closed candle is news, never a busy-loop."""
+    page = _page()
+    body = page[page.index("const cadence ="):]
+    body = body[:body.index(";")]
+    assert "Math.max(10000" in body, "never faster than 10s"
+    assert "60000" in body, "never slower than a minute"
+    assert "FRAME_SECONDS[frame]" in body, "the frame decides, not a constant"
+
+
+def test_the_page_never_decides_for_itself_that_data_is_fresh():
+    """A standing rule: do not hard-code the UI to show FRESH, do not remove
+    STALE_CANDLES, do not widen tolerances to make the warning go away.
+
+    The verdict is rendered from the backend field and nowhere else, so there
+    is no branch in this file that can print FRESH without the server -- which
+    asks services/market_data_freshness.py -- having said so.
+    """
+    page = _page()
+    assert "candles?.freshness" in page
+    assert "candles.freshness.status" in page
+    # No locally computed verdict and no tolerance of its own.
+    for banned in ("isFresh =", "function fresh(", "allowedAge =",
+                   "STALE_TOLERANCE", "toleranceSeconds", "Date.now() - close"):
+        assert banned not in page, f"the page must not decide freshness itself ({banned})"
+    # The literal appears exactly once, and only to compare against the
+    # server's own verdict -- never to render one.
+    assert page.count('"FRESH"') == 1
+    assert 'candles.freshness.status !== "FRESH"' in page
+
+
+def test_a_stale_series_is_a_headline_not_a_footnote():
+    """Requirement: if data is stale, show a prominent DATA STALE state."""
+    page = _page()
+    stale = page[page.index('candles.freshness.status !== "FRESH"'):]
+    stale = stale[:stale.index("</div> : null}")]
+    assert "ivl-chartnote is-bad" in stale
+    assert "DATA STALE" in stale
+    assert "candles.freshness.blocker" in stale
+    # The numbers that produced the verdict, so it can be checked rather than
+    # believed.
+    assert "allowed_age_seconds" in stale and "age_seconds" in stale
+
+
+def test_a_lagging_worker_is_reported_rather_than_papered_over():
+    """The chart running ahead of the instance is information: it means the bot
+    is seeing less than the operator is."""
+    page = _page()
+    assert "strategy_series_behind" in page
+    assert "The running strategy is behind this chart" in page
 
 
 def test_the_socket_reconnects_with_backoff_and_does_not_duplicate():

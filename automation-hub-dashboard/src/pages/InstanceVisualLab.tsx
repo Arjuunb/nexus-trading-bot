@@ -81,14 +81,41 @@ interface Timeline {
            last_trade: TimelineEvent | null };
 }
 interface Candle { t: string; o: number; h: number; l: number; c: number; v?: number }
+/** The platform's one freshness verdict, as services/market_data_freshness.py
+ *  returns it. Never recomputed here -- a second opinion about the same candle
+ *  is how a page ends up disagreeing with the bot it is watching. */
+interface Freshness {
+  status: string; blocker: string; age_seconds: number | null;
+  allowed_age_seconds: number; interval_seconds: number; last_close: string | null;
+}
+interface Attempt { source: string; error?: string; freshness?: Freshness }
 interface Candles {
   candles: Candle[]; source: string; symbol: string; timeframe: string;
   instance_timeframe?: string; strategy_timeframes?: string[];
   aligned_with_overlays?: boolean; market_data_state?: string | null;
+  freshness?: Freshness; attempts?: Attempt[]; venue?: string;
+  strategy_series_behind?: boolean;
 }
 /** Offered in the chart header. A frame the strategy holds is marked as such. */
 const TIMEFRAMES = ["1m", "3m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const VIEWS = [60, 120, 240, 480];
+const FRAME_SECONDS: Record<string, number> = {
+  "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+  "1h": 3600, "4h": 14400, "1d": 86400,
+};
+/** Refetch often enough that a closed candle shows up while it is still news,
+ *  and never faster than 10s. The backend reuses its venue read while the
+ *  series is fresh, so a poll between closes costs nothing at the exchange. */
+const cadence = (frame: string) =>
+  Math.max(10000, Math.min((FRAME_SECONDS[frame] ?? 300) * 100, 60000));
+const age = (seconds?: number | null) => {
+  if (seconds === null || seconds === undefined) return "—";
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 90) return `${s}s`;
+  if (s < 5400) return `${Math.round(s / 60)}m`;
+  if (s < 172800) return `${Math.round(s / 3600)}h`;
+  return `${Math.round(s / 86400)}d`;
+};
 
 const STAGE_LABEL: Record<string, string> = {
   MARKET_DATA: "Market data", FEATURES: "Features", CONTEXT: "Context",
@@ -432,9 +459,10 @@ export default function InstanceVisualLab() {
   useEffect(() => {
     formingRef.current = null; setForming(null);
     void loadCandles(selected, frame);
-    const c = setInterval(() => void loadCandles(selected, frame), 60000);
+    const c = setInterval(() => void loadCandles(selected, frame),
+                          cadence(frame || instanceFrame));
     return () => clearInterval(c);
-  }, [selected, frame, loadCandles]);
+  }, [selected, frame, instanceFrame, loadCandles]);
 
   /**
    * The forming candle, straight from the venue the instance trades.
@@ -560,6 +588,14 @@ export default function InstanceVisualLab() {
             {shownFrame && shownFrame !== instanceFrame
               ? <i className="ivl-offframe">context frame · this instance decides on {instanceFrame}</i>
               : null}
+            {/* The verdict comes from the backend, which asks the one freshness
+                authority. There is deliberately no branch here that can render
+                FRESH without the server having said so. */}
+            {candles?.freshness
+              ? <i className={`ivl-fresh is-${candles.freshness.status.toLowerCase()}`}>
+                  {candles.freshness.status} · {age(candles.freshness.age_seconds)}
+                </i>
+              : <i className="ivl-fresh is-unknown">AGE UNVERIFIED</i>}
           </span>
 
           <span className="ivl-frames">
@@ -602,6 +638,22 @@ export default function InstanceVisualLab() {
           <span>{dataError}</span>
           <small>The Visual Lab will not substitute sample or synthetic candles.</small>
         </div> : null}
+        {candles?.freshness && candles.freshness.status !== "FRESH"
+          ? <div className="ivl-chartnote is-bad">
+              <b>DATA STALE · {candles.freshness.blocker || candles.freshness.status}</b>
+              <span>
+                The newest closed {candles.timeframe} candle is {age(candles.freshness.age_seconds)} old;
+                this timeframe allows {age(candles.freshness.allowed_age_seconds)}. Drawn from {candles.source}.
+              </span>
+              <small>These candles are real and are shown as they are. The age is the
+                platform&rsquo;s own verdict, not this page&rsquo;s.</small>
+            </div> : null}
+        {candles?.strategy_series_behind
+          ? <div className="ivl-chartnote is-warn">
+              <b>The running strategy is behind this chart</b>
+              <span>Its own series is stale, so the chart is drawn from the venue instead.
+                The instance is seeing less than you are.</span>
+            </div> : null}
         {featureError ? <div className="ivl-chartnote is-warn">
           <b>Strategy overlays unavailable</b><span>{featureError}</span>
           <small>Candles and decision markers are still drawn. Overlays come from
@@ -634,8 +686,12 @@ export default function InstanceVisualLab() {
           <span>Candle source<b>{candles?.source || "—"}</b>
             <small>{!candles ? "no series loaded"
               : candles.aligned_with_overlays
-                ? "the strategy\u2019s own series \u2014 overlays align by construction"
-                : "second-choice real history"}</small></span>
+                ? "on the venue candle grid \u2014 overlays align by timestamp"
+                : "cache, only as current as the last /data/sync"}</small></span>
+          <span>Candle age<b>{age(candles?.freshness?.age_seconds)}</b>
+            <small>{candles?.freshness
+              ? `allowed ${age(candles.freshness.allowed_age_seconds)} for ${candles.timeframe}`
+              : "no verdict"}</small></span>
           <span>Runtime overlays<b>{features ? features.overlays.length : "—"}</b>
             <small>{features?.withheld_features?.length
               ? `withheld (not declared): ${features.withheld_features.join(", ")}`
