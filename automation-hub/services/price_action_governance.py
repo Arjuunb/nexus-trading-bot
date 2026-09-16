@@ -77,6 +77,21 @@ def _fingerprint(value: object, prefix: str) -> str:
     return f"{prefix}-{hashlib.sha256(raw).hexdigest()}"
 
 
+def _transition_key(row: dict) -> tuple:
+    """Identify a state transition by the event, not by its recorded values.
+
+    The id is a fingerprint of the setup, the status and the moment, so it is
+    the right key when it is present. A legacy row without one falls back to
+    the same four facts, so it still matches itself across captures instead of
+    being appended again on every poll.
+    """
+    identifier = row.get("id")
+    if identifier:
+        return ("id", str(identifier))
+    return ("event", str(row.get("setup_id")), str(row.get("from_phase")),
+            str(row.get("to_phase")), str(row.get("timestamp")))
+
+
 def _latest_by(rows: list[dict], key: str, value: str) -> dict | None:
     return next((row for row in reversed(rows) if str(row.get(key) or "") == value), None)
 
@@ -298,7 +313,12 @@ class PriceActionJournalStore:
                 "stop": proposal.get("stop"), "target": proposal.get("target"),
                 "signal_at": proposal.get("signal_at"),
                 "entry_model": proposal.get("entry_model"),
-                "valid_until_index": proposal.get("valid_until_index"),
+                # valid_until_index is deliberately absent. It is len(bars) - 1
+                # + entry_expiry_bars, so it identifies where the rolling
+                # buffer happened to end, not the data the decision was made
+                # on: two replays over identical candles would fingerprint the
+                # same decision differently. entry_expiry_bars is part of the
+                # configuration fingerprint, which is where it belongs.
             } if proposal else None),
         }
         dataset_fingerprint = _fingerprint(decision_evidence, "decision-evidence")
@@ -545,6 +565,18 @@ class PriceActionJournalStore:
                             "confirmation_candle", "invalidation_price",
                             "acceptance_reasons", "rejection_reasons"):
                             record["setup"][key] = prior["setup"].get(key)
+                        # A transition records something that happened. Rebuilt
+                        # every capture, it stamps the feed state and the
+                        # proposal prices of *now* onto a past event, so the
+                        # same transition keeps changing while the event does
+                        # not -- and _classification reads that health back,
+                        # flipping the setup's learning classification with the
+                        # feed. Keep what was recorded, append only what is new.
+                        recorded = prior["setup"].get("state_transitions") or []
+                        seen = {_transition_key(row) for row in recorded}
+                        record["setup"]["state_transitions"] = list(recorded) + [
+                            row for row in (record["setup"].get("state_transitions") or [])
+                            if _transition_key(row) not in seen]
                         record["chart_state"] = prior["chart_state"]
                         # Runtime capture may append lifecycle evidence but may
                         # never erase an immutable researcher annotation.

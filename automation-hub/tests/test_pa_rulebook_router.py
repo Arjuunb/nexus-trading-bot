@@ -134,3 +134,63 @@ def test_the_router_has_no_write_path():
     assert methods == {"get"}, f"a non-GET route appeared: {sorted(methods - {'get'})}"
     for forbidden in ("sqlite3", "execution", "broker", "paper_trading"):
         assert forbidden not in imported, f"the read-only router imported {forbidden}"
+
+
+def test_the_state_endpoint_carries_what_the_lab_panel_reads(client, monkeypatch):
+    """The visual lab's Rulebook tab renders these keys by name.
+
+    Not a shape test for its own sake: the panel's whole job is to show the
+    measured reason a setup did not trade, and the 2025 replay showed that
+    reason is almost always the room to the target rather than the threshold.
+    If target_room or required_room_for_min_rr quietly disappears, the panel
+    keeps rendering and silently stops answering the only question it exists
+    to answer.
+    """
+    import routers.pa_rulebook as module
+    from services.pa_rulebook_v01 import CONFIRM_TF, CONTEXT_TF, SETUP_TF
+    from tests.test_pa_rulebook_replay import _dataset
+
+    # The endpoint evaluates one candle rather than walking the series, so the
+    # confirm frame has to END on the confirming candle. With the fixture's
+    # trailing bar included the engine has already moved past it.
+    data = _dataset()
+    data[CONFIRM_TF] = data[CONFIRM_TF][:-1]
+    monkeypatch.setattr(module, "_bars",
+                        lambda symbol, timeframe, limit: list(data[timeframe]))
+    body = client.get("/research/pa-rulebook/state?symbol=BTCUSDT").json()
+
+    for key in ("symbol", "rulebook_version", "strategies", "regime",
+                "regime_evidence", "timeframes", "last_closed", "zones",
+                "retired_zones", "consumed_zone_ids", "pending_setup",
+                "history", "decision", "plan"):
+        assert key in body, f"the lab panel reads {key}"
+    assert body["timeframes"] == {"context": CONTEXT_TF, "setup": SETUP_TF,
+                                  "confirm": CONFIRM_TF}
+    assert body["real_execution_allowed"] is False
+    assert body["paper_execution_allowed"] is False
+    assert set(body["decision"]) == {"state", "blocker", "evidence", "confirmed"}
+
+    plan = body["plan"]
+    assert plan is not None, "the fixture is meant to reach a plan"
+    for key in ("accepted", "direction", "strategy_id", "entry_bound", "stop",
+                "target", "stop_distance", "stop_distance_atr", "net_rr",
+                "costs_loss", "costs_win", "quantity", "planned_loss",
+                "zone_id", "blocker", "evidence"):
+        assert key in plan, f"the lab panel reads plan.{key}"
+    for key in ("target_room", "required_room_for_min_rr", "cost_share_of_risk",
+                "target_zone_id"):
+        assert key in plan["evidence"], f"the lab panel reads plan.evidence.{key}"
+
+
+def test_every_blocker_the_panel_annotates_still_exists(client):
+    """The panel writes a plain-English note per blocker. A renamed blocker
+    would fall through to an unexplained code, which is what the panel is for."""
+    from services.pa_rulebook_v01 import Blocker
+
+    annotated = {
+        "NET_RR_TOO_LOW", "TARGET_UNAVAILABLE", "STOP_DISTANCE_INVALID",
+        "REGIME_NOT_ALIGNED", "REJECTION_FAILED", "CONFIRMATION_EXPIRED",
+        "ZONE_CONSUMED", "NO_ELIGIBLE_ZONE",
+    }
+    known = {member.value for member in Blocker}
+    assert annotated <= known, f"the panel annotates blockers that no longer exist: {annotated - known}"
