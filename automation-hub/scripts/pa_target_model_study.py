@@ -57,6 +57,7 @@ import json
 import math
 import statistics
 import sys
+from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -75,12 +76,19 @@ MIN_RESOLVED = 5
 
 
 def _live_opposing(zones: list[dict], direction: str, entry: float) -> list[dict]:
-    """The same filter the shipped model uses, applied to the recorded registry.
+    """Opposing pivot zones still live at the decision, nearest first.
 
     origin == "pivot" and not retired: a flip object is not an original zone
     and chapter 10 does not let it supply a target. The audit records zones as
     they stood at the decision, so this re-reads history rather than replaying
     it.
+
+    This is a RECONSTRUCTION of the shipped model's view, not proof of
+    identity with it: this finds two opposing zones on confirmations the
+    engine itself rejected with TARGET_UNAVAILABLE, so the engine applies at
+    least one constraint beyond "pivot, live, beyond entry". Read the
+    zone-derived variants as an upper bound on what structure offered, not as
+    what the engine would have chosen.
     """
     live = [z for z in zones
             if z.get("origin") == "pivot" and not z.get("retired")]
@@ -304,7 +312,13 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
     names.append("gate_exact")
     results = {name: {"priced": 0, "undefined": 0, "passed": 0, "net_rrs": [],
                       "pass_nets": [], "target": 0, "stop": 0, "ambiguous": 0,
-                      "timeout": 0, "unresolved": 0, "r_sum": 0.0, "holds": []}
+                      "timeout": 0, "unresolved": 0, "r_sum": 0.0, "holds": [],
+                      # Why a confirmation could not be priced, by the verdict
+                      # the replay recorded. "control" is the target the engine
+                      # actually chose, so it is absent on every rejection --
+                      # including ones decided by the STOP, where it is not
+                      # evidence about the target model at all.
+                      "undefined_by": Counter()}
                for name in names}
 
     for record in records:
@@ -319,6 +333,7 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
             bucket = results[name]
             if target is None:
                 bucket["undefined"] += 1
+                bucket["undefined_by"][record.get("verdict") or "UNKNOWN"] += 1
                 continue
             bucket["priced"] += 1
             net = _net_rr(entry, stop, float(target), costs)
@@ -396,6 +411,30 @@ def study(audit: dict, bars, *, max_hold: int, min_net_rr: float, tick: float,
     print("  amb     one bar spanned target AND stop; resolved as a LOSS.", file=out)
     print("  t/o     open past the max hold; counted in neither win nor loss.", file=out)
     print(file=out)
+
+    unpriced = [n for n in names if results[n]["undefined_by"]]
+    if unpriced:
+        print("  Could not be priced, by the verdict the replay recorded", file=out)
+        for name in unpriced:
+            counts = results[name]["undefined_by"]
+            detail = "   ".join(f"{count} {verdict}"
+                                for verdict, count in counts.most_common())
+            print(f"    {name:<16}{detail}", file=out)
+        # The distinction the bare n/a column cannot make: a plan the engine
+        # threw out on the STOP never had a target to judge, so counting it
+        # against the target model is counting the wrong gate.
+        not_target = sum(count for verdict, count
+                         in results["control"]["undefined_by"].items()
+                         if verdict != "TARGET_UNAVAILABLE")
+        if not_target:
+            print(f"    {not_target} of control's are not TARGET_UNAVAILABLE: the engine"
+                  " rejected those plans on", file=out)
+            print("    another gate and never recorded a target, so they say nothing"
+                  " about the target", file=out)
+            print("    model. Every other variant prices them anyway, which gives"
+                  " those variants", file=out)
+            print("    chances the shipped model never took.", file=out)
+        print(file=out)
 
     control = results["control"]
     best, sized = _candidate(results, names)

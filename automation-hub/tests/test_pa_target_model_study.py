@@ -301,6 +301,36 @@ def test_too_few_resolved_trades_says_so_rather_than_ranking(study):
     assert "HYPOTHESIS" not in text
 
 
+def test_a_plan_rejected_on_the_stop_is_not_counted_against_the_target_model(study):
+    """control is the target the ENGINE chose, so it is absent on every
+    rejection -- including ones decided by the stop, where the target model
+    was never consulted. A bare n/a column reads those as target failures."""
+    records = [_record(verdict="STOP_DISTANCE_INVALID", plan={"target": None})
+               for _ in range(3)]
+    records += [_record(verdict="TARGET_UNAVAILABLE", plan={"target": None})
+                for _ in range(2)]
+    result, text = _run(study, records, _bars([(100.1, 98.5)] * 3))
+
+    control = result["variants"]["control"]
+    assert control["undefined"] == 5
+    assert control["undefined_by"]["STOP_DISTANCE_INVALID"] == 3
+    assert control["undefined_by"]["TARGET_UNAVAILABLE"] == 2
+    assert "3 STOP_DISTANCE_INVALID" in text
+    assert "not TARGET_UNAVAILABLE" in text
+    assert "say nothing about the target" in text
+
+
+def test_an_all_target_unavailable_control_draws_no_caveat(study):
+    """The caveat is about the OTHER verdicts. When every unpriced
+    confirmation really was a missing target, inventing a qualification
+    would be its own distortion."""
+    records = [_record(verdict="TARGET_UNAVAILABLE", plan={"target": None})
+               for _ in range(3)]
+    _, text = _run(study, records, _bars([(100.1, 98.5)] * 3))
+    assert "3 TARGET_UNAVAILABLE" in text
+    assert "not TARGET_UNAVAILABLE" not in text
+
+
 def test_a_partial_replay_audit_is_flagged(study):
     from services.pa_rulebook_v01 import CostModel
 
