@@ -120,15 +120,16 @@ def analyse(db_path: str, *, reason: str | None, since: str | None,
     db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
 
-    where, params = [], []
-    if since:
-        where.append("created_at >= ?")
-        params.append(since)
-    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    # No WHERE on --since. A pair needs the revision BEFORE the window as its
+    # baseline, and that one was almost always written by the old build -- it
+    # is the thing being compared against, not a thing being measured.
+    # Filtering it out in SQL meant the first revision of every setup after a
+    # deploy could never be analysed, so the flag under-measured precisely the
+    # window it exists to measure. The window is applied to the NEWER half of
+    # each pair instead, below.
     rows = db.execute(
         "SELECT journal_id,revision_no,reason_code,created_at,payload_json "
-        f"FROM pa_journal_revisions{clause} ORDER BY journal_id, revision_no",
-        params)
+        "FROM pa_journal_revisions ORDER BY journal_id, revision_no")
 
     reasons: Counter = Counter()
     changed_in: Counter = Counter()          # pairs in which this path differs
@@ -137,23 +138,35 @@ def analyse(db_path: str, *, reason: str | None, since: str | None,
     examples: dict = defaultdict(list)
     combos: Counter = Counter()
 
-    scanned = pairs = suppressed = analysed = 0
+    scanned = pairs = suppressed = analysed = carried = 0
     suppressed_bytes = still_bytes = 0
     current_journal = None
     previous = None
+    previous_in_window = False
 
     for row in rows:
-        scanned += 1
-        reasons[row["reason_code"]] += 1
+        in_window = since is None or str(row["created_at"]) >= since
+        if in_window:
+            scanned += 1
+            reasons[row["reason_code"]] += 1
         payload = json.loads(row["payload_json"])
         size = len(row["payload_json"])
         if row["journal_id"] != current_journal:
             current_journal, previous = row["journal_id"], payload
+            previous_in_window = in_window
             continue
         prior, previous = previous, payload
+        was_in_window, previous_in_window = previous_in_window, in_window
+        # The pair belongs to the window when its newer half does. A baseline
+        # from before the window is counted so the report can say how much of
+        # what it measured leans on pre-deploy rows.
+        if not in_window:
+            continue
         if reason is not None and row["reason_code"] != reason:
             continue
         pairs += 1
+        if not was_in_window:
+            carried += 1
 
         before, after = _flatten(project(prior)), _flatten(project(payload))
         diff = sorted(k for k in set(before) | set(after)
@@ -193,7 +206,9 @@ def analyse(db_path: str, *, reason: str | None, since: str | None,
     for code, count in reasons.most_common():
         line(f"  {count:>8}  {code}")
     line()
-    line(f"Consecutive pairs examined          {pairs}")
+    line(f"Consecutive pairs examined          {pairs}"
+         + (f"   ({carried} against a baseline from before the window)"
+            if carried else ""))
     line(f"  already suppressed by this build  {suppressed:>8}"
          f"   {suppressed_bytes / 1e6:>9.1f} MB")
     line(f"  still written by this build       {analysed:>8}"
@@ -275,7 +290,10 @@ def main(argv=None) -> int:
     parser.add_argument("--db", default=DB)
     parser.add_argument("--reason", default=CHURN_REASON,
                         help=f"reason_code to analyse, or ALL (default {CHURN_REASON})")
-    parser.add_argument("--since", help="only revisions created at or after this ISO timestamp")
+    parser.add_argument("--since",
+                        help="only count revisions created at or after this ISO "
+                             "timestamp; the revision before the window is still "
+                             "read, as the baseline to compare against")
     parser.add_argument("--top", type=int, default=15)
     parser.add_argument("--samples", type=int, default=2)
     parser.add_argument("--json", dest="as_json", help="also write the totals here")

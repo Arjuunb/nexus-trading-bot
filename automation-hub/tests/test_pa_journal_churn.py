@@ -259,3 +259,51 @@ def test_a_past_since_bound_is_not_called_future(churn):
     assert churn._is_future("2020-01-01T00:00:00") is False
     assert churn._is_future("2020-01-01T00:00:00+00:00") is False
     assert churn._is_future("not a timestamp") is False
+
+
+def test_a_window_diffs_against_the_revision_before_it(churn, tmp_path):
+    """The first revision after a deploy is the one worth measuring.
+
+    Its predecessor was written by the old build and is the baseline, not a
+    measurement. Filtering it out with the window meant that revision could
+    never be analysed, so --since under-measured exactly the window it exists
+    for: the run that prompted this found 5 revisions and 0 pairs.
+    """
+    def drift(record):
+        record["outcome"]["maximum_adverse_excursion"] -= 0.01
+
+    path = _journal(tmp_path, [("j1", "SETUP_CREATED", _nothing)]
+                    + [("j1", "MATERIAL_EVIDENCE_CHANGED", drift)] * 3)
+    # The fixture stamps 00:01, 00:02, 00:03, 00:04.
+    totals, text = _run(churn, path, since="2026-09-15T00:04:00")
+
+    assert totals["scanned"] == 1, "only the last revision is inside the window"
+    assert totals["pairs"] == 1, "and it is still comparable to the one before it"
+    assert totals["sole_cause"] == {"outcome.maximum_adverse_excursion": 1}
+    assert "1 against a baseline from before the window" in text
+
+
+def test_a_window_does_not_measure_pairs_that_predate_it(churn, tmp_path):
+    """The baseline is read, not counted. Otherwise --since would quietly
+    re-measure the history it was asked to exclude."""
+    def drift(record):
+        record["outcome"]["maximum_adverse_excursion"] -= 0.01
+
+    path = _journal(tmp_path, [("j1", "SETUP_CREATED", _nothing)]
+                    + [("j1", "MATERIAL_EVIDENCE_CHANGED", drift)] * 5)
+    everything, _ = _run(churn, path)
+    windowed, _ = _run(churn, path, since="2026-09-15T00:05:00")
+
+    assert everything["pairs"] == 5
+    assert windowed["pairs"] == 2, "00:05 and 00:06 only"
+    assert windowed["sole_cause"] == {"outcome.maximum_adverse_excursion": 2}
+
+
+def test_a_baseline_inside_the_window_is_not_reported_as_carried(churn, tmp_path):
+    def drift(record):
+        record["outcome"]["maximum_adverse_excursion"] -= 0.01
+
+    path = _journal(tmp_path, [("j1", "SETUP_CREATED", _nothing)]
+                    + [("j1", "MATERIAL_EVIDENCE_CHANGED", drift)] * 3)
+    _, text = _run(churn, path, since="2020-01-01T00:00:00")
+    assert "baseline from before the window" not in text
