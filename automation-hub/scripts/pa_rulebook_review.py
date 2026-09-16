@@ -27,6 +27,7 @@ import argparse
 import html
 import json
 import statistics
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -332,6 +333,105 @@ def diagnosis(records: list) -> list:
     return sorted(out, key=lambda row: not row[3])
 
 
+def threshold_sensitivity(records: list, gate: float = 2.5) -> list:
+    """How many confirmations clear each candidate net-RR gate.
+
+    This is the question a rejection count cannot answer. Thirty-two setups
+    refused at 2.5R reads like a threshold that is slightly too strict; it is a
+    different finding entirely if their median is 0.2R, because then no setting
+    short of abandoning the gate admits them and the shortage is in the
+    structure, not the parameter.
+
+    It is a first-order count, not a re-run: net_rr is already measured, and
+    the gate is the last check applied, so lowering it admits exactly these
+    plans. It does not model what changes downstream -- an admitted trade
+    consumes its zone and occupies the book, so a real re-run would raise a
+    slightly different set of later setups. And a plan that clears a gate is
+    not a trade that wins; this says nothing about the outcome.
+    """
+    values = [(r.get("plan") or {}).get("net_rr") for r in records]
+    values = [v for v in values if v is not None]
+    if not values:
+        return []
+    return [(level, len([v for v in values if v >= level]), len(values))
+            for level in (0.5, 1.0, 1.5, 2.0, gate, 3.0)]
+
+
+def summarise(audit: dict, out=sys.stdout) -> None:
+    """The same reconciliation the page draws, as text.
+
+    The HTML review is the artefact to read; this is the one to paste into a
+    terminal, an issue or a message. Every figure carries its calculation and
+    its sample count for the same reason it does on the page: a median over
+    three setups and a median over fifty-five are different claims.
+    """
+    meta, summary = audit.get("meta", {}), audit.get("summary", {})
+    records = audit.get("confirmations", [])
+    counts = _verdict_counts(records)
+    rrs = [(r.get("plan") or {}).get("net_rr") for r in records]
+    stops = [(r.get("plan") or {}).get("stop_distance_atr") for r in records]
+    drifts = [(r.get("plan") or {}).get("entry_drift_atr") for r in records]
+    clean = lambda xs: [x for x in xs if x is not None]          # noqa: E731
+
+    def line(text: str = "") -> None:
+        print(text, file=out)
+
+    line(f"Nexus PA rulebook v{meta.get('rulebook_version', '?')} -- setup review")
+    line(f"  symbol      {meta.get('symbol', '?')}")
+    line(f"  period      {meta.get('first_candle', '?')} to {meta.get('last_candle', '?')}")
+    line(f"  strategies  {', '.join(meta.get('strategies', []))}")
+    line(f"  sources     {json.dumps(meta.get('sources', {}))}")
+    if meta.get("complete", True) is False:
+        progress = meta.get("progress") or {}
+        line(f"  PARTIAL     interrupted after {progress.get('candles_judged')} of "
+             f"{progress.get('candles_total')} candles, through {progress.get('through')}")
+    line()
+    line("Funnel")
+    line(f"  {summary.get('setups_raised', 0):>6}  setups raised")
+    line(f"  {len(records):>6}  reached CONFIRMED"
+         f"  ({100 * len(records) / max(summary.get('setups_raised', 0), 1):.1f}% of setups)")
+    for verdict, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+        line(f"  {count:>6}  {verdict}"
+             f"  ({100 * count / max(len(records), 1):.1f}% of confirmations)")
+    line()
+    line("Statistics, each with its calculation and sample count")
+    for value, label, formula in (
+            (_median(rrs), "median net RR",
+             f"(|T-E| - costs_win) / (|E-S| + costs_loss), n={len(clean(rrs))}"),
+            (_median(stops), "median stop distance, ATR15",
+             f"|E-S| / ATR15, n={len(clean(stops))}"),
+            (_median(drifts), "median entry drift, ATR15",
+             f"(E - rejection close) / ATR15, n={len(clean(drifts))}")):
+        line(f"  {_num(value):>8}  {label:<28} {formula}")
+    if clean(rrs):
+        values = sorted(clean(rrs))
+        line(f"  {values[0]:>8.2f}  lowest net RR")
+        line(f"  {values[-1]:>8.2f}  highest net RR")
+    line()
+    rows = threshold_sensitivity(records)
+    if rows:
+        line("Confirmations clearing each net-RR gate")
+        line("  (first-order count over measured net_rr, not a re-run; an admitted")
+        line("   trade would consume its zone and change later setups slightly)")
+        for level, passing, total in rows:
+            line(f"  >= {level:.1f}R   {passing:>4} of {total}"
+                 f"   {100 * passing / total:>5.1f}%")
+        line()
+    for title, figure, note, leading in diagnosis(records):
+        line(f"{'>> ' if leading else '   '}{title} -- {figure}")
+        line(f"      {note}")
+    line()
+    line("Every confirmation")
+    line(f"  {'#':>3}  {'when':<16} {'strategy':<22} {'dir':<5} "
+         f"{'netRR':>6} {'stopATR':>7} {'driftATR':>8}  verdict")
+    for record in records:
+        plan = record.get("plan") or {}
+        line(f"  {record['index']:>3}  {_when(record['at']):<16} "
+             f"{record['strategy_id']:<22} {record['direction']:<5} "
+             f"{_num(plan.get('net_rr')):>6} {_num(plan.get('stop_distance_atr')):>7} "
+             f"{_num(plan.get('entry_drift_atr')):>8}  {record['verdict']}")
+
+
 def _vars(palette: dict) -> str:
     return "".join(f"--{key.replace('_', '-')}:{value};" for key, value in palette.items())
 
@@ -426,7 +526,21 @@ def render(audit: dict) -> str:
         f'<div class="stat"><b>{value}</b><span>{label}</span>'
         f'<em>{formula}</em></div>' for value, label, formula in stats)
 
+    # The counterfactual the rejection count cannot answer on its own: is the
+    # gate slightly too strict, or is the structure nowhere near it?
+    gate_rows = threshold_sensitivity(records)
     why_html = ""
+    if gate_rows:
+        cells = "".join(
+            f'<div><span>&ge; {level:.1f}R</span>'
+            f'<span>{passing} of {total}</span></div>'
+            for level, passing, total in gate_rows)
+        why_html += ('<div class="why"><b>Confirmations clearing each net-RR gate</b>'
+                     'A first-order count over measured net_rr, not a re-run: the gate '
+                     'is the last check, so lowering it admits exactly these plans. An '
+                     'admitted trade would consume its zone and shift later setups, and '
+                     'clearing a gate is not the same as winning.'
+                     f'<div class="grid">{cells}</div></div>')
     for title, figure, note, leading in diagnosis(records):
         why_html += (f'<div class="why{" lead" if leading else ""}"><b>{_e(title)} '
                      f'&mdash; {_e(figure)}</b>{_e(note)}</div>')
@@ -549,12 +663,17 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("audit", help="JSON written by pa_rulebook_replay.py --audit")
     parser.add_argument("-o", "--out", default="review.html")
+    parser.add_argument("--text", action="store_true",
+                        help="also print the reconciliation to stdout")
     args = parser.parse_args()
 
     audit = json.loads(Path(args.audit).read_text())
     Path(args.out).write_text(render(audit))
     count = len(audit.get("confirmations", []))
     print(f"wrote {args.out} ({count} confirmations)")
+    if args.text:
+        print()
+        summarise(audit)
     return 0
 
 

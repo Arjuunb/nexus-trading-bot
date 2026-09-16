@@ -211,3 +211,49 @@ def test_an_archive_without_a_payload_says_what_it_did_contain(checker, tmp_path
     assert checker.check(archive) == 2
     out = capsys.readouterr().out
     assert "trades.csv" in out and "notes.txt" in out
+
+
+def test_the_gate_sensitivity_says_whether_the_threshold_is_the_problem(review, audit):
+    """32 refusals at 2.5R reads like a strict parameter until you see that the
+    median is 0.2R. The count per candidate gate is what tells them apart."""
+    records = [
+        {"plan": {"net_rr": 0.2}}, {"plan": {"net_rr": 0.4}},
+        {"plan": {"net_rr": 1.2}}, {"plan": {"net_rr": 2.7}},
+        {"plan": None}, {},                      # no plan: not counted either way
+    ]
+    rows = dict((level, (passing, total))
+                for level, passing, total in review.threshold_sensitivity(records))
+    assert rows[0.5] == (2, 4)   # 0.2 and 0.4 are both below 0.5
+    assert rows[1.0] == (2, 4)
+    assert rows[2.5] == (1, 4)
+    assert rows[3.0] == (0, 4)
+    assert review.threshold_sensitivity([]) == []
+
+    page = review.render(audit)
+    assert "clearing each net-RR gate" in page
+    assert "not a re-run" in page
+
+
+def test_the_text_reconciliation_carries_the_formulas_and_the_counts(review, audit):
+    import io
+    out = io.StringIO()
+    review.summarise(audit, out=out)
+    text = out.getvalue()
+
+    assert "Funnel" in text and "reached CONFIRMED" in text
+    assert "(|T-E| - costs_win) / (|E-S| + costs_loss), n=" in text
+    assert "|E-S| / ATR15, n=" in text
+    assert "Confirmations clearing each net-RR gate" in text
+    assert "Every confirmation" in text
+    for record in audit["confirmations"]:
+        assert record["verdict"] in text
+
+
+def test_the_text_reconciliation_admits_a_partial_run(review, audit):
+    import io
+    partial = {**audit, "meta": {**audit["meta"], "complete": False,
+                                 "progress": {"candles_judged": 10, "candles_total": 99,
+                                              "through": "2025-02-01T00:00:00+00:00"}}}
+    out = io.StringIO()
+    review.summarise(partial, out=out)
+    assert "PARTIAL" in out.getvalue()
