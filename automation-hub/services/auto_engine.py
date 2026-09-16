@@ -240,6 +240,10 @@ class AutoStrategyEngine:
         # for A/B research with HUB_STRATEGY_HEALTH_GUARD=0.
         self.strategy_health_guard = _os.environ.get("HUB_STRATEGY_HEALTH_GUARD", "1").lower() not in ("0", "false", "off")
         self._strategy_health: dict[str, dict] = {}
+        #: Live strategy objects by symbol, published for read-only observation.
+        #: Empty until a run loop starts, which is itself the honest answer to
+        #: "what is this instance analysing" before it has analysed anything.
+        self._live_strategies: dict[str, object] = {}
         # services.approvals.ApprovalStore — the semi-auto approval queue.
         self.approvals = None
         self._seq = itertools.count(1)
@@ -623,6 +627,13 @@ class AutoStrategyEngine:
         from data.market_data import get_bars
 
         strategies: dict[str, object] = {}
+        # Published read-only so the Instance Visual Lab can read the SAME
+        # strategy object this loop is driving -- its engine's zones, pivots,
+        # structure events and fair value gaps are the runtime evidence, and
+        # re-deriving them anywhere else is how a chart and a bot come to
+        # disagree. A reference, not a copy: nothing is written, nothing is
+        # snapshotted per candle, and no reader may mutate it.
+        self._live_strategies = strategies
         live: dict[str, list] = {}
         seeds: dict[str, int] = {}
 
@@ -653,6 +664,13 @@ class AutoStrategyEngine:
         """Warm up on history WITHOUT trading, then act only on NEW closed
         candles as they arrive — genuine forward paper-trading."""
         strategies: dict[str, object] = {}
+        # Published read-only so the Instance Visual Lab can read the SAME
+        # strategy object this loop is driving -- its engine's zones, pivots,
+        # structure events and fair value gaps are the runtime evidence, and
+        # re-deriving them anywhere else is how a chart and a bot come to
+        # disagree. A reference, not a copy: nothing is written, nothing is
+        # snapshotted per candle, and no reader may mutate it.
+        self._live_strategies = strategies
         last_ts: dict[str, object] = {}
 
         for sym in self.symbols:

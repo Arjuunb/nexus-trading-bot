@@ -173,6 +173,7 @@ def state(instance_id: str = Query(..., min_length=1)):
         "gates": [gate.public() for gate in gates],
         "pipeline": [stage_.value for stage_ in PIPELINE],
         "current_stage": stage.value,
+        "feed": _feed_panel(status),
         "mtf_evidence": (engine.get("mtf_policy") or {}).get("evidence"),
         "position": status.get("current_position"),
         "last_closed_candle": market.get("last_market_data_timestamp"),
@@ -180,6 +181,135 @@ def state(instance_id: str = Query(..., min_length=1)):
         "data_source": market.get("data_source"),
         "real_execution_allowed": False,
         "paper_execution_allowed": False,
+    }
+
+
+_TIMEFRAME_SECONDS = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+                      "1h": 3600, "2h": 7200, "4h": 14400, "1d": 86400}
+
+
+def _feed_panel(status: dict) -> dict:
+    """The live market facts, taken from the instance's own status contract.
+
+    services/instance_status.py already decides what "fresh" means for this
+    instance across four independent axes. Recomputing any of it here would
+    give the Lab a second opinion about staleness, and the operator no way to
+    tell which one the bot acted on.
+    """
+    feed = dict(status.get("feed") or {})
+    subscription = dict(status.get("subscription") or {})
+    bid, ask = feed.get("bid"), feed.get("ask")
+    spread = None
+    if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
+        spread = round(float(ask) - float(bid), 10)
+
+    # Candle countdown from the last CLOSED candle, never from wall-clock
+    # guesswork: the bar the strategy will decide on next is the one after the
+    # last one it closed.
+    seconds_to_close = None
+    period = _TIMEFRAME_SECONDS.get(str(status.get("timeframe") or ""))
+    last_closed = feed.get("last_closed_candle_timestamp")
+    if period and last_closed:
+        from datetime import datetime, timezone
+        try:
+            opened = datetime.fromisoformat(str(last_closed).replace("Z", "+00:00"))
+            if opened.tzinfo is None:
+                opened = opened.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - opened).total_seconds()
+            seconds_to_close = max(0, int(period - (elapsed % period)))
+        except (TypeError, ValueError):
+            seconds_to_close = None
+
+    return {
+        "exchange": feed.get("exchange"), "market_type": feed.get("market_type"),
+        "symbol": feed.get("symbol"), "timeframe": feed.get("execution_timeframe"),
+        "htf_primary": feed.get("htf_primary_timeframe"),
+        "htf_secondary": feed.get("htf_secondary_timeframe"),
+        "last_price": feed.get("last_trade_price"),
+        "bid": bid, "ask": ask, "mark_price": feed.get("mark_price"), "spread": spread,
+        "last_closed_candle": last_closed,
+        "last_processed_candle": feed.get("last_processed_candle_timestamp"),
+        "last_quote_timestamp": feed.get("last_quote_timestamp"),
+        "last_websocket_message": feed.get("last_websocket_message_timestamp"),
+        "data_age_seconds": feed.get("data_age_seconds"),
+        "quote_age_seconds": feed.get("quote_age_seconds"),
+        "seconds_to_candle_close": seconds_to_close,
+        "candle_period_seconds": period,
+        "data_source": feed.get("data_source"),
+        "warmup_bars": feed.get("warmup_bars"),
+        "warmup_required": feed.get("warmup_required"),
+        "transport_state": subscription.get("transport_state"),
+        "subscription_state": subscription.get("state"),
+        "reliable": subscription.get("reliable"),
+        "health_reason": subscription.get("health_reason"),
+        "failing_dependency": subscription.get("failing_dependency"),
+        "market_status": status.get("market_status"),
+        "current_blocker": status.get("current_blocker"),
+    }
+
+
+def _live_strategy(instance_id: str, symbol: str):
+    """The very strategy object the run loop is driving, or None.
+
+    Reached through the engine's published reference rather than rebuilt: a
+    freshly constructed strategy would hold no zones, no pivots and no
+    structure, and would quietly show an empty chart for a busy market.
+    """
+    manager = _wa.instance_manager
+    runtime = getattr(manager, "_runtime", {}).get(instance_id)
+    if not runtime:
+        return None
+    engine = runtime[0]
+    live = getattr(engine, "_live_strategies", None) or {}
+    return live.get(symbol) or live.get(str(symbol).upper())
+
+
+@router.get("/features")
+def features(instance_id: str = Query(..., min_length=1)):
+    """Chart overlays read from the running strategy's own state.
+
+    Refuses rather than returns an empty set when the runtime does not expose
+    them: "this strategy sees nothing" and "we cannot see what it sees" look
+    identical on a chart and mean opposite things.
+    """
+    from services import strategy_visual_features as features_module
+
+    status = _status(instance_id)
+    strategy_id = _strategy_id_of(status)
+    adapter = adapter_for(strategy_id)
+    if adapter is None:
+        raise HTTPException(501, {"code": "NO_VISUAL_ADAPTER", "strategy_id": strategy_id,
+                                  "message": f"no visual adapter for '{strategy_id}'"})
+    strategy = _live_strategy(instance_id, str(status.get("symbol") or ""))
+    if strategy is None:
+        raise HTTPException(503, {
+            "code": "STRATEGY_NOT_RUNNING", "retryable": True,
+            "strategy_id": strategy_id,
+            "message": ("the instance is not running a strategy worker, so it has "
+                        "no live feature state to show")})
+    try:
+        overlays = features_module.extract(strategy_id, strategy)
+    except features_module.FeatureUnavailable as exc:
+        raise HTTPException(501, {
+            "code": "FEATURES_NOT_EXPOSED", "strategy_id": strategy_id,
+            "message": str(exc),
+            "note": "The Visual Lab draws runtime evidence only; it will not invent it."},
+        ) from exc
+
+    declared = {feature.value for feature in adapter.features}
+    drawn = [overlay for overlay in overlays if overlay.feature in declared]
+    # A feature the adapter never declared must not reach the chart even if an
+    # engine happens to publish it: the declaration is what the test suite
+    # checks against the implementation.
+    withheld = sorted({o.feature for o in overlays} - declared)
+    return {
+        "instance_id": instance_id, "strategy_id": strategy_id,
+        "symbol": status.get("symbol"), "timeframe": status.get("timeframe"),
+        "strategy_version": status.get("strategy_version"),
+        "declared_features": sorted(declared),
+        "overlays": [overlay.public() for overlay in drawn],
+        "withheld_features": withheld,
+        "real_execution_allowed": False,
     }
 
 

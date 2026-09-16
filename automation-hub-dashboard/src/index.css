@@ -1958,3 +1958,55 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
   font-size: 11px; }
 .ivl-foot b { letter-spacing: .06em; }
 .ivl-foot span { color: var(--text-dim); }
+
+/* Instance Visual Lab — live chart layer. */
+.ivl-feed { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 10px 14px;
+  border-radius: 10px; border: 1px solid var(--border, #222a35); background: #0b0e13;
+  font-variant-numeric: tabular-nums; }
+.ivl-feed.is-stale { border-color: #7a3030; background: #1a0f0f; }
+.ivl-feed span { display: grid; gap: 2px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-dim); }
+.ivl-feed b { font-size: 13px; text-transform: none; letter-spacing: 0; color: #e6edf3; }
+.ivl-feed small { font-size: 9.5px; text-transform: none; letter-spacing: 0; color: #6b7787; }
+
+.ivl-toggles { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ivl-toggles button { padding: 4px 10px; font-size: 11px; opacity: .45; }
+.ivl-toggles button.active { opacity: 1; border-color: #3d8bff; color: #9ec5ff; }
+.ivl-forming-tag { margin-left: auto; font-size: 10px; letter-spacing: .06em;
+  color: #e6c07b; }
+
+.ivl-chart { height: 460px; }
+.ivl-chart g.is-forming line, .ivl-chart g.is-forming rect {
+  stroke-dasharray: 2 2; opacity: .75; }
+.ivl-zone rect { opacity: .13; }
+.ivl-zone text { font-size: 8px; fill: #8693a6; }
+.ivl-zone.is-invalid rect { opacity: .06; }
+.ivl-zone.is-invalid text { fill: #6b5b5b; }
+.ivl-zone.is-support rect, .ivl-zone.is-demand rect { fill: #3d8bff; }
+.ivl-zone.is-resistance rect, .ivl-zone.is-supply rect { fill: #ff6b6b; }
+.ivl-zone.is-fvg rect { fill: #e6c07b; }
+.ivl-line polyline { fill: none; stroke-width: 1.1; }
+.ivl-line.is-ema polyline { stroke: #e6c07b; }
+.ivl-line.is-donchian_channel polyline { stroke: #8f7bff; stroke-dasharray: 4 3; }
+.ivl-fmarker circle { fill: none; stroke: #9fb0c3; stroke-width: 1.2; }
+.ivl-fmarker text { font-size: 8px; fill: #9fb0c3; }
+.ivl-fmarker.is-bos circle, .ivl-fmarker.is-choch circle { stroke: #4ec9a0; }
+.ivl-fmarker.is-bos text, .ivl-fmarker.is-choch text { fill: #4ec9a0; }
+.ivl-fmarker.is-liquidity_sweep circle { stroke: #e6c07b; }
+.ivl-fmarker.is-rejection_candle circle { stroke: #ff9b9b; }
+.ivl-level line { stroke-width: 1.2; stroke-dasharray: 5 3; }
+.ivl-level text { font-size: 9px; }
+.ivl-level.entry line, .ivl-level.entry text { stroke: #4ec9a0; fill: #4ec9a0; }
+.ivl-level.stop line, .ivl-level.stop text { stroke: #ff6b6b; fill: #ff6b6b; }
+.ivl-level.target line, .ivl-level.target text { stroke: #3d8bff; fill: #3d8bff; }
+.ivl-decision line { stroke-width: 1; stroke-dasharray: 3 3; cursor: pointer; }
+.ivl-decision text { font-size: 8px; cursor: pointer; }
+.ivl-decision.accepted line, .ivl-decision.accepted text { stroke: #4ec9a0; fill: #4ec9a0; }
+.ivl-decision.rejected line, .ivl-decision.rejected text { stroke: #e6c07b; fill: #e6c07b; }
+.ivl-decision.is-focus line { stroke-width: 2; stroke-dasharray: none; }
+.ivl-evidence { position: relative; }
+.ivl-close { position: absolute; top: 8px; right: 8px; padding: 2px 8px; font-size: 10px; }
+.ivl-prov { font-size: 10px; color: #6b7787; }
+.ivl-note-inline { margin-left: auto; font-size: 10px; color: #6b7787; }
+.ivl-alert-soft { border-color: #6b5a30; background: #17130c; }
+.ivl-alert-soft span, .ivl-alert-soft small { color: #d9c9a5; }

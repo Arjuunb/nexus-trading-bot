@@ -146,3 +146,79 @@ def test_modes_that_cannot_order_are_shown_at_the_order_gate(blocker):
     assert len(failing) == 1
     assert failing[0].gate.stage is Stage.ORDER_INTENT
     assert current_stage(gates) is Stage.ORDER_INTENT
+
+
+# ------------------------------------------------------- live chart layer
+
+def _page() -> str:
+    return (DASHBOARD / "pages" / "InstanceVisualLab.tsx").read_text()
+
+
+def test_the_forming_candle_can_never_produce_a_decision():
+    """Acceptance 3. The venue stream is display only.
+
+    A forming candle that looks like a breakout is not one until the backend
+    closes it and the engine judges it. The socket therefore drops closed
+    frames (k.x) -- the backend owns those -- and the forming candle is passed
+    to the renderer, never to a marker.
+    """
+    page = _page()
+    assert "if (!k || k.x) return;" in page, "closed frames must be left to the backend"
+    assert "display only" in page.lower()
+    assert "FORMING" in page
+    # The decision markers come from the timeline, which is backend evidence.
+    assert "events={timeline?.events ?? []}" in page
+
+
+def test_overlays_come_from_the_features_endpoint_only():
+    """Acceptance 4, 5, 6, 7, 8: geometry is fetched, never computed here."""
+    page = _page()
+    assert "/research/instance-visual/features" in page
+    assert "overlays={features?.overlays ?? []}" in page
+    for banned in ("function ema(", "function atr(", "calcEma", "computeFVG",
+                   "detectBOS", "findPivots", "buildZones"):
+        assert banned not in page, f"the chart must not compute {banned}"
+
+
+def test_unavailable_overlays_do_not_blank_the_decision_panels():
+    """A strategy whose engine exposes nothing must still show why it is not
+    trading -- that is the panel the operator came for."""
+    page = _page()
+    assert "featureError" in page
+    assert "ivl-alert-soft" in page
+    assert "Candles and decisions are still shown" in page
+
+
+def test_toggles_are_built_from_the_declared_features():
+    """Acceptance 16 / requirement 25: only toggles relevant to this strategy."""
+    page = _page()
+    assert "features?.declared_features" in page
+    assert "TOGGLE_GROUP" in page
+
+
+def test_the_chart_is_not_polled_at_one_cadence():
+    """Requirement 29: do not re-fetch the whole history every second."""
+    page = _page()
+    assert "loadState(selected), 4000" in page
+    assert "loadFeatures(selected), 15000" in page
+    assert "loadCandles(selected), 60000" in page
+
+
+def test_the_socket_reconnects_with_backoff_and_does_not_duplicate():
+    """Acceptance 18: a reconnect rebuilds from the authoritative snapshot and
+    must not add state of its own. The forming candle is a single slot, not a
+    list, so a reconnect cannot append a second copy of anything."""
+    page = _page()
+    assert "Math.min(1000 * 2 ** Math.min(attempts, 5), 30000)" in page
+    assert "formingRef.current = null;" in page      # cleared on teardown
+    assert "setForming(formingRef.current)" in page  # one slot, overwritten
+
+
+def test_position_levels_use_real_position_state():
+    """Acceptance 12, 13: SL/TP/entry drawn from the instance's position."""
+    page = _page()
+    assert "position={state.position}" in page
+    assert 'level(position.entry' in page
+    assert 'level(position.stop, "stop", "SL")' in page
+    assert 'level(position.target, "target", "TP")' in page
+    assert "Entry (actual fill)" in page

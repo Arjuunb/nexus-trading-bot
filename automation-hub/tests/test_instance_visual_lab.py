@@ -361,3 +361,131 @@ def test_real_candles_are_returned_with_their_source(lab, monkeypatch):
     assert body["source"] == "local store (real)"
     assert body["candles"][0]["c"] == 100.5
     assert body["symbol"] == "BTCUSDT" and body["timeframe"] == "5m"
+
+
+# ------------------------------------------------------------ live overlays
+
+class _Engine:
+    """Stands in for the run loop's engine, publishing its live strategies."""
+    def __init__(self, strategies):
+        self._live_strategies = dict(strategies)
+
+
+def _with_runtime(monkeypatch, rows, strategies, decisions=()):
+    import routers.instance_visual_lab as module
+
+    manager = _Manager(rows)
+    manager._runtime = {rows[0]["id"]: (_Engine(strategies), None, None, None)}
+
+    class _Proxy:
+        instance_manager = manager
+        decision_store = _Decisions(decisions)
+
+    monkeypatch.setattr(module, "_wa", _Proxy())
+    app = FastAPI()
+    app.include_router(module.router)
+    return TestClient(app)
+
+
+class _StubStrategy:
+    def __init__(self, engine=None, bars=(), params=None):
+        self._engine = engine
+        self.bars = list(bars)
+        self.params = dict(params or {})
+
+
+def test_overlays_are_read_from_the_running_strategy(monkeypatch):
+    """The whole point: the chart draws the object the run loop is driving."""
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 16, 3, 0, tzinfo=timezone.utc)
+    zone = SimpleNamespace(id="z-1", role="support", original_role="support",
+                           low=108_000.0, high=108_500.0, created_at=now,
+                           confirmed_at=now, touch_count=1, active=True,
+                           source_swing_ids=[])
+    engine = SimpleNamespace(zones={"z-1": zone}, swings={}, events={})
+    client = _with_runtime(
+        monkeypatch, [_instance(strategy_key="price_action_rejection")],
+        {"BTCUSDT": _StubStrategy(engine)})
+
+    body = client.get("/research/instance-visual/features?instance_id=inst-1").json()
+    overlay = body["overlays"][0]
+    assert overlay["lower"] == 108_000.0 and overlay["upper"] == 108_500.0
+    assert overlay["provenance"]["field"] == "engine.zones"
+    assert body["strategy_id"] == "price_action_rejection"
+
+
+def test_an_undeclared_feature_is_withheld_from_the_chart(monkeypatch):
+    """Acceptance 16 in its strictest form: even if an engine publishes a
+    feature, the chart draws it only when the adapter declared it -- because
+    the declaration is what the test suite checks against the code."""
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+
+    now = datetime(2026, 9, 16, 3, 0, tzinfo=timezone.utc)
+    gap = SimpleNamespace(id="fvg-1", direction="bullish", top=105.0, bottom=104.0,
+                          created_at=now, origin=(now, now, now), active=True,
+                          mitigated=False, mitigation_at=None)
+    # A price-action engine that somehow also carries FVGs.
+    engine = SimpleNamespace(zones={}, swings={}, events={}, fvgs={"fvg-1": gap},
+                             obs={}, pivots={}, swing_bias=0, internal_bias=0)
+    client = _with_runtime(
+        monkeypatch, [_instance(strategy_key="price_action_rejection")],
+        {"BTCUSDT": _StubStrategy(engine)})
+
+    body = client.get("/research/instance-visual/features?instance_id=inst-1").json()
+    assert all(o["feature"] != "fvg" for o in body["overlays"])
+    assert "fvg" not in body["declared_features"]
+
+
+def test_a_strategy_that_is_not_running_is_refused(monkeypatch):
+    """Acceptance 18's half: a reconnect against a stopped worker must not
+    invent overlays from a freshly constructed strategy."""
+    client = _with_runtime(monkeypatch, [_instance()], {})
+    response = client.get("/research/instance-visual/features?instance_id=inst-1")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "STRATEGY_NOT_RUNNING"
+
+
+def test_a_strategy_with_no_extractor_says_so_rather_than_drawing_nothing(monkeypatch):
+    client = _with_runtime(monkeypatch, [_instance(strategy_key="supertrend")],
+                           {"BTCUSDT": _StubStrategy(bars=[], params={})})
+    response = client.get("/research/instance-visual/features?instance_id=inst-1")
+    assert response.status_code == 501
+    detail = response.json()["detail"]
+    assert detail["code"] == "FEATURES_NOT_EXPOSED"
+    assert "will not invent" in detail["note"]
+
+
+# --------------------------------------------------------------- feed panel
+
+def test_the_state_carries_the_live_quote_and_countdown(lab):
+    """Requirement 1: bid, ask, spread and time to the next decision candle."""
+    row = _instance()
+    row["feed"] = {"exchange": "binance_usdm", "symbol": "BTCUSDT",
+                   "execution_timeframe": "5m", "htf_primary_timeframe": "1h",
+                   "last_trade_price": 114_250.4, "bid": 114_249.8, "ask": 114_251.1,
+                   "mark_price": 114_250.0, "data_age_seconds": 1.2,
+                   "quote_age_seconds": 0.4, "data_source": "binance_usdm",
+                   "last_closed_candle_timestamp": "2026-09-16T03:00:00+00:00"}
+    row["subscription"] = {"transport_state": "STREAMING", "state": "SYNCHRONIZED",
+                           "reliable": True}
+    client = lab([row])
+
+    feed = client.get("/research/instance-visual/state?instance_id=inst-1").json()["feed"]
+    assert feed["bid"] == 114_249.8 and feed["ask"] == 114_251.1
+    assert feed["spread"] == pytest.approx(1.3)
+    assert feed["candle_period_seconds"] == 300
+    assert 0 <= feed["seconds_to_candle_close"] <= 300
+    assert feed["transport_state"] == "STREAMING"
+    assert feed["htf_primary"] == "1h"
+
+
+def test_a_missing_quote_does_not_invent_a_spread(lab):
+    """A spread computed from absent quotes is a number that means nothing."""
+    row = _instance()
+    row["feed"] = {"bid": None, "ask": None, "execution_timeframe": "5m"}
+    client = lab([row])
+    feed = client.get("/research/instance-visual/state?instance_id=inst-1").json()["feed"]
+    assert feed["spread"] is None
