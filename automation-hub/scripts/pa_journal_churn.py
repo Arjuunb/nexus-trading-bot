@@ -53,6 +53,23 @@ def _flatten(value: object, prefix: str = "") -> dict:
     return {prefix: json.dumps(value, sort_keys=True, default=str)}
 
 
+def _is_future(since: str) -> bool:
+    """Whether a --since bound has not arrived yet.
+
+    Worth naming on its own line: asking for a window that starts in the future
+    returns no rows, and no rows read exactly like a fixed journal.
+    """
+    from datetime import datetime, timezone
+
+    try:
+        parsed = datetime.fromisoformat(str(since).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed > datetime.now(timezone.utc)
+
+
 def _describe_list_change(before: str, after: str) -> str | None:
     """Say whether a list-valued field grew or was rewritten in place.
 
@@ -193,10 +210,29 @@ def analyse(db_path: str, *, reason: str | None, since: str | None,
     line("    pa_journal_churn.py --since <deploy timestamp>")
     line()
 
+    # Three different things print the same zero, and only one of them is good
+    # news. An empty window is not evidence that the churn stopped; saying it
+    # was is how a report congratulates itself on measuring nothing.
+    if not scanned:
+        line("NOTHING MEASURED: no revisions at all in this window.")
+        if since:
+            line(f"  Nothing has been written since {since}."
+                 + ("  That timestamp is in the future."
+                    if _is_future(since) else
+                    "  Either the lab is idle or the window is too recent."))
+        return {"scanned": scanned, "pairs": pairs, "suppressed": suppressed,
+                "analysed": analysed, "sole_cause": {}, "changed_in": {}}
+    if not pairs:
+        line(f"NOTHING COMPARED: {scanned} revisions, but no two consecutive"
+             f" {reason or 'analysed'} revisions of the same setup.")
+        line("  A pair needs a setup to be captured twice inside the window."
+             "  Leave it running longer.")
+        return {"scanned": scanned, "pairs": pairs, "suppressed": suppressed,
+                "analysed": analysed, "sole_cause": {}, "changed_in": {}}
     if not analysed:
-        line("No pair survives the current material projection: every"
-             f" {reason or 'analysed'} revision in this window was written by a"
-             " field the deployed code now excludes.")
+        line(f"CLEAN: all {pairs} pairs in this window collapse under the"
+             " current material projection, so this build would write none of"
+             " them.")
         return {"scanned": scanned, "pairs": pairs, "suppressed": suppressed,
                 "analysed": analysed, "sole_cause": dict(sole_cause),
                 "changed_in": dict(changed_in)}

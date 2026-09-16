@@ -92,7 +92,7 @@ def test_a_field_the_deployed_projection_drops_is_reported_as_suppressed(churn, 
     assert totals["suppressed"] == 4          # the build already writes none of these
     assert totals["analysed"] == 0
     assert totals["sole_cause"] == {}
-    assert "every" in text and "excludes" in text
+    assert "CLEAN" in text and "would write none of them" in text
 
 
 def test_a_field_that_still_drifts_is_named_with_its_count_and_bytes(churn, tmp_path):
@@ -222,3 +222,40 @@ def test_the_report_says_what_it_cannot_measure(churn, tmp_path):
     _, text = _run(churn, path)
     assert "cannot show here" in text
     assert "--since" in text
+
+
+def test_an_empty_window_is_not_reported_as_a_clean_one(churn, tmp_path):
+    """Three different situations print zero and only one is good news.
+
+    Asking for a window that has not started yet returned no rows, and the
+    report announced that every revision in it had been suppressed by the
+    current build. A conclusion drawn from no data is worse than no
+    conclusion, because it stops the next question being asked.
+    """
+    path = _journal(tmp_path, [("j1", "SETUP_CREATED", _nothing)]
+                    + [("j1", "MATERIAL_EVIDENCE_CHANGED", _nothing)] * 3)
+
+    totals, text = _run(churn, path, since="2099-01-01T00:00:00")
+    assert totals["scanned"] == 0 and totals["pairs"] == 0
+    assert "NOTHING MEASURED" in text
+    assert "in the future" in text
+    assert "CLEAN" not in text
+
+
+def test_a_window_with_no_second_capture_says_so(churn, tmp_path):
+    """Revisions present but never two of the same setup: nothing to compare,
+    which is not the same as nothing to fix."""
+    path = _journal(tmp_path, [("j1", "MATERIAL_EVIDENCE_CHANGED", _nothing),
+                               ("j2", "MATERIAL_EVIDENCE_CHANGED", _nothing)])
+    totals, text = _run(churn, path)
+    assert totals["scanned"] == 2 and totals["pairs"] == 0
+    assert "NOTHING COMPARED" in text
+    assert "Leave it running longer" in text
+    assert "CLEAN" not in text
+
+
+def test_a_past_since_bound_is_not_called_future(churn):
+    assert churn._is_future("2099-01-01T00:00:00") is True
+    assert churn._is_future("2020-01-01T00:00:00") is False
+    assert churn._is_future("2020-01-01T00:00:00+00:00") is False
+    assert churn._is_future("not a timestamp") is False
