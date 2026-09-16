@@ -53,6 +53,43 @@ def _flatten(value: object, prefix: str = "") -> dict:
     return {prefix: json.dumps(value, sort_keys=True, default=str)}
 
 
+def _describe_list_change(before: str, after: str) -> str | None:
+    """Say whether a list-valued field grew or was rewritten in place.
+
+    This is the whole question for a field like state_transitions. A row
+    appended is a real event and belongs in a new revision; the same row
+    written again with different values is a record of the past being restamped
+    with the present, which is a defect. Truncating the JSON shows neither, and
+    the two look identical at 34 characters.
+    """
+    try:
+        old_rows, new_rows = json.loads(before), json.loads(after)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(old_rows, list) or not isinstance(new_rows, list):
+        return None
+    if len(new_rows) != len(old_rows):
+        return (f"{len(old_rows)} -> {len(new_rows)} rows "
+                f"({'appended' if len(new_rows) > len(old_rows) else 'removed'} "
+                f"{abs(len(new_rows) - len(old_rows))}) -- a real change")
+    rewrites = []
+    for index, (old_row, new_row) in enumerate(zip(old_rows, new_rows)):
+        if not isinstance(old_row, dict) or not isinstance(new_row, dict):
+            if old_row != new_row:
+                rewrites.append(f"row {index} replaced")
+            continue
+        for key in sorted(set(old_row) | set(new_row)):
+            if old_row.get(key) != new_row.get(key):
+                rewrites.append(
+                    f"row {index}.{key} {_short(json.dumps(old_row.get(key), default=str), 22)}"
+                    f" -> {_short(json.dumps(new_row.get(key), default=str), 22)}")
+    if not rewrites:
+        return f"{len(old_rows)} rows, identical"
+    return (f"{len(old_rows)} rows, SAME LENGTH -- rewritten in place: "
+            + "; ".join(rewrites[:4])
+            + (f" (+{len(rewrites) - 4} more)" if len(rewrites) > 4 else ""))
+
+
 def _short(text: str, width: int = 34) -> str:
     text = text.replace("\n", " ")
     return text if len(text) <= width else text[:width - 1] + "…"
@@ -145,6 +182,16 @@ def analyse(db_path: str, *, reason: str | None, since: str | None,
     line(f"  still written by this build       {analysed:>8}"
          f"   {still_bytes / 1e6:>9.1f} MB")
     line()
+    # Read once, misread once: these two lines replay the *current material
+    # projection* over rows already in the table. A fix that changes what
+    # capture() writes -- preserving a recorded transition instead of
+    # rebuilding it, say -- never appears here, because the stored payloads
+    # still differ and the projection does not touch that field. Those are
+    # measured forward, on revisions written after the deploy.
+    line("  Both lines replay the current projection over stored rows, so a fix")
+    line("  to what capture() writes cannot show here. Measure those forward:")
+    line("    pa_journal_churn.py --since <deploy timestamp>")
+    line()
 
     if not analysed:
         line("No pair survives the current material projection: every"
@@ -176,7 +223,11 @@ def analyse(db_path: str, *, reason: str | None, since: str | None,
         for key, count in sole_cause.most_common(min(top, 5)):
             line(f"  {key}")
             for at, before, after in examples[key]:
-                line(f"      {at}  {_short(before)}  ->  {_short(after)}")
+                described = _describe_list_change(before, after)
+                if described:
+                    line(f"      {at}  {described}")
+                else:
+                    line(f"      {at}  {_short(before)}  ->  {_short(after)}")
     return {"scanned": scanned, "pairs": pairs, "suppressed": suppressed,
             "analysed": analysed, "sole_cause": dict(sole_cause),
             "changed_in": dict(changed_in)}

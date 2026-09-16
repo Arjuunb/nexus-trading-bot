@@ -165,3 +165,60 @@ def test_the_analyser_cannot_write_to_the_journal(churn, tmp_path):
     with pytest.raises(sqlite3.OperationalError):
         db.execute("DELETE FROM pa_journal_revisions")
     db.close()
+
+
+def test_a_list_field_says_whether_it_grew_or_was_rewritten(churn):
+    """For state_transitions this is the only question that matters.
+
+    An appended row is a real event and earns its revision. The same row
+    written again with a different feed state is the past being restamped with
+    the present, which is the defect. Truncated JSON shows neither.
+    """
+    recorded = {"id": "t-1", "to_phase": "REJECTED", "market_data_health": "SYNCHRONIZED"}
+    later = {"id": "t-2", "to_phase": "CLOSED", "market_data_health": "SYNCHRONIZED"}
+
+    grew = churn._describe_list_change(json.dumps([recorded]),
+                                       json.dumps([recorded, later]))
+    assert "1 -> 2 rows" in grew and "appended 1" in grew and "a real change" in grew
+
+    rewritten = churn._describe_list_change(
+        json.dumps([recorded]),
+        json.dumps([{**recorded, "market_data_health": "DEGRADED"}]))
+    assert "SAME LENGTH" in rewritten and "rewritten in place" in rewritten
+    assert "row 0.market_data_health" in rewritten
+    assert "SYNCHRONIZED" in rewritten and "DEGRADED" in rewritten
+
+    assert "identical" in churn._describe_list_change(json.dumps([recorded]),
+                                                      json.dumps([recorded]))
+
+
+def test_a_scalar_field_is_left_to_the_plain_before_and_after(churn):
+    """The list description must not swallow the numbers it cannot explain."""
+    assert churn._describe_list_change("1242", "235") is None
+    assert churn._describe_list_change('"a"', '"b"') is None
+    assert churn._describe_list_change("not json", "also not") is None
+    assert churn._describe_list_change('{"a": 1}', '{"a": 2}') is None
+
+
+def test_the_description_reaches_the_report(churn, tmp_path):
+    def restamp(record):
+        rows = record["setup"].setdefault("state_transitions",
+                                          [{"id": "t-1", "market_data_health": "SYNCHRONIZED"}])
+        rows[0]["market_data_health"] = "DEGRADED" if rows[0]["market_data_health"] == "SYNCHRONIZED" else "SYNCHRONIZED"
+
+    path = _journal(tmp_path, [("j1", "SETUP_CREATED", _nothing)]
+                    + [("j1", "MATERIAL_EVIDENCE_CHANGED", restamp)] * 3)
+    totals, text = _run(churn, path)
+    assert totals["sole_cause"] == {"setup.state_transitions": 3}
+    assert "rewritten in place" in text
+    assert "row 0.market_data_health" in text
+
+
+def test_the_report_says_what_it_cannot_measure(churn, tmp_path):
+    """It replays the projection over stored rows, so a capture-time fix is
+    invisible to it. Reading the unchanged number as "the fix did not work"
+    already cost one round trip; the report now says so itself."""
+    path = _journal(tmp_path, [("j1", "SETUP_CREATED", _nothing)])
+    _, text = _run(churn, path)
+    assert "cannot show here" in text
+    assert "--since" in text
