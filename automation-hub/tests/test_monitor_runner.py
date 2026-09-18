@@ -26,12 +26,21 @@ class FakeEngine:
 
 
 class FakePaper:
+    """Mirrors execution.PaperExecutionEngine: a pooled history, and a scoped
+    view that excludes trades carrying no strategy id rather than crediting
+    them to whoever asked."""
+
     def __init__(self, trades=None):
         self._t = trades or []
         self.fill_model = None
 
     def history(self):
         return self._t
+
+    def strategy_history(self, strategy_id):
+        if not strategy_id:
+            return []
+        return [t for t in self._t if t.get("strategy_id") == strategy_id]
 
 
 class FakeLedger:
@@ -45,8 +54,14 @@ class FakeLedger:
         self.logs.append(kw)
 
 
-def _trades(n, r):
-    return [{"rr": r, "closed_at": f"2026-01-{(i % 28) + 1:02d}T00:00:00"}
+def _trades(n, r, strategy_id=SPEC["id"]):
+    """Closed trades ATTRIBUTED to the deployed spec by default.
+
+    The monitor compares a strategy against its own backtest, so its live
+    sample is the trades carrying that strategy's id. Pass strategy_id=""
+    for the unattributed trades the production ledger is full of."""
+    return [{"rr": r, "strategy_id": strategy_id,
+             "closed_at": f"2026-01-{(i % 28) + 1:02d}T00:00:00"}
             for i in range(n)]
 
 
@@ -330,3 +345,81 @@ def test_the_timer_can_be_disabled_without_disabling_the_endpoints():
                        text=True, env=env, cwd=pkg_root, timeout=180)
     assert r.returncode == 0, r.stderr[-2000:]
     assert r.stdout.strip().endswith("False False"), r.stdout
+
+
+# ───────────────── the live sample is THIS strategy's trades ─────────────────
+#
+# Production reported "Live drawdown has reached 36.75R against a worst
+# backtest drawdown of 4.3R" for a strategy whose own backtest took a single
+# trade in a year. The 36.75R was the peak-to-trough of 2,804 pooled trades
+# from every strategy and symbol, none of them attributed to anything.
+
+def _keys(out):
+    return {f["key"] for f in out.get("findings") or []}
+
+
+def test_another_strategys_drawdown_is_not_reported_as_this_ones():
+    """The reported bug, in the shape it actually occurred: a deep pooled
+    history that this strategy did not produce."""
+    pooled = [{"rr": -3.0, "strategy_id": "", "closed_at": "2026-01-05T00:00:00"}
+              for _ in range(40)]
+    out = _runner(trades=pooled,
+                  baseline={**BASE, "max_drawdown_r": 4.3}).check()
+    assert "drawdown-exceeds-backtest" not in _keys(out), (
+        "pooled trades from other strategies became this strategy's drawdown")
+    assert out["attribution"] == {"strategy_id": "s1", "scoped": 0, "pooled": 40}
+
+
+def test_a_blind_monitor_says_so_rather_than_going_quiet():
+    """Scoping correctly must not turn a false CRITICAL into a silent pass.
+    A monitor with nothing to look at reads exactly like an all-clear."""
+    pooled = [{"rr": -3.0, "strategy_id": "", "closed_at": "2026-01-05T00:00:00"}
+              for _ in range(40)]
+    out = _runner(trades=pooled).check()
+    assert "monitor-unattributed-trades" in _keys(out)
+    finding = [f for f in out["findings"] if f["key"] == "monitor-unattributed-trades"][0]
+    assert finding["severity"] == "warning"
+    assert "40" in finding["detail"]
+    assert "not an all-clear" in finding["detail"]
+    assert "attribution" in out["note"] or "id" in out["note"]
+
+
+def test_trades_belonging_to_a_different_strategy_are_never_counted():
+    """Attributed, just not to this strategy. Still not its record."""
+    other = [{"rr": -3.0, "strategy_id": "someone-else",
+              "closed_at": "2026-01-05T00:00:00"} for _ in range(40)]
+    out = _runner(trades=other, baseline={**BASE, "max_drawdown_r": 4.3}).check()
+    assert "drawdown-exceeds-backtest" not in _keys(out)
+    assert out["attribution"]["scoped"] == 0
+    assert "monitor-unattributed-trades" in _keys(out)
+
+
+def test_an_empty_ledger_is_not_an_attribution_failure():
+    """Nothing has traded at all. That is a quiet strategy, not a blind
+    monitor, and calling it a defect would cry wolf on every fresh install."""
+    out = _runner(trades=[]).check()
+    assert "monitor-unattributed-trades" not in _keys(out)
+    assert out["attribution"] == {"strategy_id": "s1", "scoped": 0, "pooled": 0}
+
+
+def test_a_strategys_own_drawdown_is_still_reported():
+    """The guard must not have disabled the check it was protecting. Same
+    deep drawdown, now genuinely attributed to this strategy."""
+    mine = _trades(40, -3.0)
+    out = _runner(trades=mine, baseline={**BASE, "max_drawdown_r": 4.3}).check()
+    assert "drawdown-exceeds-backtest" in _keys(out)
+    assert "monitor-unattributed-trades" not in _keys(out)
+    assert out["attribution"] == {"strategy_id": "s1", "scoped": 40, "pooled": 40}
+
+
+def test_a_mixed_ledger_counts_only_this_strategys_trades():
+    """The state after attribution is fixed: this strategy's trades alongside
+    everyone else's."""
+    mixed = _trades(20, 0.5) + [
+        {"rr": -9.0, "strategy_id": "other", "closed_at": "2026-01-05T00:00:00"}
+        for _ in range(30)]
+    out = _runner(trades=mixed).check()
+    assert out["attribution"] == {"strategy_id": "s1", "scoped": 20, "pooled": 50}
+    assert out["live"]["total_trades"] == 20
+    assert out["live"]["net_r"] == 10.0, "only this strategy's R may be summed"
+    assert "monitor-unattributed-trades" not in _keys(out)

@@ -303,17 +303,55 @@ def _execution(execution: Optional[dict], t: Thresholds) -> list[dict]:
 _SEV_RANK = {"critical": 0, "warning": 1, "info": 2}
 
 
+def _attribution(att: Optional[dict]) -> list[dict]:
+    """Say so when the monitor cannot see this strategy's trades.
+
+    Comparing a strategy's backtest against the POOLED history of every
+    strategy is not a weaker comparison, it is a different one: it reported
+    a 36.75R live drawdown against a 4.3R backtest for a strategy whose own
+    backtest took one trade in a year. The 36.75R belonged to 2,804 trades it
+    never made.
+
+    Scoping that comparison correctly is the fix, but silence is not an
+    acceptable result of it. A monitor with nothing to look at looks exactly
+    like a monitor reporting all-clear, so when trades exist and none of them
+    carry this strategy's id, that is itself the finding.
+    """
+    if not att:
+        return []
+    scoped, pooled = int(_f(att, "scoped")), int(_f(att, "pooled"))
+    if scoped or not pooled:
+        return []
+    return [{
+        "key": "monitor-unattributed-trades", "severity": "warning",
+        "title": "Monitoring is blind: no closed trade carries this strategy's id",
+        "detail": (f"The ledger holds {pooled} closed paper trades and none of them "
+                   f"are attributed to this strategy, so there is nothing to compare "
+                   f"against its backtest. This is not an all-clear -- it is the "
+                   f"monitor reporting that it cannot see."),
+        "evidence": [{"stat": "closed trades in ledger", "value": str(pooled)},
+                     {"stat": "attributed to this strategy", "value": str(scoped)},
+                     {"stat": "strategy id", "value": str(att.get("strategy_id") or "(none)")}],
+        "recommendation": ("Trades are written without a strategy id, so no per-strategy "
+                           "statistic can be trusted until that is fixed. Until then, read "
+                           "deviation monitoring as unavailable rather than passing."),
+    }]
+
+
 def evaluate(*, baseline: Optional[dict], live: Optional[dict],
              volatility_band: Optional[dict] = None,
              current_atr_pct: Optional[float] = None,
              execution: Optional[dict] = None,
+             attribution: Optional[dict] = None,
              thresholds: Thresholds = DEFAULT) -> dict:
     """Compare live behaviour against the strategy's own backtest.
 
     Returns ``{available, status, findings, baseline, live, note, auto_modify}``.
     ``auto_modify`` is always False — this agent recommends, it never acts."""
     # Checks that need no trade sample run in every state.
-    ambient = _volatility(volatility_band, current_atr_pct) + _execution(execution, thresholds)
+    ambient = (_volatility(volatility_band, current_atr_pct)
+               + _execution(execution, thresholds)
+               + _attribution(attribution))
 
     if not baseline or not _f(baseline, "total_trades"):
         return {"available": False, "status": "no_baseline", "auto_modify": False,
@@ -325,11 +363,16 @@ def evaluate(*, baseline: Optional[dict], live: Optional[dict],
     live = live or {}
     n_live = int(_f(live, "total_trades"))
     if n_live < MIN_LIVE_TRADES:
+        blind = any(f["key"] == "monitor-unattributed-trades" for f in ambient)
         return {"available": True, "status": "warming_up", "auto_modify": False,
                 "findings": ambient, "baseline": baseline, "live": live,
-                "note": (f"{n_live} of {MIN_LIVE_TRADES} closed live trades. Performance "
-                         "deviation is not reported below that sample — it would be noise. "
-                         "Volatility and execution checks are active now.")}
+                "note": (f"{n_live} of {MIN_LIVE_TRADES} closed live trades attributed to "
+                         "this strategy. Performance deviation is not reported below that "
+                         "sample — it would be noise. Volatility and execution checks are "
+                         "active now."
+                         + (" Trades exist in the ledger but none carry this strategy's id,"
+                            " so this is a gap in attribution rather than a quiet strategy."
+                            if blind else ""))}
 
     findings = (_performance(baseline, live, thresholds)
                 + _drawdown(baseline, live, thresholds)

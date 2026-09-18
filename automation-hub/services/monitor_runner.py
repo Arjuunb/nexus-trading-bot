@@ -184,9 +184,20 @@ class MonitorRunner:
         # point is comparing one timeframe against another.)
         tf_mismatch = baseline.pop("__tf_mismatch", None)
 
-        trades = self.paper.history()
+        # The live sample must be THIS strategy's trades. paper.history() is
+        # every closed trade from every strategy and symbol pooled together,
+        # and comparing that against one strategy's backtest is not a loose
+        # comparison but a different one: it reported a 36.75R live drawdown
+        # against a 4.3R backtest for a strategy whose own backtest took a
+        # single trade in a year. strategy_history() scopes it, and excludes
+        # trades carrying no id rather than crediting them to whoever asked.
+        strategy_id = str(spec.get("id") or "")
+        pooled = self.paper.history()
+        trades = self.paper.strategy_history(strategy_id)
         live = ma.live_metrics(trades)
         live["span_days"] = ma.span_days(trades)
+        attribution = {"strategy_id": strategy_id, "scoped": len(trades),
+                       "pooled": len(pooled)}
 
         execution = None
         if self.exec_quality is not None:
@@ -196,6 +207,7 @@ class MonitorRunner:
                 execution = None
 
         out = ma.evaluate(baseline=baseline or None, live=live,
+                          attribution=attribution,
                           volatility_band=(vol or {}).get("band"),
                           current_atr_pct=(vol or {}).get("current_atr_pct"),
                           execution=execution)
@@ -206,6 +218,10 @@ class MonitorRunner:
             "baseline_cached": cached,
             "baseline_computed_at": self._baseline_cache.get("computed_at"),
             "data_source": (vol or {}).get("source"),
+            # What the verdict was computed over. Without this the reader
+            # cannot tell a strategy compared on its own 40 trades from one
+            # compared on nothing, and the two read identically as "in_line".
+            "attribution": attribution,
             "checked_at": _now_iso(),
         })
         if tf_mismatch:
