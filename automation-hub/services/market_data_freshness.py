@@ -242,6 +242,31 @@ def assess_timeframe(symbol: str, timeframe: str,
         status=status, blocker=blocker)
 
 
+def judge_bars(symbol: str, timeframe: str, bars, *,
+               now: Optional[datetime] = None,
+               tolerance: Optional["Tolerance"] = None) -> "TimeframeFreshness":
+    """Judge a list of CLOSED candles, so a cache read can carry its own age.
+
+    ``get_bars(require_real=True)`` promises the candles are REAL. It promises
+    nothing about WHEN: a series whose newest candle closed 15.8 hours ago
+    satisfies it exactly as well as one that closed 25 seconds ago. Callers
+    that present an answer as current -- a scanner ranking today's setups, a
+    page printing a last price -- cannot tell those apart from the return
+    value, so they have been presenting the second as the first.
+
+    This is the adapter, not a second opinion: it reads the newest bar's open
+    timestamp and hands it to assess_timeframe, which remains the only code
+    that decides what fresh means. ``bars`` must be closed candles in
+    ascending time order, which is what the historical store returns; a
+    forming candle passed in here would be judged as though it had closed.
+    """
+    last_open = None
+    if bars:
+        last_open = getattr(bars[-1], "timestamp", None)
+    return assess_timeframe(symbol, timeframe, last_open, now=now,
+                            tolerance=tolerance)
+
+
 @dataclass(frozen=True)
 class TimeframeFreshness:
     """One timeframe's verdict, with every number the judgement used."""

@@ -530,9 +530,12 @@ export interface WatchRow {
   last?: number; change_pct?: number; vol_pct?: number; spark?: number[]; bars?: number;
 }
 export interface Watchlist { timeframe: string; symbols: WatchRow[]; }
-export interface ScanSignal { symbol?: string; type: string; side: string; strength: number; detail: string; }
-export interface ScanRow { symbol: string; available: boolean; source?: string; signals: ScanSignal[]; score: number; bias?: string; last?: number; }
-export interface ScanResult { timeframe: string; symbols: ScanRow[]; opportunities: ScanSignal[]; count: number; }
+export interface CandleFreshness { status: string; blocker?: string; age_seconds?: number | null; allowed_age_seconds?: number; last_close?: string | null; }
+// as_of/stale ride on the signal too: opportunities are rendered detached from
+// their row, so one that left its age behind arrives on screen looking current.
+export interface ScanSignal { symbol?: string; type: string; side: string; strength: number; detail: string; as_of?: string | null; stale?: boolean; }
+export interface ScanRow { symbol: string; available: boolean; source?: string; signals: ScanSignal[]; score: number; bias?: string; last?: number; as_of?: string | null; stale?: boolean; freshness?: CandleFreshness; }
+export interface ScanResult { timeframe: string; symbols: ScanRow[]; opportunities: ScanSignal[]; count: number; stale_symbols?: string[]; fresh?: boolean; }
 export interface HealthCard {
   available?: boolean; error?: string; needs_download?: boolean;
   status: string; classification?: string; unhealthy: boolean; win_rate: number; profit_factor: number; expectancy: number;

@@ -1257,6 +1257,27 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 }
 .scan-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--sc-accent, var(--purple)); }
 .scan-card:hover { border-color: rgba(234, 181, 79, 0.3); transform: translateY(-1px); }
+
+/* The age of the candles a ranking was computed from. The scanner reads a
+   local cache that nothing refreshes on a schedule, so "no setups" and "no
+   recent data" have to look different on screen. */
+.scan-stale {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+  font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  color: var(--gold); opacity: .95;
+}
+.scan-stale-note {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 12px;
+  padding: 9px 11px; border-radius: 8px; font-size: 12px; line-height: 1.5;
+  text-align: left;
+  color: var(--gold);
+  background: rgba(234, 181, 79, 0.08);
+  border: 1px solid rgba(234, 181, 79, 0.28);
+}
+.scan-stale-note code {
+  font-size: 11px; padding: 1px 5px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+}
 .scan-type { font-size: 13px; font-weight: 600; }
 .scan-strength { display: flex; align-items: center; gap: 8px; }
 .scan-bar { flex: 1; height: 6px; border-radius: 3px; background: #131315; overflow: hidden; }
