@@ -200,7 +200,17 @@ class PaperExecutionEngine:
     def open(self, *, symbol: str, side: str, size: float, entry: float,
              stop: Optional[float], target: Optional[float] = None,
              alert_id: str = "", maker: bool = False,
+             strategy_id: str = "",
              sizing_context: Optional[dict] = None) -> FillResult:
+        """``strategy_id`` attributes this trade to the strategy that produced
+        the signal -- per call, not per engine.
+
+        One engine is shared by every producer: the deployed rule spec,
+        built-in strategies, and inbound webhook alerts. A single mutable
+        engine-level id would stamp whatever was deployed last onto all of
+        them, which is worse than leaving them unowned because it credits a
+        strategy with a record it did not produce. With no id the trade stays
+        honestly unattributed, exactly as the field's contract states."""
         direction = _dir(side)
         # Return the result the guard built. Re-deriving it here called
         # float(entry) on exactly the unparseable input the guard exists to
@@ -234,8 +244,11 @@ class PaperExecutionEngine:
         trade_row = {
             "alert_id": alert_id, "symbol": symbol, "side": direction,
             "size": size, "entry": entry, "stop": stop, "target": target,
-            "strategy_id": self.strategy_id,
             **entry_sizing,
+            # After the spread, deliberately: the caller that knows which
+            # strategy fired decides attribution, never a loose key that
+            # happened to ride along in the sizing context.
+            "strategy_id": strategy_id or self.strategy_id,
         }
         atomic_open = getattr(self.ledger, "open_position_and_trade", None)
         if not callable(atomic_open):
@@ -286,7 +299,9 @@ class PaperExecutionEngine:
             "alert_id": "", "symbol": symbol, "side": pos["side"],
             "size": remainder, "entry": pos["entry"], "stop": pos.get("stop"),
             "target": pos.get("target"),
-            "strategy_id": self.strategy_id,
+            # Reading the engine here would re-attribute a half-closed trade
+            # to a strategy deployed after the entry.
+            "strategy_id": open_trade.get("strategy_id") or self.strategy_id,
             **({key: open_trade.get(key) for key in (
                 "sizing_mode", "sizing_engine_version", "risk_basis_at_entry",
                 "risk_pct_at_entry", "risk_amount_at_entry", "equity_before_trade",
@@ -442,8 +457,15 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
     def open(self, *, symbol: str, side: str, size: float, entry: float,
              stop: Optional[float], target: Optional[float] = None,
              alert_id: str = "", maker: bool = False,
+             strategy_id: str = "",
              sizing_context: Optional[dict] = None) -> FillResult:
+        # Forward paper does not fill here -- it queues an intent and waits for
+        # a real quote. The owning strategy therefore has to travel WITH the
+        # intent, or attribution is lost between the decision and the fill
+        # (including across a restart, since intents are checkpointed).
         context = dict(sizing_context or {})
+        if strategy_id:
+            context["strategy_id"] = strategy_id
         decision_timestamp = context.get("decision_timestamp")
         self._utc(decision_timestamp)
         # A simulated account cannot spend money it does not have. The sizing
@@ -521,6 +543,7 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
                     entry=reference, stop=intent.get("stop"),
                     target=intent.get("target"), alert_id=intent.get("alert_id", ""),
                     maker=bool(intent.get("maker")), sizing_context=context,
+                    strategy_id=str(context.get("strategy_id") or ""),
                 )
                 if fill.action == "opened":
                     commission = (self._fee_rate(maker=bool(intent.get("maker")))

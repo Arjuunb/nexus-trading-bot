@@ -1686,6 +1686,24 @@ class AutoStrategyEngine:
                                      "side": None, "entry": None})["target"] = tg
             return out
 
+    def owning_strategy_id(self) -> str:
+        """Which strategy owns the trades this engine produces.
+
+        The label is for humans and is not unique, so it cannot scope a
+        statistic. A deployed rule spec carries an id and the monitor compares
+        live behaviour against the backtest of that same id; an instance
+        running a built-in strategy carries strategy_key, which
+        instance_metrics already treats as its strategy id.
+
+        Neither means nobody owns the trade. It is then written unattributed
+        rather than borrowing whichever strategy happens to be deployed --
+        crediting a strategy with a record it did not produce is worse than
+        leaving the record unowned, and is what put a 36.75R drawdown from
+        2,804 pooled trades onto a strategy that had taken one in a year.
+        """
+        return str((self.deployed_spec or {}).get("id")
+                   or getattr(self, "strategy_key", "") or "")
+
     def _on_signal(self, sym: str, signal: Signal, strategy=None, *,
                    decision_identity: str | None = None) -> Optional[dict]:
         # The brain re-asserts its view every bar; only act when it CHANGES the
@@ -1833,6 +1851,7 @@ class AutoStrategyEngine:
             "journal_quality_gate": v.to_dict() if v is not None else None,
             "journal_decision_id": decision_id,
             "strategy": self.strategy_label,
+            "strategy_id": self.owning_strategy_id(),
             "timeframe": self.timeframe,
             "mode": "live" if self.live else "paper",
             "open_trades": len(self.paper.positions()),
