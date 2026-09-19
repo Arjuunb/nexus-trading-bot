@@ -1,0 +1,17 @@
+{
+  "_comment": "Baseline for the SMC decision path. The SMC Lab strategy is READ-ONLY: the agent layer built around it observes the strategy and must never alter it. If a test pointing at this file fails, a decision-path file was edited or the strategy now behaves differently -- do not regenerate this baseline to make the test pass unless the change was deliberate and the new behaviour was reviewed.",
+  "recorded_at": "2026-09-19",
+  "decision_path": [
+    "services/native_smc.py",
+    "services/smc_strategy_ladder.py",
+    "services/smc_strategy_v1.py",
+    "services/native_smc_live_visual.py"
+  ],
+  "source_manifest": {
+    "services/native_smc.py": "47c2b7e28fee15e3366ea5434092f13c99cb50cbf718e56a35becaf715c8c36d",
+    "services/smc_strategy_ladder.py": "51d3a293062644a7f1eae8585ae0ff8cf8fe0f0b143fe6388f5fe9155b1b9e8b",
+    "services/smc_strategy_v1.py": "dca7f79a3ba18b126e9193db696d8997436bf86c446c25fdfed280d5f36e7afc",
+    "services/native_smc_live_visual.py": "1e0056cf067800d3e13a66349de231f24d75efbd7dc8a21dc2eebc1164550635"
+  },
+  "behaviour_fingerprint": "7230a75e0af39ac608dfa862ad1c85903db4f244bd864c5e519c28abf8457d5e"
+}
