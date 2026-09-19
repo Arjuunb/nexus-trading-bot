@@ -124,6 +124,7 @@ class Ledger(Protocol):
     def get_logs(self, limit: int = 200, instance_id: str = "") -> list[dict]: ...
     def add_alert(self, *, severity: str, category: str, title: str, detail: str = "", instance_id: str = "") -> None: ...
     def get_alerts(self, limit: int = 100) -> list[dict]: ...
+    def last_alert_ts(self, *, category: str, title: str) -> Optional[str]: ...
     def begin_factory_reset_audit(self, row: dict) -> None: ...
     def finish_factory_reset_audit(self, reset_id: str, *, status: str,
                                    duration_ms: int, error: str = "") -> None: ...
@@ -680,6 +681,19 @@ class SqliteLedger:
             return [dict(r) for r in self._c.execute(
                 "SELECT * FROM alerts ORDER BY ts DESC LIMIT ?", (limit,))]
 
+    def last_alert_ts(self, *, category, title):
+        """When an alert with this category and title was last RAISED.
+
+        A repeat-suppression window kept in process memory is not a window: it
+        empties on restart and every worker keeps its own. This is the delivery
+        record itself, so the answer is the same for every worker and survives
+        a redeploy."""
+        with self._lock:
+            row = self._c.execute(
+                "SELECT ts FROM alerts WHERE category=? AND title=? "
+                "ORDER BY ts DESC LIMIT 1", (category, title)).fetchone()
+        return row["ts"] if row else None
+
     def prune(self, keep_logs=50000, keep_alerts=10000, keep_events=20000) -> dict:
         """Retention cap for the noisy append-only tables (bot_logs, alerts,
         webhook_events) — keep the most recent N of each, delete older. Trade
@@ -965,6 +979,12 @@ class SupabaseLedger:
     def get_alerts(self, limit=100):  # pragma: no cover
         return remote_call_with_retry(lambda: self._t("alerts").select("*")
                                       .order("ts", desc=True).limit(limit).execute()).data
+
+    def last_alert_ts(self, *, category, title):  # pragma: no cover
+        rows = remote_call_with_retry(
+            lambda: self._t("alerts").select("ts").eq("category", category)
+            .eq("title", title).order("ts", desc=True).limit(1).execute()).data
+        return (rows[0].get("ts") if rows else None)
 
     def begin_factory_reset_audit(self, row: dict) -> None:  # pragma: no cover
         payload = dict(row)

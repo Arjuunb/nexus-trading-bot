@@ -14,9 +14,15 @@ Three design decisions worth stating, because each one is a trap avoided:
     else does. A long TTL still forces an eventual refresh, because the data
     behind the baseline does move.
 
-  * **Alerts have a per-finding cooldown.** A strategy in drawdown produces the
-    same finding every cycle. Without a cooldown the operator learns to ignore
-    the channel, which is worse than not alerting at all.
+  * **Alerts have a per-finding cooldown, and it is durable.** A strategy in
+    drawdown produces the same finding every cycle. Without a cooldown the
+    operator learns to ignore the channel, which is worse than not alerting at
+    all. A cooldown kept only in process memory is barely better: it empties on
+    restart and every worker keeps its own, so a redeploy re-armed every
+    finding and three workers tripled what survived. One drawdown finding
+    reached the operator eleven times carrying the identical number. The window
+    is therefore read from the alert record itself, which is shared and
+    survives a restart.
 
   * **It watches the deployed spec, not the open editor.** ``engine.deployed_spec``
     is set at deploy time and cleared on every other reconfigure, so a built-in
@@ -56,6 +62,22 @@ def spec_key(spec: Optional[dict], range_key: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(value: str) -> Optional[float]:
+    """An ISO timestamp as epoch seconds, comparable with time.time().
+
+    A timestamp stored without a zone is read as UTC rather than local: the
+    ledger writes UTC, and guessing local here would shift the suppression
+    window by the host's offset and re-open it early.
+    """
+    try:
+        at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.timestamp()
 
 
 class MonitorRunner:
@@ -235,10 +257,36 @@ class MonitorRunner:
             self.last_result, self.last_check = out, out["checked_at"]
         return out
 
+    def _delivered_at(self, title: str) -> Optional[float]:
+        """When this finding was last actually raised, from the alert record.
+
+        The in-memory window is per process and empties on restart, so a
+        redeploy re-armed every finding and each worker kept its own copy: one
+        drawdown finding reached the operator eleven times carrying the
+        identical number. Reading the delivery record makes the window shared
+        and durable. Degrades to memory-only on a ledger without the query
+        rather than failing the check.
+        """
+        fn = getattr(self.ledger, "last_alert_ts", None)
+        if not callable(fn):
+            return None
+        try:
+            raw = fn(category="monitor", title=title)
+            if not raw:
+                return None
+            return _parse_iso(str(raw))
+        except Exception:  # noqa: BLE001 — suppression must not kill the loop
+            return None
+
     def _raise_alerts(self, findings: list[dict], now: float) -> None:
         for f in findings:
             key = f.get("key", "?")
             last = self._last_sent.get(key)
+            # Whichever window is further ahead wins: memory is fastest, the
+            # ledger is the one that survives a restart and spans workers.
+            delivered = self._delivered_at(f.get("title", ""))
+            if delivered is not None:
+                last = delivered if last is None else max(last, delivered)
             # "never sent" is not "sent recently". Defaulting the timestamp to 0
             # only looks correct because wall-clock time is huge — it would
             # swallow the first alert of any run whose clock starts near zero.

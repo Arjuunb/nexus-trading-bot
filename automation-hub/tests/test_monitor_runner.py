@@ -423,3 +423,68 @@ def test_a_mixed_ledger_counts_only_this_strategys_trades():
     assert out["live"]["total_trades"] == 20
     assert out["live"]["net_r"] == 10.0, "only this strategy's R may be summed"
     assert "monitor-unattributed-trades" not in _keys(out)
+
+
+# ───────────────── repeat suppression that survives a restart ─────────────────
+#
+# The Alerts page showed one drawdown finding eleven times, every row carrying
+# the identical 36.75R. The window was a dict in process memory: it emptied on
+# every redeploy and each of the three workers kept its own.
+
+def _real_ledger():
+    from data.ledger import SqliteLedger
+    return SqliteLedger(":memory:")
+
+
+def _runner_on(ledger, **kw):
+    """A fresh runner over a SHARED ledger — a redeploy, or another worker."""
+    return mr.MonitorRunner(
+        FakeEngine(), FakePaper(_trades(40, -3.0)), ledger,
+        baseline_fn=lambda spec, rng: dict(BASE),
+        volatility_fn=lambda spec, rng: {}, **kw)
+
+
+def _monitor_alerts(ledger):
+    return [a for a in ledger.get_alerts(500) if a["category"] == "monitor"]
+
+
+def test_a_restart_does_not_re_alert_inside_the_cooldown():
+    """A fresh process has an empty in-memory window. The ledger's does not
+    empty, so the finding stays suppressed across the redeploy."""
+    ledger = _real_ledger()
+    _runner_on(ledger).check()
+    first = len(_monitor_alerts(ledger))
+    assert first, "the scenario must raise at least one alert"
+
+    _runner_on(ledger).check()          # the redeploy
+    assert len(_monitor_alerts(ledger)) == first, "a restart re-armed the alert"
+
+
+def test_a_second_worker_does_not_duplicate_the_same_finding():
+    """Three workers each ran their own loop against one shared ledger."""
+    ledger = _real_ledger()
+    _runner_on(ledger).check()
+    first = len(_monitor_alerts(ledger))
+    _runner_on(ledger).check()
+    _runner_on(ledger).check()
+    assert len(_monitor_alerts(ledger)) == first
+
+
+def test_the_finding_is_raised_again_once_the_durable_window_expires():
+    """Suppression must not become silence: a cooldown that never reopens is
+    an alert that only ever fires once."""
+    ledger = _real_ledger()
+    _runner_on(ledger, cooldown_s=0.0).check()
+    first = len(_monitor_alerts(ledger))
+    _runner_on(ledger, cooldown_s=0.0).check()
+    assert len(_monitor_alerts(ledger)) > first
+
+
+def test_a_ledger_without_the_query_still_alerts():
+    """FakeLedger has no last_alert_ts. Degrade to memory-only rather than
+    failing the check — a monitor that raises nothing monitors nothing."""
+    ledger = FakeLedger()
+    assert not hasattr(ledger, "last_alert_ts")
+    runner = _runner_on(ledger)
+    runner.check()
+    assert [a for a in ledger.alerts if a.get("category") == "monitor"]
