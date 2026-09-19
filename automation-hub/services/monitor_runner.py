@@ -152,17 +152,25 @@ class MonitorRunner:
         return base
 
     def _default_volatility(self, spec: dict, range_key: str) -> dict:
-        from data.market_data import get_bars
+        """The backtest's ATR band, and what volatility is doing NOW.
+
+        "Now" is the whole claim, and it is read from a cache that has been
+        observed 15.8 hours behind the venue. The age travels with the number
+        so the finding cannot call day-old candles current.
+        """
+        from data.market_data import get_bars_judged
         from services.strategy_review import bars_for_range
         tf = spec.get("timeframe", "4h")
-        rows, source = get_bars(spec.get("symbol", "BTCUSDT"),
-                                n=bars_for_range(tf, range_key), timeframe=tf)
+        rows, source, freshness = get_bars_judged(
+            spec.get("symbol", "BTCUSDT"),
+            n=bars_for_range(tf, range_key), timeframe=tf)
         if not rows:
             return {}
         band = ma.atr_pct_band(rows)
         recent = ma.atr_pct_band(rows[-120:]) if len(rows) > 60 else None
         return {"band": band, "current_atr_pct": (recent or {}).get("median"),
-                "source": source}
+                "source": source, "freshness": freshness.to_dict(),
+                "fresh": freshness.fresh}
 
     # -------------------------------------------------------------- caching
     def _baseline_for(self, spec: dict, now: float) -> tuple[dict, dict, bool]:
@@ -232,6 +240,7 @@ class MonitorRunner:
                           attribution=attribution,
                           volatility_band=(vol or {}).get("band"),
                           current_atr_pct=(vol or {}).get("current_atr_pct"),
+                          volatility_freshness=(vol or {}).get("freshness"),
                           execution=execution)
         out.update({
             "strategy": spec.get("name") or getattr(self.engine, "strategy_label", None),

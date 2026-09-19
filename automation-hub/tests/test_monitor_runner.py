@@ -488,3 +488,19 @@ def test_a_ledger_without_the_query_still_alerts():
     runner = _runner_on(ledger)
     runner.check()
     assert [a for a in ledger.alerts if a.get("category") == "monitor"]
+
+
+def test_the_runner_carries_the_atr_datas_age_into_the_finding():
+    """_default_volatility reads the same cache the scanner does. If the age
+    stops at the runner, the agent calls day-old candles current again."""
+    stale = {"band": {"p10": 0.5, "median": 1.0, "p90": 1.5},
+             "current_atr_pct": 9.0,
+             "freshness": {"status": "STALE", "age_seconds": 56880.0,
+                           "last_close": "2026-09-18T20:00:00+00:00"}}
+    runner = mr.MonitorRunner(
+        FakeEngine(), FakePaper(_trades(40, 0.5)), FakeLedger(),
+        baseline_fn=lambda spec, rng: dict(BASE),
+        volatility_fn=lambda spec, rng: dict(stale))
+    keys = {f["key"] for f in runner.check()["findings"]}
+    assert "volatility-not-current" in keys
+    assert "volatility-out-of-range" not in keys

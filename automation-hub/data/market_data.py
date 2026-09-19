@@ -149,3 +149,27 @@ def get_bars(symbol: str, n: int = 1500, timeframe: str = "1h",
         return generate_bars(n=n, timeframe=timeframe, seed=seed), "synthetic"
     except ValueError:
         return [], f"unavailable (no real data for {symbol} {timeframe})"
+
+
+def get_bars_judged(symbol: str, n: int = 1500, timeframe: str = "1h",
+                    seed: int = 1, since_ms: Optional[int] = None,
+                    require_real: bool = False, now=None):
+    """``get_bars`` plus the age of what came back: (bars, source, freshness).
+
+    ``require_real=True`` promises the candles are REAL. It promises nothing
+    about WHEN, and the return value gives the caller no way to tell a candle
+    that closed 25 seconds ago from one that closed 15.8 hours ago -- both of
+    which the local store has actually served. Any consumer whose answer is a
+    claim about NOW ("current volatility", today's tradable universe, the ATR
+    a position is sized from) needs the second number and could not get it.
+
+    The verdict comes from ``services.market_data_freshness``, which stays the
+    only code that decides what fresh means. Nothing here filters, refuses or
+    reorders on it: this hands the caller the fact, and what to do about a
+    stale series is the caller's decision, made with the number rather than
+    without it.
+    """
+    from services.market_data_freshness import judge_bars
+    bars, source = get_bars(symbol, n=n, timeframe=timeframe, seed=seed,
+                            since_ms=since_ms, require_real=require_real)
+    return bars, source, judge_bars(symbol, timeframe, bars, now=now)

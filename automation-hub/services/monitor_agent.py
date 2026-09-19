@@ -247,9 +247,46 @@ def _frequency(base: dict, live: dict, t: Thresholds) -> list[dict]:
     return []
 
 
-def _volatility(band: Optional[dict], current: Optional[float]) -> list[dict]:
+def _age_phrase(seconds: Optional[float]) -> str:
+    """How old, in the coarsest unit that stays honest."""
+    if seconds is None:
+        return "an unknown age"
+    if seconds < 3600:
+        return f"{seconds / 60:.0f} minutes old"
+    if seconds < 172800:
+        return f"{seconds / 3600:.1f} hours old"
+    return f"{seconds / 86400:.0f} days old"
+
+
+def _volatility(band: Optional[dict], current: Optional[float],
+                freshness: Optional[dict] = None) -> list[dict]:
     if not band or current is None:
         return []
+    # Every branch below is a statement about CURRENT volatility, and the
+    # candles behind it come from a cache measured 15.8 hours behind the
+    # venue. Yesterday's ATR asserted as today's is not a weaker warning, it
+    # is a different claim -- and it would tell the operator to resize stops
+    # for a regime that may have ended. Saying the check could not run is the
+    # honest answer, and saying nothing is not: an absent finding reads as a
+    # volatility that is in range.
+    if freshness is not None and freshness.get("status") != "FRESH":
+        age = _age_phrase(freshness.get("age_seconds"))
+        return [{
+            "key": "volatility-not-current", "severity": "warning",
+            "title": "Volatility cannot be assessed: the candles are not current",
+            "detail": (f"The newest candle available for this symbol is {age}, so"
+                       " there is no current ATR to compare against the backtest"
+                       " range. This is not a reading that volatility is in"
+                       " range -- it is the check reporting that it could not"
+                       " run."),
+            "evidence": [{"stat": "candle status", "value": str(freshness.get("status"))},
+                         {"stat": "newest candle", "value": str(freshness.get("last_close") or "none held")},
+                         {"stat": "backtest ATR % range (p10-p90)",
+                          "value": f"{band.get('p10')}% - {band.get('p90')}%"}],
+            "recommendation": ("Refresh the candle cache (/data/sync) or check the"
+                               " feed. Until it is current, treat the volatility"
+                               " regime as unknown rather than unchanged."),
+        }]
     cur = round(float(current), 3)
     lo, hi = band.get("p10"), band.get("p90")
     if lo is None or hi is None:
@@ -341,6 +378,7 @@ def _attribution(att: Optional[dict]) -> list[dict]:
 def evaluate(*, baseline: Optional[dict], live: Optional[dict],
              volatility_band: Optional[dict] = None,
              current_atr_pct: Optional[float] = None,
+             volatility_freshness: Optional[dict] = None,
              execution: Optional[dict] = None,
              attribution: Optional[dict] = None,
              thresholds: Thresholds = DEFAULT) -> dict:
@@ -349,7 +387,7 @@ def evaluate(*, baseline: Optional[dict], live: Optional[dict],
     Returns ``{available, status, findings, baseline, live, note, auto_modify}``.
     ``auto_modify`` is always False — this agent recommends, it never acts."""
     # Checks that need no trade sample run in every state.
-    ambient = (_volatility(volatility_band, current_atr_pct)
+    ambient = (_volatility(volatility_band, current_atr_pct, volatility_freshness)
                + _execution(execution, thresholds)
                + _attribution(attribution))
 
