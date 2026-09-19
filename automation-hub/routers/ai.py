@@ -23,7 +23,7 @@ def ai_analyze(symbol: str = "BTCUSDT", timeframe: str = "1h",
 
     Cached briefly (per symbol/timeframe/side/leverage) so repeated dashboard
     polls don't re-run the read or re-fetch candles."""
-    from data.market_data import get_bars
+    from data.market_data import get_bars_judged
     from services.ttl_cache import cached
 
     equity = _wa.paper.balance()
@@ -32,7 +32,7 @@ def ai_analyze(symbol: str = "BTCUSDT", timeframe: str = "1h",
     key = f"ai:analyze:{symbol}:{timeframe}:{side}:{leverage}:{ms}:{round(equity, 2)}"
 
     def _run() -> dict:
-        bars, source = get_bars(symbol, n=250, timeframe=timeframe)
+        bars, source, freshness = get_bars_judged(symbol, n=250, timeframe=timeframe)
         if not bars:
             return {"available": False, "symbol": symbol, "note": "no market data"}
         out = _ai.analyze_setup(symbol=symbol, timeframe=timeframe, bars=bars, side=side,
@@ -40,6 +40,15 @@ def ai_analyze(symbol: str = "BTCUSDT", timeframe: str = "1h",
                                 leverage=float(leverage))
         out["available"] = True
         out["data_source"] = source
+        # This is a scored, sized setup someone acts on. Read from candles that
+        # closed hours ago it describes a setup that may no longer exist, and
+        # nothing in the response said which candles it was.
+        out["as_of"] = freshness.last_close.isoformat() if freshness.last_close else None
+        out["stale"] = not freshness.fresh
+        out["freshness"] = freshness.to_dict()
+        if not freshness.fresh:
+            out["note"] = ("Computed from candles that are not current — treat this "
+                           "as a reading of that moment, not of the market now.")
         return out
 
     return cached(key, 20.0, _run)
@@ -49,7 +58,7 @@ def ai_analyze(symbol: str = "BTCUSDT", timeframe: str = "1h",
 def ai_insights(symbols: Optional[str] = None, timeframe: Optional[str] = None):
     """Live market insights (trend / volume / liquidity / reversal / volatility)
     across the tracked symbols — natural-language reads of the real candles."""
-    from data.market_data import get_bars
+    from data.market_data import get_bars_judged
     from services import market_analysis
     from services.ttl_cache import cached
 
@@ -59,15 +68,20 @@ def ai_insights(symbols: Optional[str] = None, timeframe: Optional[str] = None):
     key = f"ai:insights:{','.join(syms)}:{tf}"
 
     def _run() -> dict:
-        reads = []
+        reads, stale = [], []
         for sym in syms:
             try:
-                bars, _ = get_bars(sym, n=120, timeframe=tf)
+                bars, _, freshness = get_bars_judged(sym, n=120, timeframe=tf)
                 if bars:
                     reads.append({"symbol": sym, "ma": market_analysis.analyze(bars)})
+                    if not freshness.fresh:
+                        stale.append(sym)
             except Exception:  # noqa: BLE001
                 continue
-        return {"insights": _ai.market_insights(reads), "symbols": syms, "timeframe": tf}
+        # Commentary on "the market" mixing current and day-old symbols is not
+        # commentary on the market, and the reader cannot tell which is which.
+        return {"insights": _ai.market_insights(reads), "symbols": syms,
+                "timeframe": tf, "stale_symbols": stale, "fresh": not stale}
 
     return cached(key, 30.0, _run)
 
@@ -89,7 +103,7 @@ def ai_alerts():
     max daily loss, and outside-session — all from real current state. Cached
     briefly so it doesn't re-analyse every poll."""
     from datetime import datetime, timezone
-    from data.market_data import get_bars
+    from data.market_data import get_bars_judged
     from services.ttl_cache import cached
 
     def _run() -> dict:
@@ -101,11 +115,14 @@ def ai_alerts():
         analyses = []
         for sym in symbols:
             try:
-                bars, _ = get_bars(sym, n=250, timeframe=tf)
+                bars, _, freshness = get_bars_judged(sym, n=250, timeframe=tf)
                 if bars:
                     a = _ai.analyze_setup(symbol=sym, timeframe=tf, bars=bars,
                                           equity=equity, risk_pct=float(risk_pct), min_score=ms)
                     a["available"] = True
+                    a["stale"] = not freshness.fresh
+                    a["as_of"] = (freshness.last_close.isoformat()
+                                  if freshness.last_close else None)
                     analyses.append(a)
             except Exception:  # noqa: BLE001 — one bad symbol shouldn't drop the feed
                 continue

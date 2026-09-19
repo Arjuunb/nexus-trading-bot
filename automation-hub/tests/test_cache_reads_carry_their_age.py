@@ -104,3 +104,67 @@ def test_the_same_age_is_judged_per_timeframe_not_by_a_fixed_rule(monkeypatch):
     if not hourly.get("price_available") or not daily.get("price_available"):
         pytest.skip("BTCUSDT is not a crypto entry in this universe build")
     assert hourly["stale"] is True and daily["stale"] is False
+
+
+# ───────────── the AI endpoints, which produce actionable output ─────────────
+#
+# /ai/analyze returns a SCORED, SIZED setup — a side, a stop, a position size.
+# Read from candles that closed hours ago it describes a setup that may no
+# longer exist, and nothing in the response said which candles it used.
+
+@pytest.fixture()
+def ai_client():
+    pytest.importorskip("fastapi")
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    # Via webhook_api, which wires the sub-routers: importing routers.ai
+    # directly is a circular import.
+    import webhook_api
+    app = FastAPI()
+    app.include_router(webhook_api.router)
+    return TestClient(app)
+
+
+def _serve(monkeypatch, newest_at, step_minutes=60, count=260):
+    """Make every cache read return candles ending at `newest_at`.
+
+    Also clears the endpoints' 20-second TTL cache. Without that a test
+    asserting FRESH would be handed the previous test's STALE answer and pass
+    or fail on ordering rather than on behaviour.
+    """
+    import data.market_data as md
+    import services.ttl_cache as ttl
+    with ttl._lock:
+        ttl._store.clear()
+    monkeypatch.setattr(
+        md, "get_bars",
+        lambda *a, **k: (_bars(newest_at, count=count,
+                               step_minutes=step_minutes), "cache"))
+
+
+def test_an_analysed_setup_says_which_candles_it_used(monkeypatch, ai_client):
+    _serve(monkeypatch, datetime.now(timezone.utc) - timedelta(hours=16))
+    body = ai_client.get("/ai/analyze?symbol=BTCUSDT&timeframe=1h").json()
+    if not body.get("available"):
+        pytest.skip(f"analyze unavailable here: {body.get('note')}")
+    assert body["stale"] is True
+    assert body["as_of"], "a sized setup must name the candle it came from"
+    assert "not current" in body["note"]
+
+
+def test_a_setup_on_current_candles_is_not_flagged(monkeypatch, ai_client):
+    _serve(monkeypatch, datetime.now(timezone.utc) - timedelta(minutes=30))
+    body = ai_client.get("/ai/analyze?symbol=BTCUSDT&timeframe=1h").json()
+    if not body.get("available"):
+        pytest.skip(f"analyze unavailable here: {body.get('note')}")
+    assert body["stale"] is False
+    assert "not current" not in (body.get("note") or "")
+
+
+def test_market_insights_name_the_symbols_that_are_behind(monkeypatch, ai_client):
+    """Commentary on 'the market' mixing current and day-old symbols is not
+    commentary on the market, and the reader cannot tell which is which."""
+    _serve(monkeypatch, datetime.now(timezone.utc) - timedelta(hours=16))
+    body = ai_client.get("/ai/insights?symbols=BTCUSDT&timeframe=1h").json()
+    assert body["fresh"] is False
+    assert body["stale_symbols"] == ["BTCUSDT"]
