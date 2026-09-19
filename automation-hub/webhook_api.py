@@ -904,6 +904,25 @@ market_store = HistoricalStore(settings.market_db)
 from data.backfill import BackfillJob  # noqa: E402
 backfill_job = BackfillJob(market_store)
 
+# Keep the real-candle cache current. /data/sync is a manual POST and nothing
+# ever called it on a schedule, so the store drifted until somebody noticed --
+# 15.8h behind for BTCUSDT and empty for BNBUSDT on the running host, while
+# ~30 call sites read it. Only timeframes the freshness authority judges stale
+# are refetched, one venue page each.
+from services.candle_sync_runner import CandleSyncRunner  # noqa: E402
+from data.historical import SYMBOLS as _SYNC_SYMBOLS  # noqa: E402
+candle_sync_runner = CandleSyncRunner(
+    market_store, ledger, symbols=_SYNC_SYMBOLS,
+    # The timeframes the instances, scanner and sizing actually read. The 1w
+    # series is left to the manual endpoint: it changes weekly and refreshing
+    # it on this loop is all cost.
+    timeframes=("5m", "15m", "1h", "4h", "1d"))
+# Same opt-out as the monitor agent, for the same reason: each worker would
+# otherwise run its own loop and refetch what a sibling just fetched. The
+# manual /data/sync endpoints keep working either way — only the timer stops.
+if _os.environ.get("HUB_CANDLE_SYNC", "1").strip().lower() not in ("0", "false", "no", "off"):
+    candle_sync_runner.start()
+
 # Paper Trading V2: strict provider-backed cache and persistent candle-driven
 # broker.  This is additive; the established signal-driven ``paper`` engine
 # remains the compatibility path until callers opt into /paper-v2.

@@ -77,6 +77,25 @@ class HistoricalStore:
         finally:
             c.close()
 
+    def last_open_time(self, symbol: str, timeframe: str) -> Optional[datetime]:
+        """Open time of the newest cached candle, or None if none is held.
+
+        A freshness probe must not read the series to answer one question:
+        get_bars(n=1) selects every row for the pair and then slices, which is
+        105,120 rows to learn one timestamp. MAX(open_time) is a lookup on the
+        primary key, and this runs for every symbol and timeframe on a timer.
+        """
+        c = self._conn()
+        try:
+            row = c.execute("SELECT MAX(open_time) FROM candles "
+                            "WHERE symbol=? AND timeframe=?",
+                            (symbol, timeframe)).fetchone()
+        finally:
+            c.close()
+        if not row or row[0] is None:
+            return None
+        return datetime.fromtimestamp(row[0] / 1000, tz=timezone.utc)
+
     def get_bars(self, symbol: str, timeframe: str, *, n: Optional[int] = None,
                  start_ms: Optional[int] = None, end_ms: Optional[int] = None) -> list[Bar]:
         c = self._conn()
