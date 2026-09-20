@@ -929,7 +929,10 @@ if _os.environ.get("HUB_CANDLE_SYNC", "1").strip().lower() not in ("0", "false",
 from data.market_data_v2 import MarketDataService, MarketDataUpdateJob  # noqa: E402
 from execution.paper_broker_v2 import PaperBrokerV2  # noqa: E402
 from services.price_action_lab import PriceActionLabRuntime, PriceActionPaperAccount  # noqa: E402
-from services.smc_strategy_lab import SMCPaperAccount, SMCStrategyLabRuntime  # noqa: E402
+from services.smc_agent import SMCAgent  # noqa: E402
+from services.smc_agent_journal import SMCAgentJournal  # noqa: E402
+from services.smc_agent_runtime import (AgentGatedSMCPaperAccount,  # noqa: E402
+                                        AgentSMCStrategyLabRuntime)
 from services.forward_paper_hub import ForwardPaperMarketDataHub  # noqa: E402
 from services.research_observer import ResearchObservationRuntime  # noqa: E402
 from services.shadow_research import ShadowResearchStore  # noqa: E402
@@ -984,9 +987,19 @@ price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
                                               starting_balance=10_000.0)
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
-smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
-smc_runtime = SMCStrategyLabRuntime(
-    v2_market_data, smc_paper, market_hub=forward_paper_market_hub,
+smc_paper = AgentGatedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+smc_agent_journal = SMCAgentJournal(settings.smc_agent_journal_db)
+# equity here is only a fallback: on every live tick the runtime supplies the
+# paper account's actual equity and the session's saved risk percentage.
+smc_agent = SMCAgent(smc_agent_journal, equity=10_000.0)
+# The agent sits downstream of the SMC strategy and can only approve or refuse
+# what the strategy already decided.  It becomes the approver only while the
+# saved session is in manual_approval mode; in the default automatic mode the
+# lab places its own orders and the agent stands down, so attaching it here
+# does not change what a running session does.
+smc_runtime = AgentSMCStrategyLabRuntime(
+    v2_market_data, smc_paper, agent=smc_agent,
+    market_hub=forward_paper_market_hub,
     poll_seconds=settings.smc_poll_s)
 # Price Action must remain autonomous after a server restart even when no
 # browser has opened the lab page. The supervisor owns stream initialization;

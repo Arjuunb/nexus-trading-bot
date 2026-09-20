@@ -14,7 +14,7 @@ import pytest
 
 from services import smc_agent as agent_mod
 from services.smc_agent import (BTC_MAX_SIZE, BTC_MIN_SIZE, MIN_REWARD_TO_RISK,
-                                SMCAgent, reward_to_risk)
+                                SMCAgent, SizingInputs, reward_to_risk)
 from services.smc_agent_journal import (MISSED, NOT_READY, REJECTED, TAKEN,
                                         SMCAgentJournal)
 
@@ -28,7 +28,13 @@ def journal():
 
 @pytest.fixture()
 def agent(journal):
-    return SMCAgent(journal, equity=10_000.0)
+    """Equity chosen so the default fixture sizes INSIDE the BTC bounds.
+
+    The fixture prices a move around 100, so 0.5% of 100 over a 1.00 risk
+    distance is 0.5 BTC. At 10,000 every default trade would have been capped
+    at 0.9 and the ordinary path would never have been exercised.
+    """
+    return SMCAgent(journal, equity=100.0)
 
 
 def _plan(entry=100.0, stop=99.0, target_2=103.0, risk_percent=0.5, **kw):
@@ -42,19 +48,26 @@ def _plan(entry=100.0, stop=99.0, target_2=103.0, risk_percent=0.5, **kw):
 
 
 def _evaluation(state="ENTRY_READY", plan=None, conditions=None, missing=None,
-                strategy_id="SMC_SOURCE_V1"):
+                strategy_id="SMC_SOURCE_V1", candle="2026-09-19T12:00:00+00:00",
+                proposal_id="prop-1"):
     return {
         "strategy_id": strategy_id, "state": state,
         "data_identity": {"symbol": "BTCUSDT", "timeframe": "5m",
-                          "selected_candle": "2026-09-19T12:00:00+00:00"},
+                          "selected_candle": candle},
         "ordered_condition_results": conditions if conditions is not None else
             [{"label": "Bullish FVG", "status": "PASS"},
              {"label": "Exact POI retest", "status": "PASS"}],
         "missing_conditions": missing or [],
         "trade_plan": plan if plan is not None else (_plan() if state == "ENTRY_READY" else None),
         "proposal": {"direction": "bullish"} if state == "ENTRY_READY" else None,
-        "setup_id": "setup-1", "proposal_id": "prop-1",
+        "setup_id": "setup-1", "proposal_id": proposal_id,
     }
+
+
+def _candle(n: int) -> str:
+    """A distinct closed candle. The agent decides once per candle, so a test
+    making several observations has to advance the clock like the market does."""
+    return f"2026-09-19T{12 + n:02d}:00:00+00:00"
 
 
 # ──────────────── signals come only from the SMC strategy ────────────────
@@ -70,8 +83,9 @@ def test_a_ready_smc_signal_is_taken(agent, journal):
 def test_the_agent_never_trades_a_setup_smc_did_not_offer(agent, journal):
     """The core constraint: no agent path turns a non-ready evaluation into a
     trade. If this ever fails, the agent has grown entry logic of its own."""
-    for state in ("WATCHING", "PARKED", "", "ALMOST_READY"):
-        out = agent.observe(_evaluation(state=state, plan=None))
+    for i, state in enumerate(("WATCHING", "PARKED", "", "ALMOST_READY")):
+        out = agent.observe(_evaluation(state=state, plan=None, candle=_candle(i),
+                                        proposal_id=""))
         assert out["outcome"] == NOT_READY, state
         assert out["trade_id"] == ""
     assert journal.trades() == []
@@ -178,13 +192,65 @@ def test_a_setup_that_fails_a_gate_is_skipped_not_missed(agent, journal):
     assert journal.decisions(outcome=REJECTED) and not journal.decisions(outcome=MISSED)
 
 
+# ───────────────── one decision per candle, one act per proposal ─────────────
+
+def test_a_second_tick_on_the_same_candle_decides_nothing_new(agent, journal):
+    """The runtime polls far more often than candles close."""
+    from services.smc_agent import ALREADY_DECIDED
+    first = agent.observe(_evaluation())
+    again = agent.observe(_evaluation())
+    assert first["outcome"] == TAKEN
+    assert again["outcome"] == ALREADY_DECIDED
+    assert again["previous_outcome"] == TAKEN
+    assert len(journal.trades()) == 1 and len(journal.decisions()) == 1
+
+
+def test_the_same_proposal_on_a_later_candle_is_not_acted_on_twice(agent, journal):
+    """A restart or a replay re-presents work already done. One proposal is
+    one trade."""
+    from services.smc_agent import ALREADY_DECIDED
+    agent.observe(_evaluation(candle=_candle(0), proposal_id="prop-42"))
+    again = agent.observe(_evaluation(candle=_candle(1), proposal_id="prop-42"))
+    assert again["outcome"] == ALREADY_DECIDED
+    assert len(journal.trades()) == 1
+
+
+def test_a_genuinely_new_candle_and_proposal_is_decided(agent, journal):
+    """Dedupe must not become paralysis."""
+    agent.observe(_evaluation(candle=_candle(0), proposal_id="p-a"))
+    second = agent.observe(_evaluation(candle=_candle(1), proposal_id="p-b"))
+    assert second["outcome"] == TAKEN and len(journal.trades()) == 2
+
+
+# ──────────────── the capped size is recorded as a capped size ────────────────
+
+def test_a_capped_trade_records_both_sizes_and_says_it_was_capped(journal):
+    big = SMCAgent(journal, equity=10_000_000.0)
+    out = big.observe(_evaluation())
+    trade = journal.trade(out["trade_id"])
+    assert trade["size"] == BTC_MAX_SIZE
+    assert trade["requested_size"] > BTC_MAX_SIZE
+    assert trade["size_capped"] is True
+    assert "capped down from" in trade["why"]
+
+
+def test_an_uncapped_trade_is_not_marked_capped(agent, journal):
+    out = agent.observe(_evaluation())
+    trade = journal.trade(out["trade_id"])
+    assert trade["size_capped"] is False
+    assert trade["requested_size"] == trade["size"]
+
+
 # ───────────────────────── every look is recorded ─────────────────────────
 
 def test_nothing_the_agent_sees_goes_unrecorded(agent, journal):
-    agent.observe(_evaluation())
-    agent.observe(_evaluation(plan=_plan(target_2=102.0)))
-    agent.observe(_evaluation(state="WATCHING", plan=None))
-    agent.observe(_evaluation(), can_trade=False, blocked_reason="paused")
+    agent.observe(_evaluation(candle=_candle(0), proposal_id="p0"))
+    agent.observe(_evaluation(plan=_plan(target_2=102.0), candle=_candle(1),
+                              proposal_id="p1"))
+    agent.observe(_evaluation(state="WATCHING", plan=None, candle=_candle(2),
+                              proposal_id=""))
+    agent.observe(_evaluation(candle=_candle(3), proposal_id="p3"),
+                  can_trade=False, blocked_reason="paused")
     outcomes = [d["outcome"] for d in journal.decisions()]
     assert sorted(outcomes) == sorted([TAKEN, REJECTED, NOT_READY, MISSED])
 
@@ -235,3 +301,62 @@ def test_reward_to_risk_is_computed_from_the_plans_own_prices():
     assert reward_to_risk(100.0, 99.0, 103.0) == pytest.approx(3.0)
     assert reward_to_risk(100.0, 101.0, 97.0) == pytest.approx(3.0)   # short
     assert reward_to_risk(100.0, 100.0, 103.0) is None
+
+
+# ───────────────────── sizing from live inputs, not a constant ─────────────────
+
+def test_live_sizing_inputs_replace_the_constructed_equity(agent):
+    """A size must come from the account that will carry the trade."""
+    plan = _plan()
+    _, constructed = agent.evaluate_gates(plan, "BTCUSDT")
+    _, live = agent.evaluate_gates(
+        plan, "BTCUSDT", SizingInputs(equity=400.0, risk_percent=0.5))
+
+    # The fixture's own equity gives 0.5 BTC; the live equity asks for 2.0,
+    # which the position cap then brings back to 0.9.
+    assert constructed.executed == pytest.approx(0.5)
+    assert live.requested == pytest.approx(2.0)
+    assert (live.executed, live.capped) == (pytest.approx(BTC_MAX_SIZE), True)
+
+
+def test_a_size_is_rounded_down_to_the_venue_step(agent):
+    """Rounded DOWN, so the recorded size is one the venue would accept and
+    the trade never risks more than the plan allowed."""
+    _, sizing = agent.evaluate_gates(
+        _plan(entry=100.0, stop=99.3), "BTCUSDT",
+        SizingInputs(equity=100.0, risk_percent=0.5, quantity_step=0.001))
+
+    # 0.5 / 0.7 is 0.714285..., which is not placeable.
+    assert sizing.executed == pytest.approx(0.714)
+
+
+def test_the_saved_risk_percentage_wins_over_the_plans_default(agent):
+    plan = _plan(risk_percent=0.5)
+    _, sizing = agent.evaluate_gates(
+        plan, "BTCUSDT", SizingInputs(equity=100.0, risk_percent=0.25))
+
+    assert sizing.executed == pytest.approx(0.25)
+
+
+def test_the_executor_is_handed_the_sizing_it_must_place(agent, journal):
+    seen = []
+
+    def executor(sizing):
+        seen.append(sizing)
+        return {"order": {"id": "order-7"}}
+
+    result = agent.observe(_evaluation(), executor=executor,
+                           sizing_inputs=SizingInputs(equity=100.0, risk_percent=0.5))
+
+    assert result["outcome"] == TAKEN
+    assert seen[0].executed == pytest.approx(result["size"])
+    assert journal.trades()[0]["order_id"] == "order-7"
+
+
+def test_an_executor_that_declines_leaves_no_trade_and_one_missed_row(agent, journal):
+    result = agent.observe(_evaluation(), executor=lambda sizing: None)
+
+    assert result["outcome"] == MISSED
+    assert journal.trades() == []
+    assert [d["outcome"] for d in journal.decisions()] == [MISSED]
+    assert journal.decisions()[0]["reason_code"] == "EXECUTION_DECLINED"

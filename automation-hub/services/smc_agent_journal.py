@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -82,7 +83,40 @@ class SMCAgentJournal:
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
+        self._depth = 0
         self._migrate()
+
+    # -------------------------------------------------------- transactions
+    def _commit(self) -> None:
+        """Commit unless an enclosing transaction() owns the boundary."""
+        if not self._depth:
+            self._db.commit()
+
+    @contextmanager
+    def transaction(self):
+        """Make several journal writes land together or not at all.
+
+        Used where a journal row and a real side effect have to agree. The
+        writes inside are ordered BEFORE the side effect so a journal that
+        cannot accept them raises first and the side effect never happens;
+        the commit comes after, so a side effect that fails takes its rows
+        with it. Nothing here weakens append-only: rows that roll back were
+        never visible, and committed rows remain immutable.
+        """
+        if self._depth:
+            yield self
+            return
+        self._db.execute("BEGIN IMMEDIATE")
+        self._depth = 1
+        try:
+            yield self
+        except BaseException:
+            self._depth = 0
+            self._db.rollback()
+            raise
+        else:
+            self._depth = 0
+            self._db.commit()
 
     # ------------------------------------------------------------- schema
     def _migrate(self) -> None:
@@ -103,10 +137,15 @@ class SMCAgentJournal:
             symbol TEXT NOT NULL, timeframe TEXT NOT NULL, direction TEXT NOT NULL,
             entry REAL NOT NULL, stop REAL NOT NULL, target REAL NOT NULL,
             planned_rr REAL NOT NULL, size REAL NOT NULL,
+            -- What risk asked for before the position bound was applied, and
+            -- whether the bound moved it. A journal showing only the executed
+            -- size cannot tell a trade sized at 0.9 by choice from one capped
+            -- there, and those are different trades to review.
+            requested_size REAL, size_capped INTEGER NOT NULL DEFAULT 0,
             risk_amount REAL, setup_id TEXT, proposal_id TEXT,
             conditions_json TEXT, market_json TEXT, why TEXT NOT NULL,
             closed_at TEXT, exit_price REAL, realised_r REAL, result TEXT,
-            close_reason TEXT, strategy_fingerprint TEXT);
+            close_reason TEXT, strategy_fingerprint TEXT, order_id TEXT);
 
         CREATE TABLE IF NOT EXISTS agent_reviews(
             id TEXT PRIMARY KEY, trade_id TEXT NOT NULL, at TEXT NOT NULL,
@@ -152,6 +191,16 @@ class SMCAgentJournal:
               BEGIN SELECT RAISE(ABORT,
                 'agent journal is append-only: {table} cannot be deleted'); END;
             """)
+        # Columns added to agent_trades after its first version. A journal is
+        # long-lived by definition, so opening a file an earlier build wrote
+        # has to widen it rather than refuse it or lose what is in it.
+        present = {row["name"] for row in c.execute("PRAGMA table_info(agent_trades)")}
+        for column, definition in (("requested_size", "requested_size REAL"),
+                                   ("size_capped", "size_capped INTEGER NOT NULL DEFAULT 0"),
+                                   ("order_id", "order_id TEXT")):
+            if column not in present:
+                c.execute(f"ALTER TABLE agent_trades ADD COLUMN {definition}")
+
         # An open trade may be closed exactly once, and nothing else about it
         # may move — not the entry, not the stop, not the planned RR.
         c.executescript("""
@@ -195,8 +244,39 @@ class SMCAgentJournal:
              outcome, reason_code, reason, setup_id, proposal_id,
              _dump(conditions), _dump(missing), _dump(plan), _dump(gates),
              _dump(market), strategy_fingerprint, trade_id))
-        self._db.commit()
+        self._commit()
         return row_id
+
+    def decision_for_candle(self, *, symbol: str, timeframe: str,
+                            candle_time: str) -> Optional[dict]:
+        """The decision already recorded for this closed candle, if any.
+
+        The runtime polls every few seconds and the evaluation only moves when
+        a candle closes. Without this the journal would fill with thousands of
+        identical "still watching" rows a day and stop being readable, and the
+        agent would record the same entry decision on every poll.
+        """
+        if not candle_time:
+            return None
+        row = self._db.execute(
+            "SELECT * FROM agent_decisions WHERE symbol=? AND timeframe=? "
+            "AND candle_time=? ORDER BY at LIMIT 1",
+            (symbol, timeframe, candle_time)).fetchone()
+        return self._decision(row) if row else None
+
+    def decision_for_proposal(self, proposal_id: str) -> Optional[dict]:
+        """The decision already recorded against this SMC proposal, if any.
+
+        A proposal is the strategy's unit of "this specific trade". Acting on
+        one twice — across a restart, a replay, or two workers — would be two
+        orders for one signal.
+        """
+        if not proposal_id:
+            return None
+        row = self._db.execute(
+            "SELECT * FROM agent_decisions WHERE proposal_id=? AND outcome=? "
+            "ORDER BY at LIMIT 1", (proposal_id, TAKEN)).fetchone()
+        return self._decision(row) if row else None
 
     def decisions(self, *, outcome: str = "", since: str = "",
                   limit: int = 500) -> list[dict]:
@@ -223,21 +303,34 @@ class SMCAgentJournal:
     def open_trade(self, *, decision_id: str, symbol: str, timeframe: str,
                    direction: str, entry: float, stop: float, target: float,
                    planned_rr: float, size: float, why: str,
+                   requested_size: Optional[float] = None,
+                   size_capped: bool = False,
                    risk_amount: Optional[float] = None, setup_id: str = "",
                    proposal_id: str = "", conditions: Any = None,
                    market: Any = None, strategy_fingerprint: str = "",
-                   opened_at: Optional[str] = None) -> str:
+                   order_id: str = "", opened_at: Optional[str] = None) -> str:
         if not why:
             raise ValueError("a trade must record why it was taken")
         trade_id = _id()
+        # Columns are named rather than positional: a journal outlives the
+        # build that created it, and a column added by _migrate to an existing
+        # file lands at the end of the table rather than where the CREATE
+        # statement puts it. Naming them means an older file still writes.
         self._db.execute(
-            "INSERT INTO agent_trades VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO agent_trades(id, decision_id, opened_at, symbol, timeframe,"
+            " direction, entry, stop, target, planned_rr, size, requested_size,"
+            " size_capped, risk_amount, setup_id, proposal_id, conditions_json,"
+            " market_json, why, strategy_fingerprint, order_id)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (trade_id, decision_id, opened_at or _now(), symbol, timeframe,
              direction, float(entry), float(stop), float(target),
-             float(planned_rr), float(size), risk_amount, setup_id, proposal_id,
+             float(planned_rr), float(size),
+             float(requested_size if requested_size is not None else size),
+             int(bool(size_capped)),
+             risk_amount, setup_id, proposal_id,
              _dump(conditions), _dump(market), why,
-             None, None, None, None, None, strategy_fingerprint))
-        self._db.commit()
+             strategy_fingerprint, order_id))
+        self._commit()
         return trade_id
 
     def close_trade(self, trade_id: str, *, exit_price: float, realised_r: float,
@@ -248,7 +341,7 @@ class SMCAgentJournal:
             "result=?, close_reason=? WHERE id=? AND closed_at IS NULL",
             (closed_at or _now(), float(exit_price), float(realised_r),
              result, close_reason, trade_id))
-        self._db.commit()
+        self._commit()
         if not cur.rowcount:
             raise ValueError(f"no open trade {trade_id!r} to close")
         return self.trade(trade_id)
@@ -281,6 +374,7 @@ class SMCAgentJournal:
         out["conditions"] = _load(out.pop("conditions_json", None))
         out["market"] = _load(out.pop("market_json", None))
         out["open"] = out.get("closed_at") is None
+        out["size_capped"] = bool(out.get("size_capped"))
         return out
 
     # ------------------------------------------------------------- reviews
@@ -298,7 +392,7 @@ class SMCAgentJournal:
             (row_id, trade_id, at or _now(), verdict, int(bool(followed_rules)),
              result, realised_r, _dump(list(did_well)), _dump(list(did_badly)),
              _dump(list(violations)), why))
-        self._db.commit()
+        self._commit()
         return row_id
 
     def reviews(self, *, trade_id: str = "", since: str = "",
@@ -331,7 +425,7 @@ class SMCAgentJournal:
             "INSERT INTO agent_lessons VALUES (?,?,?,?,?,?,?,?)",
             (row_id, at or _now(), pattern, int(occurrences), detail,
              _dump(evidence), first_seen, last_seen))
-        self._db.commit()
+        self._commit()
         return row_id
 
     def lessons(self, limit: int = 200) -> list[dict]:
@@ -354,7 +448,7 @@ class SMCAgentJournal:
             "INSERT INTO agent_weekly_reviews VALUES (?,?,?,?,?,?,?)",
             (row_id, at or _now(), period_start, period_end, _dump(summary),
              _dump(list(agent_findings)), _dump(list(lessons))))
-        self._db.commit()
+        self._commit()
         return row_id
 
     def weekly_reviews(self, limit: int = 52) -> list[dict]:
@@ -385,7 +479,7 @@ class SMCAgentJournal:
             "INSERT INTO agent_proposed_improvements VALUES (?,?,?,?,?,?,?,?)",
             (row_id, at or _now(), target, title, rationale, _dump(evidence),
              "PROPOSED", 0))
-        self._db.commit()
+        self._commit()
         return row_id
 
     def proposed_improvements(self, *, target: str = "",

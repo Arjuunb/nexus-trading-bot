@@ -153,6 +153,11 @@ class Settings:
     # other paper account, including at the database-file boundary.
     smc_paper_db: str = field(default_factory=lambda: os.environ.get(
         "HUB_SMC_PAPER_DB", str(DATA_DIR / "smc_strategy_paper.db")))
+    # The SMC agent's own append-only journal: its decisions, the trades it
+    # took, its reviews and the improvements it proposes. Separate from the
+    # lab's paper database because it records the AGENT, not the account.
+    smc_agent_journal_db: str = field(default_factory=lambda: os.environ.get(
+        "HUB_SMC_AGENT_JOURNAL_DB", str(DATA_DIR / "smc_agent_journal.db")))
     price_action_research_db: str = field(default_factory=lambda: os.environ.get(
         "HUB_PRICE_ACTION_RESEARCH_DB", str(DATA_DIR / "price_action_research.db")))
     shadow_research_db: str = field(default_factory=lambda: os.environ.get(

@@ -19,14 +19,16 @@ from pathlib import Path
 
 import pytest
 
-from services import smc_agent, smc_agent_journal, smc_agent_review
+from services import (smc_agent, smc_agent_journal, smc_agent_review,
+                      smc_agent_runtime)
 from services import smc_strategy_freeze as freeze
 from services.smc_agent import SMCAgent
 from services.smc_agent_journal import SMCAgentJournal
 from services.smc_agent_review import review_closed_trades, weekly_review
 
 ROOT = Path(__file__).resolve().parents[1]
-AGENT_MODULES = (smc_agent, smc_agent_journal, smc_agent_review)
+AGENT_MODULES = (smc_agent, smc_agent_journal, smc_agent_review,
+                 smc_agent_runtime)
 #: Modules the agent may read from and must never write into.
 STRATEGY_NAMES = {"native_smc", "smc_strategy_v1", "smc_strategy_ladder",
                   "smc_strategy_lab", "native_smc_live_visual",
