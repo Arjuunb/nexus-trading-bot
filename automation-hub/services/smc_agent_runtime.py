@@ -51,6 +51,13 @@ from services.smc_strategy_lab import SMCPaperAccount, SMCStrategyLabRuntime
 #: docstring: this is a property of the lab, not a new mode.
 AGENT_APPROVAL_MODE = "manual_approval"
 
+#: The lab's control-plane view treats "not automatic" as a reason execution
+#: cannot happen, because before the agent existed that was true: the only
+#: approver was a person pressing a button. With the agent attached it is no
+#: longer true, and leaving it would make the status say BLOCKED about a
+#: session that is creating orders.
+NOT_AUTOMATIC_BLOCKER = "saved operating mode is not Automatic paper"
+
 
 class AgentGatedSMCPaperAccount(SMCPaperAccount):
     """The lab's paper account, able to place a size the agent decided.
@@ -166,6 +173,45 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         finally:
             self._capture.visual = None
             self._agent_lock.release()
+
+    # -------------------------------------------------------- control plane
+    def agent_is_approver(self) -> bool:
+        """Whether an order can be created without a person pressing approve."""
+        return (self.agent is not None
+                and (self.account.session() or {}).get("operating_mode")
+                == AGENT_APPROVAL_MODE)
+
+    def bot_status(self) -> dict:
+        """The lab's own status, corrected for who the approver is.
+
+        The lab reports a non-automatic session as BLOCKED and unarmed. That
+        was accurate while the only approver was a person; with the agent
+        attached it would describe a session that is placing orders as one
+        that cannot. Only the one stale blocker is dropped, and only when the
+        agent really is the approver — every other blocker the lab raised
+        still blocks, and a session the lab called ERROR stays ERROR.
+        """
+        status = super().bot_status()
+        approver = self.agent_is_approver()
+        status["agent"] = {
+            "attached": self.agent is not None,
+            "is_approver": approver,
+            "gates_orders_in_mode": AGENT_APPROVAL_MODE,
+            "minimum_reward_to_risk": getattr(self.agent, "min_reward_to_risk", None),
+            "last_result": dict(self.last_agent_result),
+        }
+        if not approver or status.get("execution_state") == "ERROR":
+            return status
+        remaining = [row for row in (status.get("blockers") or [])
+                     if row != NOT_AUTOMATIC_BLOCKER]
+        if not status.get("session_id"):
+            return status
+        state = "BLOCKED" if remaining else "RUNNING_ARMED"
+        status["blockers"] = remaining
+        status["execution_state"] = state
+        status["session_state"] = state
+        status["execution_armed"] = state == "RUNNING_ARMED"
+        return status
 
     # --------------------------------------------------------------- agent
     @staticmethod

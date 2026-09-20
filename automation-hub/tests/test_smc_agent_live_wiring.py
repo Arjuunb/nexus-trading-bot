@@ -32,9 +32,11 @@ from services.smc_agent import (BTC_MAX_SIZE, BTC_MIN_SIZE, SMCAgent,
 from services.smc_agent_journal import (MISSED, NOT_READY, REJECTED, TAKEN,
                                         SMCAgentJournal)
 from services.smc_agent_runtime import (AGENT_APPROVAL_MODE,
+                                        NOT_AUTOMATIC_BLOCKER,
                                         AgentGatedSMCPaperAccount,
                                         AgentSMCStrategyLabRuntime)
-from services.smc_strategy_lab import SMCPaperAccount, SMCPaperConfig
+from services.smc_strategy_lab import (SMCPaperAccount, SMCPaperConfig,
+                                       SMCStrategyLabRuntime)
 from services.smc_strategy_v1 import evaluate
 from tests.test_smc_strategy_ladder import seeded_engine
 
@@ -524,3 +526,97 @@ def test_the_agents_own_arithmetic_matches_what_the_runtime_places(tmp_path, mon
     assert trade["size"] == pytest.approx(sizing.executed)
     assert lab.account.broker.order(result["agent"]["order_id"])["quantity"] == \
         pytest.approx(sizing.executed)
+
+
+# ─────────────────── the control plane says who the approver is ───────────────
+
+def test_an_agent_gated_session_does_not_report_itself_blocked(tmp_path, monkeypatch):
+    """The lab calls a non-automatic session blocked because, before the agent,
+    the only approver was a person. With the agent attached that is no longer
+    true, and a status saying BLOCKED about a session creating orders is the
+    kind of display that stops being worth reading."""
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.tick()
+
+    status = lab.runtime.bot_status()
+
+    assert status["agent"]["is_approver"] is True
+    assert status["agent"]["minimum_reward_to_risk"] == 3.0
+    assert NOT_AUTOMATIC_BLOCKER not in status["blockers"]
+    assert status["agent"]["last_result"]["outcome"] == TAKEN
+
+
+def test_a_session_without_an_agent_keeps_the_labs_own_verdict(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch, agent=False)
+    lab.runtime.tick()
+
+    status = lab.runtime.bot_status()
+
+    assert status["agent"]["attached"] is False
+    assert status["agent"]["is_approver"] is False
+    assert NOT_AUTOMATIC_BLOCKER in status["blockers"]
+    assert status["execution_armed"] is False
+
+
+def test_an_agent_gated_session_still_reports_every_other_blocker(tmp_path, monkeypatch):
+    """Only the stale one is dropped. The entry the agent just placed still
+    blocks the next one, and the status has to keep saying so."""
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.tick()
+
+    status = lab.runtime.bot_status()
+
+    assert status["pending_orders"] == 1
+    assert any("pending paper entry order" in row for row in status["blockers"])
+    assert status["execution_state"] == "BLOCKED"
+    assert status["execution_armed"] is False
+    assert NOT_AUTOMATIC_BLOCKER not in status["blockers"]
+
+
+def _lab_status(**overrides):
+    base = {"session_id": "smc-session-1", "operating_mode": AGENT_APPROVAL_MODE,
+            "blockers": [NOT_AUTOMATIC_BLOCKER], "execution_state": "BLOCKED",
+            "session_state": "BLOCKED", "execution_armed": False}
+    return {**base, **overrides}
+
+
+def test_clearing_the_mode_blocker_arms_a_session_with_nothing_else_wrong(
+        tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status())
+
+    status = lab.runtime.bot_status()
+
+    assert status["blockers"] == []
+    assert status["execution_state"] == "RUNNING_ARMED"
+    assert status["session_state"] == "RUNNING_ARMED"
+    assert status["execution_armed"] is True
+
+
+@pytest.mark.parametrize("overrides, expected", [
+    ({"blockers": [NOT_AUTOMATIC_BLOCKER, "market data is not synchronized"]},
+     "BLOCKED"),
+    ({"execution_state": "ERROR", "blockers": [NOT_AUTOMATIC_BLOCKER]}, "ERROR"),
+    ({"session_id": "", "blockers": [NOT_AUTOMATIC_BLOCKER]}, "BLOCKED"),
+])
+def test_nothing_else_the_lab_blocked_on_is_cleared(tmp_path, monkeypatch,
+                                                    overrides, expected):
+    lab = build(tmp_path, monkeypatch)
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status(**overrides))
+
+    status = lab.runtime.bot_status()
+
+    assert status["execution_state"] == expected
+    assert status["execution_armed"] is False
+
+
+def test_an_automatic_session_is_untouched_by_the_agent_status(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch, mode="automatic")
+    lab.runtime.tick()
+
+    status = lab.runtime.bot_status()
+
+    assert status["agent"]["is_approver"] is False
+    assert status["operating_mode"] == "automatic"
