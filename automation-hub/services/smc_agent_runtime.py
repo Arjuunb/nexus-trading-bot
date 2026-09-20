@@ -44,7 +44,7 @@ import threading
 from contextlib import contextmanager
 from typing import Optional
 
-from services.smc_agent import SizingInputs
+from services.smc_agent import ExecutionFailed, SMCAgent, SizingInputs
 from services.smc_strategy_lab import SMCPaperAccount, SMCStrategyLabRuntime
 
 #: The one saved operating mode in which an approver decides. See the module
@@ -78,6 +78,7 @@ class AgentGatedSMCPaperAccount(SMCPaperAccount):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._staged_quantity = threading.local()
+        self._staged_execution_key = threading.local()
 
     @contextmanager
     def agent_quantity(self, quantity: float):
@@ -89,8 +90,24 @@ class AgentGatedSMCPaperAccount(SMCPaperAccount):
         finally:
             self._staged_quantity.value = previous
 
+    @contextmanager
+    def agent_execution(self, execution_key: str):
+        """Attach the durable agent key to the lab's existing order call."""
+        previous = getattr(self._staged_execution_key, "value", None)
+        self._staged_execution_key.value = str(execution_key)
+        try:
+            yield
+        finally:
+            self._staged_execution_key.value = previous
+
     def submit_order(self, **kwargs):
         quantity = getattr(self._staged_quantity, "value", None)
+        execution_key = getattr(self._staged_execution_key, "value", None)
+        if execution_key and kwargs.get("ownership") == "strategy":
+            # The parent lab remains the order authority. It receives the
+            # agent's stable key only so PaperBrokerV2 can deduplicate retries
+            # and a restart can find the committed order again.
+            kwargs = {**kwargs, "idempotency_key": str(execution_key)}
         if (quantity is not None and kwargs.get("ownership") == "strategy"
                 and kwargs.get("risk_pct") is not None):
             # Replacing risk_pct rather than adding to it: the parent sizes
@@ -98,6 +115,15 @@ class AgentGatedSMCPaperAccount(SMCPaperAccount):
             # that arithmetic against its own bounds.
             kwargs = {**kwargs, "quantity": float(quantity), "risk_pct": None}
         return super().submit_order(**kwargs)
+
+    def execution_for_key(self, execution_key: str) -> dict | None:
+        """Return broker evidence for an agent intent, if one exists."""
+        key = str(execution_key or "")
+        for order in self.broker.orders():
+            if str(order.get("candle_id") or "") == key:
+                return {"order": order,
+                        "positions": self.broker.positions()}
+        return None
 
 
 class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
@@ -159,6 +185,25 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
             return {"skipped": True, "reason": "tick already running",
                     "real_execution_allowed": False}
         try:
+            if self.agent is not None and hasattr(self.account, "execution_for_key"):
+                try:
+                    recovered = self.agent.reconcile_execution_intents(
+                        self.account.execution_for_key)
+                    if recovered:
+                        self.last_agent_result = {
+                            "enabled": True, "executed": False,
+                            "reconciled": recovered,
+                            "reason": "pending execution intents reconciled before tick",
+                        }
+                except Exception as exc:
+                    # A reconciliation outage blocks the agent's new-entry
+                    # path; it must not cause a second submission.
+                    self.last_agent_result = {
+                        "enabled": True, "executed": False,
+                        "execution_state": "EXECUTION_UNCERTAIN",
+                        "failed": True,
+                        "reason": f"reconciliation unavailable: {type(exc).__name__}: {exc}",
+                    }
             self._capture.armed = True
             self._capture.visual = None
             try:
@@ -269,6 +314,8 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         staged = status == "PENDING_APPROVAL"
         reliable = bool(health.get("reliable"))
         proposal_id = str(evaluation.get("proposal_id") or "")
+        candle_time = self._closed_candle_time(visual or {})
+        execution_key = SMCAgent.execution_key_for(evaluation, candle_time)
         inputs = self._sizing_inputs(session)
         stage = getattr(self.account, "agent_quantity", None)
 
@@ -286,8 +333,17 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
                 raise RuntimeError(
                     "this paper account cannot place the agent's own size; "
                     "refusing to place a size the journal would not match")
-            with stage(sizing.executed):
-                return self.account.approve_candidate(proposal_id)
+            with stage(sizing.executed), self.account.agent_execution(execution_key):
+                try:
+                    return self.account.approve_candidate(proposal_id)
+                except Exception as exc:
+                    evidence = self.account.execution_for_key(execution_key)
+                    if evidence and evidence.get("order"):
+                        # The broker committed, but a later account metadata
+                        # write may have failed. Return the committed evidence
+                        # so the agent finalizes truthfully and does not retry.
+                        return evidence
+                    raise ExecutionFailed(str(exc)) from exc
 
         # Why the agent could not act, if it cannot. A signal the strategy
         # produced and the agent then failed to take is a MISSED trade, and
@@ -310,17 +366,25 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
                         "session_id": session.get("id"), "operating_mode": mode},
                 can_trade=can_trade,
                 blocked_reason=blocked,
-                candle_time=self._closed_candle_time(visual or {}),
+                candle_time=candle_time,
                 sizing_inputs=inputs,
                 executor=execute)
         except Exception as exc:  # noqa: BLE001 — a broken agent must not trade
-            # Nothing was placed: in this mode the lab does not place orders,
-            # and the only path to an order is the executor above, which only
-            # runs once the agent has committed to taking the trade.
-            return {"enabled": True, "executed": False, "failed": True,
+            evidence = None
+            try:
+                evidence = self.account.execution_for_key(execution_key)
+            except Exception:
+                evidence = None
+            order = (evidence or {}).get("order") or {}
+            order_id = str(order.get("id") or "")
+            # A journal error after broker submission is an uncertain
+            # execution, never a claim that no order was placed.
+            return {"enabled": True, "executed": bool(order_id),
+                    "outcome": "EXECUTION_UNCERTAIN", "execution_state": "EXECUTION_UNCERTAIN",
+                    "order_id": order_id, "failed": True,
                     "error": f"{type(exc).__name__}: {exc}",
-                    "reason": (f"the agent failed: {type(exc).__name__}: {exc}. "
-                               "No order was placed.")}
+                    "reason": (f"the agent failed: {type(exc).__name__}: {exc}; "
+                               "execution must be reconciled before retry")}
 
         return {"enabled": True, "outcome": outcome.get("outcome"),
                 "executed": outcome.get("outcome") == "TAKEN",
@@ -331,4 +395,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
                 "requested_size": outcome.get("requested_size"),
                 "size_capped": outcome.get("size_capped"),
                 "previous_outcome": outcome.get("previous_outcome"),
-                "candidate_status": status}
+                "candidate_status": status,
+                "execution_key": outcome.get("execution_key", ""),
+                "execution_state": outcome.get("execution_state", ""),
+                "error": outcome.get("error", "")}

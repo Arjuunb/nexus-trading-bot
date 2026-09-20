@@ -38,7 +38,22 @@ TAKEN = "TAKEN"            # the agent opened a trade on this signal
 REJECTED = "REJECTED"      # SMC offered a trade; an AGENT gate refused it
 NOT_READY = "NOT_READY"    # SMC itself was not ready — nothing was offered
 MISSED = "MISSED"          # SMC offered a trade and the agent failed to act
-DECISION_OUTCOMES = (TAKEN, REJECTED, NOT_READY, MISSED)
+EXECUTION_FAILED = "EXECUTION_FAILED"
+EXECUTION_UNCERTAIN = "EXECUTION_UNCERTAIN"
+RECONCILED = "RECONCILED"
+DECISION_OUTCOMES = (TAKEN, REJECTED, NOT_READY, MISSED,
+                     EXECUTION_FAILED, EXECUTION_UNCERTAIN, RECONCILED)
+
+# Durable execution lifecycle.  These states belong to the execution intent,
+# not to the strategy decision: the strategy remains read-only while the
+# broker/journal boundary is recovered after partial failure.
+DECISION_APPROVED = "DECISION_APPROVED"
+EXECUTION_PENDING = "EXECUTION_PENDING"
+EXECUTED = "EXECUTED"
+EXECUTION_COMPLETE = "COMPLETE"
+EXECUTION_STATES = (DECISION_APPROVED, EXECUTION_PENDING, EXECUTED,
+                    EXECUTION_FAILED, EXECUTION_UNCERTAIN, RECONCILED,
+                    EXECUTION_COMPLETE)
 
 #: How a closed trade is judged. Deliberately separate from win/loss.
 CORRECT = "CORRECT"                    # followed the rules
@@ -174,6 +189,26 @@ class SMCAgentJournal:
         CREATE INDEX IF NOT EXISTS ix_decisions_outcome ON agent_decisions(outcome, at);
         CREATE INDEX IF NOT EXISTS ix_trades_opened ON agent_trades(opened_at);
         CREATE INDEX IF NOT EXISTS ix_reviews_trade ON agent_reviews(trade_id);
+
+        -- The intent is written before the broker call.  It is deliberately
+        -- separate from the append-only decision/trade tables because its
+        -- current state must advance as the external paper broker responds.
+        CREATE TABLE IF NOT EXISTS execution_intents(
+            id TEXT PRIMARY KEY, execution_key TEXT NOT NULL UNIQUE,
+            decision_id TEXT, symbol TEXT NOT NULL, timeframe TEXT NOT NULL,
+            candle_time TEXT, proposal_id TEXT, state TEXT NOT NULL,
+            broker_order_id TEXT, trade_id TEXT, error TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS execution_intent_events(
+            id TEXT PRIMARY KEY, execution_key TEXT NOT NULL,
+            state TEXT NOT NULL, broker_order_id TEXT, trade_id TEXT,
+            error TEXT, payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS ix_execution_intents_state
+          ON execution_intents(state, updated_at);
+        CREATE INDEX IF NOT EXISTS ix_execution_events_key
+          ON execution_intent_events(execution_key, created_at);
         """)
         # A journal that can be rewritten after the outcome is known is a story,
         # not evidence. Closing a trade is the one legitimate update, so it goes
@@ -222,6 +257,91 @@ class SMCAgentJournal:
             'agent journal is append-only: agent_trades cannot be deleted'); END;
         """)
         c.commit()
+
+    # ----------------------------------------------------- execution intents
+    @staticmethod
+    def _intent(row: sqlite3.Row | None) -> Optional[dict]:
+        if row is None:
+            return None
+        out = dict(row)
+        out["payload"] = _load(out.pop("payload_json", None)) or {}
+        return out
+
+    def create_execution_intent(self, *, execution_key: str, symbol: str,
+                                timeframe: str, candle_time: str = "",
+                                proposal_id: str = "", payload: Any = None,
+                                decision_id: str = "") -> dict:
+        """Durably claim one execution key before touching the broker."""
+        key = str(execution_key or "").strip()
+        if not key:
+            raise ValueError("execution intent requires a stable execution key")
+        existing = self._db.execute(
+            "SELECT * FROM execution_intents WHERE execution_key=?", (key,)
+        ).fetchone()
+        if existing:
+            return self._intent(existing)  # type: ignore[return-value]
+        now, intent_id = _now(), _id()
+        self._db.execute(
+            "INSERT INTO execution_intents(id,execution_key,decision_id,symbol,"
+            "timeframe,candle_time,proposal_id,state,payload_json,created_at,updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (intent_id, key, decision_id or None, symbol, timeframe, candle_time,
+             proposal_id, DECISION_APPROVED, _dump(payload or {}), now, now),
+        )
+        self._db.execute(
+            "INSERT INTO execution_intent_events(id,execution_key,state,payload_json,created_at)"
+            " VALUES (?,?,?,?,?)", (_id(), key, DECISION_APPROVED,
+                                     _dump(payload or {}), now))
+        self._commit()
+        return self.execution_intent(key)  # type: ignore[return-value]
+
+    def execution_intent(self, execution_key: str) -> Optional[dict]:
+        row = self._db.execute(
+            "SELECT * FROM execution_intents WHERE execution_key=?",
+            (str(execution_key),)).fetchone()
+        return self._intent(row)
+
+    def execution_intents(self, *, states: Iterable[str] = ()) -> list[dict]:
+        wanted = tuple(str(state) for state in states)
+        if not wanted:
+            rows = self._db.execute(
+                "SELECT * FROM execution_intents ORDER BY created_at").fetchall()
+        else:
+            marks = ",".join("?" for _ in wanted)
+            rows = self._db.execute(
+                f"SELECT * FROM execution_intents WHERE state IN ({marks}) "
+                "ORDER BY created_at", wanted).fetchall()
+        return [self._intent(row) for row in rows]
+
+    def transition_execution(self, execution_key: str, state: str, *,
+                             broker_order_id: str = "", trade_id: str = "",
+                             decision_id: str = "", error: str = "",
+                             payload: Any = None) -> dict:
+        """Record a durable state transition and its immutable event."""
+        if state not in EXECUTION_STATES:
+            raise ValueError(f"unknown execution state {state!r}")
+        current = self.execution_intent(execution_key)
+        if current is None:
+            raise KeyError(execution_key)
+        now = _now()
+        order_id = broker_order_id or current.get("broker_order_id") or None
+        linked_trade = trade_id or current.get("trade_id") or None
+        linked_decision = decision_id or current.get("decision_id") or None
+        detail = error or current.get("error") or None
+        self._db.execute(
+            "UPDATE execution_intents SET state=?,decision_id=?,broker_order_id=?,"
+            "trade_id=?,error=?,updated_at=? WHERE execution_key=?",
+            (state, linked_decision, order_id, linked_trade, detail, now,
+             str(execution_key)),
+        )
+        self._db.execute(
+            "INSERT INTO execution_intent_events(id,execution_key,state,"
+            "broker_order_id,trade_id,error,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (_id(), str(execution_key), state, order_id, linked_trade, detail,
+             _dump(payload or {}), now),
+        )
+        self._commit()
+        return self.execution_intent(execution_key)  # type: ignore[return-value]
 
     # ----------------------------------------------------------- decisions
     def record_decision(self, *, symbol: str, timeframe: str, smc_state: str,

@@ -29,8 +29,9 @@ import pytest
 
 from services.smc_agent import (BTC_MAX_SIZE, BTC_MIN_SIZE, SMCAgent,
                                 SizingInputs)
-from services.smc_agent_journal import (MISSED, NOT_READY, REJECTED, TAKEN,
-                                        SMCAgentJournal)
+from services.smc_agent_journal import (EXECUTION_FAILED,
+                                        EXECUTION_UNCERTAIN, MISSED, NOT_READY,
+                                        REJECTED, TAKEN, SMCAgentJournal)
 from services.smc_agent_runtime import (AGENT_APPROVAL_MODE,
                                         NOT_AUTOMATIC_BLOCKER,
                                         AgentGatedSMCPaperAccount,
@@ -306,6 +307,7 @@ def test_repeated_ticks_on_one_candle_cannot_create_a_second_order(tmp_path, mon
     assert [r["agent"]["outcome"] for r in repeats] == ["ALREADY_DECIDED"] * 4
     assert [r["agent"]["previous_outcome"] for r in repeats] == [TAKEN] * 4
     assert len(lab.strategy_orders()) == 1
+    assert len(lab.account.broker.orders()) == 1
     assert len(lab.journal.trades()) == 1
     # And the journal did not fill up with one row per poll either.
     assert len(lab.decisions()) == 1
@@ -388,7 +390,7 @@ def test_an_agent_that_raises_places_nothing(tmp_path, monkeypatch):
     assert lab.account.broker.positions() == []
 
 
-def test_an_unwritable_journal_places_nothing(tmp_path, monkeypatch):
+def test_an_unwritable_journal_preserves_committed_order_as_uncertain(tmp_path, monkeypatch):
     class Unwritable(SMCAgentJournal):
         def record_decision(self, **kwargs):
             raise sqlite3.OperationalError("attempt to write a readonly database")
@@ -397,16 +399,17 @@ def test_an_unwritable_journal_places_nothing(tmp_path, monkeypatch):
 
     result = lab.runtime.tick()
 
-    assert result["agent"]["failed"] is True
+    assert result["agent"]["outcome"] == EXECUTION_UNCERTAIN
+    assert result["agent"]["execution_state"] == EXECUTION_UNCERTAIN
     assert "readonly database" in result["agent"]["error"]
-    # The order is what matters: a journal that cannot record the trade must
-    # not leave a trade behind that nothing recorded.
-    assert lab.strategy_orders() == []
+    # The broker truth is retained. The journal outage must not turn a
+    # committed order into a false no-order result or permit a retry.
+    assert len(lab.account.broker.orders()) == 1
     assert lab.account.broker.positions() == []
-    assert lab.candidate_status() == "PENDING_APPROVAL"
+    assert lab.candidate_status() == "ORDER_CREATED"
 
 
-def test_a_journal_that_cannot_open_the_trade_rolls_the_decision_back(tmp_path, monkeypatch):
+def test_a_journal_that_cannot_open_the_trade_preserves_uncertain_execution(tmp_path, monkeypatch):
     class HalfBroken(SMCAgentJournal):
         def open_trade(self, **kwargs):
             raise RuntimeError("trade table is gone")
@@ -415,12 +418,102 @@ def test_a_journal_that_cannot_open_the_trade_rolls_the_decision_back(tmp_path, 
 
     result = lab.runtime.tick()
 
-    assert result["agent"]["outcome"] == MISSED
+    assert result["agent"]["outcome"] == EXECUTION_UNCERTAIN
+    assert result["agent"]["execution_state"] == EXECUTION_UNCERTAIN
+    assert result["agent"]["order_id"]
+    # The broker committed exactly one order before the journal failure. It
+    # has not filled yet, so there is no position to silently invent or erase.
+    assert len(lab.account.broker.orders()) == 1
+    assert lab.account.broker.positions() == []
     assert lab.journal.trades() == []
-    # Exactly one decision row, and it says the trade was missed rather than
-    # leaving a rolled-back TAKEN row behind.
-    assert [d["outcome"] for d in lab.decisions()] == [MISSED]
-    assert lab.decisions()[0]["reason_code"] == "EXECUTION_FAILED"
+    assert lab.journal.execution_intents()[0]["state"] == EXECUTION_UNCERTAIN
+    # There is no false MISSED row and no claim that the order was absent.
+    assert lab.decisions() == []
+
+
+def test_intent_persistence_failure_calls_no_broker(tmp_path, monkeypatch):
+    class BrokenIntent(SMCAgentJournal):
+        def create_execution_intent(self, **kwargs):
+            raise RuntimeError("intent store is unavailable")
+
+    lab = build(tmp_path, monkeypatch, journal=BrokenIntent(":memory:"))
+    result = lab.runtime.tick()
+
+    assert result["agent"]["outcome"] == EXECUTION_FAILED
+    assert lab.account.broker.orders() == []
+    assert lab.account.broker.positions() == []
+
+
+def test_broker_failure_after_intent_is_truthful_and_not_retried(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+
+    def fail_before_submit(proposal_id):
+        raise RuntimeError("paper broker rejected before commit")
+
+    monkeypatch.setattr(lab.account, "approve_candidate", fail_before_submit)
+    first = lab.runtime.tick()
+
+    assert first["agent"]["outcome"] == EXECUTION_FAILED
+    assert first["agent"]["execution_state"] == EXECUTION_FAILED
+    assert lab.account.broker.orders() == []
+    assert lab.account.broker.positions() == []
+    assert lab.journal.execution_intents()[0]["state"] == EXECUTION_FAILED
+
+
+def test_persistent_journal_outage_blocks_retries_and_keeps_order_recoverable(
+        tmp_path, monkeypatch):
+    class HalfBroken(SMCAgentJournal):
+        def open_trade(self, **kwargs):
+            raise RuntimeError("trade table is gone")
+
+    lab = build(tmp_path, monkeypatch, journal=HalfBroken(":memory:"))
+    first = lab.runtime.tick()
+    second = lab.runtime.tick()
+
+    assert first["agent"]["outcome"] == EXECUTION_UNCERTAIN
+    assert second["agent"]["outcome"] == EXECUTION_UNCERTAIN
+    assert len(lab.account.broker.orders()) == 1
+    assert lab.account.broker.positions() == []
+
+
+def test_status_exposes_uncertain_execution_without_no_order_claim(tmp_path, monkeypatch):
+    class HalfBroken(SMCAgentJournal):
+        def open_trade(self, **kwargs):
+            raise RuntimeError("trade table is gone")
+
+    lab = build(tmp_path, monkeypatch, journal=HalfBroken(":memory:"))
+    lab.runtime.tick()
+
+    last = lab.runtime.bot_status()["agent"]["last_result"]
+    assert last["execution_state"] == EXECUTION_UNCERTAIN
+    assert last["order_id"]
+    assert "No order was placed" not in str(last)
+
+
+def test_restart_reconciles_committed_order_without_duplicate(tmp_path, monkeypatch):
+    journal_path = tmp_path / "agent-journal.db"
+
+    class HalfBroken(SMCAgentJournal):
+        def open_trade(self, **kwargs):
+            raise RuntimeError("crash between broker commit and journal finalization")
+
+    first_journal = HalfBroken(journal_path)
+    first = build(tmp_path, monkeypatch, journal=first_journal,
+                  journal_path=journal_path, db="same-account.db")
+    first_result = first.runtime.tick()
+    assert first_result["agent"]["execution_state"] == EXECUTION_UNCERTAIN
+    first_journal.close()
+
+    recovered_journal = SMCAgentJournal(journal_path)
+    recovered = build(tmp_path, monkeypatch, journal=recovered_journal,
+                      journal_path=journal_path, db="same-account.db")
+    recovered_result = recovered.runtime.tick()
+
+    assert recovered_result["agent"]["outcome"] == "ALREADY_DECIDED"
+    assert len(recovered.account.broker.orders()) == 1
+    assert len(recovered_journal.trades()) == 1
+    assert recovered_journal.execution_intents()[0]["state"] == "COMPLETE"
+    recovered_journal.close()
 
 
 def test_an_ungated_account_refuses_to_place_a_size_it_cannot_honour(tmp_path, monkeypatch):

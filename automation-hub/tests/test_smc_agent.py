@@ -15,7 +15,8 @@ import pytest
 from services import smc_agent as agent_mod
 from services.smc_agent import (BTC_MAX_SIZE, BTC_MIN_SIZE, MIN_REWARD_TO_RISK,
                                 SMCAgent, SizingInputs, reward_to_risk)
-from services.smc_agent_journal import (MISSED, NOT_READY, REJECTED, TAKEN,
+from services.smc_agent_journal import (EXECUTION_FAILED, MISSED, NOT_READY,
+                                        REJECTED, TAKEN,
                                         SMCAgentJournal)
 
 
@@ -356,7 +357,7 @@ def test_the_executor_is_handed_the_sizing_it_must_place(agent, journal):
 def test_an_executor_that_declines_leaves_no_trade_and_one_missed_row(agent, journal):
     result = agent.observe(_evaluation(), executor=lambda sizing: None)
 
-    assert result["outcome"] == MISSED
+    assert result["outcome"] == EXECUTION_FAILED
     assert journal.trades() == []
-    assert [d["outcome"] for d in journal.decisions()] == [MISSED]
-    assert journal.decisions()[0]["reason_code"] == "EXECUTION_DECLINED"
+    assert [d["outcome"] for d in journal.decisions()] == [EXECUTION_FAILED]
+    assert journal.decisions()[0]["reason_code"] == "EXECUTION_FAILED"
