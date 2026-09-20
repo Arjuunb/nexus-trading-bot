@@ -185,6 +185,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
             return {"skipped": True, "reason": "tick already running",
                     "real_execution_allowed": False}
         try:
+            recovered = []
             if self.agent is not None and hasattr(self.account, "execution_for_key"):
                 try:
                     recovered = self.agent.reconcile_execution_intents(
@@ -213,6 +214,11 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
             if result.get("skipped"):
                 return result
             agent_result = self._run_agent(result, self._capture.visual)
+            if recovered:
+                # The ordinary tick may return ALREADY_DECIDED after
+                # reconciliation. Preserve the recovery evidence for status
+                # consumers instead of hiding it behind that later response.
+                agent_result = {**agent_result, "reconciled": recovered}
             self.last_agent_result = agent_result
             return {**result, "agent": agent_result}
         finally:
@@ -315,7 +321,9 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         reliable = bool(health.get("reliable"))
         proposal_id = str(evaluation.get("proposal_id") or "")
         candle_time = self._closed_candle_time(visual or {})
-        execution_key = SMCAgent.execution_key_for(evaluation, candle_time)
+        session_id = str(session.get("id") or "")
+        execution_key = SMCAgent.execution_key_for(
+            evaluation, candle_time, session_id)
         inputs = self._sizing_inputs(session)
         stage = getattr(self.account, "agent_quantity", None)
 
@@ -367,6 +375,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
                 can_trade=can_trade,
                 blocked_reason=blocked,
                 candle_time=candle_time,
+                session_id=session_id,
                 sizing_inputs=inputs,
                 executor=execute)
         except Exception as exc:  # noqa: BLE001 — a broken agent must not trade
@@ -381,7 +390,9 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
             # execution, never a claim that no order was placed.
             return {"enabled": True, "executed": bool(order_id),
                     "outcome": "EXECUTION_UNCERTAIN", "execution_state": "EXECUTION_UNCERTAIN",
-                    "order_id": order_id, "failed": True,
+                    "order_id": order_id, "execution_key": execution_key,
+                    "position_count": len((evidence or {}).get("positions") or []),
+                    "failed": True,
                     "error": f"{type(exc).__name__}: {exc}",
                     "reason": (f"the agent failed: {type(exc).__name__}: {exc}; "
                                "execution must be reconciled before retry")}

@@ -28,6 +28,7 @@ willing to put at risk on a signal the strategy already validated.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -212,13 +213,27 @@ class SMCAgent:
             trade_id=trade_id, at=self._now())
 
     @classmethod
-    def execution_key_for(cls, evaluation: dict, candle_time: str = "") -> str:
-        """Return the stable idempotency key for one approved decision."""
+    def execution_key_for(cls, evaluation: dict, candle_time: str = "",
+                          session_id: str = "") -> str:
+        """Return the stable idempotency key for one approved decision.
+
+        The complete decision identity is hashed as a JSON tuple rather than
+        concatenated with ambiguous separators.  This keeps legitimate
+        decisions distinct across sessions, setups, symbols, timeframes,
+        strategy versions and closed candles while yielding the same key when
+        a process replays the exact same decision after a restart.
+        """
         symbol, timeframe, candle = cls._identity(evaluation, candle_time)
         proposal_id = str(evaluation.get("proposal_id") or
                           (evaluation.get("proposal") or {}).get("id") or "")
-        material = "|".join(("SMC_AGENT", symbol, timeframe, candle, proposal_id))
-        return "smc-agent:" + hashlib.sha256(material.encode()).hexdigest()[:32]
+        setup_id = str(evaluation.get("setup_id") or
+                       (evaluation.get("proposal") or {}).get("setup_id") or "")
+        material = ["SMC_AGENT", str(session_id or ""), symbol, timeframe,
+                    candle, setup_id, proposal_id,
+                    str(evaluation.get("strategy_id") or SOURCE_STRATEGY_ID),
+                    str(evaluation.get("version") or "")]
+        encoded = json.dumps(material, ensure_ascii=True, separators=(",", ":"))
+        return "smc-agent:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _gate_objects(raw: list[dict]) -> list[Gate]:
@@ -243,6 +258,9 @@ class SMCAgent:
 
     def _finalize_intent(self, intent: dict, *, order_id: str) -> dict:
         """Write the decision/trade and close the intent in one journal tx."""
+        if not intent:
+            raise ValueError("cannot finalize a missing execution intent")
+        execution_key = str(intent["execution_key"])
         payload = intent.get("payload") or {}
         evaluation = payload.get("evaluation") or {}
         plan = payload.get("plan") or evaluation.get("trade_plan") or {}
@@ -253,6 +271,19 @@ class SMCAgent:
         rr = reward_to_risk(float(plan["entry"]), float(plan["stop"]),
                             float(plan["target_2"]))
         with self.journal.transaction():
+            # BEGIN IMMEDIATE serializes two restart/reconciliation workers.
+            # If the first one committed the final rows before the second
+            # acquired the lock, the second returns that same trade instead of
+            # appending a duplicate decision/trade.
+            current = self.journal.execution_intent(execution_key)
+            if (current and current.get("state") == EXECUTION_COMPLETE
+                    and current.get("trade_id")):
+                return {"outcome": TAKEN,
+                        "decision_id": current.get("decision_id") or "",
+                        "trade_id": current.get("trade_id") or "",
+                        "order_id": current.get("broker_order_id") or order_id,
+                        "execution_key": execution_key,
+                        "execution_state": EXECUTION_COMPLETE}
             decision_id = self._record(
                 evaluation, outcome=TAKEN, reason_code="ALL_GATES_PASSED",
                 reason=str(payload.get("why") or "all agent gates passed"),
@@ -274,7 +305,7 @@ class SMCAgent:
                 order_id=order_id, strategy_fingerprint=strategy_fingerprint(),
                 opened_at=self._now())
             self.journal.transition_execution(
-                str(intent["execution_key"]), EXECUTION_COMPLETE,
+                execution_key, EXECUTION_COMPLETE,
                 decision_id=decision_id, broker_order_id=order_id,
                 trade_id=trade_id)
         return {"outcome": TAKEN, "decision_id": decision_id,
@@ -315,6 +346,13 @@ class SMCAgent:
                 recovered.append({"execution_key": intent["execution_key"],
                                   "state": EXECUTION_FAILED})
                 continue
+            broker_order = (evidence.get("order") if isinstance(evidence, dict)
+                            else None) or {}
+            positions = ((evidence.get("positions") or [])
+                         if isinstance(evidence, dict) else [])
+            position_discovered = any(
+                str(position.get("symbol") or "") == str(intent.get("symbol") or "")
+                for position in positions if isinstance(position, dict))
             self.journal.transition_execution(
                 intent["execution_key"], EXECUTED, broker_order_id=order_id)
             try:
@@ -328,11 +366,19 @@ class SMCAgent:
                     error=f"journal finalization pending: {type(exc).__name__}: {exc}")
                 recovered.append({"execution_key": intent["execution_key"],
                                   "state": EXECUTION_UNCERTAIN,
-                                  "order_id": order_id, "error": str(exc)})
+                                  "order_id": order_id,
+                                  "broker_order_status": broker_order.get("status"),
+                                  "position_count": len(positions),
+                                  "position_discovered": position_discovered,
+                                  "error": str(exc)})
             else:
                 recovered.append({"execution_key": intent["execution_key"],
                                   "state": EXECUTION_COMPLETE,
-                                  "order_id": order_id, **result})
+                                  "order_id": order_id,
+                                  "broker_order_status": broker_order.get("status"),
+                                  "position_count": len(positions),
+                                  "position_discovered": position_discovered,
+                                  **result})
         return recovered
 
     # --------------------------------------------------------------- gates
@@ -392,6 +438,7 @@ class SMCAgent:
     def observe(self, evaluation: dict, *, market: Optional[dict] = None,
                 can_trade: bool = True, blocked_reason: str = "",
                 candle_time: str = "",
+                session_id: str = "",
                 sizing_inputs: Optional[SizingInputs] = None,
                 executor: Optional[Callable[[Sizing], object]] = None) -> dict:
         """Decide once and execute through a durable intent state machine.
@@ -407,6 +454,7 @@ class SMCAgent:
         source = str(evaluation.get("strategy_id") or "")
         symbol, timeframe, candle = self._identity(evaluation, candle_time)
         proposal_id = str(evaluation.get("proposal_id") or "")
+        execution_key = self.execution_key_for(evaluation, candle, session_id)
 
         # The runtime polls far more often than candles close, and a restart or
         # a replay re-presents work already done. Deciding again would journal
@@ -416,9 +464,12 @@ class SMCAgent:
         if seen is None and proposal_id:
             seen = self.journal.decision_for_proposal(proposal_id)
         if seen is not None:
+            intent = self.journal.execution_intent(execution_key)
             return {"outcome": ALREADY_DECIDED, "decision_id": seen["id"],
                     "trade_id": seen.get("trade_id") or "", "gates": [],
-                    "previous_outcome": seen["outcome"]}
+                    "previous_outcome": seen["outcome"],
+                    "execution_key": execution_key,
+                    "execution_state": ((intent or {}).get("state") or "")}
 
         if source != SOURCE_STRATEGY_ID:
             decision_id = self._record(
@@ -444,7 +495,6 @@ class SMCAgent:
         # Resolve an already-created intent before feed/candidate gates. A
         # restart or persistent journal outage must surface the existing
         # uncertainty, never turn it into a fresh MISSED observation.
-        execution_key = self.execution_key_for(evaluation, candle)
         existing_intent = self.journal.execution_intent(execution_key)
         if existing_intent is not None:
             state_now = str(existing_intent.get("state") or "")
@@ -518,7 +568,8 @@ class SMCAgent:
         try:
             intent = self.journal.create_execution_intent(
                 execution_key=execution_key, symbol=symbol, timeframe=timeframe,
-                candle_time=candle, proposal_id=proposal_id, payload=payload)
+                candle_time=candle, proposal_id=proposal_id,
+                session_id=session_id, payload=payload)
             self.journal.transition_execution(execution_key, EXECUTION_PENDING)
         except Exception as exc:
             # No intent means the broker must not be called. A journal outage

@@ -95,13 +95,15 @@ class Lab:
 
 def build(tmp_path, monkeypatch, *, evaluation=None, mode=AGENT_APPROVAL_MODE,
           equity=ORDINARY_EQUITY, agent=True, journal=None, db="smc.db",
-          gated=True, journal_path=None, candle_age_minutes=5):
+          gated=True, journal_path=None, candle_age_minutes=5,
+          candle_time=None):
     evaluation = entry_ready() if evaluation is None else evaluation
     account_class = AgentGatedSMCPaperAccount if gated else SMCPaperAccount
     account = account_class(tmp_path / db, starting_balance=equity)
     account.configure(config=SMCPaperConfig(operating_mode=mode))
     price = float((evaluation.get("trade_plan") or {}).get("entry") or 100.9)
-    candle_time = datetime.now(timezone.utc) - timedelta(minutes=candle_age_minutes)
+    candle_time = (candle_time or
+                   datetime.now(timezone.utc) - timedelta(minutes=candle_age_minutes))
     candle = {"timestamp": candle_time.isoformat(), "open": price,
               "high": price + 1, "low": price - 1, "close": price, "volume": 1_000}
     monkeypatch.setattr(
@@ -513,6 +515,57 @@ def test_restart_reconciles_committed_order_without_duplicate(tmp_path, monkeypa
     assert len(recovered.account.broker.orders()) == 1
     assert len(recovered_journal.trades()) == 1
     assert recovered_journal.execution_intents()[0]["state"] == "COMPLETE"
+    recovered_journal.close()
+
+
+def test_restart_reconciles_filled_position_and_preserves_runtime_truth(
+        tmp_path, monkeypatch):
+    """A crash after fill cannot become a second order or a false miss."""
+    journal_path = tmp_path / "agent-journal.db"
+
+    class HalfBroken(SMCAgentJournal):
+        def open_trade(self, **kwargs):
+            raise RuntimeError("crash after paper fill, before journal finalization")
+
+    first_journal = HalfBroken(journal_path)
+    first = build(tmp_path, monkeypatch, journal=first_journal,
+                  journal_path=journal_path, db="filled-account.db")
+    original_approve = first.account.approve_candidate
+
+    def approve_then_fill(proposal_id):
+        placed = original_approve(proposal_id)
+        now = datetime.now(timezone.utc) + timedelta(seconds=2)
+        stamp = now.isoformat()
+        first.account.broker.process_tick(
+            "BTCUSDT", {"bid": 100.0, "ask": 100.01, "mark": 100.0,
+                        "received_at": stamp, "event_timestamp": stamp,
+                        "sequence": 1, "quote_event_id": "filled-restart-1"})
+        return placed
+
+    monkeypatch.setattr(first.account, "approve_candidate", approve_then_fill)
+    failed = first.runtime.tick()
+    assert failed["agent"]["execution_state"] == EXECUTION_UNCERTAIN
+    assert len(first.account.broker.orders()) == 1
+    assert len(first.account.broker.positions()) == 1
+    execution_key = failed["agent"]["execution_key"]
+    first_journal.close()
+
+    recovered_journal = SMCAgentJournal(journal_path)
+    recovered = build(tmp_path, monkeypatch, db="filled-account.db",
+                      journal=recovered_journal, journal_path=journal_path,
+                      candle_time=first.candle_time)
+    after_restart = recovered.runtime.tick()
+
+    assert after_restart["agent"]["outcome"] == "ALREADY_DECIDED"
+    assert after_restart["agent"]["execution_key"] == execution_key
+    assert after_restart["agent"]["reconciled"][0]["state"] == "COMPLETE"
+    assert after_restart["agent"]["reconciled"][0]["position_discovered"] is True
+    assert len(recovered.account.broker.orders()) == 1
+    assert len(recovered.account.broker.positions()) == 1
+    assert len(recovered_journal.trades()) == 1
+    assert recovered_journal.execution_intents()[0]["state"] == "COMPLETE"
+    assert all(row["outcome"] != MISSED for row in recovered_journal.decisions())
+    assert "No order was placed" not in str(after_restart)
     recovered_journal.close()
 
 

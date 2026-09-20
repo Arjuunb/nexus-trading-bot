@@ -195,7 +195,8 @@ class SMCAgentJournal:
         -- current state must advance as the external paper broker responds.
         CREATE TABLE IF NOT EXISTS execution_intents(
             id TEXT PRIMARY KEY, execution_key TEXT NOT NULL UNIQUE,
-            decision_id TEXT, symbol TEXT NOT NULL, timeframe TEXT NOT NULL,
+            decision_id TEXT, session_id TEXT NOT NULL DEFAULT '',
+            symbol TEXT NOT NULL, timeframe TEXT NOT NULL,
             candle_time TEXT, proposal_id TEXT, state TEXT NOT NULL,
             broker_order_id TEXT, trade_id TEXT, error TEXT,
             payload_json TEXT NOT NULL DEFAULT '{}',
@@ -236,6 +237,14 @@ class SMCAgentJournal:
             if column not in present:
                 c.execute(f"ALTER TABLE agent_trades ADD COLUMN {definition}")
 
+        # Execution intents were introduced after the journal table. Keep old
+        # files usable while making the session part of the durable identity;
+        # an empty value is retained for pre-session direct-agent callers.
+        intent_columns = {row["name"] for row in c.execute(
+            "PRAGMA table_info(execution_intents)")}
+        if "session_id" not in intent_columns:
+            c.execute("ALTER TABLE execution_intents ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+
         # An open trade may be closed exactly once, and nothing else about it
         # may move — not the entry, not the stop, not the planned RR.
         c.executescript("""
@@ -269,7 +278,8 @@ class SMCAgentJournal:
 
     def create_execution_intent(self, *, execution_key: str, symbol: str,
                                 timeframe: str, candle_time: str = "",
-                                proposal_id: str = "", payload: Any = None,
+                                proposal_id: str = "", session_id: str = "",
+                                payload: Any = None,
                                 decision_id: str = "") -> dict:
         """Durably claim one execution key before touching the broker."""
         key = str(execution_key or "").strip()
@@ -281,13 +291,25 @@ class SMCAgentJournal:
         if existing:
             return self._intent(existing)  # type: ignore[return-value]
         now, intent_id = _now(), _id()
-        self._db.execute(
-            "INSERT INTO execution_intents(id,execution_key,decision_id,symbol,"
-            "timeframe,candle_time,proposal_id,state,payload_json,created_at,updated_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (intent_id, key, decision_id or None, symbol, timeframe, candle_time,
-             proposal_id, DECISION_APPROVED, _dump(payload or {}), now, now),
-        )
+        try:
+            self._db.execute(
+                "INSERT INTO execution_intents(id,execution_key,decision_id,session_id,symbol,"
+                "timeframe,candle_time,proposal_id,state,payload_json,created_at,updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (intent_id, key, decision_id or None, session_id or "", symbol,
+                 timeframe, candle_time, proposal_id, DECISION_APPROVED,
+                 _dump(payload or {}), now, now),
+            )
+        except sqlite3.IntegrityError:
+            # A concurrent/replayed decision may win the unique key race. It
+            # is the same intent, not a reason to touch the broker again.
+            self._db.rollback()
+            existing = self._db.execute(
+                "SELECT * FROM execution_intents WHERE execution_key=?", (key,)
+            ).fetchone()
+            if existing:
+                return self._intent(existing)  # type: ignore[return-value]
+            raise
         self._db.execute(
             "INSERT INTO execution_intent_events(id,execution_key,state,payload_json,created_at)"
             " VALUES (?,?,?,?,?)", (_id(), key, DECISION_APPROVED,
