@@ -44,8 +44,8 @@ VPS; `scripts/check_binance_feed.sh` already exists for it.
 
 ```
 Binance USD-M public WebSocket
-  fstream.binance.com/market/stream?streams=<sym>@kline_<tf>/<sym>@markPrice@1s
-  fstream.binance.com/public/stream?streams=<sym>@bookTicker
+  fstream.binance.com/stream?streams=<sym>@kline_<tf>/<sym>@markPrice@1s
+  fstream.binance.com/stream?streams=<sym>@bookTicker
         │  services/price_action_stream.py — PriceActionPublicStream
         │    per-channel reconnect, 2^n backoff capped at 30s, REST reconcile
         ▼

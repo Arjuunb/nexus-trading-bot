@@ -88,9 +88,9 @@ async def probe(label, url):
 async def main():
     # The two URLs this deployment actually opens, from
     # services/price_action_stream.py market_url and public_url.
-    market = ("wss://fstream.binance.com/market/stream?streams="
+    market = ("wss://fstream.binance.com/stream?streams="
               "%s@kline_%s/%s@markPrice@1s" % (symbol, timeframe, symbol))
-    public = ("wss://fstream.binance.com/public/stream?streams="
+    public = ("wss://fstream.binance.com/stream?streams="
               "%s@bookTicker" % symbol)
     # Binance documents the combined path as /stream?streams= and the raw path
     # as /ws/<stream>. If these two answer while the pair above do not, the
@@ -110,15 +110,14 @@ async def main():
 
     print("\nVerdict")
     if all(used):
-        print("  %sBoth streams this deployment uses are reachable.%s" % (GREEN, OFF))
+        print("  %sBoth configured streams are reachable.%s" % (GREEN, OFF))
         print("  " + DIM + "Staleness is then a delivery or processing problem, not a" + OFF)
         print("  " + DIM + "connectivity one. Check the app log next." + OFF)
     elif any(documented) and not any(used):
-        print("  %sThe documented paths work and this deployment's paths do not.%s"
+        print("  %sThe documented paths work and the configured paths do not.%s"
               % (RED, OFF))
-        print("  " + DIM + "The URLs in services/price_action_stream.py are being refused" + OFF)
-        print("  " + DIM + "by the venue, so no candle can ever arrive. This is a code" + OFF)
-        print("  " + DIM + "fix, not an ops one. Send this output back." + OFF)
+        print("  " + DIM + "The configured URLs are being refused by the venue, so no" + OFF)
+        print("  " + DIM + "candle can ever arrive. This is a code fix, not an ops one." + OFF)
     elif not any(documented) and not any(used):
         print("  %sNothing reached Binance over WebSocket.%s" % (RED, OFF))
         print("  " + DIM + "If REST above also failed, this host has no route to Binance" + OFF)

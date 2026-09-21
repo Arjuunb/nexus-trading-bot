@@ -299,12 +299,16 @@ class PriceActionPublicStream:
         streams = f"{lower}@kline_{self.timeframe}"
         if self.quotes_enabled:
             streams += f"/{lower}@markPrice@1s"
-        return f"wss://fstream.binance.com/market/stream?streams={streams}"
+        # Binance USD-M exposes combined streams at /stream?streams=.  The
+        # /market/stream and /public/stream prefixes are not valid futures
+        # websocket routes; using them leaves both required channels
+        # disconnected while REST remains healthy.
+        return f"wss://fstream.binance.com/stream?streams={streams}"
 
     @property
     def public_url(self) -> str:
         lower = self.symbol.lower()
-        return f"wss://fstream.binance.com/public/stream?streams={lower}@bookTicker"
+        return f"wss://fstream.binance.com/stream?streams={lower}@bookTicker"
 
     @property
     def url(self) -> str:
