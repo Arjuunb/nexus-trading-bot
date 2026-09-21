@@ -34,15 +34,47 @@ def test_exactly_one_visual_lab_item_was_added():
         assert f'"{label}"' not in nav, f"a per-strategy sidebar item appeared: {label}"
 
 
+def _sidebar_items() -> str:
+    """Only the NAV_GROUPS block -- what the sidebar actually renders.
+
+    Reading the whole file would count a label listed in EXTRA_ROUTES as a
+    sidebar item, which is exactly the distinction these tests are about: a
+    page can keep its route and its links while deliberately not taking a
+    sidebar slot.
+    """
+    nav = (DASHBOARD / "app-context.ts").read_text()
+    start = nav.index("export const NAV_GROUPS")
+    return nav[start:nav.index("];", start)]
+
+
 def test_the_existing_labs_are_untouched():
     """Acceptance 13 and 14: Price Action Lab and SMC Lab keep working."""
-    nav = (DASHBOARD / "app-context.ts").read_text()
     app = (DASHBOARD / "App.tsx").read_text()
+    sidebar = _sidebar_items()
     for label, page in (("Price Action Lab", "PriceActionVisualPage"),
                         ("SMC Visual Lab", "NativeSMCVisualPage"),
                         ("SMC Strategy Lab", "SMCStrategyLabPage")):
-        assert f'"{label}"' in nav, f"{label} vanished from the sidebar"
         assert f'case "{label}": return <{page}' in app, f"{label} lost its route"
+    for label in ("Price Action Lab", "SMC Strategy Lab"):
+        assert f'"{label}"' in sidebar, f"{label} vanished from the sidebar"
+
+
+def test_the_smc_visual_lab_is_off_the_sidebar_but_still_reachable():
+    """Removed from the sidebar on request, not deleted.
+
+    A page with a route and no way to reach it is worse than either keeping it
+    or removing it outright, so the three things that make it reachable are
+    asserted together: it is out of NAV_GROUPS, it is in EXTRA_ROUTES so the
+    hash still resolves, and the SMC Strategy Lab -- which tells the operator
+    the parity review lives there -- links to it.
+    """
+    nav = (DASHBOARD / "app-context.ts").read_text()
+    assert '"SMC Visual Lab"' not in _sidebar_items()
+    extras = nav[nav.index("const EXTRA_ROUTES"):]
+    assert '"SMC Visual Lab"' in extras[:extras.index("] as const")]
+
+    lab = (DASHBOARD / "pages" / "SMCStrategyLab.tsx").read_text()
+    assert '"/smc-visual-lab"' in lab, "nothing links to the hidden page"
 
 
 def test_the_lab_page_does_not_reimplement_strategy_logic():

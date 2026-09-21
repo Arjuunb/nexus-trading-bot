@@ -1718,6 +1718,12 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .pa-layer-mode { display: grid; gap: 5px; margin-top: 3px; color: var(--dim); font-size: 9px; font-weight: 700; }
 .pa-layer-mode select { width: 100%; height: 31px; }
 .pa-context-note { padding: 7px; border-left: 2px solid rgba(105,185,255,.38); background: rgba(105,185,255,.05); color: #91a6bf !important; line-height: 1.45 !important; }
+/* An inline navigation link inside body text. A button rather than an anchor
+   because the app routes by assigning window.location.hash, and an <a> would
+   also need the href kept in step with the route it points at. */
+.link-button { background: none; border: 0; padding: 0; font: inherit; color: #69b9ff; text-decoration: underline; cursor: pointer; }
+.link-button:hover { color: #9ed0ff; }
+.link-button:focus-visible { outline: 2px solid #69b9ff; outline-offset: 2px; border-radius: 2px; }
 .pa-syncing { color: var(--gold) !important; }
 .pa-focus-setup { width: 100%; min-height: 31px; border: 1px solid rgba(105,185,255,.3); border-radius: 5px; background: rgba(105,185,255,.09); color: #c8e7ff; font-size: 9px; font-weight: 800; cursor: pointer; }
 .pa-focus-setup:disabled { opacity: .45; cursor: not-allowed; }
