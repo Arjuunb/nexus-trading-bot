@@ -620,3 +620,152 @@ def test_an_automatic_session_is_untouched_by_the_agent_status(tmp_path, monkeyp
 
     assert status["agent"]["is_approver"] is False
     assert status["operating_mode"] == "automatic"
+
+
+# ----------------------------------------------------------- transport truth
+class FakeStream:
+    """A market-data subscription reporting per-channel socket state.
+
+    Shaped after the real ``PriceActionPublicStream.status()`` keys, which is
+    what ``forward_paper_hub`` passes through to the runtime.
+    """
+
+    def __init__(self, status=None, raises=None):
+        self._status, self._raises = status or {}, raises
+
+    def status(self):
+        if self._raises is not None:
+            raise self._raises
+        return self._status
+
+
+def _half_dead_transport():
+    """The 2026-09-21 production shape: bookTicker alive, kline channel dead.
+
+    Binance accepted the subscription on both sockets and delivered only
+    bookTicker, so the market channel kept reconnecting while the public
+    channel sat CONNECTED and fresh.
+    """
+    return {
+        "transport_channels": {"market": "RECONNECTING", "public": "CONNECTED"},
+        "transport_errors": {"market": "ConnectionClosedError: keepalive ping timeout",
+                             "public": ""},
+        "failing_dependency": "BINANCE_USDM_MARKET_WEBSOCKET",
+        "transport_state": "DISCONNECTED",
+        "public_streams": {"market": ["kline", "markPrice"], "public": ["bookTicker"]},
+        "last_candle_update": None, "last_mark_update": None,
+        "last_quote_update": "2026-09-21T20:31:04+00:00",
+        "last_successful_event": {"kind": "bid_ask", "at": "2026-09-21T20:31:04+00:00"},
+        "retry_state": {"attempt": 9, "channel_attempts": {"market": 9, "public": 0},
+                        "maximum_backoff_seconds": 30, "automatic_retry": True},
+        "last_error": "TimeoutError", "quotes_enabled": True,
+    }
+
+
+def test_one_dead_channel_is_visible_instead_of_a_flat_disconnected(
+        tmp_path, monkeypatch):
+    """The lab's feed block says DISCONNECTED / BINANCE_USDM_PUBLIC_STREAMS for
+    a session with no network and for one whose bookTicker channel is fully
+    connected while kline is dead. Those need different fixes by different
+    people, so the status has to tell them apart."""
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.stream = FakeStream(_half_dead_transport())
+
+    feed = lab.runtime.bot_status()["feed"]
+    diagnostics = feed["transport_diagnostics"]
+
+    assert feed["failing_dependency"] == "BINANCE_USDM_PUBLIC_STREAMS"
+    assert diagnostics["available"] is True
+    assert diagnostics["channels"] == {"market": "RECONNECTING", "public": "CONNECTED"}
+    assert diagnostics["transport_failing_dependency"] == "BINANCE_USDM_MARKET_WEBSOCKET"
+    assert "keepalive ping timeout" in diagnostics["channel_errors"]["market"]
+    assert diagnostics["streams_per_channel"]["market"] == ["kline", "markPrice"]
+    assert diagnostics["last_successful_event"]["kind"] == "bid_ask"
+    assert diagnostics["retry_state"]["channel_attempts"]["market"] == 9
+
+
+def test_a_runtime_with_no_subscription_says_so_rather_than_raising(
+        tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+    assert lab.runtime.stream is None
+
+    diagnostics = lab.runtime.bot_status()["feed"]["transport_diagnostics"]
+
+    assert diagnostics == {"available": False,
+                           "reason": "no market-data subscription"}
+
+
+#: The placeholder the lab seeds ``last_market_health`` with, and serves as the
+#: feed block until ``reconcile_visual`` completes a pass. Copied from
+#: ``SMCStrategyLabRuntime.__init__`` so a drift there fails the check below.
+PLACEHOLDER_FEED = {
+    "state": "DISCONNECTED", "transport_state": "DISCONNECTED",
+    "health_reason": "SMC market-data runtime has not synchronized",
+    "reliable": False, "new_entries_paused": True,
+    "failing_dependency": "BINANCE_USDM_PUBLIC_STREAMS",
+    "last_successful_event": None,
+}
+
+
+def test_the_placeholder_this_is_built_against_is_still_the_labs_own(
+        tmp_path, monkeypatch):
+    """If the lab ever starts reporting per-channel state itself, the fixture
+    below stops representing production and these tests quietly go fictional."""
+    lab = build(tmp_path, monkeypatch, agent=False)
+
+    assert SMCStrategyLabRuntime(Market(1.0), lab.account,
+                                 autostart=False).last_market_health == PLACEHOLDER_FEED
+
+
+def test_a_stream_that_cannot_report_does_not_break_the_status(
+        tmp_path, monkeypatch):
+    """An operator asking why the feed is down is the worst possible moment
+    to answer with a 500."""
+    lab = build(tmp_path, monkeypatch)
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status(feed=dict(PLACEHOLDER_FEED)))
+    lab.runtime.stream = FakeStream(raises=RuntimeError("hub lock timed out"))
+
+    diagnostics = lab.runtime.bot_status()["feed"]["transport_diagnostics"]
+
+    assert diagnostics["available"] is False
+    assert "hub lock timed out" in diagnostics["reason"]
+
+
+GATE_FIELDS = ("execution_state", "session_state", "execution_armed", "blockers")
+
+
+def test_reading_the_transport_cannot_move_a_single_gate(tmp_path, monkeypatch):
+    """This is observability and nothing else. If adding it could change what
+    the gates see, it would be a trading change wearing a diagnostic's name.
+
+    Both sides run against one fixed lab verdict, so the only difference is
+    whether a transport was read -- which is the claim being tested.
+    """
+    lab = build(tmp_path, monkeypatch)
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status(feed=dict(PLACEHOLDER_FEED)))
+
+    lab.runtime.stream = None
+    before = lab.runtime.bot_status()
+    lab.runtime.stream = FakeStream(_half_dead_transport())
+    after = lab.runtime.bot_status()
+
+    for field in GATE_FIELDS:
+        assert before[field] == after[field], field
+    assert {key: value for key, value in after["feed"].items()
+            if key != "transport_diagnostics"} == PLACEHOLDER_FEED
+    assert after["feed"]["transport_diagnostics"]["channels"]["public"] == "CONNECTED"
+
+
+def test_a_healthy_transport_reports_both_channels_connected(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.stream = FakeStream({
+        **_half_dead_transport(),
+        "transport_channels": {"market": "CONNECTED", "public": "CONNECTED"},
+        "failing_dependency": None})
+
+    diagnostics = lab.runtime.bot_status()["feed"]["transport_diagnostics"]
+
+    assert diagnostics["channels"] == {"market": "CONNECTED", "public": "CONNECTED"}
+    assert diagnostics["transport_failing_dependency"] is None

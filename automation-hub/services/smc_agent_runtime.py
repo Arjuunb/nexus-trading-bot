@@ -192,6 +192,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         still blocks, and a session the lab called ERROR stays ERROR.
         """
         status = super().bot_status()
+        self._attach_transport_diagnostics(status)
         approver = self.agent_is_approver()
         status["agent"] = {
             "attached": self.agent is not None,
@@ -212,6 +213,62 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         status["session_state"] = state
         status["execution_armed"] = state == "RUNNING_ARMED"
         return status
+
+    # -------------------------------------------------------- diagnostics
+    def _attach_transport_diagnostics(self, status: dict) -> None:
+        """Expose the per-channel socket truth the lab's feed block hides.
+
+        The lab seeds ``last_market_health`` with a fixed placeholder that
+        says DISCONNECTED / BINANCE_USDM_PUBLIC_STREAMS, and only replaces it
+        once ``reconcile_visual`` completes a full pass. Until then the feed
+        block in ``bot_status`` carries neither the per-channel states nor the
+        transport errors, so a session whose bookTicker channel is connected
+        and whose kline channel is dead reports exactly the same thing as one
+        with no network at all.
+
+        On 2026-09-21 that cost a diagnostic round: Binance was accepting the
+        subscription on both channels and delivering only bookTicker, and the
+        status endpoint could not say so because the lab had never reached the
+        line that reads the stream. The stream knew the whole time.
+
+        This is read-only and additive. It writes one new nested key and never
+        touches ``state``, ``reliable``, ``new_entries_paused``,
+        ``failing_dependency`` or any blocker, because the gates read those
+        and an observability change must not be able to move a gate. A status
+        call must also never raise -- an operator asking why the feed is down
+        is the worst moment to return a 500 -- so a stream that has not
+        started, or one whose status call fails, records the reason instead.
+        """
+        feed = status.get("feed")
+        if not isinstance(feed, dict):
+            return
+        stream = getattr(self, "stream", None)
+        if stream is None:
+            feed["transport_diagnostics"] = {"available": False,
+                                             "reason": "no market-data subscription"}
+            return
+        try:
+            transport = stream.status()
+        except Exception as exc:  # pragma: no cover - defensive
+            feed["transport_diagnostics"] = {
+                "available": False,
+                "reason": f"{type(exc).__name__}: {exc}"[:200]}
+            return
+        feed["transport_diagnostics"] = {
+            "available": True,
+            "channels": transport.get("transport_channels"),
+            "channel_errors": transport.get("transport_errors"),
+            "streams_per_channel": transport.get("public_streams"),
+            "transport_failing_dependency": transport.get("failing_dependency"),
+            "transport_state": transport.get("transport_state"),
+            "last_successful_event": transport.get("last_successful_event"),
+            "last_candle_update": transport.get("last_candle_update"),
+            "last_quote_update": transport.get("last_quote_update"),
+            "last_mark_update": transport.get("last_mark_update"),
+            "retry_state": transport.get("retry_state"),
+            "last_error": transport.get("last_error"),
+            "quotes_enabled": transport.get("quotes_enabled"),
+        }
 
     # --------------------------------------------------------------- agent
     @staticmethod
