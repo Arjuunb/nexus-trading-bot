@@ -769,3 +769,186 @@ def test_a_healthy_transport_reports_both_channels_connected(tmp_path, monkeypat
 
     assert diagnostics["channels"] == {"market": "CONNECTED", "public": "CONNECTED"}
     assert diagnostics["transport_failing_dependency"] is None
+
+
+# ─────────────────────────────── in-trade stops ───────────────────────────
+from services.smc_agent_trade_manager import TradeManagementPolicy  # noqa: E402
+
+MANAGING = TradeManagementPolicy(enabled=True, breakeven_at_r=1.0)
+
+
+def managed_lab(tmp_path, monkeypatch, *, policy=MANAGING, **kwargs):
+    """A lab whose runtime manages open positions."""
+    lab = build(tmp_path, monkeypatch, **kwargs)
+    lab.runtime.trade_policy = policy.validated()
+    return lab
+
+
+def test_management_is_off_unless_it_is_asked_for(tmp_path, monkeypatch):
+    """It changes which trades scratch and which run. Nobody inherits that
+    by upgrading."""
+    lab = build(tmp_path, monkeypatch)
+
+    assert lab.runtime.trade_policy.enabled is False
+
+
+def test_a_stale_feed_moves_no_stop(tmp_path, monkeypatch):
+    """Fail-closed in the same direction as every other gate: an unreliable
+    feed is not a licence to move a stop on a price nobody trusts."""
+    lab = managed_lab(tmp_path, monkeypatch)
+
+    moves = lab.runtime._manage_open_trades(
+        {"market_data_health": {"reliable": False}},
+        {"candles": [{"high": 200.0, "low": 100.0, "close": 199.0}]})
+
+    assert moves == []
+
+
+def test_no_open_trade_means_no_move(tmp_path, monkeypatch):
+    lab = managed_lab(tmp_path, monkeypatch)
+
+    moves = lab.runtime._manage_open_trades(
+        {"market_data_health": {"reliable": True}},
+        {"candles": [{"high": 200.0, "low": 100.0, "close": 199.0}]})
+
+    assert moves == []
+
+
+def test_the_forming_candle_is_never_an_execution_input(tmp_path, monkeypatch):
+    """_closed_candles reads the reconciled visual, which carries closed
+    candles only. A malformed row yields nothing rather than a guess."""
+    lab = managed_lab(tmp_path, monkeypatch)
+
+    assert lab.runtime._closed_candles({"candles": []}, 3) == []
+    assert lab.runtime._closed_candles({}, 3) == []
+    assert lab.runtime._closed_candles(
+        {"candles": [{"high": 1.0, "low": None, "close": 1.0}]}, 3) == []
+
+
+def _with_position(lab, monkeypatch, trade, *, stop=None):
+    """Present the open position the broker would hold for this trade.
+
+    The position is injected at the account's own state() seam rather than
+    filled through the book: this fixture's synthetic evaluation carries 2025
+    timestamps while the candle clock is 2026, so the staged entry expires
+    before it can fill, and reworking that time model is a different change.
+
+    What these tests cover is the WIRING -- journal read, position read, move
+    computed, book called, journal written. The arithmetic that decides the
+    move is covered against real numbers in
+    tests/test_smc_agent_trade_manager.py, which needs no lab at all.
+    """
+    real_state = lab.runtime.account.state
+    position = {"symbol": trade["symbol"], "side": "buy",
+                "size": float(trade["size"]), "entry_price": float(trade["entry"]),
+                "stop_loss": float(trade["stop"] if stop is None else stop),
+                "take_profit": float(trade["target"])}
+
+    def state(*args, **kwargs):
+        out = dict(real_state(*args, **kwargs))
+        out["positions"] = [dict(position)]
+        return out
+
+    monkeypatch.setattr(lab.runtime.account, "state", state)
+    return position
+
+
+def _reached_one_r(trade):
+    """A closed candle that took the trade a full R in favour and held it.
+
+    The close sits just short of the extreme rather than back at entry: a
+    candle closing exactly at entry would put a breakeven stop on top of the
+    price, and the manager refuses that on purpose -- sending it would close
+    the position at the next tick and record it as a stop-out.
+    """
+    entry, stop = float(trade["entry"]), float(trade["stop"])
+    risk = abs(entry - stop)
+    long = str(trade["direction"]) in {"bullish", "buy", "long"}
+    extreme = entry + risk if long else entry - risk
+    close = entry + risk * 0.9 if long else entry - risk * 0.9
+    return {"candles": [{"high": max(entry, extreme), "low": min(entry, extreme),
+                         "close": close}]}
+
+
+RELIABLE = {"market_data_health": {"reliable": True}}
+
+
+def test_a_real_breakeven_move_reaches_the_book_and_the_journal(tmp_path, monkeypatch):
+    """The whole path: an open agent trade a full R in profit has its stop
+    moved to entry, the move reaches the book, and the journal records it
+    without touching the trade it was opened on."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    _with_position(lab, monkeypatch, trade)
+    sent: list = []
+    monkeypatch.setattr(lab.runtime, "_move_stop",
+                        lambda symbol, stop_loss: sent.append((symbol, stop_loss)))
+    entry, original_stop = float(trade["entry"]), float(trade["stop"])
+
+    moves = lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade))
+
+    assert len(moves) == 1, moves
+    assert moves[0]["applied"] is True
+    assert moves[0]["to_price"] == pytest.approx(entry)
+    assert sent == [("BTCUSDT", pytest.approx(entry))], "the book was not told"
+
+    recorded = lab.journal.stop_moves(trade_id=trade["id"])
+    assert len(recorded) == 1
+    assert recorded[0]["reason_code"] == "BREAKEVEN"
+    assert recorded[0]["to_price"] == pytest.approx(entry)
+    assert recorded[0]["from_price"] == pytest.approx(original_stop)
+    assert recorded[0]["applied"] == 1
+    # The trade still says what it was opened on.
+    assert float(lab.journal.trade(trade["id"])["stop"]) == pytest.approx(original_stop)
+
+
+def test_the_same_move_is_not_reapplied_every_candle(tmp_path, monkeypatch):
+    """Once the stop sits at breakeven the candidate equals the current stop,
+    which is not a favourable move -- so a quiet market does not produce one
+    journal row per candle for the rest of the trade."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    # The stop has already been moved to entry by an earlier candle.
+    _with_position(lab, monkeypatch, trade, stop=float(trade["entry"]))
+    monkeypatch.setattr(lab.runtime, "_move_stop", lambda *a, **k: None)
+
+    assert lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade)) == []
+    assert lab.journal.stop_moves(trade_id=trade["id"]) == []
+
+
+def test_a_failed_book_move_is_journalled_rather_than_hidden(tmp_path, monkeypatch):
+    """A journal claiming a stop the position does not have is worse than a
+    journal recording that the move failed."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    _with_position(lab, monkeypatch, trade)
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("broker refused")
+
+    monkeypatch.setattr(lab.runtime, "_move_stop", refuse)
+
+    moves = lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade))
+
+    assert moves[0]["applied"] is False
+    assert "broker refused" in moves[0]["error"]
+    recorded = lab.journal.stop_moves(trade_id=trade["id"])
+    assert recorded[0]["applied"] == 0
+    assert "broker refused" in recorded[0]["error"]
+
+
+def test_a_stop_is_never_widened_through_the_live_path(tmp_path, monkeypatch):
+    """The guard that matters, asserted through the wiring rather than only
+    against the pure function: a position whose stop has already trailed past
+    entry is not dragged back down to breakeven."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    entry, risk = float(trade["entry"]), abs(float(trade["entry"]) - float(trade["stop"]))
+    _with_position(lab, monkeypatch, trade, stop=entry + risk * 0.5)
+    monkeypatch.setattr(lab.runtime, "_move_stop", lambda *a, **k: None)
+
+    assert lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade)) == []
