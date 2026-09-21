@@ -224,8 +224,9 @@ def test_a_context_channel_opens_no_redundant_quote_subscriptions():
     context = PriceActionPublicStream(lambda *a, **k: [], quotes_enabled=False)
     context.symbol, context.timeframe = "BTCUSDT", "1h"
 
-    assert "markPrice" in entry.market_url and "bookTicker" in entry.public_url
-    assert "markPrice" not in context.market_url
+    assert any("markPrice" in name for name in entry.market_subscriptions)
+    assert any("bookTicker" in name for name in entry.public_subscriptions)
+    assert not any("markPrice" in name for name in context.market_subscriptions)
     # And it is not then reported stale for lacking the quotes it never wanted.
     assert context.quotes_enabled is False
 

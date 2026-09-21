@@ -375,11 +375,11 @@ def test_public_stream_routes_required_events_and_aggregates_channel_health():
     stream.bootstrap("BTCUSDT", "5m")
     stream.reconciliation_complete = True
 
-    assert stream.market_url == (
-        "wss://fstream.binance.com/stream?streams="
-        "btcusdt@kline_5m/btcusdt@markPrice@1s")
-    assert stream.public_url == (
-        "wss://fstream.binance.com/stream?streams=btcusdt@bookTicker")
+    assert stream.market_url == "wss://fstream.binance.com/market/ws"
+    assert stream.public_url == "wss://fstream.binance.com/public/ws"
+    assert stream.market_subscriptions == ["btcusdt@kline_5m",
+                                           "btcusdt@markPrice@1s"]
+    assert stream.public_subscriptions == ["btcusdt@bookTicker"]
     assert stream.url == stream.market_url
 
     stream._set_channel_state("market", "CONNECTED")

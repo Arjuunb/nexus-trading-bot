@@ -47,10 +47,12 @@ def test_both_hub_sockets_are_binance_usdm_on_every_timeframe(timeframe):
     stream.symbol, stream.timeframe = "BTCUSDT", timeframe
     assert stream.market_url.startswith("wss://fstream.binance.com/")
     assert stream.public_url.startswith("wss://fstream.binance.com/")
-    # And the streams named are the ones the engines actually consume.
-    assert f"btcusdt@kline_{timeframe}" in stream.market_url
-    assert "btcusdt@markPrice@1s" in stream.market_url
-    assert "btcusdt@bookTicker" in stream.public_url
+    # And the streams subscribed are the ones the engines actually consume.
+    # They travel in the SUBSCRIBE message, not the URL: the venue routes by
+    # category and takes stream names once the socket is open.
+    assert f"btcusdt@kline_{timeframe}" in stream.market_subscriptions
+    assert "btcusdt@markPrice@1s" in stream.market_subscriptions
+    assert "btcusdt@bookTicker" in stream.public_subscriptions
 
 
 def test_no_alternate_venue_appears_on_the_forward_paper_path():

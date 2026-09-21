@@ -27,17 +27,33 @@ HEALTH_STATES = {
 }
 
 
-#: Binance USD-M futures serves market data on exactly two paths: the combined
-#: stream at /stream?streams=<s1>/<s2> and the raw stream at /ws/<stream>.
-#: There is no third.
+#: Binance USD-M routes public market data by CATEGORY, and the category is a
+#: path segment. bookTicker, depth and trade are served from /public/ws;
+#: kline, markPrice and aggTrade are served from /market/ws. A connection that
+#: names no category is served as /public: it completes the handshake, accepts
+#: a SUBSCRIBE for a market-category stream, acknowledges it, reports it under
+#: LIST_SUBSCRIPTIONS -- and never sends one frame for it.
 #:
-#: "market" and "public" are THIS application's names for its two channels --
-#: one carrying kline and markPrice, one carrying bookTicker. They were once
-#: written into the URL path as /market/stream and /public/stream, which the
-#: venue does not serve, so both sockets were refused and not one candle could
-#: arrive over the websocket. The channel names belong to the channels; the
-#: path belongs to Binance.
-BINANCE_USDM_COMBINED = "wss://fstream.binance.com/stream"
+#: That silence is why this took four rounds to find on 2026-09-21. An
+#: unrouted socket looks healthy from every angle except the only one that
+#: matters. Measured from two networks: /public/ws carried 3,616 bookTicker
+#: frames in fifteen seconds, /market/ws carried kline and markPrice with the
+#: first at +0.38s, and an unrouted socket subscribed to the same kline
+#: returned an acknowledgement and zero frames.
+#:
+#: Streams are named in a SUBSCRIBE message after the socket opens, not in a
+#: ?streams= query string. The combined query form belongs to the unrouted
+#: endpoint, so it cannot carry a category and cannot deliver kline or
+#: markPrice. ccxt reaches futures market data the same way -- see
+#: getFutureWsCategory and getWsUrl in its binance implementation.
+BINANCE_USDM_ROOT = "wss://fstream.binance.com"
+
+#: Which venue category serves each of this application's two channels.
+#: "market" and "public" happen to be both our channel names and Binance's
+#: category names; that is a coincidence worth stating, because an earlier fix
+#: wrote them into the path as /market/stream and /public/stream -- the right
+#: category on a path shape the venue does not serve.
+BINANCE_USDM_CATEGORY = {"market": "market", "public": "public"}
 
 
 class PriceActionPublicStream:
@@ -102,6 +118,7 @@ class PriceActionPublicStream:
         self._reconnect_attempts = {"market": 0, "public": 0}
         self._socket = None
         self._public_socket = None
+        self._request_id = 0
 
     def _set_state(self, state: str, error: str = "") -> None:
         if state not in CONNECTION_STATES:
@@ -308,16 +325,24 @@ class PriceActionPublicStream:
 
     @property
     def market_url(self) -> str:
-        lower = self.symbol.lower()
-        streams = f"{lower}@kline_{self.timeframe}"
-        if self.quotes_enabled:
-            streams += f"/{lower}@markPrice@1s"
-        return f"{BINANCE_USDM_COMBINED}?streams={streams}"
+        return f"{BINANCE_USDM_ROOT}/{BINANCE_USDM_CATEGORY['market']}/ws"
 
     @property
     def public_url(self) -> str:
+        return f"{BINANCE_USDM_ROOT}/{BINANCE_USDM_CATEGORY['public']}/ws"
+
+    @property
+    def market_subscriptions(self) -> list[str]:
+        """The stream names SUBSCRIBEd on the market channel after it opens."""
         lower = self.symbol.lower()
-        return f"{BINANCE_USDM_COMBINED}?streams={lower}@bookTicker"
+        streams = [f"{lower}@kline_{self.timeframe}"]
+        if self.quotes_enabled:
+            streams.append(f"{lower}@markPrice@1s")
+        return streams
+
+    @property
+    def public_subscriptions(self) -> list[str]:
+        return [f"{self.symbol.lower()}@bookTicker"]
 
     @property
     def url(self) -> str:
@@ -343,16 +368,19 @@ class PriceActionPublicStream:
             self._set_channel_state("market", "ERROR", error)
             self._set_channel_state("public", "ERROR", error)
             return
-        readers = [self._stream_channel("market", self.market_url, websockets)]
+        readers = [self._stream_channel("market", self.market_url, websockets,
+                                        self.market_subscriptions)]
         if self.quotes_enabled:
-            readers.append(self._stream_channel("public", self.public_url, websockets))
+            readers.append(self._stream_channel("public", self.public_url, websockets,
+                                                self.public_subscriptions))
         else:
             # Nothing will ever connect this channel, so leave it in a state
             # that reads as deliberate rather than as a socket that failed.
             self._set_channel_state("public", "DISCONNECTED")
         await asyncio.gather(*readers)
 
-    async def _stream_channel(self, channel: str, url: str, websockets) -> None:
+    async def _stream_channel(self, channel: str, url: str, websockets,
+                              subscriptions: list[str]) -> None:
         while not self._stop.is_set():
             try:
                 attempt = self._reconnect_attempts[channel]
@@ -375,12 +403,24 @@ class PriceActionPublicStream:
                             self.reconciliation_complete = False
                         else:
                             self.last_quote_update = None
+                    # The category in the URL decides what the venue is
+                    # willing to serve; this decides what it actually sends.
+                    # It must go out on every connect, including every
+                    # reconnect: a resumed socket carries no subscription
+                    # from the one it replaced.
+                    self._request_id += 1
+                    await socket.send(json.dumps({
+                        "method": "SUBSCRIBE", "params": list(subscriptions),
+                        "id": self._request_id}))
                     if channel == "market":
                         await self.reconcile()
                     async for raw in socket:
                         if self._stop.is_set():
                             break
-                        result = self.ingest_event(json.loads(raw))
+                        message = json.loads(raw)
+                        if self._consume_control_frame(channel, message):
+                            continue
+                        result = self.ingest_event(message)
                         if channel == "market" and result.get("closed") and self.state == "DELAYED":
                             await self.reconcile()
             except asyncio.CancelledError:
@@ -467,6 +507,36 @@ class PriceActionPublicStream:
             closed_at = bar.timestamp + step
             self.last_closed_update = max(self.last_closed_update, closed_at) if self.last_closed_update else closed_at
             return True
+
+    def _consume_control_frame(self, channel: str, message) -> bool:
+        """Take SUBSCRIBE replies out of the market-data path.
+
+        Binance answers a SUBSCRIBE with {"result": null, "id": N} and refuses
+        one with {"error": {...}, "id": N}. Neither carries an event or a
+        payload, but ingest_event stamps last_update on everything it is
+        handed, so letting either through would tell the freshness gate that a
+        candle arrived when only an acknowledgement did -- a feed reporting
+        itself fresh on the strength of its own subscription receipt.
+
+        A refusal is recorded rather than dropped. A socket subscribed to
+        nothing is silent in exactly the way a healthy socket in a quiet
+        market is, and that ambiguity already cost this system one outage.
+        """
+        if not isinstance(message, dict) or "id" not in message:
+            return False
+        if "error" in message:
+            detail = message.get("error")
+            error = f"Binance refused the {channel} subscription: {detail}"
+            self.last_error = error[:500]
+            self._set_channel_state(channel, "ERROR", error)
+            if self.event_sink:
+                self.event_sink({
+                    "kind": "subscription_refused", "channel": channel,
+                    "error": error[:500], "timestamp": self.clock().isoformat(),
+                    "symbol": self.symbol, "timeframe": self.timeframe,
+                })
+            return True
+        return "result" in message
 
     def ingest_event(self, message: dict) -> dict:
         data = message.get("data", message)

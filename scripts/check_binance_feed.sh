@@ -44,7 +44,7 @@ printf '\033[1mBinance USD-M reachability\033[0m  %s %s  (from inside the app co
 
 docker compose exec -T -e SYMBOL="$SYMBOL" -e TIMEFRAME="$TIMEFRAME" -e WINDOW="$WINDOW" \
   app python - <<'PY'
-import asyncio, os, ssl, time, urllib.request
+import asyncio, json, os, ssl, time, urllib.request
 
 symbol = os.environ.get("SYMBOL", "BTCUSDT").lower()
 timeframe = os.environ.get("TIMEFRAME", "5m")
@@ -82,7 +82,13 @@ rest("klines %s %s" % (symbol.upper(), timeframe),
 REFUSED, SILENT, DELIVERED = "REFUSED", "SILENT", "DELIVERED"
 
 
-async def probe(label, url):
+async def probe(label, url, streams):
+    """Open the routed endpoint and SUBSCRIBE, exactly as the runtime does.
+
+    The venue takes stream names in a SUBSCRIBE message, not a query string,
+    and answers with {"result": null, "id": N}. That receipt is not data: a
+    probe that counted it would call an unrouted socket healthy, which is the
+    precise failure this script exists to catch."""
     started = time.monotonic()
     try:
         import websockets
@@ -100,8 +106,10 @@ async def probe(label, url):
             type(exc).__name__, str(exc)[:70]))
         return REFUSED
     opened = time.monotonic() - started
-    count, first, sample, closed = 0, None, "", ""
+    count, first, sample, closed, acked, refused = 0, None, "", "", False, ""
     try:
+        await socket.send(json.dumps({"method": "SUBSCRIBE",
+                                      "params": list(streams), "id": 1}))
         deadline = time.monotonic() + window
         while True:
             remaining = deadline - time.monotonic()
@@ -111,6 +119,16 @@ async def probe(label, url):
                 message = await asyncio.wait_for(socket.recv(), timeout=remaining)
             except asyncio.TimeoutError:
                 break
+            try:
+                parsed = json.loads(message)
+            except Exception:
+                parsed = None
+            if isinstance(parsed, dict) and "id" in parsed and "e" not in parsed:
+                if "error" in parsed:
+                    refused = "  %sREFUSED: %s%s" % (RED, parsed["error"], OFF)
+                else:
+                    acked = True
+                continue
             count += 1
             if first is None:
                 first, sample = time.monotonic() - started - opened, str(message)[:46]
@@ -121,12 +139,13 @@ async def probe(label, url):
             await socket.close()
         except Exception:
             pass
+    receipt = "ack" if acked else "NO ack"
     if count:
-        print("  %s%-34s OK%s  connect %.1fs  %d msgs  first +%.2fs  %s" % (
-            GREEN, label, OFF, opened, count, first, sample))
+        print("  %s%-34s OK%s  connect %.1fs  %s  %d msgs  first +%.2fs  %s" % (
+            GREEN, label, OFF, opened, receipt, count, first, sample))
         return DELIVERED
-    print("  %s%-34s CONNECTED %.1fs then SILENT %.0fs%s%s" % (
-        YELLOW, label, opened, window, OFF, closed))
+    print("  %s%-34s CONNECTED %.1fs, %s, then SILENT %.0fs%s%s%s" % (
+        YELLOW, label, opened, receipt, window, OFF, refused, closed))
     return SILENT
 
 
@@ -135,30 +154,43 @@ async def main():
     # build rather than copied from it. A hardcoded pair is a diagnostic that
     # can quietly start testing URLs the application no longer uses, which is
     # the one thing this script must never do.
-    from services.price_action_stream import PriceActionPublicStream
+    from services.price_action_stream import (BINANCE_USDM_ROOT,
+                                               PriceActionPublicStream)
     feed = PriceActionPublicStream(lambda *a, **k: [])
     feed.symbol, feed.timeframe = symbol.upper(), timeframe
     market, public = feed.market_url, feed.public_url
     print("\n" + DIM + "  asked the running build:\n    market  " + market
-          + "\n    public  " + public + OFF)
+          + "  " + ", ".join(feed.market_subscriptions)
+          + "\n    public  " + public
+          + "  " + ", ".join(feed.public_subscriptions) + OFF)
 
-    print("\nWebSocket: the URLs this deployment opens  (%.0fs window each)" % window)
-    used = [await probe("market  (kline + markPrice)", market),
-            await probe("public  (bookTicker)", public)]
+    print("\nWebSocket: the endpoints this deployment opens  (%.0fs window each)" % window)
+    used = [await probe("market  (kline + markPrice)", market, feed.market_subscriptions),
+            await probe("public  (bookTicker)", public, feed.public_subscriptions)]
 
-    # Each stream alone. The runtime needs kline and markPrice specifically;
-    # a venue serving bookTicker while withholding those looks "reachable"
-    # from every coarser test and still cannot produce a single candle.
-    base = "wss://fstream.binance.com/stream?streams=%s@"
-    print("\nWebSocket: each stream on its own connection")
+    # Each stream alone, on its own routed socket. The runtime needs kline and
+    # markPrice specifically; a venue serving bookTicker while withholding
+    # those looks "reachable" from every coarser test and still cannot produce
+    # a single candle.
+    routed = "%s/%%s/ws" % BINANCE_USDM_ROOT
+    print("\nWebSocket: each stream on its own routed connection")
     each = {
-        "kline_%s" % timeframe: await probe("kline_%s" % timeframe,
-                                            (base % symbol) + "kline_%s" % timeframe),
-        "markPrice@1s": await probe("markPrice@1s", (base % symbol) + "markPrice@1s"),
-        "bookTicker": await probe("bookTicker", (base % symbol) + "bookTicker"),
-        "aggTrade": await probe("aggTrade", (base % symbol) + "aggTrade"),
-        "depth5@100ms": await probe("depth5@100ms", (base % symbol) + "depth5@100ms"),
+        "kline_%s" % timeframe: await probe(
+            "market/ws  kline_%s" % timeframe, routed % "market",
+            ["%s@kline_%s" % (symbol, timeframe)]),
+        "markPrice@1s": await probe("market/ws  markPrice@1s", routed % "market",
+                                    ["%s@markPrice@1s" % symbol]),
+        "bookTicker": await probe("public/ws  bookTicker", routed % "public",
+                                  ["%s@bookTicker" % symbol]),
     }
+
+    # The control that names the fault. An unrouted socket is served as
+    # /public whatever it subscribes to, so a kline on it is acknowledged and
+    # never sent. If this row ever delivers, the routing requirement is gone.
+    print("\nWebSocket: control -- the same kline on an unrouted socket")
+    unrouted = await probe("ws  (no category)  kline_%s" % timeframe,
+                           "%s/ws" % BINANCE_USDM_ROOT,
+                           ["%s@kline_%s" % (symbol, timeframe)])
 
     print("\nVerdict")
     states = list(each.values())
@@ -177,19 +209,28 @@ async def main():
         print("  " + DIM + "A refused socket is a URL or connectivity fault. Compare the" + OFF)
         print("  " + DIM + "URLs printed above against /stream?streams= and /ws/." + OFF)
     elif SILENT in needed and DELIVERED in states:
-        print("  %sThe venue accepts every subscription and serves only some of them.%s"
+        print("  %skline or markPrice is silent on its own routed socket.%s"
               % (RED, OFF))
-        print("  " + DIM + "kline and markPrice are what the runtime needs; a connection" + OFF)
-        print("  " + DIM + "carrying bookTicker or depth proves the socket, the route and" + OFF)
-        print("  " + DIM + "the URL are all fine. This is not a code fault and no restart" + OFF)
-        print("  " + DIM + "will clear it. Re-run the same probe from a different network" + OFF)
-        print("  " + DIM + "to tell a venue-side incident from something specific to this" + OFF)
-        print("  " + DIM + "host's egress IP. Entries stay blocked either way." + OFF)
+        print("  " + DIM + "Another routed stream delivered, so the socket, the route and" + OFF)
+        print("  " + DIM + "the category are all reachable. Check the SUBSCRIBE receipt on" + OFF)
+        print("  " + DIM + "the silent row above: 'NO ack' means the request never landed," + OFF)
+        print("  " + DIM + "and an explicit REFUSED names a stream the venue rejected." + OFF)
+        print("  " + DIM + "An acknowledged-then-silent routed stream is a venue-side" + OFF)
+        print("  " + DIM + "condition; re-run from another network before concluding that." + OFF)
+        print("  " + DIM + "Entries stay blocked either way." + OFF)
     elif all(state == SILENT for state in states):
         print("  %sEvery socket opened and no stream delivered anything.%s" % (RED, OFF))
         print("  " + DIM + "The route is fine and the venue is sending nothing at all." + OFF)
     else:
         print("  %sPartial delivery; read the per-stream lines above.%s" % (RED, OFF))
+
+    if unrouted == DELIVERED:
+        print("  " + DIM + "Note: the unrouted control DELIVERED. Binance no longer" + OFF)
+        print("  " + DIM + "requires a category for kline, and the routing this build" + OFF)
+        print("  " + DIM + "relies on could be simplified. Confirm before changing it." + OFF)
+    elif all(state == DELIVERED for state in used):
+        print("  " + DIM + "The unrouted control was silent, as it should be: that is" + OFF)
+        print("  " + DIM + "the routing requirement holding, not a fault." + OFF)
 
 
 asyncio.run(main())
