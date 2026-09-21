@@ -86,12 +86,15 @@ async def probe(label, url):
 
 
 async def main():
-    # The two URLs this deployment actually opens, from
-    # services/price_action_stream.py market_url and public_url.
-    market = ("wss://fstream.binance.com/market/stream?streams="
-              "%s@kline_%s/%s@markPrice@1s" % (symbol, timeframe, symbol))
-    public = ("wss://fstream.binance.com/public/stream?streams="
-              "%s@bookTicker" % symbol)
+    # The two URLs this deployment actually opens -- asked of the running
+    # build rather than copied from it. A hardcoded pair is a diagnostic that
+    # can quietly start testing URLs the application no longer uses, which is
+    # the one thing this script must never do.
+    from services.price_action_stream import PriceActionPublicStream
+    feed = PriceActionPublicStream(lambda *a, **k: [])
+    feed.symbol, feed.timeframe = symbol.upper(), timeframe
+    market, public = feed.market_url, feed.public_url
+    print("  " + DIM + "asked the running build: " + market + OFF)
     # Binance documents the combined path as /stream?streams= and the raw path
     # as /ws/<stream>. If these two answer while the pair above do not, the
     # deployment is opening paths the venue does not serve, and no amount of
@@ -116,6 +119,9 @@ async def main():
     elif any(documented) and not any(used):
         print("  %sThe documented paths work and this deployment's paths do not.%s"
               % (RED, OFF))
+        print("  " + DIM + "This is the shape of the 2026-08-24 defect, in which the" + OFF)
+        print("  " + DIM + "channel names became path segments. Print the two URLs" + OFF)
+        print("  " + DIM + "above and compare them against /stream?streams=." + OFF)
         print("  " + DIM + "The URLs in services/price_action_stream.py are being refused" + OFF)
         print("  " + DIM + "by the venue, so no candle can ever arrive. This is a code" + OFF)
         print("  " + DIM + "fix, not an ops one. Send this output back." + OFF)

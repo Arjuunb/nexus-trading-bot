@@ -27,6 +27,19 @@ HEALTH_STATES = {
 }
 
 
+#: Binance USD-M futures serves market data on exactly two paths: the combined
+#: stream at /stream?streams=<s1>/<s2> and the raw stream at /ws/<stream>.
+#: There is no third.
+#:
+#: "market" and "public" are THIS application's names for its two channels --
+#: one carrying kline and markPrice, one carrying bookTicker. They were once
+#: written into the URL path as /market/stream and /public/stream, which the
+#: venue does not serve, so both sockets were refused and not one candle could
+#: arrive over the websocket. The channel names belong to the channels; the
+#: path belongs to Binance.
+BINANCE_USDM_COMBINED = "wss://fstream.binance.com/stream"
+
+
 class PriceActionPublicStream:
     def __init__(self, rest_loader: Callable, *, max_bars: int = 1500,
                  stale_after_seconds: float = 15.0,
@@ -299,12 +312,12 @@ class PriceActionPublicStream:
         streams = f"{lower}@kline_{self.timeframe}"
         if self.quotes_enabled:
             streams += f"/{lower}@markPrice@1s"
-        return f"wss://fstream.binance.com/market/stream?streams={streams}"
+        return f"{BINANCE_USDM_COMBINED}?streams={streams}"
 
     @property
     def public_url(self) -> str:
         lower = self.symbol.lower()
-        return f"wss://fstream.binance.com/public/stream?streams={lower}@bookTicker"
+        return f"{BINANCE_USDM_COMBINED}?streams={lower}@bookTicker"
 
     @property
     def url(self) -> str:
