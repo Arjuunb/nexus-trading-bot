@@ -2099,3 +2099,52 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .ivl-fresh.is-stale, .ivl-fresh.is-missing { color: #ff9b9b; border-color: #7a3030;
   background: #1a0f0f; }
 .ivl-fresh.is-unknown { color: #8693a6; border-color: #2a3442; }
+
+
+/* ── SMC Agent ─────────────────────────────────────────────────────────────
+   The agent trades with nobody approving, so this page is the record that
+   holds it to account. The four outcomes are colour-coded by what they mean
+   for the operator, not by good/bad: MISSED is the only one that says
+   something is broken, so it is the only one carrying the loss colour. */
+.smc-agent .pa-grid { display: grid; gap: var(--space-1);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin: 0 0 var(--space-2); }
+.smc-agent .pa-grid > div { display: grid; gap: 4px; padding: 12px;
+  border: 1px solid var(--card-border-soft); border-radius: var(--radius-sm);
+  background: var(--card-2); }
+.smc-agent .pa-grid small { color: var(--dim-2); font-size: 8.5px;
+  letter-spacing: .06em; text-transform: uppercase; }
+.smc-agent .pa-grid b { color: var(--text); font: 700 13px/1.3 ui-monospace, monospace; }
+.smc-agent .pa-grid small + b + small { text-transform: none; letter-spacing: 0;
+  color: var(--dim-2); font-size: 9px; }
+
+.smc-agent .pa-note { margin: var(--space-1) 0; padding: 10px 12px;
+  border: 1px solid var(--card-border-soft); border-left: 2px solid var(--gold);
+  border-radius: var(--radius-sm); background: var(--card-2);
+  color: var(--dim); font-size: 10px; line-height: 1.5; }
+.smc-agent .pa-note b { color: var(--text); }
+
+.smc-agent .pa-blockers { margin: var(--space-1) 0; padding: 10px 12px 10px 28px;
+  border: 1px solid rgba(239, 68, 68, .28); border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, .06); color: #f3b5b5; font-size: 10px; }
+
+.smc-agent .pa-filters { display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 var(--space-1); }
+.smc-agent .pa-filters button { padding: 6px 11px; border: 1px solid var(--card-border-soft);
+  border-radius: 999px; background: var(--card-2); color: var(--dim);
+  font: 700 9px/1 ui-monospace, monospace; letter-spacing: .04em; cursor: pointer; }
+.smc-agent .pa-filters button:hover { border-color: rgba(234, 181, 79, .45); color: var(--text); }
+.smc-agent .pa-filters button.is-on { border-color: var(--gold);
+  background: rgba(234, 181, 79, .12); color: #f7dca4; }
+
+.smc-agent .pa-outcome { display: inline-block; padding: 3px 7px; border-radius: 4px;
+  font: 800 8.5px/1 ui-monospace, monospace; letter-spacing: .05em; }
+.smc-agent .pa-outcome.is-taken { background: rgba(34, 197, 94, .14); color: #7ee2a8; }
+.smc-agent .pa-outcome.is-rejected { background: rgba(234, 181, 79, .14); color: #f1cf88; }
+.smc-agent .pa-outcome.is-not_ready { background: rgba(255, 255, 255, .06); color: var(--dim-2); }
+.smc-agent .pa-outcome.is-missed { background: rgba(239, 68, 68, .16); color: #f3a0a0; }
+
+/* The reason is the substance of the row, so it is allowed to wrap where the
+   shared table would otherwise clip it to one ellipsised line. */
+.smc-agent .pa-table td { max-width: 420px; white-space: normal; vertical-align: top; }
+.smc-agent .pa-table td small { color: var(--dim-2); }
+.smc-agent .pa-table td b { color: #dce5f1; font-size: 9px; }

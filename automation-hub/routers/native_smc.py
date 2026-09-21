@@ -240,6 +240,54 @@ def smc_bot_status():
         _persistence_blocked(exc)
 
 
+@router.get("/agent")
+def smc_agent(limit: int = 100, outcome: str = ""):
+    """What the agent decided, and why, per closed candle.
+
+    The agent trades without a person in the loop, so the only way to hold it
+    to account is to read back every decision it made -- including the ones
+    where it took nothing. A panel that showed only the trades would make an
+    agent that declines everything look identical to one that is not running.
+
+    Read-only. It places nothing, changes no configuration and writes no row.
+    """
+    runtime = _smc_runtime()
+    try:
+        status = saved_status(runtime.smc_runtime)
+    except sqlite3.OperationalError as exc:
+        _persistence_blocked(exc)
+    journal = runtime.smc_agent_journal
+    try:
+        decisions = journal.decisions(outcome=outcome.strip().upper(),
+                                      limit=max(1, min(int(limit), 500)))
+        trades = journal.trades(limit=200)
+    except sqlite3.OperationalError as exc:
+        _persistence_blocked(exc)
+    counts: dict[str, int] = {}
+    for row in decisions:
+        key = str(row.get("outcome") or "UNKNOWN")
+        counts[key] = counts.get(key, 0) + 1
+    open_trades = [row for row in trades if not row.get("closed_at")]
+    return {
+        "agent": status.get("agent") or {},
+        "feed": {
+            "state": (status.get("feed") or {}).get("state"),
+            "reliable": (status.get("feed") or {}).get("reliable"),
+            "transport_diagnostics": (status.get("feed") or {}).get(
+                "transport_diagnostics"),
+        },
+        "execution_state": status.get("execution_state"),
+        "blockers": status.get("blockers") or [],
+        "decisions": decisions,
+        "decision_counts": counts,
+        "trades": trades,
+        "open_trades": len(open_trades),
+        "session_id": status.get("session_id"),
+        "symbol": status.get("symbol"), "timeframe": status.get("timeframe"),
+        "paper_only": True, "real_execution_allowed": False,
+    }
+
+
 @router.get("/paper/export")
 def smc_paper_export():
     return _smc_runtime().smc_paper.export_session()

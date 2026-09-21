@@ -32,7 +32,7 @@ export const useApp = () => useContext(AppContext);
 export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
   { title: null, items: ["Dashboard"] },
   { title: "Trading", items: ["Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading"] },
-  { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
+  { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },
   { title: "Records", items: ["Journal"] },
   { title: "System", items: ["Market Data", "Risk & Health"] },
