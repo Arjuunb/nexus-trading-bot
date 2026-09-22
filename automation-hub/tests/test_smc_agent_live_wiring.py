@@ -1046,3 +1046,96 @@ def test_an_unreadable_journal_yields_no_context_verdict(tmp_path, monkeypatch):
     monkeypatch.setattr(lab.runtime.agent.journal, "trades", broken)
 
     assert lab.runtime._context_gates({"candles": []}) == []
+
+
+# ──────────────────────────── the frozen session ──────────────────────────
+from services.smc_agent_runtime import LIVE_SESSION_MODE  # noqa: E402
+
+
+def test_a_live_session_gets_no_extra_blocker(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+
+    status = lab.runtime.bot_status()
+
+    assert status["session_mode"] == LIVE_SESSION_MODE
+    assert not any("Frozen review" in row for row in status["blockers"])
+
+
+def test_a_frozen_session_says_so_instead_of_looking_broken(tmp_path, monkeypatch):
+    """The failure this exists for: a HISTORICAL session never ticks, so it
+    reports a disconnected feed, no candles and no decisions -- identical to
+    a dead venue. It is switched off, not broken, and must say which."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+
+    status = lab.runtime.bot_status()
+
+    assert status["session_mode"] == "HISTORICAL"
+    frozen = [row for row in status["blockers"] if "Frozen review" in row]
+    assert len(frozen) == 1, status["blockers"]
+    assert "does not tick" in frozen[0]
+    assert "Switch the session to Live paper" in frozen[0]
+
+
+def test_the_frozen_blocker_is_not_added_twice(tmp_path, monkeypatch):
+    """Polling cannot duplicate it -- the list is rebuilt from the lab on
+    every call -- so the case the guard actually covers is the lab already
+    reporting the same blocker itself."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+    seen = lab.runtime.bot_status()
+    already = [row for row in seen["blockers"] if "Frozen review" in row][0]
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status(blockers=[already]))
+
+    status = lab.runtime.bot_status()
+
+    assert len([r for r in status["blockers"] if "Frozen review" in r]) == 1
+
+
+def test_the_labs_own_blockers_are_never_mutated(tmp_path, monkeypatch):
+    """The blocker list is copied before appending. Appending in place would
+    accumulate one frozen blocker per poll inside the lab's own state."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+    # Non-empty on purpose: an empty list is replaced by `or []` before the
+    # append is reached, so an empty fixture cannot reach the guard at all.
+    owned: list[str] = ["market data is not synchronized"]
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status(blockers=owned))
+
+    lab.runtime.bot_status()
+    lab.runtime.bot_status()
+
+    assert owned == ["market data is not synchronized"], \
+        "the lab's own blocker list was appended to"
+
+
+def test_naming_the_frozen_mode_cannot_let_it_trade(tmp_path, monkeypatch):
+    """Observability only. A frozen session stays blocked and unarmed."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+
+    status = lab.runtime.bot_status()
+
+    assert status["execution_state"] != "RUNNING_ARMED"
+    assert status["execution_armed"] is False
+
+
+def test_the_live_mode_constant_matches_the_labs_own_gate(tmp_path):
+    """If the lab ever renames its mode, this must fail rather than leave the
+    blocker silently attached to every healthy session."""
+    from pathlib import Path
+
+    lab_source = (Path(__file__).resolve().parents[1] / "services"
+                  / "smc_strategy_lab.py").read_text()
+
+    assert f'current.get("mode") == "{LIVE_SESSION_MODE}"' in lab_source

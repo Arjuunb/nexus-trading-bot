@@ -55,6 +55,10 @@ from services.smc_strategy_lab import SMCPaperAccount, SMCStrategyLabRuntime
 
 #: The one saved operating mode in which an approver decides. See the module
 #: docstring: this is a property of the lab, not a new mode.
+#: The one session mode in which SMCStrategyLabRuntime._run calls tick().
+#: A HISTORICAL session is frozen on purpose and never reaches the runtime.
+LIVE_SESSION_MODE = "LIVE_PAPER"
+
 AGENT_APPROVAL_MODE = "manual_approval"
 
 #: The lab's control-plane view treats "not automatic" as a reason execution
@@ -225,6 +229,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         """
         status = super().bot_status()
         self._attach_transport_diagnostics(status)
+        self._attach_session_mode(status)
         approver = self.agent_is_approver()
         status["agent"] = {
             "attached": self.agent is not None,
@@ -247,6 +252,49 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         return status
 
     # -------------------------------------------------------- diagnostics
+    def _attach_session_mode(self, status: dict) -> None:
+        """Name the one state in which the runtime deliberately never ticks.
+
+        The lab's worker loop runs the tick only for a LIVE_PAPER session:
+
+            if current and current.get("mode") == "LIVE_PAPER":
+                self.tick()
+
+        A HISTORICAL session -- "Frozen review" in the UI -- therefore spins
+        the loop forever doing nothing. That is correct: a frozen session is
+        not supposed to trade. What is not correct is that it is
+        indistinguishable from a fault. The stream is started BY the tick, so
+        a frozen session reports a disconnected feed, no candles, no
+        decisions, and the blocker "SMC market-data runtime has not
+        synchronized" -- which reads as something broken rather than
+        something switched off.
+
+        bot_status does not expose this mode at all: its "mode" key carries
+        operating_mode (automatic / manual_approval / signals_only), a
+        different field entirely. So there was no value anywhere in the
+        payload that could tell the two apart.
+
+        Read-only and additive. It names the state and adds a blocker that is
+        already true; it does not change execution_state, clear anything, or
+        let a frozen session trade.
+        """
+        try:
+            session = self.account.session() or {}
+        except Exception:  # pragma: no cover - defensive
+            return
+        mode = str(session.get("mode") or "")
+        status["session_mode"] = mode or None
+        if not mode or mode == LIVE_SESSION_MODE:
+            return
+        blocker = (f"this SMC session is in {mode} (Frozen review), so the live "
+                   "runtime does not tick: no candles are read, no decisions "
+                   "are made and the market-data stream is never opened. "
+                   "Switch the session to Live paper to run it.")
+        blockers = list(status.get("blockers") or [])
+        if blocker not in blockers:
+            blockers.append(blocker)
+        status["blockers"] = blockers
+
     def _attach_transport_diagnostics(self, status: dict) -> None:
         """Expose the per-channel socket truth the lab's feed block hides.
 
