@@ -101,6 +101,11 @@ function RebootProgress({ reboot }: { reboot?: RebootState | null }) {
   </div>;
 }
 
+//: The states TradingInstanceManager.delete will accept. A running worker --
+//: including a paused one, whose worker is deliberately retained -- is
+//: refused there, so it is refused here too.
+const DELETABLE_STATES = ["created", "stopped", "error", "degraded"];
+
 function InstanceActions({ instance, action, remove, actionBusy, locked = false, deleting = false, compact = false }: { instance: Instance; action: (instance: Instance, name: string) => Promise<void>; remove: (instance: Instance) => Promise<void>; actionBusy?: string | null; locked?: boolean; deleting?: boolean; compact?: boolean }) {
   const cls = compact ? "btn btn-soft btn-sm" : "btn btn-soft btn-sm";
   const rebooting = instance.reboot?.status === "running";
@@ -110,6 +115,15 @@ function InstanceActions({ instance, action, remove, actionBusy, locked = false,
   // state. Disable every row while one lifecycle request is in flight.
   const rowBusy = locked || deleting || Boolean(actionBusy) || rebooting;
   const progressLabels: Record<string, string> = { start: "Starting…", pause: "Pausing…", resume: "Resuming…", stop: "Stopping…", restart: "Starting reboot…" };
+  // Why Delete is unavailable, in the backend's own words. These mirror the
+  // refusals in TradingInstanceManager.delete rather than paraphrasing them,
+  // so the button and the 409 it would have produced say the same thing.
+  const deleteBlocker = DELETABLE_STATES.includes(instance.state) ? null
+    : instance.state === "paused"
+      ? "Stop this instance before deleting it. Pause only closes the entry gate — the market worker stays alive to keep its candle cursor."
+      : rebooting
+        ? "A Full Bot Reboot is in progress. It must finish before this instance can be deleted."
+        : `Stop this instance before deleting it (it is ${instance.state}).`;
   const label = (name: string, idle: string) => busyName === name ? progressLabels[name] : idle;
   return <div className="row-actions" style={{ justifyContent: "flex-start", gap: 6, flexWrap: "wrap" }}>
     {(instance.state === "running" || instance.state === "ready") && <button className={`${cls} btn-warn`} disabled={rowBusy} onClick={() => void action(instance, "pause")}>{label("pause", "Pause")}</button>}
@@ -117,7 +131,17 @@ function InstanceActions({ instance, action, remove, actionBusy, locked = false,
     {instance.state === "paused" && <><button className={`${cls} btn-primary`} disabled={rowBusy} onClick={() => void action(instance, "resume")}>{label("resume", "Resume")}</button><button className={`${cls} btn-danger`} disabled={rowBusy} onClick={() => void action(instance, "stop")}>{label("stop", "Stop")}</button></>}
     {!working && instance.state !== "running" && instance.state !== "ready" && instance.state !== "paused" && <button className={`${cls} btn-primary`} disabled={rowBusy} onClick={() => void action(instance, "start")}>{label("start", "Start")}</button>}
     <button className={cls} disabled={rowBusy} onClick={() => void action(instance, "restart")}>{rebooting ? titleCase(instance.reboot?.phase) : label("restart", "Full Bot Reboot")}</button>
-    {(["created", "stopped", "error", "degraded"].includes(instance.state)) && <button className={`${cls} btn-danger`} disabled={rowBusy} onClick={() => void remove(instance)}>{deleting ? "Deleting…" : "Delete"}</button>}
+    {/* Delete is always shown, and says why when it cannot be used.
+        It used to render only for a deletable state, so a running or paused
+        instance simply had no Delete button and nothing anywhere explained
+        the absence -- indistinguishable from the feature being broken. The
+        rule itself is unchanged: the backend refuses a delete while a worker
+        is alive, and a paused worker is deliberately still alive, so this
+        button stays disabled in exactly the states it was hidden in. */}
+    <button className={`${cls} btn-danger`} title={deleteBlocker ?? "Permanently delete this stopped Trading Instance"}
+            disabled={rowBusy || Boolean(deleteBlocker)}
+            onClick={() => void remove(instance)}>{deleting ? "Deleting…" : "Delete"}</button>
+    {deleteBlocker ? <small className="dim" style={{ flexBasis: "100%", fontSize: 10 }}>{deleteBlocker}</small> : null}
   </div>;
 }
 
