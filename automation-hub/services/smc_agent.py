@@ -32,7 +32,7 @@ import math
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 from services.smc_agent_journal import (MISSED, NOT_READY, REJECTED, TAKEN,
                                         SMCAgentJournal)
@@ -262,6 +262,7 @@ class SMCAgent:
                 can_trade: bool = True, blocked_reason: str = "",
                 candle_time: str = "",
                 sizing_inputs: Optional[SizingInputs] = None,
+                context_gates: Sequence[Gate] = (),
                 executor: Optional[Callable[[Sizing], object]] = None) -> dict:
         """Look at one SMC evaluation and decide. Always leaves a journal row.
 
@@ -319,7 +320,13 @@ class SMCAgent:
             return {"outcome": NOT_READY, "decision_id": decision_id,
                     "trade_id": "", "gates": []}
 
-        gates, sizing = self.evaluate_gates(plan, symbol, sizing_inputs)
+        plan_gates, sizing = self.evaluate_gates(plan, symbol, sizing_inputs)
+        # Context first. "Not today" outranks "this reward-to-risk is thin":
+        # the first failed gate becomes the recorded reason, and a trader who
+        # has hit their daily stop did not skip the setup because of its
+        # geometry. Context can only ever ADD a veto -- it cannot clear one
+        # the plan gates raised, because a passing gate contributes nothing.
+        gates = list(context_gates) + plan_gates
         size = sizing.executed
         failed = [g for g in gates if not g.passed]
 

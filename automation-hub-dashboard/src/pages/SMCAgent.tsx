@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useLive } from "../lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { apiPostJson, useLive } from "../lib/api";
 
 /**
  * What the SMC agent decided, and why, on every closed candle.
@@ -55,6 +55,18 @@ interface AgentResponse {
   session_id?: string; symbol?: string; timeframe?: string;
 }
 
+
+interface TradePolicy { enabled: boolean; breakeven_at_r: number | null;
+  breakeven_offset_r: number; trail_after_r: number | null;
+  trail_lookback: number; trail_buffer_r: number }
+interface ContextPolicyShape { enabled: boolean; daily_loss_cap_r: number | null;
+  max_consecutive_losses: number | null; allowed_hours_utc: number[][];
+  min_candle_range_bps: number | null; volatility_lookback: number }
+interface MemoryPolicyShape { enabled: boolean; min_sample: number;
+  veto_at_or_below_expectancy_r: number; by_hour: boolean }
+interface PolicyResponse { trade_management: TradePolicy;
+  context: ContextPolicyShape; memory: MemoryPolicyShape; note?: string }
+
 const OUTCOMES: Outcome[] = ["TAKEN", "REJECTED", "NOT_READY", "MISSED"];
 
 const BLURB: Record<Outcome, string> = {
@@ -73,6 +85,88 @@ function when(value?: string) {
 function num(value: unknown, digits = 2) {
   return typeof value === "number" && Number.isFinite(value)
     ? value.toFixed(digits) : "—";
+}
+
+
+/**
+ * The three optional rule-sets.
+ *
+ * Each one changes how much and how often the agent trades, so the switch
+ * sits next to the decisions it will change rather than on a settings page
+ * away from the evidence. The wording is deliberate: these are hypotheses to
+ * backtest, and nothing here should read as an improvement.
+ */
+function RulePanel() {
+  const live = useLive<PolicyResponse>("/research/smc/agent/policy", 30_000);
+  const [draft, setDraft] = useState<PolicyResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState("");
+
+  useEffect(() => { if (live.data && !draft) setDraft(live.data); }, [live.data, draft]);
+  if (!draft) return <p className="pa-note">Reading the agent&rsquo;s rule-sets&hellip;</p>;
+
+  const set = (section: keyof PolicyResponse, key: string, value: unknown) =>
+    setDraft({ ...draft, [section]: { ...(draft[section] as object), [key]: value } });
+
+  const save = async () => {
+    setBusy(true); setNote("");
+    try {
+      await apiPostJson("/research/smc/agent/policy", {
+        trade_management: draft.trade_management,
+        context: draft.context, memory: draft.memory });
+      setNote("Saved and applied to the running agent.");
+    } catch (error) {
+      setNote(`Not saved: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { setBusy(false); }
+  };
+
+  const numberOrNull = (raw: string) => raw.trim() === "" ? null : Number(raw);
+
+  return <section>
+    <h2>Rules</h2>
+    <p className="pa-note">
+      Each of these changes how much and how often the agent trades. They are
+      <b> hypotheses to backtest and forward-test</b>, not improvements &mdash;
+      and every one of them can only make the agent trade <i>less</i>, never
+      take a setup the strategy did not offer.
+    </p>
+
+    <div className="pa-rules">
+      <label><input type="checkbox" checked={draft.trade_management.enabled}
+        onChange={(e) => set("trade_management", "enabled", e.target.checked)} />
+        <b>Manage open trades</b>
+        <small>Move the stop to breakeven at 1R, then trail behind structure.
+          Never widens a stop and never moves a target, so the runner keeps
+          the reward-to-risk it was taken at.</small></label>
+      <label>Breakeven at (R)<input value={draft.trade_management.breakeven_at_r ?? ""}
+        onChange={(e) => set("trade_management", "breakeven_at_r", numberOrNull(e.target.value))} /></label>
+      <label>Trail after (R, blank = off)<input value={draft.trade_management.trail_after_r ?? ""}
+        onChange={(e) => set("trade_management", "trail_after_r", numberOrNull(e.target.value))} /></label>
+
+      <label><input type="checkbox" checked={draft.context.enabled}
+        onChange={(e) => set("context", "enabled", e.target.checked)} />
+        <b>Context vetoes</b>
+        <small>Stand aside on a daily loss cap, a losing streak, outside
+          session hours, or when the range has gone flat.</small></label>
+      <label>Daily loss cap (R, blank = off)<input value={draft.context.daily_loss_cap_r ?? ""}
+        onChange={(e) => set("context", "daily_loss_cap_r", numberOrNull(e.target.value))} /></label>
+      <label>Consecutive losses (blank = off)<input value={draft.context.max_consecutive_losses ?? ""}
+        onChange={(e) => set("context", "max_consecutive_losses", numberOrNull(e.target.value))} /></label>
+
+      <label><input type="checkbox" checked={draft.memory.enabled}
+        onChange={(e) => set("memory", "enabled", e.target.checked)} />
+        <b>Journal memory</b>
+        <small>Decline a setup family its own history has lost on. Says
+          nothing below the sample floor &mdash; a small sample always shows a
+          pattern whether or not one exists.</small></label>
+      <label>Minimum sample<input value={draft.memory.min_sample}
+        onChange={(e) => set("memory", "min_sample", Number(e.target.value))} /></label>
+    </div>
+
+    <button type="button" className="pa-export" disabled={busy} onClick={() => void save()}>
+      {busy ? "Saving\u2026" : "Save and apply"}</button>
+    {note ? <p className="pa-note">{note}</p> : null}
+  </section>;
 }
 
 export default function SMCAgentPage() {
@@ -145,6 +239,8 @@ export default function SMCAgentPage() {
         {(data?.blockers ?? []).map((row) => <li key={row}>{row}</li>)}
       </ul> : null}
     </section>
+
+    <RulePanel />
 
     {/* The four outcomes, never collapsed into traded / did not trade. */}
     <section>

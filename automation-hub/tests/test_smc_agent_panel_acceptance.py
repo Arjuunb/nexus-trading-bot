@@ -35,18 +35,24 @@ def test_it_sits_beside_the_lab_it_reports_on():
     assert block.index('"SMC Agent"') > block.index('"SMC Strategy Lab"')
 
 
-def test_the_panel_reads_and_never_acts():
-    """It reports on a system that places orders. It must not be able to.
-
-    Nothing here approves, places, cancels, resets or configures -- the page
-    is a read of one endpoint, and the endpoint itself is a GET.
+def test_the_panel_can_configure_rules_but_never_touch_an_order():
+    """It reports on a system that places orders, and it may change the rules
+    that system trades by -- that is the point of the rule panel. What it
+    must never do is reach the order path itself: no approving, placing,
+    cancelling or resetting. The one write it makes is the policy save, which
+    is the single protected call on the agent surface.
     """
     page = (DASHBOARD / "pages" / "SMCAgent.tsx").read_text()
 
     assert "/research/smc/agent" in page
-    for forbidden in ("apiPostJson", "apiDelete", "approve_candidate",
-                      "approve-candidate", "method: \"POST\"", "/reset"):
-        assert forbidden not in page, f"the read-only panel can act: {forbidden}"
+    writes = [line for line in page.splitlines() if "apiPostJson" in line
+              and "import" not in line]
+    assert len(writes) == 1, f"more than one write from the panel: {writes}"
+    assert "/research/smc/agent/policy" in writes[0]
+
+    for forbidden in ("approve_candidate", "approve-candidate", "/paper/reset",
+                      "cancel_order", "/sessions/current/end", "submit_order"):
+        assert forbidden not in page, f"the panel reached the order path: {forbidden}"
 
 
 def test_the_panel_computes_no_trading_decision_of_its_own():

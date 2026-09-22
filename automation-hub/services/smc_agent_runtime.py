@@ -41,10 +41,13 @@ unavailable.
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Optional
 
 from services.smc_agent import SizingInputs
+from services.smc_agent_context import ContextPolicy, context_gates
+from services.smc_agent_memory import MemoryPolicy, memory_gates
 from services.smc_agent_trade_manager import (Candle, OpenTrade,
                                               TradeManagementPolicy,
                                               plan_stop_move)
@@ -107,7 +110,9 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
     """The lab runtime with the independent SMC agent attached downstream."""
 
     def __init__(self, market, account: SMCPaperAccount, *, agent=None,
-                 trade_policy: Optional[TradeManagementPolicy] = None, **kwargs):
+                 trade_policy: Optional[TradeManagementPolicy] = None,
+                 context_policy: Optional[ContextPolicy] = None,
+                 memory_policy: Optional[MemoryPolicy] = None, **kwargs):
         super().__init__(market, account, **kwargs)
         #: The independent agent. ``None`` means the runtime behaves exactly
         #: like the lab runtime it inherits from.
@@ -117,6 +122,16 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         #: them is a change to the result distribution and a hypothesis to
         #: backtest -- not a default anyone should inherit silently.
         self.trade_policy = (trade_policy or TradeManagementPolicy()).validated()
+        #: Which setups to stand aside from regardless of their own merits.
+        #: Off by default for the same reason: every rule reduces trade count,
+        #: and a filter that removes losers on one sample and winners on the
+        #: next is the easiest thing here to fool yourself with.
+        self.context_policy = (context_policy or ContextPolicy()).validated()
+        #: Whether the agent reads its own history before deciding. Off by
+        #: default and the most cautious of the three: a small sample will
+        #: always show a pattern, so the rule refuses to speak below its
+        #: sample floor rather than guessing early.
+        self.memory_policy = (memory_policy or MemoryPolicy()).validated()
         # The agent step runs after the parent tick has released its own lock,
         # so it needs its own. Non-blocking for the same reason the parent's
         # is: a slow tick must not queue up the poll loop behind it.
@@ -286,6 +301,41 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
             "last_error": transport.get("last_error"),
             "quotes_enabled": transport.get("quotes_enabled"),
         }
+
+    def _context_gates(self, visual: Optional[dict]) -> list:
+        """The context vetoes for this tick.
+
+        Returns nothing on any failure to read history or candles. A context
+        rule that cannot see its inputs must not invent a verdict, and the
+        direction of that failure is safe in both senses: the plan gates
+        below still apply, and the worst case is that the agent trades a
+        setup it would otherwise have stood aside from -- never that it takes
+        one the strategy did not offer.
+        """
+        if not (self.context_policy.enabled or self.memory_policy.enabled):
+            return []
+        journal = getattr(self.agent, "journal", None)
+        if journal is None:
+            return []
+        try:
+            closed_trades = journal.trades(closed_only=True, limit=500)
+        except Exception:
+            return []
+        now = datetime.now(timezone.utc)
+        gates = context_gates(closed_trades=closed_trades,
+                              candles=((visual or {}).get("candles") or []),
+                              now=now, policy=self.context_policy)
+        gates += memory_gates(closed_trades=closed_trades,
+                              setup_id=self._setup_id(visual),
+                              policy=self.memory_policy, hour=now.hour)
+        return gates
+
+    @staticmethod
+    def _setup_id(visual: Optional[dict]) -> str:
+        """The setup the strategy is offering, for the history lookup."""
+        evaluation = (visual or {}).get("source_strategy") or {}
+        proposal = evaluation.get("proposal") or {}
+        return str(evaluation.get("setup_id") or proposal.get("setup_id") or "")
 
     # ------------------------------------------------------ in-trade stops
     def _manage_open_trades(self, result: dict, visual: Optional[dict]) -> list[dict]:
@@ -502,6 +552,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
                 blocked_reason=blocked,
                 candle_time=self._closed_candle_time(visual or {}),
                 sizing_inputs=inputs,
+                context_gates=self._context_gates(visual),
                 executor=execute)
         except Exception as exc:  # noqa: BLE001 — a broken agent must not trade
             # Nothing was placed: in this mode the lab does not place orders,

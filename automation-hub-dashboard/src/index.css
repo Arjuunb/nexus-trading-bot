@@ -2148,3 +2148,18 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .smc-agent .pa-table td { max-width: 420px; white-space: normal; vertical-align: top; }
 .smc-agent .pa-table td small { color: var(--dim-2); }
 .smc-agent .pa-table td b { color: #dce5f1; font-size: 9px; }
+
+.smc-agent .pa-rules { display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  margin: 0 0 var(--space-2); }
+.smc-agent .pa-rules label { display: grid; gap: 5px; padding: 11px 12px;
+  border: 1px solid var(--card-border-soft); border-radius: var(--radius-sm);
+  background: var(--card-2); color: var(--dim); font-size: 9.5px; }
+.smc-agent .pa-rules label b { color: var(--text); font-size: 10.5px; }
+.smc-agent .pa-rules label small { color: var(--dim-2); font-size: 9px; line-height: 1.5; }
+.smc-agent .pa-rules input[type="checkbox"] { justify-self: start; accent-color: var(--gold); }
+.smc-agent .pa-rules input[type="text"], .smc-agent .pa-rules input:not([type]) {
+  padding: 6px 8px; border: 1px solid var(--card-border-soft); border-radius: 5px;
+  background: var(--bg-2); color: var(--text);
+  font: 10px/1.2 ui-monospace, monospace; }
+.smc-agent .pa-export { margin: 0 0 var(--space-1); }

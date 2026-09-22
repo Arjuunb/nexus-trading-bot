@@ -952,3 +952,97 @@ def test_a_stop_is_never_widened_through_the_live_path(tmp_path, monkeypatch):
     monkeypatch.setattr(lab.runtime, "_move_stop", lambda *a, **k: None)
 
     assert lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade)) == []
+
+
+# ────────────────────────────── context vetoes ────────────────────────────
+from services.smc_agent import Gate  # noqa: E402
+from services.smc_agent_context import ContextPolicy  # noqa: E402
+from services.smc_agent_journal import REJECTED as REJECTED_OUTCOME  # noqa: E402
+
+
+def test_context_rules_are_off_unless_asked_for(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+
+    assert lab.runtime.context_policy.enabled is False
+    assert lab.runtime._context_gates({"candles": []}) == []
+
+
+def test_a_context_veto_places_nothing_and_is_recorded_as_rejected(
+        tmp_path, monkeypatch):
+    """The distinction that matters in the journal: this is the agent
+    choosing not to trade, not the agent failing to. REJECTED, not MISSED."""
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.context_policy = ContextPolicy(
+        enabled=True, allowed_hours_utc=((0, 1),)).validated()
+    # Force the session hours gate to fail whatever the wall clock says.
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="session_hours", passed=False,
+             detail="03:00 UTC is outside the traded session")])
+
+    lab.runtime.tick()
+
+    assert lab.strategy_orders() == [], "a vetoed setup placed an order"
+    decisions = lab.decisions()
+    assert decisions[0]["outcome"] == REJECTED_OUTCOME
+    assert decisions[0]["reason_code"] == "SESSION_HOURS"
+    assert "outside the traded session" in decisions[0]["reason"]
+
+
+def test_a_context_veto_outranks_a_plan_gate_in_the_recorded_reason(
+        tmp_path, monkeypatch):
+    """A trader who has hit their daily stop did not skip the setup because
+    of its geometry, and the journal should not say they did."""
+    lab = build(tmp_path, monkeypatch,
+                evaluation=plan_with(entry_ready(), target_2=101.5))  # thin RR
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="daily_loss_cap", passed=False,
+             detail="the day is at -2.10R against a -2.00R stop")])
+
+    lab.runtime.tick()
+
+    decisions = lab.decisions()
+    assert decisions[0]["reason_code"] == "DAILY_LOSS_CAP"
+    assert lab.strategy_orders() == []
+
+
+def test_a_passing_context_gate_cannot_clear_a_failing_plan_gate(
+        tmp_path, monkeypatch):
+    """Context can only ever ADD a veto. A rule that passed contributes
+    nothing, and must not rescue a plan the agent's own gates refused."""
+    lab = build(tmp_path, monkeypatch,
+                evaluation=plan_with(entry_ready(), target_2=101.5))  # below 3R
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="daily_loss_cap", passed=True, detail="the day is at +1.00R")])
+
+    lab.runtime.tick()
+
+    assert lab.strategy_orders() == []
+    assert lab.decisions()[0]["outcome"] == REJECTED_OUTCOME
+    assert lab.decisions()[0]["reason_code"] == "MINIMUM_REWARD_TO_RISK"
+
+
+def test_context_gates_that_all_pass_leave_the_trade_alone(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="session_hours", passed=True, detail="12:00 UTC is inside"),
+        Gate(name="daily_loss_cap", passed=True, detail="the day is at +0.00R")])
+
+    lab.runtime.tick()
+
+    assert len(lab.strategy_orders()) == 1
+    assert lab.decisions()[0]["outcome"] == TAKEN
+
+
+def test_an_unreadable_journal_yields_no_context_verdict(tmp_path, monkeypatch):
+    """A context rule that cannot see its inputs must not invent one. The
+    plan gates still apply, so the failure direction is safe."""
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.context_policy = ContextPolicy(
+        enabled=True, max_consecutive_losses=2).validated()
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("journal unavailable")
+
+    monkeypatch.setattr(lab.runtime.agent.journal, "trades", broken)
+
+    assert lab.runtime._context_gates({"candles": []}) == []
