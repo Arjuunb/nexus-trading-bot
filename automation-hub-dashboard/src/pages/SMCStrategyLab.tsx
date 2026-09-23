@@ -188,6 +188,9 @@ const PRESETS: Record<ChartPreset, NativeSMCOverlayFilters> = {
   debug: { pivots: true, internal: true, swing: true, structure: true, liquidity: true, fvg: true, orderBlocks: true, mitigated: true, labels: true },
 };
 
+const operatingModeLabel = (mode?: string) =>
+  mode === "manual_approval" ? "Agent decides" : mode === "automatic" ? "Automatic paper"
+    : mode === "signals_only" ? "Signals only" : mode || "—";
 const pretty = (value: string) => value.replace(/^SMC_[A-Z0-9]+_?/, "").replace(/_/g, " ").toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase());
 const cell = (value: unknown) => value === null || value === undefined || value === "" ? "—" : typeof value === "number" ? value.toLocaleString(undefined, { maximumFractionDigits: 6 }) : String(value);
 const money = (value?: number) => Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -261,6 +264,7 @@ export default function SMCStrategyLabPage() {
   const [busy, setBusy] = useState(false);
   const [marketBusy, setMarketBusy] = useState(false);
   const marketSwitchInFlight = useRef(false);
+  const strategySaveInFlight = useRef(false);
   const [order, setOrder] = useState({ side: "buy", type: "market", quantity: "0.001", price: "", stop_loss: "", target_1: "", target_2: "" });
   const [priceViewport, setPriceViewport] = useState<ChartPriceViewport>({ auto: true, scale: 1, offset: 0 });
   const [timeViewport, setTimeViewport] = useState<ChartTimeViewport | null>(null);
@@ -307,7 +311,7 @@ export default function SMCStrategyLabPage() {
     setTimeframe(savedSession.timeframe);
     setSelectedModelId(savedSession.model_id);
     if (paper.data) setLeverage(String(paper.data.account.leverage));
-  }, [paper.data?.account.leverage, savedSession?.id, savedSession?.symbol, savedSession?.timeframe, savedSession?.operating_mode, savedSession?.risk_pct]);
+  }, [paper.data?.account.leverage, savedSession?.id, savedSession?.symbol, savedSession?.timeframe, savedSession?.operating_mode, savedSession?.risk_pct, savedSession?.model_id]);
 
   useEffect(() => {
     historyRequestRef.current = false;
@@ -334,7 +338,9 @@ export default function SMCStrategyLabPage() {
     setFilters((current) => ({ ...current, [key]: !current[key] }));
   };
   const switchMarket = async (nextSymbol: string, nextTimeframe = timeframe) => {
-    if (!savedSession || marketSwitchInFlight.current || (nextSymbol === symbol && nextTimeframe === timeframe)) return;
+    // Never while a strategy save is in flight: this request resends the saved
+    // mode/model/risk, and the saved copy it holds would undo that save.
+    if (!savedSession || marketSwitchInFlight.current || strategySaveInFlight.current || (nextSymbol === symbol && nextTimeframe === timeframe)) return;
     marketSwitchInFlight.current = true;
     setMarketBusy(true);
     try {
@@ -377,13 +383,46 @@ export default function SMCStrategyLabPage() {
       setBusy(false);
     }
   };
-  const applyConfiguration = () => runAction(
-    () => apiPostJson("/research/smc/sessions/current/configuration", {
-      symbol, timeframe, operating_mode: operatingMode,
-      model_id: selectedModelId, risk_pct: Number(riskPct),
-    }),
-    "SMC paper configuration saved",
-  );
+  const modelLabel = (id?: string) => sourceModels.data?.models.find((model) => model.id === id)?.label ?? id ?? "—";
+  /** Save one strategy change the moment it is made.
+   *
+   * These controls used to be drafts that only an "Apply" press sent, so a
+   * strategy picked without Apply was never saved and the page quietly went
+   * back to the saved one. Every field the operator did NOT change is sent
+   * as the server holds it: the endpoint fills a missing field with its
+   * default, so a partial request would silently reset the mode or risk.
+   * A refusal puts every control back to what is actually saved.
+   */
+  const saveStrategy = async (change: { model_id?: string; operating_mode?: string; risk_pct?: number }, what: string) => {
+    if (!savedSession || strategySaveInFlight.current || marketSwitchInFlight.current) return;
+    strategySaveInFlight.current = true;
+    setBusy(true);
+    try {
+      const updated = await apiPostJson<SMCPaperState>("/research/smc/sessions/current/configuration", {
+        symbol: savedSession.symbol, timeframe: savedSession.timeframe,
+        operating_mode: savedSession.operating_mode, model_id: savedSession.model_id,
+        risk_pct: savedSession.risk_pct, ...change,
+      });
+      setSelectedModelId(updated.session.model_id);
+      setOperatingMode(updated.session.operating_mode);
+      setRiskPct(String(updated.session.risk_pct));
+      await Promise.all([paper.refetch(), identity.refetch()]);
+      toast(`Saved: ${what}. The bot now trades ${modelLabel(updated.session.model_id)} on ${updated.session.symbol} ${updated.session.timeframe}.`, "success");
+    } catch (error) {
+      setSelectedModelId(savedSession.model_id);
+      setOperatingMode(savedSession.operating_mode);
+      setRiskPct(String(savedSession.risk_pct));
+      toast(`Not saved: ${error instanceof Error ? error.message : "the server refused the change"}`, "error");
+    } finally {
+      strategySaveInFlight.current = false;
+      setBusy(false);
+    }
+  };
+  const saveRisk = () => {
+    const value = Number(riskPct);
+    if (!savedSession || !Number.isFinite(value) || value === savedSession.risk_pct) return;
+    void saveStrategy({ risk_pct: value }, `risk ${value}% per trade`);
+  };
   const applyLeverage = (value: string) => {
     setLeverage(value);
     return runAction(() => apiPostJson("/research/smc/paper/leverage", { leverage: Number(value) }), `SMC paper leverage set to ${value}x`);
@@ -460,16 +499,16 @@ export default function SMCStrategyLabPage() {
 
     <div className="pa-workspace">
       <aside className={`pa-sidebar ${controlsOpen ? "is-open" : ""}`} aria-label="SMC Strategy controls">
-        <section><h2>SMC session market</h2><label>Binance USDⓈ-M contract<select aria-label="SMC session symbol" disabled={marketBusy || !sessionLoaded} value={symbol} onChange={(event) => switchMarket(event.target.value)}>{SYMBOLS.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button type="button" className={chartFeed === "binance_usdm" ? "active" : ""} onClick={() => { if (savedSession) { setSymbol(savedSession.symbol); setTimeframe(savedSession.timeframe); } setChartFeed("binance_usdm"); }}>Live paper</button><button type="button" className={chartFeed === "checkpoint" ? "active" : ""} onClick={() => { setChartFeed("checkpoint"); setSymbol("BTCUSDT"); setTimeframe("5m"); }}>Frozen review</button></div><small className="pa-context-note">Independent SMC paper session. Pine reference and parity review remain in the separate <button type="button" className="link-button" onClick={() => { window.location.hash = "/smc-visual-lab"; }}>SMC Visual Lab</button>, which is reachable from here rather than from the sidebar.</small></section>
-        <section><h2>Strategy &amp; execution</h2><label>Visible SMC entry model<select aria-label="SMC entry model" value={selectedModelId} onChange={(event) => setSelectedModelId(event.target.value)}>{(sourceModels.data?.models ?? []).map((model) => <option key={model.id} value={model.id} disabled={model.status === "PARKED"}>{model.label} · {model.status === "PARKED" ? "Parked" : "Active"}</option>)}</select></label><label>Paper operating mode<select disabled={!sessionLoaded} value={operatingMode} onChange={(event) => setOperatingMode(event.target.value)}>{!sessionLoaded && <option value="">Loading saved mode…</option>}<option value="signals_only">Signals only</option><option value="manual_approval">Agent decides · no human approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%)<input value={riskPct} onChange={(event) => setRiskPct(event.target.value)} inputMode="decimal" /></label><button type="button" className="pa-export" disabled={busy || marketBusy || !sessionLoaded} onClick={() => void applyConfiguration()}>Apply paper configuration</button><small>Agent decides: the SMC strategy stages the entry, then the agent checks reward-to-risk, sizes it and places it &mdash; nobody presses approve. Automatic paper places the strategy&rsquo;s entry with no agent judgement at all. Visible evidence follows this model; existing paper orders retain immutable configuration snapshots.</small></section>
+        <section><h2>SMC session market</h2><label>Binance USDⓈ-M contract<select aria-label="SMC session symbol" disabled={marketBusy || busy || !sessionLoaded} value={symbol} onChange={(event) => switchMarket(event.target.value)}>{SYMBOLS.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button type="button" className={chartFeed === "binance_usdm" ? "active" : ""} onClick={() => { if (savedSession) { setSymbol(savedSession.symbol); setTimeframe(savedSession.timeframe); } setChartFeed("binance_usdm"); }}>Live paper</button><button type="button" className={chartFeed === "checkpoint" ? "active" : ""} onClick={() => { setChartFeed("checkpoint"); setSymbol("BTCUSDT"); setTimeframe("5m"); }}>Frozen review</button></div><small className="pa-context-note">Independent SMC paper session. Pine reference and parity review remain in the separate <button type="button" className="link-button" onClick={() => { window.location.hash = "/smc-visual-lab"; }}>SMC Visual Lab</button>, which is reachable from here rather than from the sidebar.</small></section>
+        <section><h2>Strategy &amp; execution</h2><p className="pa-saved-config" data-testid="smc-saved-configuration">{savedSession ? <>Bot is trading: <b>{modelLabel(savedSession.model_id)}</b> · {savedSession.symbol} {savedSession.timeframe} · {operatingModeLabel(savedSession.operating_mode)} · risk {savedSession.risk_pct}% <small>(saved on the server)</small></> : "Loading saved configuration…"}</p><label>SMC strategy (saves immediately)<select aria-label="SMC entry model" disabled={busy || marketBusy || !sessionLoaded} value={selectedModelId} onChange={(event) => { const next = event.target.value; setSelectedModelId(next); void saveStrategy({ model_id: next }, `strategy ${modelLabel(next)}`); }}>{(sourceModels.data?.models ?? []).map((model) => <option key={model.id} value={model.id} disabled={model.status === "PARKED"}>{model.label} · {model.status === "PARKED" ? "not built yet" : "active"}</option>)}</select></label><label>Paper operating mode (saves immediately)<select aria-label="Paper operating mode" disabled={busy || marketBusy || !sessionLoaded} value={operatingMode} onChange={(event) => { const next = event.target.value; setOperatingMode(next); void saveStrategy({ operating_mode: next }, `mode ${operatingModeLabel(next)}`); }}>{!sessionLoaded && <option value="">Loading saved mode…</option>}<option value="signals_only">Signals only</option><option value="manual_approval">Agent decides · no human approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%) · Enter to save<input aria-label="SMC risk per trade" value={riskPct} disabled={busy || marketBusy || !sessionLoaded} onChange={(event) => setRiskPct(event.target.value)} onBlur={saveRisk} onKeyDown={(event) => { if (event.key === "Enter") saveRisk(); }} inputMode="decimal" /></label><small>Every change here is saved to the server at once and the line above shows what the bot is really trading. Agent decides: the SMC strategy stages the entry, then the agent checks reward-to-risk, sizes it and places it &mdash; nobody presses approve. Automatic paper places the strategy&rsquo;s entry with no agent judgement at all. &ldquo;Not built yet&rdquo; strategies have no entry, stop or target rules and cannot be selected. Existing paper orders keep their own configuration.</small></section>
         <section><h2>Chart layers</h2><label className="pa-layer-mode">Preset<select aria-label="SMC chart layer preset" value={chartPreset} onChange={(event) => applyPreset(event.target.value as ChartPreset)}>{(Object.keys(PRESETS) as ChartPreset[]).map((preset) => <option key={preset} value={preset}>{pretty(preset)}</option>)}</select></label>{([[
-          "pivots", "Swings"], ["structure", "Events"], ["liquidity", "Liquidity"], ["fvg", "Fair value gaps"], ["orderBlocks", "Order blocks"], ["mitigated", "Invalidated · lifecycle"], ["labels", "Labels"]] as [keyof NativeSMCOverlayFilters, string][]).map(([key, label]) => <label className="pa-check" key={key}><input type="checkbox" checked={filters[key]} onChange={() => toggleLayer(key)} /><span>{label}</span></label>)}<label className="pa-layer-mode">Selected setup<select aria-label="Selected SMC setup" value={selectedCandidate?.strategy_id ?? selectedCandidateId} onChange={(event) => setSelectedCandidateId(event.target.value)}>{candidates.map((candidate) => <option key={candidate.strategy_id} value={candidate.strategy_id}>{pretty(candidate.strategy_id)} · {candidate.state}</option>)}</select></label><button type="button" className="pa-focus-setup" disabled={!selectedCandidate && !evaluation} onClick={focusCandidate}>Focus selected setup</button><small>Presets affect rendering only. SMC decisions, orders and journal evidence remain unchanged.</small></section>
+          "pivots", "Swings"], ["structure", "Events"], ["liquidity", "Liquidity"], ["fvg", "Fair value gaps"], ["orderBlocks", "Order blocks"], ["mitigated", "Invalidated · lifecycle"], ["labels", "Labels"]] as [keyof NativeSMCOverlayFilters, string][]).map(([key, label]) => <label className="pa-check" key={key}><input type="checkbox" checked={filters[key]} onChange={() => toggleLayer(key)} /><span>{label}</span></label>)}<label className="pa-layer-mode">Chart focus · view only, not a strategy<select aria-label="Selected SMC setup" value={selectedCandidate?.strategy_id ?? selectedCandidateId} onChange={(event) => setSelectedCandidateId(event.target.value)}>{candidates.map((candidate) => <option key={candidate.strategy_id} value={candidate.strategy_id}>{pretty(candidate.strategy_id)} · {candidate.state}</option>)}</select></label><button type="button" className="pa-focus-setup" disabled={!selectedCandidate && !evaluation} onClick={focusCandidate}>Focus selected setup</button><small>Presets affect rendering only. SMC decisions, orders and journal evidence remain unchanged.</small></section>
         <section><h2>Virtual account</h2><div className="pa-account"><span>Balance<b>{money(paper.data?.account.balance)} USDT</b></span><span>Equity<b>{money(paper.data?.account.equity)} USDT</b></span><span>Open P&amp;L<b className={(paper.data?.account.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(paper.data?.account.unrealized_pnl)}</b></span><span>Free margin<b>{money(paper.data?.account.available_margin)}</b></span></div><label>Isolated leverage<select value={leverage} onChange={(event) => void applyLeverage(event.target.value)}>{[1, 2, 3, 5, 10].map((value) => <option key={value} value={value}>{value}×</option>)}</select></label><small>Persistent and isolated from every other paper account.</small></section>
         <section className="pa-legend"><h2>Chart truth</h2><span><i className="confirmed" />Confirmed</span><span><i className="provisional" />Forming · display only</span><span><i className="invalid" />Invalidated</span></section>
       </aside>
 
       <main className="pa-main">
-        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable ? "live" : "stale"} />{symbol}<span>SMC SESSION · PERPETUAL</span></div><div className="pa-timeframes">{(data?.mtf_policy?.available_entry_timeframes ?? ["1m", "5m", "15m", "1h", "4h"]).map((row) => <button type="button" key={row} disabled={marketBusy || !sessionLoaded} className={row === timeframe ? "active" : ""} onClick={() => switchMarket(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible SMC chart candles" value={visibleBars} onChange={(event) => { setVisibleBars(Number(event.target.value)); setTimeViewport(null); setFitSignal((value) => value + 1); }}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button type="button" onClick={() => { setTimeViewport(null); setPriceViewport({ auto: true, scale: 1, offset: 0 }); setFitSignal((value) => value + 1); }}>Fit</button><button type="button" onClick={onGoLatest}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{healthState}</span></div>
+        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable ? "live" : "stale"} />{symbol}<span>SMC SESSION · PERPETUAL</span></div><div className="pa-timeframes" role="group" aria-label="Bot trading timeframe" title="These buttons change the timeframe the bot TRADES, and save it">{(data?.mtf_policy?.available_entry_timeframes ?? ["1m", "5m", "15m", "1h", "4h"]).map((row) => <button type="button" key={row} disabled={marketBusy || busy || !sessionLoaded} className={row === timeframe ? "active" : ""} onClick={() => switchMarket(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible SMC chart candles" value={visibleBars} onChange={(event) => { setVisibleBars(Number(event.target.value)); setTimeViewport(null); setFitSignal((value) => value + 1); }}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button type="button" onClick={() => { setTimeViewport(null); setPriceViewport({ auto: true, scale: 1, offset: 0 }); setFitSignal((value) => value + 1); }}>Fit</button><button type="button" onClick={onGoLatest}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{healthState}</span></div>
 
         <div className="pa-chart-shell" aria-label="Native SMC chart workspace">
           <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{data?.mtf_policy?.label ?? "Native MTF context loading"}</span><span>{data?.data_provenance?.venue ?? "Binance USDⓈ-M Futures"} · session {savedSession?.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{evaluation ? `${evaluation.model.label} · ${evaluation.state} · ${evaluation.next_required_event}` : "SMC strategy evidence loading"}</span><span>{data?.snapshot?.swing_bias === 1 ? "BULLISH" : data?.snapshot?.swing_bias === -1 ? "BEARISH" : "NEUTRAL"}</span><b>{evaluation?.state === "ENTRY_READY" ? "READY" : "WAIT"}</b></div></div>

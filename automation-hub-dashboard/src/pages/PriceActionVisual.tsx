@@ -104,6 +104,9 @@ type JournalFilters = { strategy_id: string; direction: string; result: string; 
 type OperatingMode = "signals_only" | "manual_approval" | "automatic";
 
 const STRATEGIES = ["PA1_SR_REJECTION", "PA2_TREND_PULLBACK", "PA3_FLIP_RETEST", "PA4_FALSE_BREAK_REVERSAL"];
+const PA_MODE_LABEL: Record<string, string> = {
+  signals_only: "Signals only", manual_approval: "Manual approval", automatic: "Automatic paper",
+};
 const TABS: BottomTab[] = ["positions", "orders", "trades", "setups", "rejected", "rulebook", "journal", "learning", "session", "connection"];
 const money = (value?: number) => Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const stamp = (value?: string | null) => value ? value.replace("T", " ").replace("+00:00", " UTC").slice(0, 22) : "—";
@@ -410,6 +413,8 @@ export default function PriceActionVisual() {
   const [selectedSetupId, setSelectedSetupId] = useState("");
   const [focusedSetupId, setFocusedSetupId] = useState("");
   const [marketBusy, setMarketBusy] = useState(false);
+  const [strategyBusy, setStrategyBusy] = useState(false);
+  const strategySaveInFlight = useRef(false);
   const [pendingMarket, setPendingMarket] = useState<{ symbol: string; timeframe: string; mode: Mode } | null>(null);
   const [activeStrategy, setActiveStrategy] = useState(STRATEGIES[0]);
   const [operatingMode, setOperatingMode] = useState<OperatingMode | "">("");
@@ -646,15 +651,44 @@ export default function PriceActionVisual() {
     setSelectedSetupId(entry.setup.setup_id); setFocusedSetupId(entry.setup.setup_id);
     applyPreset("strategy");
   };
-  const applyAutomation = async () => {
-    if (!sessionLoaded || !operatingMode) return;
+  /** Save one strategy change the moment it is made.
+   *
+   * The strategy and mode pickers used to be drafts that only an "Apply"
+   * press sent, so a strategy picked without Apply was never saved and the
+   * page went back to the saved one. Every field NOT being changed is sent as
+   * the server holds it -- the endpoint fills a missing field with its
+   * default -- and a refusal puts the controls back to what is saved.
+   */
+  const saveStrategy = async (change: { strategy_id?: string; operating_mode?: OperatingMode; risk_pct?: number }, what: string) => {
+    if (!savedSession?.id || !savedSession.operating_mode || strategySaveInFlight.current || marketBusy) return;
+    strategySaveInFlight.current = true;
+    setStrategyBusy(true);
     try {
       const updated = await apiPostJson<PaperState>("/research/price-action/sessions/current/configuration", {
-        mode: mode === "live" ? "LIVE_PAPER" : "HISTORICAL", symbol, timeframe,
-        operating_mode: operatingMode, strategy_id: activeStrategy, risk_pct: Number(riskPct),
+        mode: savedSession.mode ?? "LIVE_PAPER", symbol: savedSession.symbol, timeframe: savedSession.timeframe,
+        operating_mode: savedSession.operating_mode,
+        strategy_id: savedSession.execution_config?.strategy_id ?? STRATEGIES[0],
+        risk_pct: savedSession.execution_config?.risk_pct ?? .5, ...change,
       });
-      setPaper(updated); toast(`Paper mode set to ${operatingMode.replace(/_/g, " ")}`, "success");
-    } catch (reason) { toast(reason instanceof Error ? reason.message : "Configuration failed", "error"); }
+      setPaper(updated);
+      setOperatingMode(updated.session.operating_mode ?? "");
+      setActiveStrategy(updated.session.execution_config?.strategy_id ?? STRATEGIES[0]);
+      setRiskPct(String(updated.session.execution_config?.risk_pct ?? .5));
+      toast(`Saved: ${what}. The bot now trades ${pretty(updated.session.execution_config?.strategy_id ?? STRATEGIES[0])} on ${updated.session.symbol} ${updated.session.timeframe}.`, "success");
+    } catch (reason) {
+      setOperatingMode(savedSession.operating_mode ?? "");
+      setActiveStrategy(savedSession.execution_config?.strategy_id ?? STRATEGIES[0]);
+      setRiskPct(String(savedSession.execution_config?.risk_pct ?? .5));
+      toast(`Not saved: ${reason instanceof Error ? reason.message : "the server refused the change"}`, "error");
+    } finally {
+      strategySaveInFlight.current = false;
+      setStrategyBusy(false);
+    }
+  };
+  const saveRisk = () => {
+    const value = Number(riskPct);
+    if (!savedSession?.id || !Number.isFinite(value) || value === savedSession.execution_config?.risk_pct) return;
+    void saveStrategy({ risk_pct: value }, `risk ${value}% per trade`);
   };
   const approve = async (proposalId: string) => {
     try { await apiPostJson(`/research/price-action/paper/candidates/${proposalId}/approve`, {}); toast("Paper candidate approved", "success"); await loadPaper(); }
@@ -684,6 +718,9 @@ export default function PriceActionVisual() {
   };
   const confirmMarketChange = (nextSymbol: string, nextTimeframe: string, nextMode: Mode = mode) => {
     if (nextSymbol === symbol && nextTimeframe === timeframe && nextMode === mode) return;
+    // Never while a strategy save is in flight: this request resends the saved
+    // mode/strategy/risk, and the copy it holds would undo that save.
+    if (strategySaveInFlight.current) return;
     const exposed = Boolean((paper?.positions.length ?? 0) + (paper?.orders.filter((row) => ["open", "partially_filled", "triggered"].includes(String(row.status))).length ?? 0));
     if (exposed) {
       toast("Close or cancel this Price Action session's paper exposure before changing its market, timeframe or mode", "error");
@@ -763,15 +800,15 @@ export default function PriceActionVisual() {
 
     <div className="pa-workspace">
       <aside className={`pa-sidebar ${controlsOpen ? "is-open" : ""}`} aria-label="Price Action controls">
-        <section><h2>PA session market</h2><label>Binance USDⓈ-M contract<select aria-label="Price Action session symbol" disabled={marketBusy} value={marketSelection.symbol} onChange={(event) => confirmMarketChange(event.target.value, timeframe)}>{contracts.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button disabled={marketBusy} className={marketSelection.mode === "live" ? "active" : ""} onClick={() => confirmMarketChange(symbol, timeframe, "live")}>Live paper</button><button disabled={marketBusy} className={marketSelection.mode === "replay" ? "active" : ""} onClick={() => confirmMarketChange(symbol, timeframe, "replay")}>Replay</button></div><small className="pa-context-note">Independent Price Action research session. The global header remains the selected Trading Instance context.</small>{marketBusy ? <small className="pa-syncing">Synchronizing session, feed and chart…</small> : null}</section>
-        <section><h2>Strategy &amp; execution</h2><label>Visible automated strategy<select value={activeStrategy} onChange={(event) => { setActiveStrategy(event.target.value); setFocusedSetupId(""); }}>{STRATEGIES.map((id) => <option key={id} value={id}>{pretty(id)}</option>)}</select></label><label>Paper operating mode<select disabled={!sessionLoaded} value={operatingMode} onChange={(event) => setOperatingMode(event.target.value as OperatingMode)}>{!sessionLoaded && <option value="">Loading saved mode…</option>}<option value="signals_only">Signals only</option><option value="manual_approval">Manual approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%)<input value={riskPct} onChange={(event) => setRiskPct(event.target.value)} inputMode="decimal" /></label><button type="button" className="pa-export" disabled={!sessionLoaded} onClick={() => void applyAutomation()}>Apply paper configuration</button><small>Visible metrics follow this strategy. Paper execution changes only after Apply; existing orders retain immutable snapshots.</small></section>
+        <section><h2>PA session market</h2><label>Binance USDⓈ-M contract<select aria-label="Price Action session symbol" disabled={marketBusy || strategyBusy} value={marketSelection.symbol} onChange={(event) => confirmMarketChange(event.target.value, timeframe)}>{contracts.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button disabled={marketBusy || strategyBusy} className={marketSelection.mode === "live" ? "active" : ""} onClick={() => confirmMarketChange(symbol, timeframe, "live")}>Live paper</button><button disabled={marketBusy || strategyBusy} className={marketSelection.mode === "replay" ? "active" : ""} onClick={() => confirmMarketChange(symbol, timeframe, "replay")}>Replay</button></div><small className="pa-context-note">Independent Price Action research session. The global header remains the selected Trading Instance context.</small>{marketBusy ? <small className="pa-syncing">Synchronizing session, feed and chart…</small> : null}</section>
+        <section><h2>Strategy &amp; execution</h2><p className="pa-saved-config" data-testid="pa-saved-configuration">{savedSession?.id ? <>Bot is trading: <b>{pretty(savedSession.execution_config?.strategy_id ?? STRATEGIES[0])}</b> · {savedSession.symbol} {savedSession.timeframe} · {PA_MODE_LABEL[savedSession.operating_mode ?? ""] ?? "—"} · risk {savedSession.execution_config?.risk_pct ?? .5}% <small>(saved on the server)</small></> : "Loading saved configuration…"}</p><label>Price Action strategy (saves immediately)<select aria-label="Price Action strategy" disabled={strategyBusy || marketBusy || !sessionLoaded} value={activeStrategy} onChange={(event) => { const next = event.target.value; setActiveStrategy(next); setFocusedSetupId(""); void saveStrategy({ strategy_id: next }, `strategy ${pretty(next)}`); }}>{STRATEGIES.map((id) => <option key={id} value={id}>{pretty(id)}</option>)}</select></label><label>Paper operating mode (saves immediately)<select aria-label="Paper operating mode" disabled={strategyBusy || marketBusy || !sessionLoaded} value={operatingMode} onChange={(event) => { const next = event.target.value as OperatingMode; setOperatingMode(next); void saveStrategy({ operating_mode: next }, `mode ${PA_MODE_LABEL[next]}`); }}>{!sessionLoaded && <option value="">Loading saved mode…</option>}<option value="signals_only">Signals only</option><option value="manual_approval">Manual approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%) · Enter to save<input aria-label="Price Action risk per trade" value={riskPct} disabled={strategyBusy || marketBusy || !sessionLoaded} onChange={(event) => setRiskPct(event.target.value)} onBlur={saveRisk} onKeyDown={(event) => { if (event.key === "Enter") saveRisk(); }} inputMode="decimal" /></label><small>Every change here is saved to the server at once, and the line above shows what the bot is really trading. The chart and metrics follow the same strategy. Existing orders keep their own configuration.</small></section>
         <section><h2>Chart layers</h2><label className="pa-layer-mode">Preset<select aria-label="Chart layer preset" value={chartPreset} onChange={(event) => applyPreset(event.target.value as ChartPreset)}>{(["clean", "structure", "zones", "strategy", "trades", "debug"] as ChartPreset[]).map((preset) => <option key={preset} value={preset}>{pretty(preset)}</option>)}</select></label>{([['pivots','Swings'], ['structure','Events'], ['orderBlocks','S/R zones'], ['mitigated','Invalidated · lifecycle'], ['labels','Labels']] as [keyof NativeSMCOverlayFilters, string][]).map(([key, label]) => <label className="pa-check" key={key}><input type="checkbox" checked={filters[key]} onChange={() => toggleLayer(key)} /><span>{label}</span></label>)}<label className="pa-layer-mode">Selected setup<select aria-label="Selected Price Action setup" value={selectedSetup?.id ?? ""} onChange={(event) => setSelectedSetupId(event.target.value)}><option value="">Latest relevant setup</option>{setupChoices.map((row) => <option key={row.id} value={row.id}>{pretty(row.strategy_id)} · {row.direction} · {row.phase}</option>)}</select></label><button className="pa-focus-setup" disabled={!selectedSetup} onClick={focusSelectedSetup}>Focus selected setup</button><small>Presets affect rendering only. All zones, setups, orders and trades remain in the audit records below.</small></section>
         <section><h2>Virtual account</h2><div className="pa-account"><span>Balance<b>{money(paper?.account.balance)} USDT</b></span><span>Equity<b>{money(paper?.account.equity)} USDT</b></span><span>Open P&amp;L<b className={(paper?.account.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(paper?.account.unrealized_pnl)}</b></span><span>Free margin<b>{money(paper?.account.free_margin)}</b></span></div><label>Isolated leverage<select value={paper?.account.leverage ?? 1} onChange={(event) => void setLeverage(Number(event.target.value))}>{Array.from({ length: 20 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}×</option>)}</select></label><small>Persistent and isolated from every other paper account.</small></section>
         <section className="pa-legend"><h2>Chart truth</h2><span><i className="confirmed" />Confirmed</span><span><i className="provisional" />Forming · display only</span><span><i className="invalid" />Invalidated</span></section>
       </aside>
 
       <main className="pa-main">
-        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable && !error ? "live" : "stale"} />{symbol}<span>PA SESSION · PERPETUAL</span></div><div className="pa-timeframes">{(state?.mtf_policy?.available_entry_timeframes ?? ["5m"]).map((row) => <button key={row} disabled={marketBusy} className={row === marketSelection.timeframe ? "active" : ""} onClick={() => confirmMarketChange(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible chart candles" value={visibleBars} onChange={(event) => changeVisibleBars(Number(event.target.value))}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button onClick={() => setFitSignal((n) => n + 1)}>Fit</button><button onClick={() => setLatestSignal((n) => n + 1)}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{mode === "live" ? healthState : "REPLAY"}</span></div>
+        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable && !error ? "live" : "stale"} />{symbol}<span>PA SESSION · PERPETUAL</span></div><div className="pa-timeframes">{(state?.mtf_policy?.available_entry_timeframes ?? ["5m"]).map((row) => <button key={row} disabled={marketBusy || strategyBusy} className={row === marketSelection.timeframe ? "active" : ""} onClick={() => confirmMarketChange(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible chart candles" value={visibleBars} onChange={(event) => changeVisibleBars(Number(event.target.value))}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button onClick={() => setFitSignal((n) => n + 1)}>Fit</button><button onClick={() => setLatestSignal((n) => n + 1)}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{mode === "live" ? healthState : "REPLAY"}</span></div>
         {mode === "replay" ? <div className="pa-replay"><button onClick={() => setCursor(1)}>Restart</button><button onClick={() => setReplayPlaying((value) => !value)}>{replayPlaying ? "Pause" : "Play"}</button><button onClick={() => setCursor((n) => Math.max(1, n - 1))}>◀</button><input aria-label="Replay candle cursor" type="range" min="1" max={state?.replay?.total ?? 1000} value={Math.min(cursor, state?.replay?.total ?? cursor)} onChange={(event) => setCursor(Number(event.target.value))} /><button disabled={!state?.replay?.has_next} onClick={() => setCursor((n) => n + 1)}>▶</button><select aria-label="Replay speed" value={replaySpeed} onChange={(event) => setReplaySpeed(Number(event.target.value))}>{[1, 2, 5, 10, 25, 100].map((value) => <option key={value} value={value}>{value === 100 ? "Maximum" : `${value}×`}</option>)}</select><span>Candle {state?.replay?.cursor ?? cursor} / {state?.replay?.total ?? "—"} · future bars hidden</span></div> : null}
         <div className="pa-chart-shell">
           <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{state?.mtf_policy?.label ?? "Native MTF context loading"}</span><span>{state?.data_provenance?.exchange ?? "Binance USDⓈ-M Futures"} · session {savedSession?.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{selectedMetrics ? `${pretty(activeStrategy)} · Net ${selectedMetrics.net_r.toFixed(2)}R · Execution R ${Number(selectedMetrics.gross_r ?? 0).toFixed(2)}R · Commission ${selectedMetrics.costs_r.toFixed(2)}R · ${selectedMetrics.wins}W/${selectedMetrics.losses}L · ${selectedMetrics.unfilled} unfilled` : `${pretty(activeStrategy)} · metric scope unavailable`}</span><span>{state?.snapshot?.structure_bias?.toUpperCase() ?? "NEUTRAL"}</span><b>{ready.length ? `${ready.length} READY` : "WAIT"}</b></div></div>

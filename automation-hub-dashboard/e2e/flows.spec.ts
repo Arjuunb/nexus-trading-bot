@@ -44,10 +44,10 @@ test("Price Action Visual Lab — public stream truth and protected paper modes"
   await expect(ticker).toHaveAttribute(
     "aria-label", /Live price .* candle closes in \d{2}:\d{2}/);
 
-  await page.getByLabel("Paper operating mode").selectOption("automatic");
+  // Picking the mode saves it; there is no separate Apply step.
   const [request] = await Promise.all([
     page.waitForRequest((row) => row.url().includes("/research/price-action/sessions/current/configuration") && row.method() === "POST"),
-    page.getByRole("button", { name: "Apply paper configuration" }).click(),
+    page.getByLabel("Paper operating mode").selectOption("automatic"),
   ]);
   expect(request.postDataJSON().operating_mode).toBe("automatic");
   await expect(page.locator(".toast.success")).toBeVisible();

@@ -18,7 +18,7 @@ test("PA failed refresh replaces cached healthy labels with a blocked error", as
   await expect(page.locator(".pa-stream-truth")).toContainText("entries PAUSED");
 });
 
-test("SMC saves timeframe first, keeps saved risk/mode, and clears old candles", async ({ page }) => {
+test("SMC saves a mode change at once; a timeframe switch then carries the saved mode and clears old candles", async ({ page }) => {
   await mockApi(page);
   let session = structuredClone(SMC_PAPER.session);
   const changes: any[] = [];
@@ -45,16 +45,21 @@ test("SMC saves timeframe first, keeps saved risk/mode, and clears old candles",
   await page.goto("/#/smc-strategy-lab");
   await expect(page.locator(".smc-chart-canvas")).toBeVisible();
   await page.getByLabel("Paper operating mode").selectOption("automatic");
+  // Saved the moment it is picked -- no Apply press, no unsaved draft.
+  await expect.poll(() => changes.length).toBe(1);
+  expect(changes[0]).toMatchObject({ timeframe: "5m", operating_mode: "automatic", risk_pct: .5 });
   await page.locator(".pa-timeframes").getByRole("button", { name: "15m", exact: true }).click();
   await expect(page.locator(".smc-chart-canvas")).toHaveCount(0);
   await expect(page.locator(".smc-chart-canvas")).toBeVisible();
-  expect(changes).toHaveLength(1);
-  expect(changes[0]).toMatchObject({ timeframe: "15m", operating_mode: "signals_only", risk_pct: .5 });
+  expect(changes).toHaveLength(2);
+  // The switch resends what is SAVED, including the mode saved a moment ago.
+  expect(changes[1]).toMatchObject({ timeframe: "15m", operating_mode: "automatic", risk_pct: .5,
+    model_id: "SMC_M1_SWEEP_REVERSAL" });
   expect(mismatches).toEqual([]);
   expect(errors).toEqual([]);
   await expect(page.locator(".pa-error")).toHaveCount(0);
   await page.getByRole("button", { name: "Frozen review", exact: true }).click();
-  expect(changes).toHaveLength(1); // review is read-only, never a session mutation
+  expect(changes).toHaveLength(2); // review is read-only, never a session mutation
 });
 
 test("SMC rejected market change retains the saved chart and explains why", async ({ page }) => {
