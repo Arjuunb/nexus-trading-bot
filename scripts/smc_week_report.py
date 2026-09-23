@@ -83,6 +83,11 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
         return ["The SMC lab has not judged a single closed candle yet."], \
             ["NOTHING JUDGED: the lab has never evaluated a candle, so it could not trade."]
     session, symbol, timeframe = latest["session_id"], latest["symbol"], latest["timeframe"]
+    saved = lab.execute("SELECT timeframe FROM smc_sessions WHERE id=?", (session,)).fetchone()
+    # The session's saved timeframe, not the latest row's: the chart's
+    # timeframe buttons change the SESSION, so rows of several timeframes can
+    # sit in one session and must not be counted as one candle series.
+    timeframe = (saved["timeframe"] if saved else None) or timeframe
     step = timedelta(minutes=TF_MINUTES.get(str(timeframe), 5))
 
     entry = lab.execute(
@@ -104,14 +109,20 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
 
     # Times are compared as datetimes here, never as text in SQL: a stored
     # "2026-09-16 18:35" sorts before "2026-09-16T18:30" and would vanish.
-    recorded = sorted(
-        ((t, row["state"], json.loads(row["missing_conditions_json"] or "[]"),
-          str(row["candle_time"]), str(row["created_at"]))
-         for row in lab.execute(
-             "SELECT candle_time, state, missing_conditions_json, created_at FROM smc_evaluations "
-             "WHERE session_id=?", (session,))
-         if (t := _when(row["candle_time"])) is not None and t > since),
-        key=lambda item: (item[0], item[4]))
+    other_timeframes: Counter = Counter()
+    recorded = []
+    for row in lab.execute(
+            "SELECT candle_time, timeframe, state, missing_conditions_json, created_at "
+            "FROM smc_evaluations WHERE session_id=?", (session,)):
+        moment = _when(row["candle_time"])
+        if moment is None or moment <= since:
+            continue
+        if row["timeframe"] != timeframe:
+            other_timeframes[row["timeframe"]] += 1
+            continue
+        recorded.append((moment, row["state"], json.loads(row["missing_conditions_json"] or "[]"),
+                         str(row["candle_time"]), str(row["created_at"])))
+    recorded.sort(key=lambda item: (item[0], item[4]))
     # One judgement per candle is the lab's own rule (its idempotency key is
     # the candle time). The key is the timestamp TEXT, so the same candle
     # written in two formats would be judged twice; count candles, not rows,
@@ -189,6 +200,22 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
     for moment in sorted(future)[-5:]:
         lines.append(f"  future: {moment.isoformat()}")
 
+    lines.append("")
+    lines.append(f"== OTHER TIMEFRAMES JUDGED IN THIS SESSION SINCE: "
+                 f"{dict(other_timeframes) or 'none'} ==")
+    changed_after = (_when(entry["created_at"]) if entry else None) or since
+    changes = [row for row in lab.execute(
+        "SELECT created_at, payload FROM smc_activity "
+        "WHERE session_id=? AND kind='session_configuration_changed'", (session,))
+        if (_when(row["created_at"]) or changed_after) > changed_after]
+    changes.sort(key=lambda row: str(row["created_at"]))
+    lines.append(f"== SESSION CONFIGURATION CHANGES SINCE THE ENTRY: {len(changes)} ==")
+    for row in changes[-20:]:
+        change = json.loads(row["payload"] or "{}")
+        lines.append(f"  {_short(_when(row['created_at']))} UTC  {change.get('symbol')} "
+                     f"{change.get('timeframe')}  mode={change.get('operating_mode')}  "
+                     f"model={change.get('model_id')}  risk={change.get('risk_pct')}%")
+
     candidates = Counter(row["status"] for row in lab.execute(
         "SELECT status, created_at FROM smc_candidates WHERE session_id=?", (session,))
         if (_when(row["created_at"]) or staged_after) > staged_after)
@@ -228,6 +255,12 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
                        "entry: before that the agent was not deciding for this lab.")
     if near:
         verdict.append(f"{len(near)} candle(s) came within one or two conditions of a setup.")
+    if other_timeframes:
+        verdict.append(
+            "The session was switched to another timeframe for part of this period "
+            f"({', '.join(f'{count} {name} candles' for name, count in other_timeframes.items())}). "
+            "On the SMC Strategy Lab page the chart's timeframe buttons change the TRADING "
+            "session, not just the chart. See SESSION CONFIGURATION CHANGES for when.")
     if repeated or off_grid or future:
         verdict.append(
             f"DATA CHECK FAILED: {len(repeated)} candle(s) were judged more than once, {len(off_grid)} "
