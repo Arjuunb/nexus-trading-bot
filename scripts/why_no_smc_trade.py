@@ -7,10 +7,16 @@ without the app's virtualenv.
 
     cd /opt/nexus-trading-bot && python3 scripts/why_no_smc_trade.py
 
-It asks the running server, never a second copy of the app: a
-"docker compose exec app python" that imports webhook_api builds a fresh
-process with its own state, and reading that process has already produced a
-wrong diagnosis once.
+The app container publishes nothing to the host (compose says "expose: 8000",
+not "ports"), so from a host shell 127.0.0.1:8000 is refused. When that
+happens the script re-runs itself inside the app container, where the port is
+reachable -- the same transport scripts/triage_paper_orders.sh uses. Set
+HUB_URL to skip that, e.g. HUB_URL=https://trade-logx.com from a workstation.
+
+Either way it only makes HTTP requests to the running server. It never
+imports the app: a "docker compose exec app python" that imports webhook_api
+builds a fresh process with its own state, and reading that process has
+already produced a wrong diagnosis once.
 
 Every possible answer comes from a rule in the code, checked in this order:
 
@@ -27,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -34,6 +41,7 @@ from collections import Counter
 from datetime import datetime, timezone
 
 BASE = os.environ.get("HUB_URL", "http://127.0.0.1:8000").rstrip("/")
+IN_CONTAINER = "SMC_PROBE_IN_CONTAINER"
 OPEN_ORDER_STATUSES = {"open", "partially_filled", "triggered"}
 
 
@@ -226,6 +234,26 @@ def diagnose(status: dict, agent: dict, paper: dict, policy: dict) -> tuple[list
     return lines, verdict
 
 
+def _rerun_in_app_container() -> int | None:
+    """Run this same file inside the app container; None if that is not possible."""
+    if os.environ.get(IN_CONTAINER) or "HUB_URL" in os.environ:
+        return None
+    here = os.path.abspath(__file__)
+    if not os.path.isfile(here):
+        return None
+    repo = os.path.dirname(os.path.dirname(here))
+    print(f"({BASE} is not published on this host; asking from inside the app container)",
+          flush=True)
+    try:
+        with open(here, "rb") as source:
+            return subprocess.run(
+                ["docker", "compose", "exec", "-T", "-e", f"{IN_CONTAINER}=1",
+                 "app", "python", "-"],
+                stdin=source, cwd=repo, check=False).returncode
+    except OSError:
+        return None
+
+
 def main() -> int:
     try:
         agent = get("/research/smc/agent?limit=500")
@@ -234,6 +262,9 @@ def main() -> int:
         print(f"FAIL: {exc.code} from {exc.url}: {exc.read()[:300]!r}")
         return 2
     except (urllib.error.URLError, OSError) as exc:
+        rerun = _rerun_in_app_container()
+        if rerun is not None:
+            return rerun
         print(f"FAIL: cannot reach {BASE}: {exc}")
         return 2
     status: dict = {}
