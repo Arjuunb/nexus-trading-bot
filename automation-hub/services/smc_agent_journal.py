@@ -221,6 +221,33 @@ class SMCAgentJournal:
           BEGIN SELECT RAISE(ABORT,
             'agent journal is append-only: agent_trades cannot be deleted'); END;
         """)
+
+        # Stop moves are their own history, never an edit of the trade.
+        # agent_trades_plan_is_fixed forbids changing a trade's stop for
+        # exactly the right reason: the plan it was opened on is the thing
+        # the review judges it against. So a breakeven move or a trail is
+        # recorded as an event beside the trade, and the trade keeps saying
+        # what it was opened on. Reading them together gives the whole life
+        # of the position; reading the trade alone still gives the promise.
+        c.executescript("""
+        CREATE TABLE IF NOT EXISTS agent_stop_moves(
+            id TEXT PRIMARY KEY, trade_id TEXT NOT NULL, at TEXT NOT NULL,
+            candle_time TEXT, symbol TEXT NOT NULL,
+            from_price REAL NOT NULL, to_price REAL NOT NULL,
+            reason_code TEXT NOT NULL, reason TEXT NOT NULL,
+            progress_r REAL, applied INTEGER NOT NULL DEFAULT 1,
+            error TEXT);
+        CREATE INDEX IF NOT EXISTS agent_stop_moves_by_trade
+            ON agent_stop_moves(trade_id, at);
+        CREATE TRIGGER IF NOT EXISTS agent_stop_moves_no_update
+          BEFORE UPDATE ON agent_stop_moves
+          BEGIN SELECT RAISE(ABORT,
+            'agent journal is append-only: a stop move cannot be changed'); END;
+        CREATE TRIGGER IF NOT EXISTS agent_stop_moves_no_delete
+          BEFORE DELETE ON agent_stop_moves
+          BEGIN SELECT RAISE(ABORT,
+            'agent journal is append-only: a stop move cannot be deleted'); END;
+        """)
         c.commit()
 
     # ----------------------------------------------------------- decisions
@@ -378,6 +405,39 @@ class SMCAgentJournal:
         return out
 
     # ------------------------------------------------------------- reviews
+    # --------------------------------------------------------- stop moves
+    def record_stop_move(self, *, trade_id: str, symbol: str, from_price: float,
+                         to_price: float, reason_code: str, reason: str,
+                         candle_time: str = "", progress_r: Optional[float] = None,
+                         applied: bool = True, error: str = "",
+                         at: Optional[str] = None) -> str:
+        """One stop move, applied or attempted.
+
+        A move that failed to reach the book is recorded too, with applied=0
+        and the error. Dropping it would leave the journal claiming a stop the
+        position does not have, which is worse than recording the failure.
+        """
+        if not reason_code or not reason:
+            raise ValueError("a stop move must say why")
+        row_id = _id()
+        self._db.execute(
+            "INSERT INTO agent_stop_moves VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (row_id, trade_id, at or _now(), candle_time, symbol,
+             float(from_price), float(to_price), reason_code, reason,
+             progress_r, 1 if applied else 0, error[:500]))
+        self._commit()
+        return row_id
+
+    def stop_moves(self, *, trade_id: str = "", limit: int = 500) -> list[dict]:
+        q = "SELECT * FROM agent_stop_moves"
+        args: list = []
+        if trade_id:
+            q += " WHERE trade_id=?"
+            args.append(trade_id)
+        q += " ORDER BY at DESC LIMIT ?"
+        args.append(int(limit))
+        return [dict(row) for row in self._db.execute(q, args)]
+
     def record_review(self, *, trade_id: str, verdict: str, followed_rules: bool,
                       why: str, did_well: Iterable[str] = (),
                       did_badly: Iterable[str] = (),

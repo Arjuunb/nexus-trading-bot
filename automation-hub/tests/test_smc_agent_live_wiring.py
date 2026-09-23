@@ -769,3 +769,373 @@ def test_a_healthy_transport_reports_both_channels_connected(tmp_path, monkeypat
 
     assert diagnostics["channels"] == {"market": "CONNECTED", "public": "CONNECTED"}
     assert diagnostics["transport_failing_dependency"] is None
+
+
+# ─────────────────────────────── in-trade stops ───────────────────────────
+from services.smc_agent_trade_manager import TradeManagementPolicy  # noqa: E402
+
+MANAGING = TradeManagementPolicy(enabled=True, breakeven_at_r=1.0)
+
+
+def managed_lab(tmp_path, monkeypatch, *, policy=MANAGING, **kwargs):
+    """A lab whose runtime manages open positions."""
+    lab = build(tmp_path, monkeypatch, **kwargs)
+    lab.runtime.trade_policy = policy.validated()
+    return lab
+
+
+def test_management_is_off_unless_it_is_asked_for(tmp_path, monkeypatch):
+    """It changes which trades scratch and which run. Nobody inherits that
+    by upgrading."""
+    lab = build(tmp_path, monkeypatch)
+
+    assert lab.runtime.trade_policy.enabled is False
+
+
+def test_a_stale_feed_moves_no_stop(tmp_path, monkeypatch):
+    """Fail-closed in the same direction as every other gate: an unreliable
+    feed is not a licence to move a stop on a price nobody trusts."""
+    lab = managed_lab(tmp_path, monkeypatch)
+
+    moves = lab.runtime._manage_open_trades(
+        {"market_data_health": {"reliable": False}},
+        {"candles": [{"high": 200.0, "low": 100.0, "close": 199.0}]})
+
+    assert moves == []
+
+
+def test_no_open_trade_means_no_move(tmp_path, monkeypatch):
+    lab = managed_lab(tmp_path, monkeypatch)
+
+    moves = lab.runtime._manage_open_trades(
+        {"market_data_health": {"reliable": True}},
+        {"candles": [{"high": 200.0, "low": 100.0, "close": 199.0}]})
+
+    assert moves == []
+
+
+def test_the_forming_candle_is_never_an_execution_input(tmp_path, monkeypatch):
+    """_closed_candles reads the reconciled visual, which carries closed
+    candles only. A malformed row yields nothing rather than a guess."""
+    lab = managed_lab(tmp_path, monkeypatch)
+
+    assert lab.runtime._closed_candles({"candles": []}, 3) == []
+    assert lab.runtime._closed_candles({}, 3) == []
+    assert lab.runtime._closed_candles(
+        {"candles": [{"high": 1.0, "low": None, "close": 1.0}]}, 3) == []
+
+
+def _with_position(lab, monkeypatch, trade, *, stop=None):
+    """Present the open position the broker would hold for this trade.
+
+    The position is injected at the account's own state() seam rather than
+    filled through the book: this fixture's synthetic evaluation carries 2025
+    timestamps while the candle clock is 2026, so the staged entry expires
+    before it can fill, and reworking that time model is a different change.
+
+    What these tests cover is the WIRING -- journal read, position read, move
+    computed, book called, journal written. The arithmetic that decides the
+    move is covered against real numbers in
+    tests/test_smc_agent_trade_manager.py, which needs no lab at all.
+    """
+    real_state = lab.runtime.account.state
+    position = {"symbol": trade["symbol"], "side": "buy",
+                "size": float(trade["size"]), "entry_price": float(trade["entry"]),
+                "stop_loss": float(trade["stop"] if stop is None else stop),
+                "take_profit": float(trade["target"])}
+
+    def state(*args, **kwargs):
+        out = dict(real_state(*args, **kwargs))
+        out["positions"] = [dict(position)]
+        return out
+
+    monkeypatch.setattr(lab.runtime.account, "state", state)
+    return position
+
+
+def _reached_one_r(trade):
+    """A closed candle that took the trade a full R in favour and held it.
+
+    The close sits just short of the extreme rather than back at entry: a
+    candle closing exactly at entry would put a breakeven stop on top of the
+    price, and the manager refuses that on purpose -- sending it would close
+    the position at the next tick and record it as a stop-out.
+    """
+    entry, stop = float(trade["entry"]), float(trade["stop"])
+    risk = abs(entry - stop)
+    long = str(trade["direction"]) in {"bullish", "buy", "long"}
+    extreme = entry + risk if long else entry - risk
+    close = entry + risk * 0.9 if long else entry - risk * 0.9
+    return {"candles": [{"high": max(entry, extreme), "low": min(entry, extreme),
+                         "close": close}]}
+
+
+RELIABLE = {"market_data_health": {"reliable": True}}
+
+
+def test_a_real_breakeven_move_reaches_the_book_and_the_journal(tmp_path, monkeypatch):
+    """The whole path: an open agent trade a full R in profit has its stop
+    moved to entry, the move reaches the book, and the journal records it
+    without touching the trade it was opened on."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    _with_position(lab, monkeypatch, trade)
+    sent: list = []
+    monkeypatch.setattr(lab.runtime, "_move_stop",
+                        lambda symbol, stop_loss: sent.append((symbol, stop_loss)))
+    entry, original_stop = float(trade["entry"]), float(trade["stop"])
+
+    moves = lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade))
+
+    assert len(moves) == 1, moves
+    assert moves[0]["applied"] is True
+    assert moves[0]["to_price"] == pytest.approx(entry)
+    assert sent == [("BTCUSDT", pytest.approx(entry))], "the book was not told"
+
+    recorded = lab.journal.stop_moves(trade_id=trade["id"])
+    assert len(recorded) == 1
+    assert recorded[0]["reason_code"] == "BREAKEVEN"
+    assert recorded[0]["to_price"] == pytest.approx(entry)
+    assert recorded[0]["from_price"] == pytest.approx(original_stop)
+    assert recorded[0]["applied"] == 1
+    # The trade still says what it was opened on.
+    assert float(lab.journal.trade(trade["id"])["stop"]) == pytest.approx(original_stop)
+
+
+def test_the_same_move_is_not_reapplied_every_candle(tmp_path, monkeypatch):
+    """Once the stop sits at breakeven the candidate equals the current stop,
+    which is not a favourable move -- so a quiet market does not produce one
+    journal row per candle for the rest of the trade."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    # The stop has already been moved to entry by an earlier candle.
+    _with_position(lab, monkeypatch, trade, stop=float(trade["entry"]))
+    monkeypatch.setattr(lab.runtime, "_move_stop", lambda *a, **k: None)
+
+    assert lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade)) == []
+    assert lab.journal.stop_moves(trade_id=trade["id"]) == []
+
+
+def test_a_failed_book_move_is_journalled_rather_than_hidden(tmp_path, monkeypatch):
+    """A journal claiming a stop the position does not have is worse than a
+    journal recording that the move failed."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    _with_position(lab, monkeypatch, trade)
+
+    def refuse(*_args, **_kwargs):
+        raise RuntimeError("broker refused")
+
+    monkeypatch.setattr(lab.runtime, "_move_stop", refuse)
+
+    moves = lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade))
+
+    assert moves[0]["applied"] is False
+    assert "broker refused" in moves[0]["error"]
+    recorded = lab.journal.stop_moves(trade_id=trade["id"])
+    assert recorded[0]["applied"] == 0
+    assert "broker refused" in recorded[0]["error"]
+
+
+def test_a_stop_is_never_widened_through_the_live_path(tmp_path, monkeypatch):
+    """The guard that matters, asserted through the wiring rather than only
+    against the pure function: a position whose stop has already trailed past
+    entry is not dragged back down to breakeven."""
+    lab = managed_lab(tmp_path, monkeypatch)
+    lab.runtime.tick()
+    trade = lab.journal.trades(open_only=True)[0]
+    entry, risk = float(trade["entry"]), abs(float(trade["entry"]) - float(trade["stop"]))
+    _with_position(lab, monkeypatch, trade, stop=entry + risk * 0.5)
+    monkeypatch.setattr(lab.runtime, "_move_stop", lambda *a, **k: None)
+
+    assert lab.runtime._manage_open_trades(RELIABLE, _reached_one_r(trade)) == []
+
+
+# ────────────────────────────── context vetoes ────────────────────────────
+from services.smc_agent import Gate  # noqa: E402
+from services.smc_agent_context import ContextPolicy  # noqa: E402
+from services.smc_agent_journal import REJECTED as REJECTED_OUTCOME  # noqa: E402
+
+
+def test_context_rules_are_off_unless_asked_for(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+
+    assert lab.runtime.context_policy.enabled is False
+    assert lab.runtime._context_gates({"candles": []}) == []
+
+
+def test_a_context_veto_places_nothing_and_is_recorded_as_rejected(
+        tmp_path, monkeypatch):
+    """The distinction that matters in the journal: this is the agent
+    choosing not to trade, not the agent failing to. REJECTED, not MISSED."""
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.context_policy = ContextPolicy(
+        enabled=True, allowed_hours_utc=((0, 1),)).validated()
+    # Force the session hours gate to fail whatever the wall clock says.
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="session_hours", passed=False,
+             detail="03:00 UTC is outside the traded session")])
+
+    lab.runtime.tick()
+
+    assert lab.strategy_orders() == [], "a vetoed setup placed an order"
+    decisions = lab.decisions()
+    assert decisions[0]["outcome"] == REJECTED_OUTCOME
+    assert decisions[0]["reason_code"] == "SESSION_HOURS"
+    assert "outside the traded session" in decisions[0]["reason"]
+
+
+def test_a_context_veto_outranks_a_plan_gate_in_the_recorded_reason(
+        tmp_path, monkeypatch):
+    """A trader who has hit their daily stop did not skip the setup because
+    of its geometry, and the journal should not say they did."""
+    lab = build(tmp_path, monkeypatch,
+                evaluation=plan_with(entry_ready(), target_2=101.5))  # thin RR
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="daily_loss_cap", passed=False,
+             detail="the day is at -2.10R against a -2.00R stop")])
+
+    lab.runtime.tick()
+
+    decisions = lab.decisions()
+    assert decisions[0]["reason_code"] == "DAILY_LOSS_CAP"
+    assert lab.strategy_orders() == []
+
+
+def test_a_passing_context_gate_cannot_clear_a_failing_plan_gate(
+        tmp_path, monkeypatch):
+    """Context can only ever ADD a veto. A rule that passed contributes
+    nothing, and must not rescue a plan the agent's own gates refused."""
+    lab = build(tmp_path, monkeypatch,
+                evaluation=plan_with(entry_ready(), target_2=101.5))  # below 3R
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="daily_loss_cap", passed=True, detail="the day is at +1.00R")])
+
+    lab.runtime.tick()
+
+    assert lab.strategy_orders() == []
+    assert lab.decisions()[0]["outcome"] == REJECTED_OUTCOME
+    assert lab.decisions()[0]["reason_code"] == "MINIMUM_REWARD_TO_RISK"
+
+
+def test_context_gates_that_all_pass_leave_the_trade_alone(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+    monkeypatch.setattr(lab.runtime, "_context_gates", lambda visual: [
+        Gate(name="session_hours", passed=True, detail="12:00 UTC is inside"),
+        Gate(name="daily_loss_cap", passed=True, detail="the day is at +0.00R")])
+
+    lab.runtime.tick()
+
+    assert len(lab.strategy_orders()) == 1
+    assert lab.decisions()[0]["outcome"] == TAKEN
+
+
+def test_an_unreadable_journal_yields_no_context_verdict(tmp_path, monkeypatch):
+    """A context rule that cannot see its inputs must not invent one. The
+    plan gates still apply, so the failure direction is safe."""
+    lab = build(tmp_path, monkeypatch)
+    lab.runtime.context_policy = ContextPolicy(
+        enabled=True, max_consecutive_losses=2).validated()
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("journal unavailable")
+
+    monkeypatch.setattr(lab.runtime.agent.journal, "trades", broken)
+
+    assert lab.runtime._context_gates({"candles": []}) == []
+
+
+# ──────────────────────────── the frozen session ──────────────────────────
+from services.smc_agent_runtime import LIVE_SESSION_MODE  # noqa: E402
+
+
+def test_a_live_session_gets_no_extra_blocker(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+
+    status = lab.runtime.bot_status()
+
+    assert status["session_mode"] == LIVE_SESSION_MODE
+    assert not any("Frozen review" in row for row in status["blockers"])
+
+
+def test_a_frozen_session_says_so_instead_of_looking_broken(tmp_path, monkeypatch):
+    """The failure this exists for: a HISTORICAL session never ticks, so it
+    reports a disconnected feed, no candles and no decisions -- identical to
+    a dead venue. It is switched off, not broken, and must say which."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+
+    status = lab.runtime.bot_status()
+
+    assert status["session_mode"] == "HISTORICAL"
+    frozen = [row for row in status["blockers"] if "Frozen review" in row]
+    assert len(frozen) == 1, status["blockers"]
+    assert "does not tick" in frozen[0]
+    assert "Switch the session to Live paper" in frozen[0]
+
+
+def test_the_frozen_blocker_is_not_added_twice(tmp_path, monkeypatch):
+    """Polling cannot duplicate it -- the list is rebuilt from the lab on
+    every call -- so the case the guard actually covers is the lab already
+    reporting the same blocker itself."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+    seen = lab.runtime.bot_status()
+    already = [row for row in seen["blockers"] if "Frozen review" in row][0]
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status(blockers=[already]))
+
+    status = lab.runtime.bot_status()
+
+    assert len([r for r in status["blockers"] if "Frozen review" in r]) == 1
+
+
+def test_the_labs_own_blockers_are_never_mutated(tmp_path, monkeypatch):
+    """The blocker list is copied before appending. Appending in place would
+    accumulate one frozen blocker per poll inside the lab's own state."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+    # Non-empty on purpose: an empty list is replaced by `or []` before the
+    # append is reached, so an empty fixture cannot reach the guard at all.
+    owned: list[str] = ["market data is not synchronized"]
+    monkeypatch.setattr(SMCStrategyLabRuntime, "bot_status",
+                        lambda self: _lab_status(blockers=owned))
+
+    lab.runtime.bot_status()
+    lab.runtime.bot_status()
+
+    assert owned == ["market data is not synchronized"], \
+        "the lab's own blocker list was appended to"
+
+
+def test_naming_the_frozen_mode_cannot_let_it_trade(tmp_path, monkeypatch):
+    """Observability only. A frozen session stays blocked and unarmed."""
+    lab = build(tmp_path, monkeypatch)
+    real = lab.runtime.account.session
+    monkeypatch.setattr(lab.runtime.account, "session",
+                        lambda: {**(real() or {}), "mode": "HISTORICAL"})
+
+    status = lab.runtime.bot_status()
+
+    assert status["execution_state"] != "RUNNING_ARMED"
+    assert status["execution_armed"] is False
+
+
+def test_the_live_mode_constant_matches_the_labs_own_gate(tmp_path):
+    """If the lab ever renames its mode, this must fail rather than leave the
+    blocker silently attached to every healthy session."""
+    from pathlib import Path
+
+    lab_source = (Path(__file__).resolve().parents[1] / "services"
+                  / "smc_strategy_lab.py").read_text()
+
+    assert f'current.get("mode") == "{LIVE_SESSION_MODE}"' in lab_source

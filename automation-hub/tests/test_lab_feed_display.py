@@ -20,6 +20,38 @@ def healthy():
                 candle_age_seconds=0.1, health_reason="fresh")
 
 
+def test_deployed_agent_policies_and_display_exist_before_worker_start(monkeypatch):
+    from services.smc_agent_context import ContextPolicy
+    from services.smc_agent_memory import MemoryPolicy
+    from services.smc_agent_trade_manager import TradeManagementPolicy
+    from services.smc_strategy_lab import SMCStrategyLabRuntime
+
+    trade = TradeManagementPolicy(enabled=True, breakeven_at_r=1.5)
+    context = ContextPolicy(enabled=True, daily_loss_cap_r=2.0)
+    memory = MemoryPolicy(enabled=True, min_sample=30)
+    agent = object()
+    starts = []
+
+    def start_parent(runtime, market, account, **kwargs):
+        # The real parent may start tick() immediately. All merged subclass
+        # state must be ready, with supplied policies retained, at this point.
+        assert runtime.agent is agent
+        assert runtime.trade_policy == trade
+        assert runtime.context_policy == context
+        assert runtime.memory_policy == memory
+        assert isinstance(runtime._display, SMCLabDisplay)
+        assert runtime._agent_lock.acquire(blocking=False)
+        runtime._agent_lock.release()
+        assert not getattr(runtime._capture, "armed", False)
+        starts.append(kwargs["autostart"])
+
+    monkeypatch.setattr(SMCStrategyLabRuntime, "__init__", start_parent)
+    AgentSMCStrategyLabRuntime(None, None, agent=agent, trade_policy=trade,
+                              context_policy=context, memory_policy=memory,
+                              autostart=True)
+    assert starts == [True]  # one parent initialization, never two workers
+
+
 def test_current_receipts_replace_cached_stale_verdict_without_mutating_it():
     old = dict(state="STALE_CANDLES", reliable=False, failing_dependency="BINANCE_USDM_KLINE_STREAM", candle_age_seconds=32)
     result = current_health(old, healthy())

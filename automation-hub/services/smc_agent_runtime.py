@@ -41,14 +41,24 @@ unavailable.
 from __future__ import annotations
 
 import threading
+from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Optional
 
 from services.smc_agent import SizingInputs
+from services.smc_agent_context import ContextPolicy, context_gates
+from services.smc_agent_memory import MemoryPolicy, memory_gates
+from services.smc_agent_trade_manager import (Candle, OpenTrade,
+                                              TradeManagementPolicy,
+                                              plan_stop_move)
 from services.smc_strategy_lab import SMCPaperAccount, SMCStrategyLabRuntime
 
 #: The one saved operating mode in which an approver decides. See the module
 #: docstring: this is a property of the lab, not a new mode.
+#: The one session mode in which SMCStrategyLabRuntime._run calls tick().
+#: A HISTORICAL session is frozen on purpose and never reaches the runtime.
+LIVE_SESSION_MODE = "LIVE_PAPER"
+
 AGENT_APPROVAL_MODE = "manual_approval"
 
 #: The lab's control-plane view treats "not automatic" as a reason execution
@@ -103,12 +113,30 @@ class AgentGatedSMCPaperAccount(SMCPaperAccount):
 class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
     """The lab runtime with the independent SMC agent attached downstream."""
 
-    def __init__(self, market, account: SMCPaperAccount, *, agent=None, **kwargs):
+    def __init__(self, market, account: SMCPaperAccount, *, agent=None,
+                 trade_policy: Optional[TradeManagementPolicy] = None,
+                 context_policy: Optional[ContextPolicy] = None,
+                 memory_policy: Optional[MemoryPolicy] = None, **kwargs):
         from services.smc_lab_display import SMCLabDisplay
         self._display = SMCLabDisplay()
         #: The independent agent. ``None`` means the runtime behaves exactly
         #: like the lab runtime it inherits from.
         self.agent = agent
+        #: How open positions are managed. Off unless asked for: breakeven and
+        #: trailing change which trades scratch and which run, so enabling
+        #: them is a change to the result distribution and a hypothesis to
+        #: backtest -- not a default anyone should inherit silently.
+        self.trade_policy = (trade_policy or TradeManagementPolicy()).validated()
+        #: Which setups to stand aside from regardless of their own merits.
+        #: Off by default for the same reason: every rule reduces trade count,
+        #: and a filter that removes losers on one sample and winners on the
+        #: next is the easiest thing here to fool yourself with.
+        self.context_policy = (context_policy or ContextPolicy()).validated()
+        #: Whether the agent reads its own history before deciding. Off by
+        #: default and the most cautious of the three: a small sample will
+        #: always show a pattern, so the rule refuses to speak below its
+        #: sample floor rather than guessing early.
+        self.memory_policy = (memory_policy or MemoryPolicy()).validated()
         # The agent step runs after the parent tick has released its own lock,
         # so it needs its own. Non-blocking for the same reason the parent's
         # is: a slow tick must not queue up the poll loop behind it.
@@ -206,6 +234,14 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
                 return result
             agent_result = self._run_agent(result, self._capture.visual)
             self.last_agent_result = agent_result
+            # Management runs AFTER the entry decision and on the same closed
+            # candle. An open position is managed whether or not this tick
+            # produced a new signal, so it cannot be starved by a quiet
+            # market -- which is exactly when a runner needs trailing.
+            managed = self._manage_open_trades(result, self._capture.visual)
+            if managed:
+                agent_result = {**agent_result, "managed": managed}
+                self.last_agent_result = agent_result
             return {**result, "agent": agent_result}
         finally:
             self._capture.visual = None
@@ -242,6 +278,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
             view.last_market_health = current_health(self.last_market_health, raw)
         status = SMCStrategyLabRuntime.bot_status(view)
         self._attach_transport_diagnostics(status)
+        self._attach_session_mode(status)
         approver = self.agent_is_approver()
         status["agent"] = {
             "attached": self.agent is not None,
@@ -264,6 +301,49 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         return status
 
     # -------------------------------------------------------- diagnostics
+    def _attach_session_mode(self, status: dict) -> None:
+        """Name the one state in which the runtime deliberately never ticks.
+
+        The lab's worker loop runs the tick only for a LIVE_PAPER session:
+
+            if current and current.get("mode") == "LIVE_PAPER":
+                self.tick()
+
+        A HISTORICAL session -- "Frozen review" in the UI -- therefore spins
+        the loop forever doing nothing. That is correct: a frozen session is
+        not supposed to trade. What is not correct is that it is
+        indistinguishable from a fault. The stream is started BY the tick, so
+        a frozen session reports a disconnected feed, no candles, no
+        decisions, and the blocker "SMC market-data runtime has not
+        synchronized" -- which reads as something broken rather than
+        something switched off.
+
+        bot_status does not expose this mode at all: its "mode" key carries
+        operating_mode (automatic / manual_approval / signals_only), a
+        different field entirely. So there was no value anywhere in the
+        payload that could tell the two apart.
+
+        Read-only and additive. It names the state and adds a blocker that is
+        already true; it does not change execution_state, clear anything, or
+        let a frozen session trade.
+        """
+        try:
+            session = self.account.session() or {}
+        except Exception:  # pragma: no cover - defensive
+            return
+        mode = str(session.get("mode") or "")
+        status["session_mode"] = mode or None
+        if not mode or mode == LIVE_SESSION_MODE:
+            return
+        blocker = (f"this SMC session is in {mode} (Frozen review), so the live "
+                   "runtime does not tick: no candles are read, no decisions "
+                   "are made and the market-data stream is never opened. "
+                   "Switch the session to Live paper to run it.")
+        blockers = list(status.get("blockers") or [])
+        if blocker not in blockers:
+            blockers.append(blocker)
+        status["blockers"] = blockers
+
     def _attach_transport_diagnostics(self, status: dict) -> None:
         """Expose the per-channel socket truth the lab's feed block hides.
 
@@ -318,6 +398,157 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
             "last_error": transport.get("last_error"),
             "quotes_enabled": transport.get("quotes_enabled"),
         }
+
+    def _context_gates(self, visual: Optional[dict]) -> list:
+        """The context vetoes for this tick.
+
+        Returns nothing on any failure to read history or candles. A context
+        rule that cannot see its inputs must not invent a verdict, and the
+        direction of that failure is safe in both senses: the plan gates
+        below still apply, and the worst case is that the agent trades a
+        setup it would otherwise have stood aside from -- never that it takes
+        one the strategy did not offer.
+        """
+        if not (self.context_policy.enabled or self.memory_policy.enabled):
+            return []
+        journal = getattr(self.agent, "journal", None)
+        if journal is None:
+            return []
+        try:
+            closed_trades = journal.trades(closed_only=True, limit=500)
+        except Exception:
+            return []
+        now = datetime.now(timezone.utc)
+        gates = context_gates(closed_trades=closed_trades,
+                              candles=((visual or {}).get("candles") or []),
+                              now=now, policy=self.context_policy)
+        gates += memory_gates(closed_trades=closed_trades,
+                              setup_id=self._setup_id(visual),
+                              policy=self.memory_policy, hour=now.hour)
+        return gates
+
+    @staticmethod
+    def _setup_id(visual: Optional[dict]) -> str:
+        """The setup the strategy is offering, for the history lookup."""
+        evaluation = (visual or {}).get("source_strategy") or {}
+        proposal = evaluation.get("proposal") or {}
+        return str(evaluation.get("setup_id") or proposal.get("setup_id") or "")
+
+    # ------------------------------------------------------ in-trade stops
+    def _manage_open_trades(self, result: dict, visual: Optional[dict]) -> list[dict]:
+        """Move stops on positions the agent opened. Never widens one.
+
+        Fail-closed in the same direction as everything else: an unreliable
+        feed, a missing position, an unmeasurable risk or a policy that is off
+        all end in no move. The pure decision lives in
+        services/smc_agent_trade_manager.py; this is the part that reads live
+        state and writes.
+
+        Partials are deliberately absent. The lab already scales out half the
+        position at target_1 on the entry fill, driven by the plan the SMC
+        strategy produced. Taking another partial here would sell the same
+        position twice.
+        """
+        policy = self.trade_policy
+        journal = getattr(self.agent, "journal", None)
+        if not policy.enabled or self.agent is None or journal is None:
+            return []
+        health = result.get("market_data_health") or {}
+        if not health.get("reliable"):
+            return []
+        candles = self._closed_candles(visual, policy.trail_lookback)
+        if not candles:
+            return []
+        try:
+            open_trades = [row for row in journal.trades(open_only=True)
+                           if not row.get("closed_at")]
+        except Exception:
+            return []
+        if not open_trades:
+            return []
+        positions = {row["symbol"]: row for row in
+                     (self.account.state().get("positions") or [])}
+
+        moves: list[dict] = []
+        for trade in open_trades:
+            position = positions.get(trade.get("symbol"))
+            if not position or position.get("stop_loss") is None:
+                continue
+            try:
+                open_trade = OpenTrade(
+                    symbol=str(trade["symbol"]),
+                    side="buy" if str(trade.get("direction")) in
+                        {"bullish", "buy", "long"} else "sell",
+                    entry=float(trade["entry"]),
+                    original_stop=float(trade["stop"]),
+                    current_stop=float(position["stop_loss"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+            move = plan_stop_move(open_trade, candles, policy)
+            if move is None:
+                continue
+            moves.append(self._apply_stop_move(trade, open_trade, move, visual))
+        return moves
+
+    def _apply_stop_move(self, trade: dict, open_trade: OpenTrade,
+                         move, visual: Optional[dict]) -> dict:
+        """Send one move to the book and journal what happened either way.
+
+        A move that fails to reach the book is still recorded, with the error.
+        Dropping it would leave the journal claiming a stop the position does
+        not have.
+        """
+        applied, error = True, ""
+        try:
+            # Not SMCStrategyLabRuntime.set_protection: that method reaches
+            # for self.broker, self._audit and self._snapshot, none of which
+            # exist on the runtime, so calling it raises AttributeError. It
+            # sits in a PR6-pinned file and is not this change's to repair.
+            # The audit row and snapshot it MEANT to write are written here,
+            # against the account that actually owns them.
+            self._move_stop(open_trade.symbol, move.to_price)
+        except Exception as exc:
+            applied, error = False, f"{type(exc).__name__}: {exc}"
+        try:
+            self.agent.journal.record_stop_move(
+                trade_id=str(trade.get("id") or ""), symbol=open_trade.symbol,
+                from_price=open_trade.current_stop, to_price=move.to_price,
+                reason_code=move.reason, reason=move.detail,
+                candle_time=self._closed_candle_time(visual or {}),
+                progress_r=move.progress_r, applied=applied, error=error)
+        except Exception:
+            # The book move already happened or already failed; a journal
+            # that cannot record it must not also retry it.
+            pass
+        return {"trade_id": trade.get("id"), "to_price": move.to_price,
+                "reason": move.reason, "applied": applied, "error": error}
+
+    def _move_stop(self, symbol: str, stop_loss: float) -> dict:
+        """Move one position's stop, and leave the audit trail behind it."""
+        position = self.account.broker.set_protection(symbol, stop_loss=stop_loss)
+        self.account._audit("paper_position_protection_changed", object_id=symbol,
+                            payload={"stop_loss": stop_loss, "source": "smc_agent"})
+        self.account._snapshot()
+        return position
+
+    @staticmethod
+    def _closed_candles(visual: Optional[dict], lookback: int) -> list[Candle]:
+        """The last N CLOSED candles from the reconciled visual.
+
+        The forming candle is display-only everywhere in this system and must
+        not become an execution input, so it is never included: a stop trailed
+        off a candle that has not closed moves on noise that may not survive
+        the bar.
+        """
+        rows = ((visual or {}).get("candles") or [])[-max(1, lookback):]
+        out: list[Candle] = []
+        for row in rows:
+            try:
+                out.append(Candle(high=float(row["high"]), low=float(row["low"]),
+                                  close=float(row["close"])))
+            except (KeyError, TypeError, ValueError):
+                return []
+        return out
 
     # --------------------------------------------------------------- agent
     @staticmethod
@@ -418,6 +649,7 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
                 blocked_reason=blocked,
                 candle_time=self._closed_candle_time(visual or {}),
                 sizing_inputs=inputs,
+                context_gates=self._context_gates(visual),
                 executor=execute)
         except Exception as exc:  # noqa: BLE001 — a broken agent must not trade
             # Nothing was placed: in this mode the lab does not place orders,

@@ -131,3 +131,135 @@ def test_every_outcome_the_journal_defines_survives_the_endpoint(api):
     body = client.get("/research/smc/agent").json()
 
     assert body["decision_counts"] == {name: 1 for name in DECISION_OUTCOMES}
+
+
+# ──────────────────────────────── policy ──────────────────────────────────
+from dataclasses import asdict  # noqa: E402
+
+from services.smc_agent_context import ContextPolicy  # noqa: E402
+from services.smc_agent_memory import MemoryPolicy  # noqa: E402
+from services.smc_agent_policy_store import AgentPolicyStore  # noqa: E402
+from services.smc_agent_trade_manager import TradeManagementPolicy  # noqa: E402
+
+
+class FakeRuntime:
+    def __init__(self):
+        self.trade_policy = TradeManagementPolicy()
+        self.context_policy = ContextPolicy()
+        self.memory_policy = MemoryPolicy()
+
+
+@pytest.fixture()
+def policy_api(monkeypatch, tmp_path):
+    store = AgentPolicyStore(tmp_path / "policy.json")
+    runtime = FakeRuntime()
+    monkeypatch.setattr(webhook_api, "smc_agent_policies", store, raising=False)
+    monkeypatch.setattr(webhook_api, "smc_runtime", runtime, raising=False)
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app), store, runtime
+
+
+SECRET = {"x-webhook-secret": webhook_api.settings.admin_key}
+
+
+def test_every_rule_set_is_off_until_someone_turns_it_on(policy_api):
+    client, _, _ = policy_api
+
+    body = client.get("/research/smc/agent/policy").json()
+
+    assert body["trade_management"]["enabled"] is False
+    assert body["context"]["enabled"] is False
+    assert body["memory"]["enabled"] is False
+    assert "hypotheses to backtest" in body["note"]
+
+
+def test_saving_a_policy_needs_the_admin_key(policy_api):
+    """Everything else on the agent surface only reads. This changes how the
+    agent trades, so it is the one call that is protected."""
+    client, _, runtime = policy_api
+
+    refused = client.post("/research/smc/agent/policy",
+                          json={"trade_management": {"enabled": True}})
+
+    assert refused.status_code == 401
+    assert runtime.trade_policy.enabled is False
+
+
+def test_a_saved_policy_is_applied_to_the_running_agent(policy_api):
+    client, store, runtime = policy_api
+
+    saved = client.post("/research/smc/agent/policy", headers=SECRET, json={
+        "trade_management": {"enabled": True, "breakeven_at_r": 1.0,
+                             "trail_after_r": 2.0},
+        "context": {"enabled": True, "max_consecutive_losses": 3},
+        "memory": {"enabled": True, "min_sample": 25}})
+
+    assert saved.status_code == 200
+    assert saved.json()["applied"] is True
+    assert runtime.trade_policy.enabled is True
+    assert runtime.trade_policy.trail_after_r == 2.0
+    assert runtime.context_policy.max_consecutive_losses == 3
+    assert runtime.memory_policy.min_sample == 25
+    # And it survives a restart.
+    assert store.load()["memory"].min_sample == 25
+
+
+def test_a_rejected_value_changes_neither_the_file_nor_the_agent(policy_api):
+    """Validation happens before anything is written. A policy that is half
+    applied is one nobody can reason about."""
+    client, store, runtime = policy_api
+    client.post("/research/smc/agent/policy", headers=SECRET,
+                json={"context": {"enabled": True, "max_consecutive_losses": 3}})
+
+    refused = client.post("/research/smc/agent/policy", headers=SECRET, json={
+        "trade_management": {"enabled": True},
+        "context": {"enabled": True, "max_consecutive_losses": 3},
+        "memory": {"enabled": True, "min_sample": 2}})     # below the floor
+
+    assert refused.status_code == 400
+    assert "anecdote" in refused.json()["detail"]
+    assert runtime.trade_policy.enabled is False, "a rejected save was applied"
+    assert store.load()["context"].max_consecutive_losses == 3
+
+
+def test_the_endpoint_reports_the_running_policy_not_the_saved_file(policy_api):
+    """A file the runtime never picked up must not read back as in force."""
+    client, store, runtime = policy_api
+    store.save({"trade_management": {"enabled": True}, "context": {}, "memory": {}})
+
+    body = client.get("/research/smc/agent/policy").json()
+
+    assert body["trade_management"]["enabled"] is False
+
+
+def test_an_unreadable_policy_file_falls_back_to_everything_off(tmp_path):
+    """A policy store that could fail open would be a way to turn a trading
+    behaviour on by corrupting a file."""
+    path = tmp_path / "broken.json"
+    path.write_text("{ this is not json")
+
+    loaded = AgentPolicyStore(path).load()
+
+    assert [policy.enabled for policy in loaded.values()] == [False, False, False]
+
+
+def test_one_broken_section_does_not_disable_the_others(tmp_path):
+    path = tmp_path / "partial.json"
+    path.write_text('{"context": {"enabled": true, "max_consecutive_losses": 3},'
+                    ' "memory": {"enabled": true, "min_sample": 1}}')
+
+    loaded = AgentPolicyStore(path).load()
+
+    assert loaded["context"].enabled is True
+    assert loaded["memory"].enabled is False, "an invalid section was accepted"
+
+
+def test_an_unknown_field_is_ignored_rather_than_accepted(tmp_path):
+    store = AgentPolicyStore(tmp_path / "p.json")
+
+    saved = store.save({"trade_management": {"enabled": True, "moon_phase": 3},
+                        "context": {}, "memory": {}})
+
+    assert saved["trade_management"].enabled is True
+    assert not hasattr(saved["trade_management"], "moon_phase")
