@@ -22,11 +22,25 @@ def test_api_version_handshake(client):
         assert j["endpoints_base"] == "/api/v1"
 
 
-def test_router_endpoint_aliased_under_v1(client):
+@pytest.mark.parametrize("cached_datasets", [0, 1, 2])
+def test_router_endpoint_aliased_under_v1(client, monkeypatch, cached_datasets):
     # a representative router-based GET must respond identically at both paths.
     # Authenticate with the webhook secret so the auth wall lets the read
     # through at BOTH paths (the alias must NOT bypass the wall on its own).
     import app as hub_app
+    from types import SimpleNamespace
+    from routers import health
+    from services.bot_os import BotOS
+
+    # Exercise the real routes, handler and auth wall against the SAME input.
+    # The app's background loaders can populate another dataset between GETs;
+    # live cache counts (and bus events) are not a route-aliasing contract.
+    # Replace only this router's dependencies, not shared worker singletons.
+    coverage = [{"candles": 10 if i < cached_datasets else 0} for i in range(2)]
+    monkeypatch.setattr(health, "_wa", SimpleNamespace(
+        market_store=SimpleNamespace(all_coverage=lambda: coverage),
+        bot_os=BotOS(),
+    ))
     sec = {"X-Webhook-Secret": hub_app.settings.admin_key}
     legacy = client.get("/bot-os", headers=sec)
     v1 = client.get("/api/v1/bot-os", headers=sec)
@@ -34,6 +48,9 @@ def test_router_endpoint_aliased_under_v1(client):
     assert v1.status_code != 404, "/api/v1 alias missing"
     assert legacy.status_code == v1.status_code == 200
     assert v1.json() == legacy.json()
+    market = next(row for row in v1.json()["services"] if row["name"] == "Market Engine")
+    assert market["detail"] == f"{cached_datasets}/2 datasets cached"
+    assert market["state"] == ("up" if cached_datasets else "idle")
 
 
 def test_v1_alias_still_enforces_the_auth_wall(client):

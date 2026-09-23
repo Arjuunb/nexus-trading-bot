@@ -82,6 +82,13 @@ class StrategyEntry:
         from services.native_price_action import STRATEGY_VERSION as PA_VERSION
         if self.strategy_id.startswith("price_action_"):
             return PA_VERSION
+        if self.strategy_id.startswith("pa_rulebook"):
+            # The rulebook engine carries its own version and its own sha256
+            # attestation (/research/pa-rulebook/manifest). Borrowing the
+            # native engine's 1.1.0 would attribute a paper record to code
+            # that did not produce it.
+            from services.pa_rulebook_v01 import RULEBOOK_VERSION
+            return RULEBOOK_VERSION
         return builtin_strategy_version(self.strategy_id)
 
     def public(self) -> dict:
@@ -179,18 +186,61 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
     # evidence a production selection requires, so they stay available to
     # research, backtests and already-created instances but are not offered
     # when creating a new one.
+    # The Nexus Price Action rulebook v0.1, whole: Setup A and Setup B under
+    # chapter 9's arbitration, in one entry. Two entries would put two engines
+    # on one symbol with nothing arbitrating between them, which is a different
+    # system from the one the document specifies. HUB_PA_RB_SETUPS narrows this
+    # entry to a single setup for the independent-book runs chapter 9 asks for.
+    #
+    # PRODUCTION here means reproducible, which builtin_versions is explicit
+    # about: a pinned version "does *not* assert a profitable historical run".
+    # This engine is versioned, hash-attested and pure, so a paper record it
+    # makes can be reproduced exactly. Its edge is unproven and the description
+    # says so; the market list keeps it on forward paper.
+    StrategyEntry(
+        strategy_id="pa_rulebook",
+        display_name="Price Action Rulebook v0.1",
+        lifecycle=PRODUCTION,
+        description=("Nexus PA rulebook v0.1: 1H regime, immutable 1H support/resistance "
+                     "zones, 15M rejection (Setup A) or breakout-and-retest (Setup B), "
+                     "3x5M dominance confirmation, structural stop, target from a "
+                     "pre-existing opposing zone, net RR >= 2.5 after costs. Research "
+                     "hypothesis with no backtest behind it yet; paper only."),
+        supported_markets=(FORWARD_PAPER_MARKET,),
+        supported_timeframes=("5m",),
+        required_data=("entry_candles", "native_primary_htf", "native_secondary_htf"),
+        warmup_candles=200,
+        warmup_basis="200 closed bars per timeframe, Wilder ATR 14 (rulebook ch.18)",
+        evidence=("tests/test_pa_rulebook_v01.py",
+                  "tests/test_pa_rulebook_engine.py",
+                  "tests/test_pa_rulebook_instance_strategy.py",
+                  "tests/test_pa_rulebook_replay.py"),
+    ),
     StrategyEntry(
         strategy_id="smc", display_name="Supply/Demand", lifecycle=RESEARCH_ONLY,
-        description=("SMC supply/demand zones: liquidity sweep + CHoCH/BOS + FVG with "
-                     "higher-timeframe bias"),
+        description=("SMC supply/demand: the Strategy Lab's sequential state machine "
+                     "(liquidity sweep -> CHoCH/BOS -> point of interest -> retest -> "
+                     "rejection) under higher-timeframe bias"),
         supported_markets=(FORWARD_PAPER_MARKET,),
-        supported_timeframes=ALL_ENTRY_TIMEFRAMES,
+        # 5m only, matching the other two native-MTF strategies. The strategy
+        # object is built by make_builtin_strategy(key, symbol), which passes no
+        # timeframe, so it always reports the 5m decision timeframe -- and
+        # TradingInstanceManager refuses to start an instance whose timeframe
+        # differs from that. Offering 1m/15m/1h/4h here let the picker accept a
+        # selection that could never start. The adapter's constructor does take
+        # a timeframe, so widening this again is a matter of threading one
+        # through the factory, not of changing the engine.
+        supported_timeframes=("5m",),
         required_data=("entry_candles", "native_primary_htf"),
-        warmup_candles=150, warmup_basis="internal warmup 120, pivot/sweep lookbacks",
+        warmup_candles=150,
+        warmup_basis=("50-bar swing pivot confirmation plus the primary-HTF bias; "
+                      "measured first setup at bar 32-56 and first swing pivot by "
+                      "bar 135 over three seeds"),
         lifecycle_reason=("No immutable version in strategies.builtin_versions, so a paper "
                           "record cannot be attributed to a reproducible build. The "
                           "supported SMC research path is the SMC Strategy Lab."),
-        evidence=("tests/test_smc_strategy.py",),
+        evidence=("tests/test_smc_strategy.py",
+                  "tests/test_smc_lab_instance_parity.py"),
     ),
     StrategyEntry(
         strategy_id="liquidity_sweep", display_name="Liquidity Sweep", lifecycle=RESEARCH_ONLY,
@@ -210,8 +260,11 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         supported_timeframes=ALL_ENTRY_TIMEFRAMES,
         required_data=("entry_candles",),
         warmup_candles=150, warmup_basis="slow EMA 26, ATR 14",
-        lifecycle_reason=("No immutable version and no test module exercises EMAStrategy "
-                          "directly; it is a baseline, not a production alpha."),
+        evidence=("tests/test_ema_and_ensemble_evidence.py",),
+        lifecycle_reason=("Behaviour is now pinned by a test module, but it remains a "
+                          "baseline rather than a production alpha: no immutable "
+                          "version, and evidence of what it does is not evidence that "
+                          "it should be traded."),
     ),
     StrategyEntry(
         strategy_id="ensemble", display_name="Confirmation Ensemble", lifecycle=RESEARCH_ONLY,
@@ -221,8 +274,10 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         required_data=("entry_candles",),
         warmup_candles=150,
         warmup_basis="widest member lookback: Donchian channel 30, slow EMA 26",
-        lifecycle_reason=("No immutable version and only an incidental backtest reference; "
-                          "one of its three members (EMA) is itself research-only."),
+        evidence=("tests/test_ema_and_ensemble_evidence.py",),
+        lifecycle_reason=("Behaviour is now pinned by a test module, but it stays "
+                          "research-only: there is no immutable version, and one of its "
+                          "three members (EMA) is itself research-only."),
     ),
 )
 

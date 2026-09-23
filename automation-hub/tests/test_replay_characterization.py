@@ -24,10 +24,26 @@ import pytest
 SNAPSHOT = os.path.join(os.path.dirname(__file__), "fixtures", "replay_snapshot.json")
 
 # (symbol, exec_tf, limit, strategy) — must match the snapshot keys.
+#
+# The two Supply/Demand rows are EMPTY, and that is the pinned fact. Replay's
+# "Supply/Demand" is strategies/smc_strategy.py, which used to be a
+# self-contained confluence model (a sweep, a structure shift and a fair-value
+# gap each merely recent, in any order, with no retest and no invalidation) and
+# is now a thin adapter over the SMC Strategy Lab's sequential state machine.
+# The state machine opens 164 setups on this synthetic series and invalidates or
+# expires every one of them, so it proposes nothing — the same verdict the Lab
+# reaches on the same data. Their emptiness is therefore load-bearing: if a
+# future change makes SMC fire loosely on a random walk again, these two rows
+# turn non-empty and this gate fails. Do not delete them to "clean up".
+#
+# Because they no longer carry trades, Support/Resistance Rejection supplies the
+# exit-path coverage the gate exists for — and covers "Final take-profit
+# reached", which the snapshot never guarded before.
 CASES = [
     ("BTCUSDT", "15m", 1200, "Supply/Demand"),
     ("ETHUSDT", "15m", 1200, "Supply/Demand"),
     ("BTCUSDT", "15m", 1200, "Trend Following"),
+    ("BTCUSDT", "15m", 1200, "Support/Resistance Rejection"),
 ]
 
 
@@ -60,10 +76,12 @@ def test_snapshot_exists_and_covers_the_paths_s44_changes():
     snap = _load()
     assert set(snap) == {_key(*c) for c in CASES}
     reasons = {row["exit_reason"] for rows in snap.values() for row in rows}
-    # the multi-stage partial/break-even path AND a plain stop must both be
-    # represented, or the gate wouldn't actually guard S4.4.
+    # the multi-stage partial/break-even path, a plain stop AND the run to the
+    # final target must all be represented, or the gate wouldn't actually guard
+    # S4.4's TP1 -> partial -> break-even -> TP2 machinery.
     assert any("Break-even" in (r or "") for r in reasons), reasons
     assert any("Stop loss" in (r or "") for r in reasons), reasons
+    assert any("Final take-profit" in (r or "") for r in reasons), reasons
     assert sum(len(v) for v in snap.values()) >= 5
 
 

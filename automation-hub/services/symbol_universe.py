@@ -263,8 +263,9 @@ def market_info(symbol: str, *, timeframe: str = "1d") -> dict:
             "found": True, "price_available": False}
     if s["asset_class"] == "crypto":
         try:
-            from data.market_data import get_bars
-            rows, src = get_bars(s["ticker"], n=30, timeframe=timeframe, require_real=True)
+            from data.market_data import get_bars_judged
+            rows, src, freshness = get_bars_judged(
+                s["ticker"], n=30, timeframe=timeframe, require_real=True)
             if rows and len(rows) >= 2:
                 last, prev = rows[-1].close, rows[-2].close
                 vol = sum(getattr(b, "volume", 0.0) or 0.0 for b in rows[-1:])
@@ -274,6 +275,13 @@ def market_info(symbol: str, *, timeframe: str = "1d") -> dict:
                     "change_24h_pct": round((last / prev - 1) * 100, 2) if prev else 0.0,
                     "volume_24h": round(vol, 2),
                     "spark": [round(b.close, 8) for b in rows[-30:]],
+                    # "price" is the close of the newest CACHED candle, and the
+                    # cache has been measured 15.8h behind the venue. Reported
+                    # without its age it reads as the current price.
+                    "as_of": (freshness.last_close.isoformat()
+                              if freshness.last_close else None),
+                    "stale": not freshness.fresh,
+                    "freshness": freshness.to_dict(),
                 })
             else:
                 info["source"] = src

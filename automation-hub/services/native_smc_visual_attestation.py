@@ -43,9 +43,13 @@ REVIEW_METHOD = "HUMAN_RETROSPECTIVE_BULK_ATTESTATION"
 REVIEWER_ASSERTION = "USER_MANUALLY_REVIEWED_ALL_82_AND_CONFIRMS_CORRECT"
 EXPECTED_SAMPLE_SIZE = 82
 EXPECTED_FROZEN_EVIDENCE_HASH = "c8641eda709e673718b6902a6eb84595280f24fe62802049f32281c0e4bf5ceb"
-# The visually attested legacy output remains unchanged. This source hash also
-# binds the approved, non-alpha native-MTF input adapter added after review.
-EXPECTED_ENGINE_SOURCE_HASH = "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
+# The visually attested legacy output remains unchanged. This source hash binds
+# two approved, non-alpha deltas made after that review: the native-MTF input
+# adapter, and the separate paper-execution permission on ProposedTrade. Both
+# were admitted on the same evidence -- state_machine_hash and the engine's
+# decision output are byte-identical across each, so the frozen sample the
+# reviewer signed off is still the sample this engine produces.
+EXPECTED_ENGINE_SOURCE_HASH = "47c2b7e28fee15e3366ea5434092f13c99cb50cbf718e56a35becaf715c8c36d"
 NATIVE_ENGINE_FREEZE = "SMC_NATIVE_V1_VISUALLY_VERIFIED_FROZEN"
 VISUAL_STATE_VERIFICATION = "VISUAL_STATE_VERIFICATION_PASSED"
 

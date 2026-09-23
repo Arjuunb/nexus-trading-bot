@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import threading
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from bot.types import Bar
+from services.market_data_freshness import DEFAULT_SILENCE_SECONDS
 
 # Candle durations come from bot.data.resample — the one definition. This used
 # to be a local copy, and six copies of the same fact had already drifted apart.
@@ -50,6 +51,11 @@ class WebSocketFeed:
         self.reconnect_attempt = 0
         self.websocket_reads = 0
         self.rest_fallback_reads = 0
+        #: How long a subscription may deliver nothing before it is recycled.
+        #: Shared with the freshness authority so the socket is recycled at the
+        #: same instant the platform stops trusting its data.
+        self.silence_timeout_seconds = float(DEFAULT_SILENCE_SECONDS)
+        self.silent_recycles = 0
 
     # ------------------------------------------------------------- ingestion
     def ingest_rows(self, symbol: str, rows: list) -> None:
@@ -75,14 +81,52 @@ class WebSocketFeed:
             dq = self._bars.get(symbol) or ()
             return list(dq)[-limit:]
 
+    def newest_closed(self, symbol: str, *, now: Optional[datetime] = None):
+        """The newest candle that has actually closed, or None.
+
+        ``get_bars`` returns the raw cache, whose last entry is normally the
+        still-forming candle -- it is refreshed in place on every tick. Judging
+        freshness on that bar is meaningless: it is always seconds old by
+        construction, which is why the previous ``fresh()`` answered True
+        almost unconditionally and was never a real gate.
+        """
+        now = now or datetime.now(timezone.utc)
+        interval = _TF_S.get(self.timeframe, 3600)
+        for bar in reversed(self.get_bars(symbol, 5)):
+            stamp = bar.timestamp
+            if stamp.tzinfo is None:
+                stamp = stamp.replace(tzinfo=timezone.utc)
+            if stamp + timedelta(seconds=interval) <= now:
+                return bar
+        return None
+
+    def freshness(self, symbol: str, *, now: Optional[datetime] = None):
+        """This feed's verdict from the one platform-wide authority."""
+        from services.market_data_freshness import assess_feed
+
+        now = now or datetime.now(timezone.utc)
+        closed = self.newest_closed(symbol, now=now)
+        last_event = None
+        if self.last_update:
+            try:
+                last_event = datetime.fromisoformat(self.last_update)
+            except ValueError:
+                last_event = None
+        running = self._thread is not None and self._thread.is_alive()
+        state = "CONNECTED" if (running and self.available) else "DISCONNECTED"
+        return assess_feed(
+            symbol, {self.timeframe: closed.timestamp if closed else None},
+            now=now, connection_state=state, last_event_at=last_event,
+            source=f"{self.exchange}-websocket", reconnects=self.reconnect_attempt)
+
     def fresh(self, symbol: str) -> bool:
-        """True when the newest cached candle is recent enough to trade on
-        (within 2 timeframe-lengths of now)."""
-        bars = self.get_bars(symbol, 1)
-        if not bars:
-            return False
-        age = (datetime.now(timezone.utc) - bars[-1].timestamp).total_seconds()
-        return age <= 2 * _TF_S.get(self.timeframe, 3600)
+        """True only when the shared freshness authority says so.
+
+        Delegated rather than recomputed: this used to be a fourth opinion on
+        what "fresh" means, measured off the forming candle against two whole
+        intervals.
+        """
+        return self.freshness(symbol).allow_new_entry
 
     def status(self) -> dict:
         with self._lock:
@@ -92,6 +136,8 @@ class WebSocketFeed:
                 "timeframe": self.timeframe, "symbols": self.symbols,
                 "bars_cached": depth, "updates": self.updates,
                 "reconnect_attempt": self.reconnect_attempt,
+                "silent_recycles": self.silent_recycles,
+                "silence_timeout_seconds": self.silence_timeout_seconds,
                 "websocket_reads": self.websocket_reads,
                 "rest_fallback_reads": self.rest_fallback_reads,
                 "last_update": self.last_update, "last_error": self.last_error}
@@ -172,11 +218,28 @@ class WebSocketFeed:
                 pair = _to_pair(sym)
                 while not self._stop.is_set():
                     try:
-                        rows = await ex.watch_ohlcv(pair, self.timeframe)
+                        # A dead socket does not raise. ccxt.pro will await a
+                        # frame that never arrives, so without this deadline a
+                        # stream that silently stops delivering stays "open"
+                        # and "CONNECTED" forever while the cache quietly ages
+                        # -- the exact failure a connection-state check cannot
+                        # see. The timeout turns silence into the reconnect
+                        # path below, which resubscribes on the next pass.
+                        rows = await asyncio.wait_for(
+                            ex.watch_ohlcv(pair, self.timeframe),
+                            timeout=self.silence_timeout_seconds)
                         self.available = True
                         self.reconnect_attempt = 0
                         self.last_error = ""
                         self.ingest_rows(sym, rows)
+                    except asyncio.TimeoutError:
+                        self.last_error = (
+                            f"{pair} {self.timeframe} delivered no event for "
+                            f"{self.silence_timeout_seconds:.0f}s; recycling the socket")
+                        self.available = False
+                        self.silent_recycles += 1
+                        self.reconnect_attempt += 1
+                        await asyncio.sleep(min(2 ** self.reconnect_attempt, 30))
                     except Exception as e:  # noqa: BLE001 — reconnect, don't die
                         self.last_error = str(e)
                         self.available = False

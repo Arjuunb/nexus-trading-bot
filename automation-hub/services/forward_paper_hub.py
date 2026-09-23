@@ -357,7 +357,9 @@ class ForwardPaperMarketDataHub:
                 consumers = list(holder["channel"].consumers.values())
             for consumer in consumers:
                 if consumer.event_sink:
-                    self._notify(consumer, consumer.event_sink, event)
+                    # Audit callbacks take database locks too. They must not
+                    # stall the socket's next kline/mark receipt.
+                    self._dispatch_notify(consumer, consumer.event_sink, event)
 
         try:
             stream = self.stream_factory(

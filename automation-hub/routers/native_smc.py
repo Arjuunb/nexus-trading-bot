@@ -240,6 +240,110 @@ def smc_bot_status():
         _persistence_blocked(exc)
 
 
+class SMCAgentPolicyBody(BaseModel):
+    trade_management: dict = Field(default_factory=dict)
+    context: dict = Field(default_factory=dict)
+    memory: dict = Field(default_factory=dict)
+
+
+@router.get("/agent")
+def smc_agent(limit: int = 100, outcome: str = ""):
+    """What the agent decided, and why, per closed candle.
+
+    The agent trades without a person in the loop, so the only way to hold it
+    to account is to read back every decision it made -- including the ones
+    where it took nothing. A panel that showed only the trades would make an
+    agent that declines everything look identical to one that is not running.
+
+    Read-only. It places nothing, changes no configuration and writes no row.
+    """
+    runtime = _smc_runtime()
+    try:
+        status = saved_status(runtime.smc_runtime)
+    except sqlite3.OperationalError as exc:
+        _persistence_blocked(exc)
+    journal = runtime.smc_agent_journal
+    try:
+        decisions = journal.decisions(outcome=outcome.strip().upper(),
+                                      limit=max(1, min(int(limit), 500)))
+        trades = journal.trades(limit=200)
+    except sqlite3.OperationalError as exc:
+        _persistence_blocked(exc)
+    counts: dict[str, int] = {}
+    for row in decisions:
+        key = str(row.get("outcome") or "UNKNOWN")
+        counts[key] = counts.get(key, 0) + 1
+    open_trades = [row for row in trades if not row.get("closed_at")]
+    return {
+        "agent": status.get("agent") or {},
+        "feed": {
+            "state": (status.get("feed") or {}).get("state"),
+            "reliable": (status.get("feed") or {}).get("reliable"),
+            "transport_diagnostics": (status.get("feed") or {}).get(
+                "transport_diagnostics"),
+        },
+        "execution_state": status.get("execution_state"),
+        "blockers": status.get("blockers") or [],
+        "decisions": decisions,
+        "decision_counts": counts,
+        "trades": trades,
+        "open_trades": len(open_trades),
+        "session_id": status.get("session_id"),
+        "symbol": status.get("symbol"), "timeframe": status.get("timeframe"),
+        "paper_only": True, "real_execution_allowed": False,
+    }
+
+
+@router.get("/agent/policy")
+def smc_agent_policy():
+    """The agent's three optional rule-sets, as they are actually running.
+
+    Read from the live runtime rather than from the file, so what this
+    reports is what the next tick will use. A saved file the runtime never
+    picked up would otherwise read back as in force when it is not.
+    """
+    runtime = _smc_runtime().smc_runtime
+    return {
+        "trade_management": asdict(runtime.trade_policy),
+        "context": asdict(runtime.context_policy),
+        "memory": asdict(runtime.memory_policy),
+        "note": ("Each of these changes how much and how often the agent "
+                 "trades. They are hypotheses to backtest and forward-test, "
+                 "not improvements."),
+        "paper_only": True, "real_execution_allowed": False,
+    }
+
+
+@router.post("/agent/policy")
+def smc_agent_policy_save(body: SMCAgentPolicyBody,
+                          x_webhook_secret: Optional[str] = Header(default=None)):
+    """Save all three and apply them to the running agent.
+
+    Protected: these change trading behaviour, unlike everything else on the
+    agent surface, which only reads. Validation happens in the store before
+    anything is written, so a rejected value leaves both the file and the
+    running agent exactly as they were.
+    """
+    _smc_auth(x_webhook_secret)
+    runtime = _smc_runtime()
+    try:
+        saved = runtime.smc_agent_policies.save({
+            "trade_management": body.trade_management,
+            "context": body.context, "memory": body.memory})
+    except ValueError as exc:
+        _smc_bad(exc)
+    except OSError as exc:
+        _smc_bad(exc, status=503)
+    # Applied only after the write succeeded: a policy running that no
+    # restart would restore is a configuration nobody can account for.
+    lab = runtime.smc_runtime
+    lab.trade_policy = saved["trade_management"]
+    lab.context_policy = saved["context"]
+    lab.memory_policy = saved["memory"]
+    return {**{name: asdict(policy) for name, policy in saved.items()},
+            "applied": True, "paper_only": True, "real_execution_allowed": False}
+
+
 @router.get("/paper/export")
 def smc_paper_export():
     return _smc_runtime().smc_paper.export_session()

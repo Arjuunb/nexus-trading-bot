@@ -6,6 +6,8 @@ instances never share its mutable strategy or trade history.
 """
 from __future__ import annotations
 
+from services.market_data_freshness import grace_for_interval
+
 import json
 import os
 import inspect
@@ -162,10 +164,14 @@ def _market_health(market: dict, *, timeframe: str, worker_state: str) -> dict:
     elif age is None:
         state = "error" if raw in ("failed", "error") else "disconnected"
     else:
-        state = "healthy" if age < interval * 1.5 else "stale" if age <= interval * 3 else "disconnected"
+        # "healthy" must mean the same thing here as it does at the gate, or
+        # the legend says Healthy while the engine blocks the entry.
+        healthy_under = interval + grace_for_interval(interval)
+        state = ("healthy" if age < healthy_under
+                 else "stale" if age <= interval * 3 else "disconnected")
     out["market_data_status"] = state
     out["freshness_thresholds_seconds"] = {
-        "healthy_under": int(_TIMEFRAME_SECONDS.get(timeframe, 300) * 1.5),
+        "healthy_under": int(interval + grace_for_interval(interval)),
         "disconnected_over": int(_TIMEFRAME_SECONDS.get(timeframe, 300) * 3),
     }
     return out

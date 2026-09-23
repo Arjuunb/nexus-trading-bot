@@ -8,7 +8,9 @@ export interface NativeCandle { timestamp: string; open: number; high: number; l
 export interface NativePivot { id: string; scope: "internal" | "swing"; kind: "high" | "low"; price: number; occurred_at: string; confirmed_at: string; strength: "strong" | "weak" }
 export interface NativeEvent { id: string; direction: Direction; event_type?: string; scope?: string; label?: string; level: number; occurred_at?: string; confirmed_at?: string; timestamp?: string; source_pivot_id?: string }
 export interface NativeZone { id: string; direction: Direction; label?: string; top?: number; bottom?: number; high?: number; low?: number; created_at: string; active: boolean; mitigated: boolean; mitigation_at?: string | null; source_pivot_id?: string; source_structure_id?: string; lifecycle?: "active" | "invalidated" | "expired" }
-export interface NativeProposal { id: string; setup_id: string; snapshot_id: string; direction: Direction; entry: number; stop: number; target: number; rr_ratio: number; execution_allowed: false; risk_status: string }
+/** `execution_allowed` is live routing and stays false; `paper_execution_allowed`
+ *  is the separate permission to simulate, matching the Price Action engine. */
+export interface NativeProposal { id: string; setup_id: string; snapshot_id: string; direction: Direction; entry: number; stop: number; target: number; rr_ratio: number; execution_allowed: false; paper_execution_allowed: true; risk_status: string }
 export interface NativeSnapshot {
   id: string; candle_open: string; candle_close: string; htf_bias: number; htf_ema: number | null;
   swing_bias: number; internal_bias: number; session: string;

@@ -8,7 +8,10 @@ set -eu
 GIT_COMMIT="${GIT_COMMIT:-$(git rev-parse HEAD 2>/dev/null || printf unknown)}"
 GIT_BRANCH="${GIT_BRANCH:-$(git branch --show-current 2>/dev/null || printf unknown)}"
 DEPLOYED_AT="${DEPLOYED_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
-export GIT_COMMIT GIT_BRANCH DEPLOYED_AT
+# A Docker tag may not contain "/", and a git branch very often does.
+APP_IMAGE_TAG="$(printf '%s-%s' "${GIT_BRANCH}" "${GIT_COMMIT}" \
+    | tr '/' '-' | tr -cd 'A-Za-z0-9._-' | cut -c1-120)"
+export GIT_COMMIT GIT_BRANCH DEPLOYED_AT APP_IMAGE_TAG
 
 # Say what is about to be built, and refuse a checkout that is not what the
 # operator thinks it is. A failed "git pull" before this script does not stop
@@ -17,7 +20,8 @@ export GIT_COMMIT GIT_BRANCH DEPLOYED_AT
 # predating the fixes it was meant to deploy, from a session whose pull had
 # aborted with "Not possible to fast-forward". Aborting here costs one command;
 # not aborting costs a full rebuild and a wrong diagnosis afterwards.
-printf 'Deploying %s at %s\n' "${GIT_BRANCH}" "$(printf '%s' "${GIT_COMMIT}" | cut -c1-7)"
+printf 'Deploying %s at %s (image tag %s)\n' "${GIT_BRANCH}" \
+    "$(printf '%s' "${GIT_COMMIT}" | cut -c1-7)" "${APP_IMAGE_TAG}"
 if [ "${SKIP_REVISION_CHECK:-0}" != "1" ] && git rev-parse --git-dir >/dev/null 2>&1; then
     if ! git diff --quiet HEAD 2>/dev/null; then
         echo 'Refusing to deploy: the working tree has uncommitted changes.' >&2

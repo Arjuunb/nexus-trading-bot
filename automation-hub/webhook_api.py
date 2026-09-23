@@ -904,13 +904,36 @@ market_store = HistoricalStore(settings.market_db)
 from data.backfill import BackfillJob  # noqa: E402
 backfill_job = BackfillJob(market_store)
 
+# Keep the real-candle cache current. /data/sync is a manual POST and nothing
+# ever called it on a schedule, so the store drifted until somebody noticed --
+# 15.8h behind for BTCUSDT and empty for BNBUSDT on the running host, while
+# ~30 call sites read it. Only timeframes the freshness authority judges stale
+# are refetched, one venue page each.
+from services.candle_sync_runner import CandleSyncRunner  # noqa: E402
+from data.historical import SYMBOLS as _SYNC_SYMBOLS  # noqa: E402
+candle_sync_runner = CandleSyncRunner(
+    market_store, ledger, symbols=_SYNC_SYMBOLS,
+    # The timeframes the instances, scanner and sizing actually read. The 1w
+    # series is left to the manual endpoint: it changes weekly and refreshing
+    # it on this loop is all cost.
+    timeframes=("5m", "15m", "1h", "4h", "1d"))
+# Same opt-out as the monitor agent, for the same reason: each worker would
+# otherwise run its own loop and refetch what a sibling just fetched. The
+# manual /data/sync endpoints keep working either way — only the timer stops.
+if _os.environ.get("HUB_CANDLE_SYNC", "1").strip().lower() not in ("0", "false", "no", "off"):
+    candle_sync_runner.start()
+
 # Paper Trading V2: strict provider-backed cache and persistent candle-driven
 # broker.  This is additive; the established signal-driven ``paper`` engine
 # remains the compatibility path until callers opt into /paper-v2.
 from data.market_data_v2 import MarketDataService, MarketDataUpdateJob  # noqa: E402
 from execution.paper_broker_v2 import PaperBrokerV2  # noqa: E402
 from services.price_action_lab import PriceActionLabRuntime, PriceActionPaperAccount  # noqa: E402
-from services.smc_strategy_lab import SMCPaperAccount, SMCStrategyLabRuntime  # noqa: E402
+from services.smc_agent import SMCAgent  # noqa: E402
+from services.smc_agent_journal import SMCAgentJournal  # noqa: E402
+from services.smc_agent_policy_store import AgentPolicyStore  # noqa: E402
+from services.smc_agent_runtime import (AgentGatedSMCPaperAccount,  # noqa: E402
+                                        AgentSMCStrategyLabRuntime)
 from services.forward_paper_hub import ForwardPaperMarketDataHub  # noqa: E402
 from services.research_observer import ResearchObservationRuntime  # noqa: E402
 from services.shadow_research import ShadowResearchStore  # noqa: E402
@@ -965,10 +988,27 @@ price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
                                               starting_balance=10_000.0)
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
-smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
-smc_runtime = SMCStrategyLabRuntime(
-    v2_market_data, smc_paper, market_hub=forward_paper_market_hub,
-    poll_seconds=settings.smc_poll_s)
+smc_paper = AgentGatedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+smc_agent_journal = SMCAgentJournal(settings.smc_agent_journal_db)
+# equity here is only a fallback: on every live tick the runtime supplies the
+# paper account's actual equity and the session's saved risk percentage.
+smc_agent = SMCAgent(smc_agent_journal, equity=10_000.0)
+# The agent sits downstream of the SMC strategy and can only approve or refuse
+# what the strategy already decided.  It becomes the approver only while the
+# saved session is in manual_approval mode; in the default automatic mode the
+# lab places its own orders and the agent stands down, so attaching it here
+# does not change what a running session does.
+# The agent's three optional rule-sets, restored from disk. All off unless
+# saved on, so an upgrade never changes how the agent trades by itself.
+smc_agent_policies = AgentPolicyStore(settings.smc_agent_policy_file)
+_saved_agent_policies = smc_agent_policies.load()
+smc_runtime = AgentSMCStrategyLabRuntime(
+    v2_market_data, smc_paper, agent=smc_agent,
+    market_hub=forward_paper_market_hub,
+    poll_seconds=settings.smc_poll_s,
+    trade_policy=_saved_agent_policies["trade_management"],
+    context_policy=_saved_agent_policies["context"],
+    memory_policy=_saved_agent_policies["memory"])
 # Price Action must remain autonomous after a server restart even when no
 # browser has opened the lab page. The supervisor owns stream initialization;
 # UI requests are read-only observers of the same server-side runtime.
@@ -1238,6 +1278,8 @@ import routers.instances  # noqa: E402
 import routers.forward_validation  # noqa: E402
 import routers.native_smc  # noqa: E402
 import routers.price_action  # noqa: E402
+import routers.pa_rulebook  # noqa: E402
+import routers.instance_visual_lab  # noqa: E402
 import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 router.include_router(routers.analytics.router)
@@ -1257,6 +1299,8 @@ router.include_router(routers.instances.router)
 router.include_router(routers.forward_validation.router)
 router.include_router(routers.native_smc.router)
 router.include_router(routers.price_action.router)
+router.include_router(routers.pa_rulebook.router)
+router.include_router(routers.instance_visual_lab.router)
 router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 

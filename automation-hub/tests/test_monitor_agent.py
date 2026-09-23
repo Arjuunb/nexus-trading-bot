@@ -301,3 +301,65 @@ def test_monitor_endpoint_runs_a_real_baseline(client):
 
 def test_monitor_endpoint_requires_entry_rules(client):
     assert client.post("/strategy/monitor", json={"spec": {}}).status_code == 400
+
+
+# ───────────── "current volatility" has to actually be current ─────────────
+#
+# Every branch of the volatility check is a claim about NOW, and the candles
+# behind it come from a cache measured 15.8 hours behind the venue. Yesterday's
+# ATR asserted as today's would tell the operator to resize stops for a regime
+# that may already have ended.
+
+BAND = {"p10": 0.5, "median": 1.0, "p90": 1.5}
+FRESH = {"status": "FRESH", "age_seconds": 25.0, "last_close": "2026-09-19T12:00:00+00:00"}
+STALE = {"status": "STALE", "age_seconds": 56880.0, "last_close": "2026-09-18T20:00:00+00:00"}
+GONE = {"status": "MISSING", "age_seconds": None, "last_close": None}
+
+
+def _keys(out):
+    return {f["key"] for f in out["findings"]}
+
+
+def test_a_current_reading_is_still_judged_normally():
+    """The guard must not have disabled the check it protects."""
+    out = ma.evaluate(baseline=BASE, live=_live(), volatility_band=BAND,
+                      current_atr_pct=9.0, volatility_freshness=FRESH)
+    assert "volatility-out-of-range" in _keys(out)
+    assert "volatility-not-current" not in _keys(out)
+
+
+def test_a_stale_reading_is_not_reported_as_current_volatility():
+    out = ma.evaluate(baseline=BASE, live=_live(), volatility_band=BAND,
+                      current_atr_pct=9.0, volatility_freshness=STALE)
+    assert "volatility-out-of-range" not in _keys(out)
+    assert "volatility-not-current" in _keys(out)
+
+
+def test_the_stale_reading_says_how_old_and_that_it_is_not_an_all_clear():
+    """An absent finding reads as 'volatility is in range'. It has to say
+    that the check could not run."""
+    out = ma.evaluate(baseline=BASE, live=_live(), volatility_band=BAND,
+                      current_atr_pct=9.0, volatility_freshness=STALE)
+    f = next(x for x in out["findings"] if x["key"] == "volatility-not-current")
+    assert f["severity"] == "warning"
+    assert "15.8 hours old" in f["detail"]
+    assert "not a reading that volatility is in range" in f["detail"]
+    assert "/data/sync" in f["recommendation"]
+
+
+def test_no_candles_at_all_is_treated_the_same_as_stale_ones():
+    """BNBUSDT held none. Absent must not read as in-range either."""
+    out = ma.evaluate(baseline=BASE, live=_live(), volatility_band=BAND,
+                      current_atr_pct=9.0, volatility_freshness=GONE)
+    assert "volatility-not-current" in _keys(out)
+    f = next(x for x in out["findings"] if x["key"] == "volatility-not-current")
+    assert "unknown age" in f["detail"] and "none held" in str(f["evidence"])
+
+
+def test_a_caller_that_supplies_no_freshness_behaves_as_before():
+    """Backward compatible: an unjudged reading is judged on its value alone
+    rather than silently suppressed."""
+    out = ma.evaluate(baseline=BASE, live=_live(), volatility_band=BAND,
+                      current_atr_pct=9.0)
+    assert "volatility-out-of-range" in _keys(out)
+    assert "volatility-not-current" not in _keys(out)

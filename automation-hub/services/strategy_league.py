@@ -38,37 +38,102 @@ def pearson(a: list[float], b: list[float]) -> float | None:
     return round(cov / (va * vb), 3)
 
 
+def _r(trade: dict) -> float:
+    try:
+        return float(trade.get("r") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _daily_r(trades: list[dict]) -> dict[str, float]:
     out: dict[str, float] = {}
     for t in trades:
         day = (t.get("exit_time") or "")[:10]
         if day:
-            out[day] = out.get(day, 0.0) + float(t.get("r") or 0.0)
+            out[day] = out.get(day, 0.0) + _r(t)
     return out
 
 
-def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 2500,
-           strategies=None, require_real: bool = True) -> dict:
+MIN_BARS = 400           # below this a symbol cannot be compared on, and is dropped
+
+
+def _candles(symbol: str, timeframe: str, bars: int, venue: str,
+             require_real: bool) -> tuple[list, str, dict]:
+    """Live venue candles when they can be had, the local cache when they cannot.
+
+    The league is a backtest, so it needs a series rather than a tick -- but a
+    series that ends now is a different measurement from one that ends whenever
+    the last /data/sync happened to run. On a host where that sync has not run
+    for a day, every verdict in this table was computed on yesterday's market
+    while claiming to rank strategies today.
+
+    Live first, therefore, and the cache named as a fallback rather than
+    silently substituted. Neither path is ever synthetic in production.
+    """
+    from services.live_candle_source import LiveCandlesUnavailable, judge, live_series
+
+    attempts = []
+    if require_real:
+        try:
+            rows = live_series(symbol, timeframe, venue, limit=bars)
+        except LiveCandlesUnavailable as exc:
+            attempts.append({"source": f"venue {venue}", "error": str(exc)})
+        else:
+            verdict = judge(symbol, timeframe, rows)
+            attempts.append({"source": f"venue {venue}",
+                             "freshness": verdict.to_dict()})
+            return rows, f"venue {venue} (live)", {"attempts": attempts,
+                                                   "freshness": verdict.to_dict(),
+                                                   "live": True}
+
     from data.market_data import get_bars
+
+    rows, src = get_bars(symbol, n=bars, timeframe=timeframe,
+                         require_real=require_real)
+    verdict = judge(symbol, timeframe, rows) if rows else None
+    attempts.append({"source": "local candle cache",
+                     "freshness": verdict.to_dict() if verdict else None,
+                     "error": None if rows else src})
+    return rows, src, {"attempts": attempts,
+                       "freshness": verdict.to_dict() if verdict else None,
+                       "live": False}
+
+
+def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 2500,
+           strategies=None, require_real: bool = True,
+           venue: str = "binance_usdm") -> dict:
     from services.strategy_presets import _run_on
 
     strategies = list(strategies or LEAGUE_STRATEGIES)
     data = {}
+    provenance: dict[str, dict] = {}
+    dropped: list[dict] = []
     for sym in symbols:
-        rows, src = get_bars(sym, n=bars, timeframe=timeframe, require_real=require_real)
-        if rows and len(rows) >= 400:
+        rows, src, meta = _candles(sym, timeframe, bars, venue, require_real)
+        if rows and len(rows) >= MIN_BARS:
             data[sym] = (rows, src)
+            provenance[sym] = {
+                "source": src, "candles": len(rows),
+                "first": rows[0].timestamp.isoformat(),
+                "last": rows[-1].timestamp.isoformat(), **meta}
+            continue
+        # A symbol quietly disappearing from the comparison is how a league
+        # labelled "BTCUSDT + ETHUSDT" ends up measuring one of them.
+        dropped.append({"symbol": sym, "candles": len(rows or []),
+                        "required": MIN_BARS, "source": src, **meta})
     if not data:
         return {"available": False, "verdict": "no-real-data",
-                "detail": "No real candles cached — press 'Load real Binance data' "
-                          "in the Bot Control Center first."}
+                "dropped": dropped,
+                "detail": "No real candles — the venue was unreachable and the "
+                          "local cache is empty. Press 'Load real Binance data' "
+                          "in the Bot Control Center, or check outbound access."}
 
     table = []
     daily: dict[str, dict[str, float]] = {}
     for strat in strategies:
         agg_trades: list[dict] = []
         wins = total = 0
-        net = gp = gl = dd = 0.0
+        net = dd = 0.0
         for sym, (rows, _src) in data.items():
             res = _run_on(strat, sym, timeframe, {}, None, rows)
             if "error" in res:
@@ -79,9 +144,15 @@ def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 25
             total += n
             wins += round(res.get("win_rate", 0) / 100 * n)
             net += res.get("net_r", 0.0)
-            gp += res.get("gross_profit_r", 0.0) or 0.0
-            gl += abs(res.get("gross_loss_r", 0.0) or 0.0)
             dd = max(dd, res.get("max_drawdown_pct", 0.0) or 0.0)
+        # Profit factor comes from the trades themselves. It used to read
+        # gross_profit_r / gross_loss_r off the simulator result, and the
+        # simulator has never produced either key -- so the column rendered a
+        # dash for every strategy in every league, which reads as "not
+        # applicable" rather than "never computed". The per-trade R is already
+        # aggregated here for the correlation stream; this is the same number.
+        gp = sum(_r(t) for t in agg_trades if _r(t) > 0)
+        gl = abs(sum(_r(t) for t in agg_trades if _r(t) < 0))
         expectancy = round(net / total, 3) if total else None
         if total < MIN_TRADES:
             verdict = "insufficient-sample"
@@ -131,8 +202,25 @@ def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 25
         guidance.append(f"Best pairing right now: {best_combo['a']} + {best_combo['b']} "
                         f"(corr {best_combo['correlation']}) — both earn and their "
                         f"return streams differ.")
+    stale = [sym for sym, row in provenance.items()
+             if (row.get("freshness") or {}).get("status") not in (None, "FRESH")]
+    if stale:
+        guidance.append(
+            "Measured on candles that are not current for "
+            f"{', '.join(stale)} — the ranking describes an older market than "
+            "the one you are trading now.")
+    if dropped:
+        guidance.append(
+            "Not measured: " + ", ".join(
+                f"{row['symbol']} ({row['candles']} candles, needs {row['required']})"
+                for row in dropped) + ".")
     return {"available": True, "timeframe": timeframe,
             "symbols": list(data.keys()),
             "data_source": next(iter(data.values()))[1],
+            "live": all(row.get("live") for row in provenance.values()),
+            "provenance": provenance, "dropped": dropped,
+            "window": {"bars_requested": bars,
+                       "first": min(row["first"] for row in provenance.values()),
+                       "last": max(row["last"] for row in provenance.values())},
             "table": table, "correlations": correlations,
             "best_combo": best_combo, "guidance": guidance}

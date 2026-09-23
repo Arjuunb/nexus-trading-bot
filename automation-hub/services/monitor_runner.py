@@ -14,9 +14,15 @@ Three design decisions worth stating, because each one is a trap avoided:
     else does. A long TTL still forces an eventual refresh, because the data
     behind the baseline does move.
 
-  * **Alerts have a per-finding cooldown.** A strategy in drawdown produces the
-    same finding every cycle. Without a cooldown the operator learns to ignore
-    the channel, which is worse than not alerting at all.
+  * **Alerts have a per-finding cooldown, and it is durable.** A strategy in
+    drawdown produces the same finding every cycle. Without a cooldown the
+    operator learns to ignore the channel, which is worse than not alerting at
+    all. A cooldown kept only in process memory is barely better: it empties on
+    restart and every worker keeps its own, so a redeploy re-armed every
+    finding and three workers tripled what survived. One drawdown finding
+    reached the operator eleven times carrying the identical number. The window
+    is therefore read from the alert record itself, which is shared and
+    survives a restart.
 
   * **It watches the deployed spec, not the open editor.** ``engine.deployed_spec``
     is set at deploy time and cleared on every other reconfigure, so a built-in
@@ -56,6 +62,22 @@ def spec_key(spec: Optional[dict], range_key: str) -> str:
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso(value: str) -> Optional[float]:
+    """An ISO timestamp as epoch seconds, comparable with time.time().
+
+    A timestamp stored without a zone is read as UTC rather than local: the
+    ledger writes UTC, and guessing local here would shift the suppression
+    window by the host's offset and re-open it early.
+    """
+    try:
+        at = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return None
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return at.timestamp()
 
 
 class MonitorRunner:
@@ -130,17 +152,25 @@ class MonitorRunner:
         return base
 
     def _default_volatility(self, spec: dict, range_key: str) -> dict:
-        from data.market_data import get_bars
+        """The backtest's ATR band, and what volatility is doing NOW.
+
+        "Now" is the whole claim, and it is read from a cache that has been
+        observed 15.8 hours behind the venue. The age travels with the number
+        so the finding cannot call day-old candles current.
+        """
+        from data.market_data import get_bars_judged
         from services.strategy_review import bars_for_range
         tf = spec.get("timeframe", "4h")
-        rows, source = get_bars(spec.get("symbol", "BTCUSDT"),
-                                n=bars_for_range(tf, range_key), timeframe=tf)
+        rows, source, freshness = get_bars_judged(
+            spec.get("symbol", "BTCUSDT"),
+            n=bars_for_range(tf, range_key), timeframe=tf)
         if not rows:
             return {}
         band = ma.atr_pct_band(rows)
         recent = ma.atr_pct_band(rows[-120:]) if len(rows) > 60 else None
         return {"band": band, "current_atr_pct": (recent or {}).get("median"),
-                "source": source}
+                "source": source, "freshness": freshness.to_dict(),
+                "fresh": freshness.fresh}
 
     # -------------------------------------------------------------- caching
     def _baseline_for(self, spec: dict, now: float) -> tuple[dict, dict, bool]:
@@ -184,9 +214,20 @@ class MonitorRunner:
         # point is comparing one timeframe against another.)
         tf_mismatch = baseline.pop("__tf_mismatch", None)
 
-        trades = self.paper.history()
+        # The live sample must be THIS strategy's trades. paper.history() is
+        # every closed trade from every strategy and symbol pooled together,
+        # and comparing that against one strategy's backtest is not a loose
+        # comparison but a different one: it reported a 36.75R live drawdown
+        # against a 4.3R backtest for a strategy whose own backtest took a
+        # single trade in a year. strategy_history() scopes it, and excludes
+        # trades carrying no id rather than crediting them to whoever asked.
+        strategy_id = str(spec.get("id") or "")
+        pooled = self.paper.history()
+        trades = self.paper.strategy_history(strategy_id)
         live = ma.live_metrics(trades)
         live["span_days"] = ma.span_days(trades)
+        attribution = {"strategy_id": strategy_id, "scoped": len(trades),
+                       "pooled": len(pooled)}
 
         execution = None
         if self.exec_quality is not None:
@@ -196,8 +237,10 @@ class MonitorRunner:
                 execution = None
 
         out = ma.evaluate(baseline=baseline or None, live=live,
+                          attribution=attribution,
                           volatility_band=(vol or {}).get("band"),
                           current_atr_pct=(vol or {}).get("current_atr_pct"),
+                          volatility_freshness=(vol or {}).get("freshness"),
                           execution=execution)
         out.update({
             "strategy": spec.get("name") or getattr(self.engine, "strategy_label", None),
@@ -206,6 +249,10 @@ class MonitorRunner:
             "baseline_cached": cached,
             "baseline_computed_at": self._baseline_cache.get("computed_at"),
             "data_source": (vol or {}).get("source"),
+            # What the verdict was computed over. Without this the reader
+            # cannot tell a strategy compared on its own 40 trades from one
+            # compared on nothing, and the two read identically as "in_line".
+            "attribution": attribution,
             "checked_at": _now_iso(),
         })
         if tf_mismatch:
@@ -219,10 +266,36 @@ class MonitorRunner:
             self.last_result, self.last_check = out, out["checked_at"]
         return out
 
+    def _delivered_at(self, title: str) -> Optional[float]:
+        """When this finding was last actually raised, from the alert record.
+
+        The in-memory window is per process and empties on restart, so a
+        redeploy re-armed every finding and each worker kept its own copy: one
+        drawdown finding reached the operator eleven times carrying the
+        identical number. Reading the delivery record makes the window shared
+        and durable. Degrades to memory-only on a ledger without the query
+        rather than failing the check.
+        """
+        fn = getattr(self.ledger, "last_alert_ts", None)
+        if not callable(fn):
+            return None
+        try:
+            raw = fn(category="monitor", title=title)
+            if not raw:
+                return None
+            return _parse_iso(str(raw))
+        except Exception:  # noqa: BLE001 — suppression must not kill the loop
+            return None
+
     def _raise_alerts(self, findings: list[dict], now: float) -> None:
         for f in findings:
             key = f.get("key", "?")
             last = self._last_sent.get(key)
+            # Whichever window is further ahead wins: memory is fastest, the
+            # ledger is the one that survives a restart and spans workers.
+            delivered = self._delivered_at(f.get("title", ""))
+            if delivered is not None:
+                last = delivered if last is None else max(last, delivered)
             # "never sent" is not "sent recently". Defaulting the timestamp to 0
             # only looks correct because wall-clock time is huge — it would
             # swallow the first alert of any run whose clock starts near zero.

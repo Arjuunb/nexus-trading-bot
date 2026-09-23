@@ -10,7 +10,7 @@
   "execution_allowed": false,
   "performance_research": "NOT_RUN",
   "native_engine_source": "services/native_smc.py",
-  "native_engine_source_sha256": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23",
+  "native_engine_source_sha256": "47c2b7e28fee15e3366ea5434092f13c99cb50cbf718e56a35becaf715c8c36d",
   "native_object_source_of_truth": [
     "PivotPoint",
     "StructureEvent",

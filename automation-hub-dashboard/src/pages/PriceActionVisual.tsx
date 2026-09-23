@@ -8,7 +8,7 @@ import Modal from "../components/common/Modal";
 import ResearchComparisonPanel from "../components/research/ResearchComparisonPanel";
 
 type Mode = "live" | "replay";
-type BottomTab = "positions" | "orders" | "trades" | "setups" | "rejected" | "journal" | "learning" | "session" | "connection";
+type BottomTab = "positions" | "orders" | "trades" | "setups" | "rejected" | "rulebook" | "journal" | "learning" | "session" | "connection";
 type ChartPreset = "clean" | "structure" | "zones" | "strategy" | "trades" | "debug";
 type Direction = "bullish" | "bearish";
 interface Swing { id: string; kind: "high" | "low"; price: number; occurred_at: string; confirmed_at: string; label: string }
@@ -74,11 +74,37 @@ interface PALearningCandidate {
     net_effect_r: number; net_oos_effect_status: string; drawdown_effect_r: number;
     trade_count_change: number; official_paper_account_affected: false };
 }
+interface RulebookZone { id: string; kind: "support" | "resistance"; lower: number; upper: number; centre: number; origin: string; retired: boolean; created_at: string; creation_atr: number }
+interface RulebookSetup { id: string; strategy_id: string; direction: string; state: string; zone: RulebookZone; setup_atr15: number; created_at: string; cancel_price?: number | null; confirm_slots_used: number; confirm_window_start?: string | null; rejection_open_time?: string | null; breakout_open_time?: string | null; blocker?: string | null; evidence: Record<string, any> }
+interface RulebookPlan {
+  accepted: boolean; direction: string; strategy_id: string; entry_bound: number;
+  stop: number; target?: number | null; stop_distance: number; stop_distance_atr: number;
+  net_rr?: number | null; costs_loss: number; costs_win: number; quantity?: number | null;
+  planned_loss?: number | null; zone_id: string; blocker?: string | null;
+  evidence: Record<string, any>;
+}
+interface RulebookState {
+  symbol: string; rulebook_version: string; strategies: string[];
+  regime: string; regime_evidence: Record<string, any>;
+  timeframes: { context: string; setup: string; confirm: string };
+  last_closed: Record<string, string>;
+  zones: RulebookZone[]; retired_zones: RulebookZone[]; consumed_zone_ids: string[];
+  pending_setup: RulebookSetup | null; history: RulebookSetup[];
+  decision: { state?: string | null; blocker?: string | null; evidence: Record<string, any>; confirmed: boolean };
+  plan: RulebookPlan | null;
+  real_execution_allowed: false; paper_execution_allowed: false;
+  state?: string; required_context_bars?: number; available_context_bars?: number;
+}
+interface RulebookManifest {
+  version: string; engine_sha256: string; pure_engine: boolean; reads_clock: boolean;
+  real_order_path: boolean; volume_used_for_signals: boolean; status_note: string;
+  instance_strategy_id: string; timeframes: { context: string; setup: string; confirm: string };
+}
 type JournalFilters = { strategy_id: string; direction: string; result: string; trigger_type: string; zone_type: string; touch_count: string; regime: string; rule_compliance: string; data_quality: string; entry_model: string; partition: string; strategy_version: string; date_from: string; date_to: string };
 type OperatingMode = "signals_only" | "manual_approval" | "automatic";
 
 const STRATEGIES = ["PA1_SR_REJECTION", "PA2_TREND_PULLBACK", "PA3_FLIP_RETEST", "PA4_FALSE_BREAK_REVERSAL"];
-const TABS: BottomTab[] = ["positions", "orders", "trades", "setups", "rejected", "journal", "learning", "session", "connection"];
+const TABS: BottomTab[] = ["positions", "orders", "trades", "setups", "rejected", "rulebook", "journal", "learning", "session", "connection"];
 const money = (value?: number) => Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const stamp = (value?: string | null) => value ? value.replace("T", " ").replace("+00:00", " UTC").slice(0, 22) : "—";
 const pretty = (value: string) => value.replace(/^PA\d_/, "").replace(/_/g, " ");
@@ -224,6 +250,112 @@ function JournalPanel({ journal, selected, selectedId, onSelect, filters, onFilt
   </div>;
 }
 
+const BLOCKER_NOTES: Record<string, string> = {
+  NET_RR_TOO_LOW: "The plan is complete and does not pay. Over 2025 this refused 32 of 55 confirmations at a median of 0.21R against a 2.50R gate, so it is usually the room to the target, not the threshold.",
+  TARGET_UNAVAILABLE: "No unexpired opposing zone to aim at, so no reward can be measured. The same shortage as NET_RR_TOO_LOW, further along.",
+  STOP_DISTANCE_INVALID: "The stop is outside the ATR band. Every 2025 instance was above the 2.50 ATR15 ceiling, never below the floor.",
+  REGIME_NOT_ALIGNED: "The 1H regime does not permit this direction. It held on 47% of 2025's 5M candles, which were TRANSITION.",
+  REJECTION_FAILED: "Price reached the zone but the candle did not meet the rejection test.",
+  CONFIRMATION_EXPIRED: "The rejection was never confirmed inside its three 5M candles.",
+  ZONE_CONSUMED: "This zone has already produced its setup and may not produce another.",
+  NO_ELIGIBLE_ZONE: "No zone was in reach of price on this candle.",
+  WARMING_UP: "Fewer than 200 closed 1H candles. The regime classifier refuses to leave UNKNOWN below that, so nothing can be decided yet.",
+  HTF_NOT_READY: "The 1H or 15M frame has not closed a candle the engine has not already seen.",
+  MISSING_CANDLE: "A gap in the closed-candle series. The engine will not decide across one.",
+  STALE_HTF_CANDLE: "The higher-timeframe candle is too old to be treated as current.",
+  NON_REAL_DATA: "The candles offered were not from a validated real provider. Chapter 2 forbids deciding on them.",
+  EXISTING_EXPOSURE: "A position is already open for this symbol.",
+};
+
+function RulebookPanel({ state, manifest, error, loading, onReload, symbol }: {
+  state: RulebookState | null; manifest: RulebookManifest | null; error: string | null;
+  loading: boolean; onReload: () => void; symbol: string;
+}) {
+  const plan = state?.plan ?? null;
+  const evidence = plan?.evidence ?? {};
+  const blocker = plan?.blocker ?? state?.decision.blocker ?? null;
+  const room = Number(evidence.target_room ?? NaN);
+  const needed = Number(evidence.required_room_for_min_rr ?? NaN);
+  // The one ratio the 2025 replay showed decides almost every refusal. Shown
+  // whenever both sides exist, not only when it is the named blocker.
+  const roomShare = Number.isFinite(room) && Number.isFinite(needed) && needed > 0
+    ? room / needed : null;
+
+  if (error) return <div className="pa-governance"><div className="pa-learning-warning"><b>Rulebook engine unavailable</b><span>{error}</span><button onClick={onReload}>Retry</button></div></div>;
+  if (!state) return <div className="pa-empty">{loading ? "Running the rulebook engine over the cached candles…" : "No rulebook evaluation yet."}</div>;
+  if (state.state === "WARMING_UP") return <div className="pa-empty">Warming up: {state.available_context_bars} of {state.required_context_bars} required 1H candles. The engine will not decide on a partial window.</div>;
+
+  return <div className="pa-governance">
+    <div className="pa-learning-warning">
+      <b>Nexus PA rulebook v{state.rulebook_version} · READ ONLY</b>
+      <span>{manifest?.status_note ?? "Research hypothesis, not a proven edge."}</span>
+      <span>
+        Pure engine {manifest?.pure_engine ? "YES" : "—"} · reads clock {manifest?.reads_clock ? "YES" : "NO"} ·
+        volume in signals {manifest?.volume_used_for_signals ? "YES" : "NO"} ·
+        order path {manifest?.real_order_path ? "YES" : "NONE"} ·
+        engine sha256 {manifest?.engine_sha256?.slice(0, 16) ?? "—"}
+      </span>
+      <span>This panel evaluates cached closed candles. It creates no session, writes no journal and proposes no order.</span>
+    </div>
+
+    <div className="pa-journal-stats">
+      <span>Regime<b>{state.regime}</b></span>
+      <span>Decision<b>{state.decision.state ?? "—"}</b></span>
+      <span>Blocker<b>{blocker ?? "none"}</b></span>
+      <span>Active zones<b>{state.zones.length}</b></span>
+      <span>Consumed<b>{state.consumed_zone_ids.length}</b></span>
+      <span>Strategies<b>{state.strategies.length}</b></span>
+    </div>
+
+    {blocker ? <div className="pa-order-audit">
+      <b>{blocker}</b>
+      <span>{BLOCKER_NOTES[blocker] ?? "See the measured evidence below."}</span>
+      {roomShare != null ? <span>
+        Room to the target is {(roomShare * 100).toFixed(0)}% of the room this gate needs
+        ({room.toFixed(2)} of {needed.toFixed(2)}, target_room / required_room_for_min_rr)
+      </span> : null}
+      <small>A setup that never appears and a setup that appears and is refused are different problems. The blocker is what tells them apart.</small>
+    </div> : null}
+
+    <div className="pa-learning-grid">
+      <section><h3>Plan arithmetic</h3>{plan ? <dl>
+        <dt>Verdict</dt><dd>{plan.accepted ? "ACCEPTED" : `REFUSED · ${plan.blocker ?? "—"}`}</dd>
+        <dt>Strategy / direction</dt><dd>{plan.strategy_id} · {plan.direction}</dd>
+        <dt>Entry / stop / target</dt><dd>{plan.entry_bound} / {plan.stop} / {plan.target ?? "—"}</dd>
+        <dt>Stop distance</dt><dd>{plan.stop_distance.toFixed(2)} ({plan.stop_distance_atr.toFixed(2)} ATR15, |E−S| / ATR15)</dd>
+        <dt>Net RR</dt><dd>{plan.net_rr == null ? "—" : plan.net_rr.toFixed(3)} <small>(|T−E| − costs_win) / (|E−S| + costs_loss)</small></dd>
+        <dt>Costs loss / win</dt><dd>{plan.costs_loss.toFixed(2)} / {plan.costs_win.toFixed(2)}</dd>
+        <dt>Fees as share of risk</dt><dd>{evidence.cost_share_of_risk == null ? "—" : `${(Number(evidence.cost_share_of_risk) * 100).toFixed(0)}%`} <small>costs_loss / (|E−S| + costs_loss)</small></dd>
+        <dt>Target capped by</dt><dd>{evidence.target_zone_id ?? "—"}</dd>
+        <dt>Room to target / needed</dt><dd>{Number.isFinite(room) ? room.toFixed(2) : "—"} / {Number.isFinite(needed) ? needed.toFixed(2) : "—"}</dd>
+        <dt>Quantity / planned loss</dt><dd>{plan.quantity ?? "—"} / {plan.planned_loss == null ? "—" : `${plan.planned_loss.toFixed(3)} USDT`}</dd>
+      </dl> : <div className="pa-empty">No plan on this candle. {state.decision.blocker ? `Blocked earlier: ${state.decision.blocker}.` : "No setup reached the plan stage."}</div>}</section>
+
+      <section><h3>Regime evidence · {state.timeframes.context}</h3><DataTable rows={Object.entries(state.regime_evidence ?? {}).map(([measure, value]) => ({ measure, value: typeof value === "number" ? Number(value.toFixed(4)) : String(value) }))} empty="No regime evidence on this candle." /></section>
+
+      <section><h3>Pending setup</h3>{state.pending_setup ? <dl>
+        <dt>Strategy</dt><dd>{state.pending_setup.strategy_id} · {state.pending_setup.direction}</dd>
+        <dt>State</dt><dd>{state.pending_setup.state}</dd>
+        <dt>Zone</dt><dd>{state.pending_setup.zone.id} ({state.pending_setup.zone.lower.toFixed(2)}–{state.pending_setup.zone.upper.toFixed(2)})</dd>
+        <dt>Setup ATR15</dt><dd>{state.pending_setup.setup_atr15.toFixed(2)}</dd>
+        <dt>Confirm slot</dt><dd>{state.pending_setup.confirm_slots_used} of 3</dd>
+        <dt>Cancel price</dt><dd>{state.pending_setup.cancel_price ?? "—"}</dd>
+      </dl> : <div className="pa-empty">No setup is waiting. {state.decision.blocker ? BLOCKER_NOTES[state.decision.blocker] ?? state.decision.blocker : ""}</div>}</section>
+    </div>
+
+    <div className="pa-shadow-comparison">
+      <section><h3>Zone registry · {symbol} {state.timeframes.setup}</h3><DataTable rows={state.zones.map((zone) => ({ id: zone.id, kind: zone.kind, lower: zone.lower, upper: zone.upper, origin: zone.origin, consumed: state.consumed_zone_ids.includes(zone.id) ? "YES" : "no", created: stamp(zone.created_at) }))} empty="No unexpired zones. Zones expire 72 setup candles after creation." /></section>
+      <section><h3>Recent setups</h3><DataTable rows={state.history.slice().reverse().map((setup) => ({ created: stamp(setup.created_at), strategy: setup.strategy_id, direction: setup.direction, state: setup.state, zone: setup.zone.id, blocker: setup.blocker ?? "—" }))} empty="No setups raised in this window." /></section>
+    </div>
+
+    <div className="pa-chart-foot">
+      <span>Last closed: {Object.entries(state.last_closed).map(([tf, at]) => `${tf} ${stamp(at)}`).join(" · ")}</span>
+      <button className="pa-export" onClick={onReload}>Re-evaluate</button>
+      <b>RESEARCH · NO ORDER PATH</b>
+    </div>
+  </div>;
+}
+
 function LearningPanel({ analysis, candidates }: { analysis: PALearningAnalysis | null; candidates: PALearningCandidate[] }) {
   const classifications = Object.entries(analysis?.classifications ?? {}).map(([classification, count]) => ({ classification, count }));
   const signalRows = candidates.map((row) => ({
@@ -287,6 +419,10 @@ export default function PriceActionVisual() {
   const [journal, setJournal] = useState<PAJournalResponse | null>(null);
   const [selectedJournalId, setSelectedJournalId] = useState("");
   const [journalFilters, setJournalFilters] = useState<JournalFilters>({ strategy_id: "", direction: "", result: "", trigger_type: "", zone_type: "", touch_count: "", regime: "", rule_compliance: "", data_quality: "", entry_model: "", partition: "", strategy_version: "", date_from: "", date_to: "" });
+  const [rulebook, setRulebook] = useState<RulebookState | null>(null);
+  const [rulebookManifest, setRulebookManifest] = useState<RulebookManifest | null>(null);
+  const [rulebookError, setRulebookError] = useState<string | null>(null);
+  const [rulebookLoading, setRulebookLoading] = useState(false);
   const [learning, setLearning] = useState<PALearningAnalysis | null>(null);
   const [learningCandidates, setLearningCandidates] = useState<PALearningCandidate[]>([]);
   const [remediationSymbol, setRemediationSymbol] = useState("");
@@ -296,6 +432,7 @@ export default function PriceActionVisual() {
   const [controlsOpen, setControlsOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 820);
   const identityInitialized = useRef(false);
   const chartRequestSequence = useRef(0);
+  const chartInFlight = useRef<{ key: string; sequence: number } | null>(null);
   const marketSwitchSequence = useRef(0);
   const marketSwitchQueue = useRef<Promise<void>>(Promise.resolve());
 
@@ -364,7 +501,11 @@ export default function PriceActionVisual() {
   }, [paper?.session.id, symbol, timeframe, journalFilters]);
   const loadChart = useCallback(async () => {
     if (!savedSession?.id) return;
+    const key = `${savedSession.id}:${mode}:${symbol}:${timeframe}:${cursor}`;
+    // A slow response must be allowed to complete, not superseded every 3s.
+    if (chartInFlight.current?.key === key) return;
     const sequence = ++chartRequestSequence.current;
+    chartInFlight.current = { key, sequence };
     const requestId = `${savedSession.id}:${mode}:${symbol}:${timeframe}:${sequence}`;
     setLoading(true);
     const path = mode === "live"
@@ -386,9 +527,33 @@ export default function PriceActionVisual() {
         setError(reason instanceof Error ? reason.message : "Price Action data unavailable");
       }
     } finally {
+      if (chartInFlight.current?.sequence === sequence) chartInFlight.current = null;
       if (sequence === chartRequestSequence.current) setLoading(false);
     }
   }, [mode, symbol, timeframe, cursor, savedSession?.id]);
+
+  const loadRulebook = useCallback(async () => {
+    setRulebookLoading(true);
+    setRulebookError(null);
+    try {
+      const [next, attestation] = await Promise.all([
+        apiGet<RulebookState>(`/research/pa-rulebook/state?symbol=${encodeURIComponent(symbol)}`),
+        apiGet<RulebookManifest>("/research/pa-rulebook/manifest"),
+      ]);
+      setRulebook(next);
+      setRulebookManifest(attestation);
+    } catch (exc) {
+      // Named, not swallowed: "no cached candles" and "the engine crashed" are
+      // different problems and the panel must not show the same blank for both.
+      setRulebookError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setRulebookLoading(false);
+    }
+  }, [symbol]);
+
+  // Only when the tab is open. This runs the engine over ~600 candles per call
+  // and nothing else on the page needs the result.
+  useEffect(() => { if (tab === "rulebook") void loadRulebook(); }, [tab, loadRulebook]);
 
   useEffect(() => { void apiGet<{ contracts: string[] }>("/research/price-action/contracts?limit=500").then((row) => setContracts(row.contracts)).catch(() => undefined); }, []);
   useEffect(() => { if (!identityInitialized.current || !savedSession?.id) return; void loadChart(); if (mode !== "live") return; const timer = window.setInterval(() => void loadChart(), 3_000); return () => window.clearInterval(timer); }, [loadChart, mode, savedSession?.id]);
@@ -427,8 +592,9 @@ export default function PriceActionVisual() {
   ];
   const selectedMetrics = state?.metrics.by_strategy?.[activeStrategy];
   const aggregateMetrics = state?.metrics;
-  const healthState = mode === "replay" ? "REPLAY" : state?.live_display?.connection_state ?? "CONNECTING";
-  const feedReliable = mode === "replay" || state?.live_display?.reliable === true;
+  const healthState = error ? "ERROR" : marketBusy ? "CONNECTING" : mode === "replay" ? "REPLAY" : state?.live_display?.connection_state ?? "CONNECTING";
+  const feedReliable = !error && !marketBusy && (mode === "replay" ||
+    (state?.live_display?.reliable === true && state.live_display.new_entries_paused !== true));
   const lastClosed = state?.candles[state.candles.length - 1];
   const marketSelection = pendingMarket ?? { symbol, timeframe, mode };
   const focusedObjectIds = focusedSetup ? [focusedSetup.id, focusedSetup.zone_id, focusedSetup.trigger_event_id].filter((row): row is string => Boolean(row)) : [];
@@ -531,8 +697,9 @@ export default function PriceActionVisual() {
       try {
         const updated = await apiPostJson<PaperState>("/research/price-action/sessions/current/configuration", {
           mode: nextMode === "live" ? "LIVE_PAPER" : "HISTORICAL", symbol: nextSymbol,
-          timeframe: nextTimeframe, operating_mode: operatingMode,
-          strategy_id: activeStrategy, risk_pct: Number(riskPct),
+          timeframe: nextTimeframe, operating_mode: savedSession?.operating_mode,
+          strategy_id: savedSession?.execution_config?.strategy_id,
+          risk_pct: savedSession?.execution_config?.risk_pct,
         });
         if (sequence !== marketSwitchSequence.current) return;
         chartRequestSequence.current += 1;
@@ -611,14 +778,14 @@ export default function PriceActionVisual() {
           {aggregateMetrics ? <div className="pa-metric-scope"><b>Selected strategy shown above</b><span>All PA1–PA4 aggregate remains {aggregateMetrics.net_r.toFixed(2)}R across {aggregateMetrics.closed} closed trades; it is not the selected-strategy result.</span><span>Dataset {String(state?.metrics_scope?.dataset_start ?? "—")} → {String(state?.metrics_scope?.dataset_end ?? "—")}</span><span>Config {String(state?.metrics_scope?.configuration_id ?? "—").slice(0, 12)} · funding {String(state?.metrics_scope?.cost_model?.funding_coverage ?? "—")}</span></div> : null}
           {error ? <div className="pa-error"><b>Market data unavailable</b><span>{error}</span><button onClick={() => void loadChart()}>Retry</button></div> : null}
           {!chart ? <div className="pa-loading">{loading ? "Loading and reconciling Binance market streams…" : "No identity-verified candle state"}</div> : <NativeSMCChartOverlay state={chart} timeframe={timeframe} rightOffsetBars={8} initialVisibleBars={visibleBars} filters={filters} highlightedObjectIds={focusedObjectIds} centerTimestamp={focusedSetup?.created_at} onCandleSelect={() => undefined} fitContentSignal={fitSignal} latestSignal={latestSignal} modelLabel="native price action" height="clamp(520px, 58vh, 680px)" liveDataStale={!feedReliable || Boolean(error)} />}
-          <div className={`pa-stream-truth ${feedReliable ? "is-healthy" : "is-stale"}`}><b>{healthState}</b><span>{mode === "replay" ? "Historical replay is isolated from live streams" : state?.live_display?.health_reason ?? "Waiting for identity-bound feed reconciliation"}</span><span>Transport {state?.live_display?.transport_state ?? "—"} · entries {state?.live_display?.new_entries_paused ? "PAUSED" : "ELIGIBLE ON CLOSED BARS"}</span></div>
+          <div className={`pa-stream-truth ${feedReliable ? "is-healthy" : "is-stale"}`}><b>{healthState}</b><span>{mode === "replay" ? "Historical replay is isolated from live streams" : error ?? state?.live_display?.health_reason ?? "Waiting for identity-bound feed reconciliation"}</span><span>Transport {state?.live_display?.transport_state ?? "—"} · entries {!feedReliable ? "PAUSED" : "ELIGIBLE ON CLOSED BARS"}</span></div>
           <div className="pa-market-readout"><span>Last completed candle<b>{lastClosed ? `${stamp(lastClosed.timestamp)} · C ${lastClosed.close.toLocaleString()}` : "—"}</b><small>Age {age(state?.live_display?.closed_candle_age_seconds)}</small></span><span>Forming candle · display only<b>{state?.forming_candle ? `${stamp(state.forming_candle.timestamp)} · O ${state.forming_candle.open.toLocaleString()} H ${state.forming_candle.high.toLocaleString()} L ${state.forming_candle.low.toLocaleString()} C ${state.forming_candle.close.toLocaleString()}` : "Not available"}</b><small>Stream age {age(state?.live_display?.candle_age_seconds)}</small></span><span>Live bid / ask<b>{state?.live_display?.bid?.toLocaleString() ?? "—"} / {state?.live_display?.ask?.toLocaleString() ?? "—"}</b><small>Age {age(state?.live_display?.quote_age_seconds)}</small></span><span>Mark price<b>{state?.live_display?.mark?.toLocaleString() ?? "—"}</b><small>Age {age(state?.live_display?.mark_age_seconds)} · deviation {state?.live_display?.candle_quote_deviation_bps?.toFixed(2) ?? "—"} bps</small></span></div>
           <div className="pa-chart-foot"><span><i className={feedReliable ? "live" : "stale"} />{mode === "live" ? `Binance · ${healthState}` : "Verified historical cache"}</span><span>Updated {stamp(state?.live_display?.last_update)}</span><span>Quote source {state?.live_display?.quote_source ?? "—"}</span><span>Closed candles used: {String(state?.data_provenance?.closed_candles_used ?? state?.candles.length ?? 0)}</span><span>Forming candle excluded from strategy: {state?.forming_candle ? "YES" : "N/A"}</span><b>PAPER · NO LIVE EXECUTION PATH</b></div>
         </div>
 
         <div className="pa-bottom">
-          <nav>{TABS.map((row) => <button key={row} className={tab === row ? "active" : ""} onClick={() => setTab(row)}>{row}<em>{row === "positions" ? paper?.positions.length ?? 0 : row === "orders" ? pendingPaperOrders.length : row === "trades" ? tradeRows.length : row === "setups" ? state?.setups.length ?? 0 : row === "rejected" ? rejected.length : row === "journal" ? journal?.statistics.setups ?? 0 : row === "learning" ? learningCandidates.length : ""}</em></button>)}</nav>
-          <div className={`pa-bottom-body ${tab === "journal" || tab === "learning" ? "is-governance" : ""}`}>
+          <nav>{TABS.map((row) => <button key={row} className={tab === row ? "active" : ""} onClick={() => setTab(row)}>{row}<em>{row === "positions" ? paper?.positions.length ?? 0 : row === "orders" ? pendingPaperOrders.length : row === "trades" ? tradeRows.length : row === "setups" ? state?.setups.length ?? 0 : row === "rejected" ? rejected.length : row === "journal" ? journal?.statistics.setups ?? 0 : row === "learning" ? learningCandidates.length : row === "rulebook" ? (rulebook?.zones.length ?? "") : ""}</em></button>)}</nav>
+          <div className={`pa-bottom-body ${tab === "journal" || tab === "learning" || tab === "rulebook" ? "is-governance" : ""}`}>
             {tab === "positions" ? <>
               {legacyPosition ? <div className="pa-order-audit">
                 <b>LEGACY / UNPROTECTED PAPER POSITION</b>
@@ -633,10 +800,11 @@ export default function PriceActionVisual() {
             {tab === "trades" ? <DataTable rows={tradeRows} empty="No completed paper fills or normalized research outcomes." /> : null}
             {tab === "setups" ? <DataTable rows={(state?.setups ?? []) as unknown as Record<string, any>[]} empty="No confirmed setups in the visible engine state." /> : null}
             {tab === "rejected" ? <DataTable rows={rejected} empty="No rejected or waiting strategy traces." /> : null}
+            {tab === "rulebook" ? <RulebookPanel state={rulebook} manifest={rulebookManifest} error={rulebookError} loading={rulebookLoading} onReload={() => void loadRulebook()} symbol={symbol} /> : null}
             {tab === "journal" ? <JournalPanel journal={journal} selected={selectedJournal} selectedId={selectedJournalId} onSelect={selectJournal} filters={journalFilters} onFilters={setJournalFilters} sessionId={paper?.session.id} symbol={symbol} timeframe={timeframe} /> : null}
             {tab === "learning" ? <LearningPanel analysis={learning} candidates={learningCandidates} /> : null}
             {tab === "session" ? <><div className="pa-session"><span>Session ID<b>{paper?.session.id ?? "—"}</b></span><span>Started<b>{stamp(paper?.session.started_at)}</b></span><span>Starting balance<b>{money(paper?.session.starting_balance)} USDT</b></span><span>Status<b>{paper?.session.status?.toUpperCase() ?? "—"}</b></span><span>Operating mode<b>{sessionLoaded ? pretty(savedSession?.operating_mode ?? "") : "Loading"}</b></span></div><div className="pa-order-ticket"><select aria-label="Saved Price Action session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)}>{sessions.map((row) => <option key={row.id} value={row.id}>{row.symbol} · {row.timeframe} · {row.status} · {stamp(row.started_at)}</option>)}</select><button onClick={() => void sessionAction("start")}>Start new</button><button disabled={!selectedSession} onClick={() => void sessionAction("resume")}>Resume</button><button disabled={!selectedSession} onClick={() => void sessionAction("duplicate")}>Duplicate</button><button disabled={!paper?.session.id} onClick={() => void sessionAction("end")}>End</button><button className="pa-export" onClick={() => void apiDownload("/research/price-action/paper/export", `price-action-session-${paper?.session.id ?? "current"}.json`)}>Export</button><button className="btn-danger" onClick={() => void resetSession()}>Reset</button></div><DataTable rows={paper?.activity ?? []} empty="No session audit events yet." /></> : null}
-            {tab === "connection" ? <div className="pa-session"><span>Exchange<b>Binance USDⓈ-M Futures</b></span><span>Overall health<b>{healthState}</b></span><span>Transport<b>{state?.live_display?.transport_state ?? (mode === "replay" ? "ISOLATED" : "CONNECTING")}</b></span><span>Candle stream<b>{age(state?.live_display?.candle_age_seconds)}</b></span><span>Bid / ask stream<b>{age(state?.live_display?.quote_age_seconds)}</b></span><span>Mark stream<b>{age(state?.live_display?.mark_age_seconds)}</b></span><span>Failing dependency<b>{state?.live_display?.failing_dependency ?? "None"}</b></span><span>Last successful event<b>{state?.live_display?.last_successful_event ? `${state.live_display.last_successful_event.kind} · ${state.live_display.last_successful_event.at}` : "—"}</b></span><span>Retry state<b>{state?.live_display?.retry_state?.automatic_retry ? `automatic · attempt ${state.live_display.retry_state.attempt ?? 0}` : "—"}</b></span><span>Reconciliation<b>{state?.live_display?.health_reason ?? "—"}</b></span><span>New entries<b>{state?.live_display?.new_entries_paused ? "PAUSED · FAIL CLOSED" : "CLOSED BARS ONLY"}</b></span><span>Real execution<b>DISABLED</b></span></div> : null}
+            {tab === "connection" ? <div className="pa-session"><span>Exchange<b>Binance USDⓈ-M Futures</b></span><span>Overall health<b>{healthState}</b></span><span>Transport<b>{state?.live_display?.transport_state ?? (mode === "replay" ? "ISOLATED" : "CONNECTING")}</b></span><span>Candle stream<b>{age(state?.live_display?.candle_age_seconds)}</b></span><span>Bid / ask stream<b>{age(state?.live_display?.quote_age_seconds)}</b></span><span>Mark stream<b>{age(state?.live_display?.mark_age_seconds)}</b></span><span>Failing dependency<b>{state?.live_display?.failing_dependency ?? "None"}</b></span><span>Last successful event<b>{state?.live_display?.last_successful_event ? `${state.live_display.last_successful_event.kind} · ${state.live_display.last_successful_event.at}` : "—"}</b></span><span>Retry state<b>{state?.live_display?.retry_state?.automatic_retry ? `automatic · attempt ${state.live_display.retry_state.attempt ?? 0}` : "—"}</b></span><span>Reconciliation<b>{state?.live_display?.health_reason ?? "—"}</b></span><span>New entries<b>{!feedReliable ? "PAUSED · FAIL CLOSED" : "CLOSED BARS ONLY"}</b></span><span>Real execution<b>DISABLED</b></span></div> : null}
           </div>
         </div>
         <ResearchComparisonPanel engine="PA" />

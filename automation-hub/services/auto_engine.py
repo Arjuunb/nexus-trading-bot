@@ -29,6 +29,9 @@ from typing import Callable, Optional
 from bot.types import Signal, SignalType
 from data.ledger import Ledger
 from execution.paper_engine import PaperExecutionEngine
+from services.market_data_freshness import (
+    assess_timeframe, grace_for_interval, is_live_source,
+)
 from services.signal_pipeline import SignalPipeline, gate_blocker
 
 
@@ -237,6 +240,10 @@ class AutoStrategyEngine:
         # for A/B research with HUB_STRATEGY_HEALTH_GUARD=0.
         self.strategy_health_guard = _os.environ.get("HUB_STRATEGY_HEALTH_GUARD", "1").lower() not in ("0", "false", "off")
         self._strategy_health: dict[str, dict] = {}
+        #: Live strategy objects by symbol, published for read-only observation.
+        #: Empty until a run loop starts, which is itself the honest answer to
+        #: "what is this instance analysing" before it has analysed anything.
+        self._live_strategies: dict[str, object] = {}
         # services.approvals.ApprovalStore — the semi-auto approval queue.
         self.approvals = None
         self._seq = itertools.count(1)
@@ -620,6 +627,13 @@ class AutoStrategyEngine:
         from data.market_data import get_bars
 
         strategies: dict[str, object] = {}
+        # Published read-only so the Instance Visual Lab can read the SAME
+        # strategy object this loop is driving -- its engine's zones, pivots,
+        # structure events and fair value gaps are the runtime evidence, and
+        # re-deriving them anywhere else is how a chart and a bot come to
+        # disagree. A reference, not a copy: nothing is written, nothing is
+        # snapshotted per candle, and no reader may mutate it.
+        self._live_strategies = strategies
         live: dict[str, list] = {}
         seeds: dict[str, int] = {}
 
@@ -650,6 +664,13 @@ class AutoStrategyEngine:
         """Warm up on history WITHOUT trading, then act only on NEW closed
         candles as they arrive — genuine forward paper-trading."""
         strategies: dict[str, object] = {}
+        # Published read-only so the Instance Visual Lab can read the SAME
+        # strategy object this loop is driving -- its engine's zones, pivots,
+        # structure events and fair value gaps are the runtime evidence, and
+        # re-deriving them anywhere else is how a chart and a bot come to
+        # disagree. A reference, not a copy: nothing is written, nothing is
+        # snapshotted per candle, and no reader may mutate it.
+        self._live_strategies = strategies
         last_ts: dict[str, object] = {}
 
         for sym in self.symbols:
@@ -887,9 +908,15 @@ class AutoStrategyEngine:
                 context[timeframe] = []
                 sources.append(f"{timeframe}:insufficient optional bias")
                 continue
-            age = ((datetime.now(timezone.utc) - closed[-1].timestamp).total_seconds()
-                   - (duration or 0))
-            if duration is None or max(0.0, age) > duration * 1.5:
+            # Each required timeframe is verified independently against the one
+            # platform-wide authority, so a fresh 5m entry candle can never
+            # carry a stale 1h bias into an entry. A mandatory clock that is
+            # stale fails closed; a policy secondary is bias only and degrades
+            # to "no bias" rather than becoming a second entry gate.
+            htf = assess_timeframe(symbol, timeframe, closed[-1].timestamp) \
+                if duration is not None else None
+            age = htf.age_seconds if htf and htf.age_seconds is not None else 0.0
+            if htf is None or not htf.fresh:
                 if mandatory:
                     raise EngineFeedError(
                         f"{symbol} {timeframe} context stale: age={max(0.0, age):.0f}s")
@@ -904,7 +931,10 @@ class AutoStrategyEngine:
 
     def _forward_fetch_for_timeframe(self, symbol: str, timeframe: str, limit: int):
         bars, source = self._fetcher(symbol, timeframe, limit)
-        if not str(source or "").startswith("live"):
+        # Provenance before freshness: a cached, sampled or synthetic candle can
+        # carry a current timestamp, so the source is checked first and against
+        # the one shared whitelist rather than a local string test.
+        if not is_live_source(source):
             raise EngineFeedError(
                 f"forward paper requires live {timeframe} provider data, got {source or 'none'}")
         return bars, source
@@ -1024,7 +1054,13 @@ class AutoStrategyEngine:
             # Some venues cap OHLCV below the requested 1000 rows. A short page
             # is therefore not proof that we reached the live edge; page until
             # freshness or until the provider makes no forward progress.
-            if age_after_close <= duration * 1.5:
+            #
+            # "Freshness" here must be the gate's definition, not a looser one.
+            # At duration * 1.5 this loop stopped paging while the candle was
+            # still too old for services/market_data_freshness.py to accept, so
+            # a backfill could finish "successfully" and leave the instance
+            # blocked on data one more page would have supplied.
+            if age_after_close <= duration + grace_for_interval(duration):
                 break
         return [merged[key] for key in sorted(merged)], source
 
@@ -1064,12 +1100,17 @@ class AutoStrategyEngine:
         # minutes older than it is and could exhaust reconnects before the
         # next provider candle arrived.
         interval = _TF_SECONDS.get(self.timeframe, 3600)
-        raw_age = (datetime.now(timezone.utc) - newest.timestamp).total_seconds()
-        age = max(0.0, raw_age - interval)
-        allowed_age = interval * 1.5
-        if age > allowed_age:
+        # One rule, shared with both Strategy Labs and the dashboard. This path
+        # already measured from the close (see above); what it did not share was
+        # how much lateness to allow, so an instance would keep trading on a
+        # candle a lab had already called stale. The shared authority also
+        # reports the numbers it judged on, which land in the blocker text.
+        verdict = assess_timeframe(symbol, self.timeframe, newest.timestamp)
+        age = verdict.age_seconds if verdict.age_seconds is not None else 0.0
+        allowed_age = verdict.allowed_age_seconds
+        if not verdict.fresh:
             self.market_data_status = "stale"
-            self.last_blocker = "GATE_REJECTED: STALE_CANDLE"
+            self.last_blocker = f"GATE_REJECTED: {verdict.blocker or 'STALE_CANDLES'}"
             self.last_blocker_timestamp = newest.timestamp.isoformat()
             raise MarketDataStaleError(
                 f"{symbol} market data stale: age={age:.0f}s allowed={allowed_age:.0f}s")
@@ -1252,10 +1293,21 @@ class AutoStrategyEngine:
                 blocker = "GATE_REJECTED: POSITION_MANAGED"
             else:
                 decision_reason = str((strategy_decision or {}).get("reason") or "")
-                blocker = (gate_blocker("strategy", decision_reason)
-                           if any(word in decision_reason.upper()
-                                  for word in ("WARM", "STALE", "R:R", "RR ", "REWARD"))
-                           else "GATE_REJECTED: NO_SETUP")
+                # A strategy that reports a structured code is believed. The
+                # alternative below sniffs prose for keywords, which cannot
+                # name a veto the vocabulary never anticipated -- and silently
+                # calls it NO_SETUP, so "nothing set up" and "a setup was
+                # confirmed and refused on reward" look identical on the board.
+                reported = str((strategy_decision or {}).get("blocker_code") or "").strip()
+                if reported:
+                    blocker = f"GATE_REJECTED: {reported.upper()}"
+                elif any(word in decision_reason.upper()
+                         # "RR_" was in gate_blocker's own vocabulary but not in
+                         # this guard, so NET_RR_TOO_LOW never reached it.
+                         for word in ("WARM", "STALE", "R:R", "RR ", "RR_", "REWARD")):
+                    blocker = gate_blocker("strategy", decision_reason)
+                else:
+                    blocker = "GATE_REJECTED: NO_SETUP"
         self.last_blocker = blocker
         self.last_blocker_timestamp = bar.timestamp.isoformat()
         if outcome is None:
@@ -1634,6 +1686,24 @@ class AutoStrategyEngine:
                                      "side": None, "entry": None})["target"] = tg
             return out
 
+    def owning_strategy_id(self) -> str:
+        """Which strategy owns the trades this engine produces.
+
+        The label is for humans and is not unique, so it cannot scope a
+        statistic. A deployed rule spec carries an id and the monitor compares
+        live behaviour against the backtest of that same id; an instance
+        running a built-in strategy carries strategy_key, which
+        instance_metrics already treats as its strategy id.
+
+        Neither means nobody owns the trade. It is then written unattributed
+        rather than borrowing whichever strategy happens to be deployed --
+        crediting a strategy with a record it did not produce is worse than
+        leaving the record unowned, and is what put a 36.75R drawdown from
+        2,804 pooled trades onto a strategy that had taken one in a year.
+        """
+        return str((self.deployed_spec or {}).get("id")
+                   or getattr(self, "strategy_key", "") or "")
+
     def _on_signal(self, sym: str, signal: Signal, strategy=None, *,
                    decision_identity: str | None = None) -> Optional[dict]:
         # The brain re-asserts its view every bar; only act when it CHANGES the
@@ -1781,6 +1851,7 @@ class AutoStrategyEngine:
             "journal_quality_gate": v.to_dict() if v is not None else None,
             "journal_decision_id": decision_id,
             "strategy": self.strategy_label,
+            "strategy_id": self.owning_strategy_id(),
             "timeframe": self.timeframe,
             "mode": "live" if self.live else "paper",
             "open_trades": len(self.paper.positions()),

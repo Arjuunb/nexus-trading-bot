@@ -125,6 +125,7 @@ class PriceActionRejectionStrategy(HubStrategy):
         # research output and must never become an order.
         self._history_proposals: set[str] = set()
         self._emitted: set[str] = set()
+        self._last_snapshot = None
         self.last_reason = "Awaiting multi-timeframe context"
 
     # ---------------------------------------------------------------- context
@@ -172,6 +173,7 @@ class PriceActionRejectionStrategy(HubStrategy):
         # Refreshed per candle, exactly as the lab does before processing.
         engine.set_native_mtf_context(self._mtf())
         snapshot = engine.process_closed_bar(bar, market_data_health="LIVE_RECONCILED")
+        self._last_snapshot = snapshot
         self.bars = list(engine.bars)
         return self.generate(bar, snapshot=snapshot)
 
@@ -204,6 +206,68 @@ class PriceActionRejectionStrategy(HubStrategy):
         self._emitted.add(proposal.id)
         return self._as_signal(bar, proposal)
 
+    #: The engine's own condition keys, mapped to the runtime's blocker
+    #: vocabulary. Taken from NativePriceActionEngine._condition rather than
+    #: invented here, so a condition the engine renames fails the mapping test
+    #: instead of silently becoming "no setup".
+    _BLOCKER_BY_CONDITION = {
+        "zone": "NO_ELIGIBLE_ZONE",
+        "pullback_zone": "NO_ELIGIBLE_ZONE",
+        "rejection": "REJECTION_FAILED",
+        "pullback_rejection": "REJECTION_FAILED",
+        "trend": "TREND_NOT_ALIGNED",
+        "role_flip": "NO_ROLE_FLIP",
+        "retest": "RETEST_NOT_HELD",
+        "false_break": "NO_FALSE_BREAK",
+        "reversal_close": "NO_REVERSAL_CLOSE",
+        "pin_bar_only": "PIN_BAR_REQUIRED",
+        "first_touch_only": "NOT_FIRST_TOUCH",
+    }
+
+    def decision_report(self) -> dict:
+        """Why this candle did not produce a signal, in the engine's own terms.
+
+        The engine already evaluates every condition and records which ones are
+        unmet, in order, on each closed candle. None of that reached the
+        runtime: this strategy had no decision_report, so every refusal it made
+        arrived at the dashboard as "GATE_REJECTED: NO_SETUP" -- the same six
+        words whether price never reached a zone or reached one and failed the
+        rejection test.
+
+        The first unmet condition is the blocker, because the engine lists them
+        in the order it requires them, so the earliest one is what actually
+        stopped the setup. The rest are reported as still-unmet rather than
+        promoted, since a condition never reached has not failed.
+        """
+        snapshot = self._last_snapshot
+        if snapshot is None:
+            return {"decision": "WAIT", "reason": self.last_reason,
+                    "blocker_code": "WARMUP", "state": None}
+        traces = [trace for trace in getattr(snapshot, "strategy_traces", ())
+                  if trace.strategy_id == self.pa_strategy_id]
+        if not traces:
+            return {"decision": "WAIT", "reason": self.last_reason,
+                    "blocker_code": "NO_SETUP", "state": None}
+        # The trace closest to firing is the informative one: a strategy
+        # evaluates both directions and the one with fewer unmet conditions is
+        # the setup actually developing.
+        trace = min(traces, key=lambda row: len(row.missing_conditions))
+        missing = list(trace.missing_conditions)
+        passed = [row["key"] for row in trace.conditions if row["status"] == "PASS"]
+        code = (self._BLOCKER_BY_CONDITION.get(missing[0], "NO_SETUP")
+                if missing else None)
+        return {
+            "decision": "ENTER" if not missing else "WAIT",
+            "reason": self.last_reason,
+            "blocker_code": code,
+            "state": trace.state,
+            "direction": trace.direction,
+            "passed_conditions": passed,
+            "missing_conditions": missing,
+            "next_required_event": trace.next_required_event,
+            "setup_id": trace.setup_id,
+        }
+
     def _as_signal(self, bar: Bar, proposal: ProposedTrade) -> Signal:
         """Carry the engine's own numbers through unchanged.
 
@@ -218,11 +282,37 @@ class PriceActionRejectionStrategy(HubStrategy):
             f"at {proposal.entry:.8f}, stop {proposal.stop:.8f} "
             f"({proposal.rr_ratio:.2f}R)"
         )
-        return Signal(
+        signal = Signal(
             timestamp=bar.timestamp, symbol=self.symbol, type=direction,
             entry=proposal.entry, stop_loss=proposal.stop,
             take_profit=proposal.target, reason=self.last_reason,
         )
+        # Provenance for the trade journal. services/auto_engine.py copies
+        # ``signal.snapshot`` into the pipeline payload, so without this a
+        # Price Action paper trade lands in the journal with no way back to the
+        # proposal that caused it -- which is the very thing the registry means
+        # when it says a paper record must be attributable. Metadata only: it
+        # names what the engine already decided and moves no level.
+        # Which level, and what rejected off it. Carrying only setup_id would
+        # leave a journal entry that says a trade happened without saying which
+        # support or resistance caused it -- the one thing worth knowing when
+        # deciding whether to trust the setup.
+        setup = (self._engine.setups.get(proposal.setup_id)
+                 if self._engine is not None else None)
+        signal.snapshot = {
+            "mtf_evidence": dict(self._native_mtf_evidence),
+            "research_id": proposal.strategy_id,
+            "strategy_version": STRATEGY_VERSION,
+            "setup_id": proposal.setup_id,
+            "proposal_id": proposal.id,
+            "entry_model": proposal.entry_model,
+            "rr_ratio": proposal.rr_ratio,
+            "risk_distance": proposal.risk_distance,
+            "zone_id": getattr(setup, "zone_id", None),
+            "trigger_event_id": getattr(setup, "trigger_event_id", None),
+            "reasons": list(getattr(setup, "reasons", ()) or ()),
+        }
+        return signal
 
 
 class PriceActionFlipRetestStrategy(PriceActionRejectionStrategy):

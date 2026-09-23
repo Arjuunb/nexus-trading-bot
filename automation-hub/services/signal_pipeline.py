@@ -913,6 +913,10 @@ class SignalPipeline:
             fill = self.paper.open(symbol=symbol, side=side, size=size, entry=entry,
                                    stop=stop, target=payload.get("target"),
                                    alert_id=alert_id, maker=bool(payload.get("maker")),
+                                   # Empty for an inbound webhook alert, which
+                                   # belongs to no deployed spec and must stay
+                                   # unattributed rather than borrow one.
+                                   strategy_id=str(payload.get("strategy_id") or ""),
                                    sizing_context={
                                        "sizing_mode": sizing.mode,
                                        "sizing_engine_version": sizing.sizing_engine_version,

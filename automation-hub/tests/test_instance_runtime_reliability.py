@@ -410,12 +410,12 @@ def test_higher_timeframe_context_channels_do_not_duplicate_quote_streams(tmp_pa
     context = PriceActionPublicStream(lambda *a, **k: [], quotes_enabled=False)
     context.symbol, context.timeframe = "BTCUSDT", "1h"
 
-    assert "markPrice" in entry.market_url
+    assert any("markPrice" in name for name in entry.market_subscriptions)
     # markPrice and bookTicker are per-symbol. Subscribing to them again on
     # every higher-timeframe channel opened two redundant Binance streams per
     # symbol per context clock, for data no consumer of that channel reads.
-    assert "markPrice" not in context.market_url
-    assert "kline_1h" in context.market_url
+    assert not any("markPrice" in name for name in context.market_subscriptions)
+    assert "btcusdt@kline_1h" in context.market_subscriptions
     assert context.status()["state"] == "DISCONNECTED"  # not started
     assert context.quotes_enabled is False
 

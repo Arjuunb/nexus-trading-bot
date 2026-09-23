@@ -247,9 +247,46 @@ def _frequency(base: dict, live: dict, t: Thresholds) -> list[dict]:
     return []
 
 
-def _volatility(band: Optional[dict], current: Optional[float]) -> list[dict]:
+def _age_phrase(seconds: Optional[float]) -> str:
+    """How old, in the coarsest unit that stays honest."""
+    if seconds is None:
+        return "an unknown age"
+    if seconds < 3600:
+        return f"{seconds / 60:.0f} minutes old"
+    if seconds < 172800:
+        return f"{seconds / 3600:.1f} hours old"
+    return f"{seconds / 86400:.0f} days old"
+
+
+def _volatility(band: Optional[dict], current: Optional[float],
+                freshness: Optional[dict] = None) -> list[dict]:
     if not band or current is None:
         return []
+    # Every branch below is a statement about CURRENT volatility, and the
+    # candles behind it come from a cache measured 15.8 hours behind the
+    # venue. Yesterday's ATR asserted as today's is not a weaker warning, it
+    # is a different claim -- and it would tell the operator to resize stops
+    # for a regime that may have ended. Saying the check could not run is the
+    # honest answer, and saying nothing is not: an absent finding reads as a
+    # volatility that is in range.
+    if freshness is not None and freshness.get("status") != "FRESH":
+        age = _age_phrase(freshness.get("age_seconds"))
+        return [{
+            "key": "volatility-not-current", "severity": "warning",
+            "title": "Volatility cannot be assessed: the candles are not current",
+            "detail": (f"The newest candle available for this symbol is {age}, so"
+                       " there is no current ATR to compare against the backtest"
+                       " range. This is not a reading that volatility is in"
+                       " range -- it is the check reporting that it could not"
+                       " run."),
+            "evidence": [{"stat": "candle status", "value": str(freshness.get("status"))},
+                         {"stat": "newest candle", "value": str(freshness.get("last_close") or "none held")},
+                         {"stat": "backtest ATR % range (p10-p90)",
+                          "value": f"{band.get('p10')}% - {band.get('p90')}%"}],
+            "recommendation": ("Refresh the candle cache (/data/sync) or check the"
+                               " feed. Until it is current, treat the volatility"
+                               " regime as unknown rather than unchanged."),
+        }]
     cur = round(float(current), 3)
     lo, hi = band.get("p10"), band.get("p90")
     if lo is None or hi is None:
@@ -303,17 +340,56 @@ def _execution(execution: Optional[dict], t: Thresholds) -> list[dict]:
 _SEV_RANK = {"critical": 0, "warning": 1, "info": 2}
 
 
+def _attribution(att: Optional[dict]) -> list[dict]:
+    """Say so when the monitor cannot see this strategy's trades.
+
+    Comparing a strategy's backtest against the POOLED history of every
+    strategy is not a weaker comparison, it is a different one: it reported
+    a 36.75R live drawdown against a 4.3R backtest for a strategy whose own
+    backtest took one trade in a year. The 36.75R belonged to 2,804 trades it
+    never made.
+
+    Scoping that comparison correctly is the fix, but silence is not an
+    acceptable result of it. A monitor with nothing to look at looks exactly
+    like a monitor reporting all-clear, so when trades exist and none of them
+    carry this strategy's id, that is itself the finding.
+    """
+    if not att:
+        return []
+    scoped, pooled = int(_f(att, "scoped")), int(_f(att, "pooled"))
+    if scoped or not pooled:
+        return []
+    return [{
+        "key": "monitor-unattributed-trades", "severity": "warning",
+        "title": "Monitoring is blind: no closed trade carries this strategy's id",
+        "detail": (f"The ledger holds {pooled} closed paper trades and none of them "
+                   f"are attributed to this strategy, so there is nothing to compare "
+                   f"against its backtest. This is not an all-clear -- it is the "
+                   f"monitor reporting that it cannot see."),
+        "evidence": [{"stat": "closed trades in ledger", "value": str(pooled)},
+                     {"stat": "attributed to this strategy", "value": str(scoped)},
+                     {"stat": "strategy id", "value": str(att.get("strategy_id") or "(none)")}],
+        "recommendation": ("Trades are written without a strategy id, so no per-strategy "
+                           "statistic can be trusted until that is fixed. Until then, read "
+                           "deviation monitoring as unavailable rather than passing."),
+    }]
+
+
 def evaluate(*, baseline: Optional[dict], live: Optional[dict],
              volatility_band: Optional[dict] = None,
              current_atr_pct: Optional[float] = None,
+             volatility_freshness: Optional[dict] = None,
              execution: Optional[dict] = None,
+             attribution: Optional[dict] = None,
              thresholds: Thresholds = DEFAULT) -> dict:
     """Compare live behaviour against the strategy's own backtest.
 
     Returns ``{available, status, findings, baseline, live, note, auto_modify}``.
     ``auto_modify`` is always False — this agent recommends, it never acts."""
     # Checks that need no trade sample run in every state.
-    ambient = _volatility(volatility_band, current_atr_pct) + _execution(execution, thresholds)
+    ambient = (_volatility(volatility_band, current_atr_pct, volatility_freshness)
+               + _execution(execution, thresholds)
+               + _attribution(attribution))
 
     if not baseline or not _f(baseline, "total_trades"):
         return {"available": False, "status": "no_baseline", "auto_modify": False,
@@ -325,11 +401,16 @@ def evaluate(*, baseline: Optional[dict], live: Optional[dict],
     live = live or {}
     n_live = int(_f(live, "total_trades"))
     if n_live < MIN_LIVE_TRADES:
+        blind = any(f["key"] == "monitor-unattributed-trades" for f in ambient)
         return {"available": True, "status": "warming_up", "auto_modify": False,
                 "findings": ambient, "baseline": baseline, "live": live,
-                "note": (f"{n_live} of {MIN_LIVE_TRADES} closed live trades. Performance "
-                         "deviation is not reported below that sample — it would be noise. "
-                         "Volatility and execution checks are active now.")}
+                "note": (f"{n_live} of {MIN_LIVE_TRADES} closed live trades attributed to "
+                         "this strategy. Performance deviation is not reported below that "
+                         "sample — it would be noise. Volatility and execution checks are "
+                         "active now."
+                         + (" Trades exist in the ledger but none carry this strategy's id,"
+                            " so this is a gap in attribution rather than a quiet strategy."
+                            if blind else ""))}
 
     findings = (_performance(baseline, live, thresholds)
                 + _drawdown(baseline, live, thresholds)
