@@ -92,15 +92,22 @@ def diagnose(status: dict, agent: dict, paper: dict, policy: dict) -> tuple[list
     lines: list[str] = []
     verdict: list[str] = []
     mode = str(status.get("operating_mode") or (paper.get("session") or {}).get("operating_mode") or "?")
-    blockers = list(status.get("blockers") or agent.get("blockers") or [])
-    feed = status.get("feed") or agent.get("feed") or {}
+    # bot-status is read last, so it is the current answer. The agent endpoint
+    # carries its own copy from a few seconds earlier; mixing the two once
+    # reported a lab as BLOCKED by a reconnect that had already recovered.
+    current = status if status else agent
+    blockers = list(current.get("blockers") or [])
+    cleared = [item for item in (agent.get("blockers") or []) if status and item not in blockers]
+    feed = current.get("feed") or {}
 
     lines.append("== LAB ==")
     lines.append(f"  {status.get('symbol') or agent.get('symbol')} "
                  f"{status.get('timeframe') or agent.get('timeframe')}  mode={mode}  "
-                 f"execution_state={status.get('execution_state') or agent.get('execution_state')}")
+                 f"execution_state={current.get('execution_state')}")
     lines.append(f"  feed={feed.get('state')} reliable={feed.get('reliable')}  "
                  f"blockers={blockers or 'none'}")
+    for item in cleared:
+        lines.append(f"  seconds earlier, since cleared: {item}")
 
     # --- every entry this session has placed ---------------------------------
     entries = sorted(
@@ -214,6 +221,9 @@ def diagnose(status: dict, agent: dict, paper: dict, policy: dict) -> tuple[list
                        "(so a new order cannot overwrite the open trade's stop and targets).")
     if pending:
         verdict.append("An entry order is still pending. No new entry until it fills or is cancelled.")
+    if cleared and not blockers:
+        verdict.append("A blocker seen seconds earlier had already cleared (" + "; ".join(cleared)
+                       + "). The lab blocks entries while a feed reconnects and re-arms after.")
     if not (blockers or positions or pending or mode == "signals_only"):
         if not ready:
             top = ", ".join(f"{name} ({count}x)" for name, count in missing.most_common(3))
