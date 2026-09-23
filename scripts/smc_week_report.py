@@ -104,13 +104,27 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
 
     # Times are compared as datetimes here, never as text in SQL: a stored
     # "2026-09-16 18:35" sorts before "2026-09-16T18:30" and would vanish.
-    rows = sorted(
-        ((t, row["state"], json.loads(row["missing_conditions_json"] or "[]"))
+    recorded = sorted(
+        ((t, row["state"], json.loads(row["missing_conditions_json"] or "[]"),
+          str(row["candle_time"]), str(row["created_at"]))
          for row in lab.execute(
-             "SELECT candle_time, state, missing_conditions_json FROM smc_evaluations "
+             "SELECT candle_time, state, missing_conditions_json, created_at FROM smc_evaluations "
              "WHERE session_id=?", (session,))
          if (t := _when(row["candle_time"])) is not None and t > since),
-        key=lambda item: item[0])
+        key=lambda item: (item[0], item[4]))
+    # One judgement per candle is the lab's own rule (its idempotency key is
+    # the candle time). The key is the timestamp TEXT, so the same candle
+    # written in two formats would be judged twice; count candles, not rows,
+    # and report any repeat instead of letting it inflate the table.
+    by_candle: dict[datetime, list] = defaultdict(list)
+    for item in recorded:
+        by_candle[item[0]].append(item)
+    rows = [(moment, *items[0][1:3]) for moment, items in sorted(by_candle.items())]
+    repeated = {moment: items for moment, items in by_candle.items() if len(items) > 1}
+    minutes = int(step.total_seconds() // 60)
+    off_grid = [moment for moment in by_candle
+                if moment.second or moment.microsecond or (moment.minute % minutes if minutes < 60 else moment.minute)]
+    future = [moment for moment in by_candle if moment > now]
 
     # --- coverage per day ------------------------------------------------------
     per_day: dict[str, list] = defaultdict(list)
@@ -118,7 +132,7 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
         per_day[moment.strftime("%Y-%m-%d")].append((moment, state, missing))
     lines.append("")
     lines.append("== CLOSED CANDLES JUDGED PER DAY (UTC) ==")
-    lines.append("  day          judged / closed   signals   closest candle (fewest conditions missing)")
+    lines.append("  day          judged / closed   repeats   signals   closest candle (fewest conditions missing)")
     day = since.replace(hour=0, minute=0, second=0, microsecond=0)
     total_closed = 0
     while day <= now:
@@ -130,8 +144,9 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
         best = min(judged, key=lambda item: len(item[2]), default=None)
         closest = (f"{best[0].strftime('%H:%M')} missing {len(best[2])}: {', '.join(best[2]) or '-'}"
                    if best else "-")
-        lines.append(f"  {day.strftime('%Y-%m-%d')}   {len(judged):5d} / {closed:<5d}   "
-                     f"{signals:7d}   {closest[:110]}")
+        repeats = sum(1 for moment in repeated if moment.strftime("%Y-%m-%d") == day.strftime("%Y-%m-%d"))
+        lines.append(f"  {day.strftime('%Y-%m-%d')}   {len(judged):5d} / {closed:<5d}   {repeats:7d}   "
+                     f"{signals:7d}   {closest[:100]}")
         day += timedelta(days=1)
 
     # --- where it judged nothing -------------------------------------------------
@@ -163,6 +178,17 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
         lines.append(f"  {count:5d} / {len(rows)}  {condition}")
 
     staged_after = (_when(entry["created_at"]) if entry else None) or since
+    lines.append("")
+    lines.append(f"== DATA CHECK: {len(repeated)} candle(s) judged more than once, "
+                 f"{len(off_grid)} off the {minutes}m grid, {len(future)} in the future ==")
+    for moment in sorted(repeated)[-8:]:
+        lines.append(f"  {_short(moment)} UTC judged {len(repeated[moment])}x as: "
+                     + " | ".join(f"{item[3]} (written {item[4][11:19]})" for item in repeated[moment]))
+    for moment in sorted(off_grid)[-5:]:
+        lines.append(f"  off-grid: {moment.isoformat()}")
+    for moment in sorted(future)[-5:]:
+        lines.append(f"  future: {moment.isoformat()}")
+
     candidates = Counter(row["status"] for row in lab.execute(
         "SELECT status, created_at FROM smc_candidates WHERE session_id=?", (session,))
         if (_when(row["created_at"]) or staged_after) > staged_after)
@@ -202,6 +228,11 @@ def report(lab: sqlite3.Connection, agent: sqlite3.Connection | None,
                        "entry: before that the agent was not deciding for this lab.")
     if near:
         verdict.append(f"{len(near)} candle(s) came within one or two conditions of a setup.")
+    if repeated or off_grid or future:
+        verdict.append(
+            f"DATA CHECK FAILED: {len(repeated)} candle(s) were judged more than once, {len(off_grid)} "
+            f"sit off the {minutes}m grid and {len(future)} are in the future. See DATA CHECK for the "
+            "raw timestamps. Entries are keyed by proposal, so a repeat cannot place a second order.")
     return lines, verdict
 
 
