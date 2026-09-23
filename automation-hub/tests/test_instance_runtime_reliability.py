@@ -5,6 +5,7 @@ depends on: a browser is not part of it, a transient venue outage is not a
 permanent shutdown, three instances are isolated from each other, and the
 status a user reads is derived from what the runtime can actually prove.
 """
+import threading
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -314,6 +315,121 @@ def test_supervisor_respects_the_slot_limit(tmp_path):
     assert second.id not in manager._runtime
     manager.shutdown()
 
+
+
+def _sweep_racing_an_operator(monkeypatch, manager):
+    """One sweep on its own thread, released at a chosen point of an operator action.
+
+    ``launch()`` returns once the sweep has decided to repair and has called
+    start(), which then waits on the lifecycle lock the operator still holds.
+    That is the production interleaving: the sweep read desired state before
+    the operator's transition finished writing it.
+    """
+    supervisor = InstanceSupervisor(manager, interval_s=60)
+    committed = threading.Event()
+    original_start = manager.start
+
+    def start(*args, **kwargs):
+        committed.set()
+        return original_start(*args, **kwargs)
+
+    monkeypatch.setattr(manager, "start", start)
+    result: dict = {}
+    thread = threading.Thread(
+        target=lambda: result.setdefault("report", supervisor.sweep()), daemon=True)
+    result["supervisor"] = supervisor
+
+    def launch():
+        # One-shot: the hooks that call this can run again inside start().
+        if thread.ident is None:
+            thread.start()
+            assert committed.wait(5), "the sweep never reached start()"
+
+    return launch, thread, result
+
+
+def test_a_sweep_in_flight_cannot_undo_an_operator_stop(tmp_path, monkeypatch):
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "ADAUSDT")
+    manager.start(instance.id)
+    engine = manager._runtime[instance.id][0]
+    launch, sweep, result = _sweep_racing_an_operator(monkeypatch, manager)
+    stop_feed = engine.ws_feed.stop
+
+    def feed_stop_while_a_sweep_runs():
+        # The engine thread is down and desired_running is not cleared yet.
+        launch()
+        stop_feed()
+
+    monkeypatch.setattr(engine.ws_feed, "stop", feed_stop_while_a_sweep_runs)
+    manager.stop(instance.id)
+    sweep.join(10)
+
+    assert not sweep.is_alive()
+    assert [row["action"] for row in result["report"]] == ["stand_down"]
+    stopped = manager._instances[instance.id]
+    assert (stopped.state, stopped.desired_running) == ("stopped", False)
+    assert not manager.worker_alive(instance.id)
+    # Stopped means deletable: the operator's next action must succeed.
+    assert manager.delete(instance.id) == instance.id
+    assert manager.store.list() == []
+    manager.shutdown()
+
+
+def test_a_sweep_in_flight_cannot_start_a_deleted_instance(tmp_path, monkeypatch):
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "ADAUSDT")
+    manager.start(instance.id)
+    manager._runtime[instance.id][0].stop("simulated terminal feed failure")
+    manager._instances[instance.id].state = "error"
+    launch, sweep, result = _sweep_racing_an_operator(monkeypatch, manager)
+    supervisor = result["supervisor"]
+    # An earlier repair attempt failed and its backoff has elapsed.
+    supervisor._failures[instance.id] = 2
+    supervisor._next_attempt[instance.id] = supervisor.clock() - 1
+
+    # Hold the lock delete() takes, so the sweep queues behind the whole delete.
+    with manager._lifecycle_lock(instance.id):
+        launch()
+        manager.delete(instance.id)
+    sweep.join(10)
+
+    assert not sweep.is_alive()
+    # A deleted instance is not a failure to retry with backoff forever.
+    assert [row["action"] for row in result["report"]] == ["stand_down"]
+    assert instance.id not in manager._instances and instance.id not in manager._runtime
+    assert manager.store.list() == []
+    assert manager.store.engine_logs(instance.id) == []
+    assert supervisor.status()["backoff"] == {}
+    manager.shutdown()
+
+
+def test_a_sweep_in_flight_cannot_reopen_an_operator_pause(tmp_path, monkeypatch):
+    _ledger, _hub, manager = _manager(tmp_path)
+    instance = _create(manager, "ADAUSDT")
+    manager.start(instance.id)
+    engine = manager._runtime[instance.id][0]
+    engine.stop("simulated terminal feed failure")
+    manager._instances[instance.id].state = "error"
+    launch, sweep, result = _sweep_racing_an_operator(monkeypatch, manager)
+    acknowledge = engine.acknowledge_entry_pause
+
+    def acknowledge_while_a_sweep_runs(*args, **kwargs):
+        # The sweep read state="error", so it would repair with the gate OPEN.
+        launch()
+        return acknowledge(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "acknowledge_entry_pause", acknowledge_while_a_sweep_runs)
+    manager.pause(instance.id)
+    sweep.join(10)
+
+    assert not sweep.is_alive()
+    # Paused is still desired, so the worker comes back -- disarmed.
+    assert [row["action"] for row in result["report"]] == ["restored"]
+    assert result["report"][0]["entry_gate_closed"] is True
+    assert manager._instances[instance.id].state == "paused"
+    assert manager._runtime[instance.id][3].trading_allowed() is False
+    manager.shutdown()
 
 # ------------------------------------------------------ status contract
 def test_status_never_reports_running_without_a_live_worker(tmp_path):

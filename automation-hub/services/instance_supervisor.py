@@ -35,7 +35,7 @@ import time
 from datetime import datetime, timezone
 
 from services.instance_telemetry import event_payload, format_event, log_event
-from services.trading_instances import WorkerLeaseError
+from services.trading_instances import InstanceNotDesired, WorkerLeaseError
 
 #: Worker states that mean "this instance has no usable execution runtime".
 _NEEDS_REPAIR = {"error", "stopped", "created", "degraded"}
@@ -195,7 +195,15 @@ class InstanceSupervisor:
             log_event(self.manager, inst, "INSTANCE_STARTING", status="repairing",
                       detail=f"supervisor repair from state={inst.state}")
             try:
-                self.manager.start(inst.id, entry_gate_closed=paused)
+                restored = self.manager.start(inst.id, entry_gate_closed=paused,
+                                              only_if_desired=True)
+            except InstanceNotDesired:
+                # The operator stopped or deleted it while this sweep waited.
+                # That is the operator's decision, not a failure to retry.
+                self._failures.pop(inst.id, None)
+                self._next_attempt.pop(inst.id, None)
+                report.append({"instance_id": inst.id, "action": "stand_down"})
+                continue
             except WorkerLeaseError as exc:
                 # Somebody else owns it. That is not a fault to retry hard:
                 # back off quietly and let the lease expire if the holder is
@@ -224,7 +232,7 @@ class InstanceSupervisor:
             running += 1
             self.repairs += 1
             report.append({"instance_id": inst.id, "action": "restored",
-                           "entry_gate_closed": paused})
+                           "entry_gate_closed": restored.state == "paused"})
             log_event(self.manager, inst, "INSTANCE_RESTORED", status="running",
                       detail="supervisor restored worker from durable desired state")
 

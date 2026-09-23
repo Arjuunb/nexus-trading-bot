@@ -101,6 +101,15 @@ class WorkerLeaseError(RuntimeError):
     """
 
 
+class InstanceNotDesired(RuntimeError):
+    """A repair start found the operator no longer wants this instance running.
+
+    The supervisor reads desired state, then waits for the lifecycle lock an
+    operator Stop, Pause or Delete may be holding. By the time it gets the lock
+    that reading can be stale, so a repair re-checks it under the lock instead.
+    """
+
+
 def _parse_iso(value: object) -> Optional[datetime]:
     if not value:
         return None
@@ -1702,8 +1711,21 @@ class TradingInstanceManager:
 
     def start(self, instance_id: str, *, entry_gate_closed: bool = False,
               allow_during_reboot: bool = False,
-              owner_id: str | None = None) -> TradingInstance:
+              owner_id: str | None = None,
+              only_if_desired: bool = False) -> TradingInstance:
         with self._lifecycle_lock(instance_id), self._lock:
+            if only_if_desired:
+                # A repair acts on intent, so it must read the intent here,
+                # under the lock stop()/pause()/delete() hold. Read earlier, a
+                # Stop that finished while this call waited for the lock was
+                # silently undone: the worker came back, desired_running was
+                # rewritten True, and Delete refused a stopped instance.
+                current = self._instances.get(instance_id)
+                if current is None or not current.desired_running:
+                    raise InstanceNotDesired(instance_id)
+                # Likewise a Pause that landed while this call waited: never
+                # rebuild a paused instance with its entry gate open.
+                entry_gate_closed = entry_gate_closed or current.state == "paused"
             if not allow_during_reboot:
                 self._assert_reboot_idle(instance_id)
             inst = self.instance_for(instance_id, owner_id)
