@@ -54,8 +54,18 @@ class Dropped(Exception):
 
 
 class FakeSocket:
-    def __init__(self, messages: list[str], *, then: Exception | None):
+    """A scripted socket.
+
+    ``silent=True`` models the failure the loop exists to survive: a socket
+    that is open and healthy in every observable way and simply never
+    delivers again. It never returns from recv() and never raises, so only a
+    timeout can end it.
+    """
+
+    def __init__(self, messages: list[str], *, then: Exception | None,
+                 silent: bool = False):
         self._messages, self._then = list(messages), then
+        self.silent = silent
         self.closed = False
         self.sent: list[dict] = []
 
@@ -66,15 +76,14 @@ class FakeSocket:
         self.closed = True
         return False
 
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
+    async def recv(self):
         if self._messages:
             return self._messages.pop(0)
         if self._then is not None:
             raise self._then
-        raise StopAsyncIteration
+        if self.silent:
+            await asyncio.Event().wait()   # never set: delivers nothing, ever
+        raise ConnectionError("closed")
 
     async def send(self, payload):
         self.sent.append(json.loads(payload))
@@ -339,3 +348,85 @@ def test_only_a_quote_carrying_channel_subscribes_to_book_ticker(
     assert any("kline_5m" in name for name in subscribed), "kline was never subscribed"
     if not quotes:
         assert feed.status()["transport_channels"]["public"] == "DISCONNECTED"
+
+
+# ─────────────────────────────── silent sockets ───────────────────────────
+
+def quiet(**kwargs):
+    """A feed whose patience for silence is measured in milliseconds."""
+    return stream(silence_limit_seconds=0.02, **kwargs)
+
+
+def test_a_connected_socket_that_stops_delivering_is_reconnected():
+    """The failure that ran for twenty hours in production: CONNECTED,
+    reconnect_attempt 0, and no data since the previous morning. Nothing
+    raised, so the reconnect loop -- which only runs on an exception -- never
+    ran. Silence has to become an error or it is invisible."""
+    feed = quiet()
+    fake = FakeWebsockets(feed, [FakeSocket([], then=None, silent=True),
+                                 FakeSocket([], then=None)])
+
+    run_channel(feed, fake)
+
+    assert len(fake.urls) >= 2, "a silent socket was never reconnected"
+    assert feed.silent_reconnects == 1
+
+
+def test_the_reconnect_after_silence_resubscribes():
+    """A recovery that reconnects without resubscribing produces a second
+    socket as silent as the first."""
+    feed = quiet()
+    fake = FakeWebsockets(feed, [FakeSocket([], then=None, silent=True),
+                                 FakeSocket([], then=None)])
+
+    run_channel(feed, fake)
+
+    assert fake.subscriptions() == [
+        ["btcusdt@kline_5m", "btcusdt@markPrice@1s"],
+        ["btcusdt@kline_5m", "btcusdt@markPrice@1s"],
+    ]
+
+
+def test_a_delivering_socket_is_never_torn_down_for_silence():
+    """The guard must not fire on a working feed. A reconnect storm on a
+    healthy socket would be worse than the bug it fixes."""
+    feed = stream(silence_limit_seconds=30.0)
+    fake = FakeWebsockets(feed, [
+        FakeSocket([kline(1_700_000_000_000, closed=True)], then=None)])
+
+    run_channel(feed, fake)
+
+    assert feed.silent_reconnects == 0
+    assert len(feed.snapshot()["closed_bars"]) == 1
+
+
+def test_silence_is_counted_apart_from_ordinary_reconnects():
+    """An ordinary reconnect is the network. This one is a socket that lied,
+    and an operator needs to tell them apart."""
+    feed = quiet()
+    fake = FakeWebsockets(feed, [FakeSocket([], then=Dropped("reset")),
+                                 FakeSocket([], then=None)])
+
+    run_channel(feed, fake)
+
+    assert feed.silent_reconnects == 0, "a dropped socket was counted as silent"
+    assert feed.status()["silent_reconnects"] == 0
+
+
+def test_the_silence_window_is_reported():
+    feed = stream()
+    status = feed.status()
+
+    assert status["silence_limit_seconds"] == 60.0
+    assert status["silent_reconnects"] == 0
+
+
+def test_stop_still_ends_the_loop_while_a_socket_is_silent():
+    """stop() must not have to wait out the silence window."""
+    feed = quiet()
+    sockets = [FakeSocket([], then=None, silent=True) for _ in range(3)]
+    fake = FakeWebsockets(feed, sockets)
+
+    run_channel(feed, fake)
+
+    assert feed._stop.is_set()

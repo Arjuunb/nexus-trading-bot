@@ -46,6 +46,29 @@ HEALTH_STATES = {
 #: endpoint, so it cannot carry a category and cannot deliver kline or
 #: markPrice. ccxt reaches futures market data the same way -- see
 #: getFutureWsCategory and getWsUrl in its binance implementation.
+#: How long a CONNECTED socket may deliver nothing before it is treated as
+#: dead and reconnected. Binance pushes a futures kline every 250ms and a
+#: markPrice every second, so a market channel silent for a full minute is not
+#: a quiet market -- it is a socket that stopped without saying so.
+SILENT_SOCKET_SECONDS = 60.0
+
+
+class SilentSocket(Exception):
+    """A connected socket that stopped delivering.
+
+    The failure this class exists for leaves no other trace. The TCP
+    connection is open, the WebSocket answers keepalive pings, the venue
+    reports the subscription as active, and no exception is ever raised --
+    so the reconnect loop below, which only runs when something raises,
+    never runs. Two instances sat CONNECTED with reconnect_attempt 0 for
+    twelve and twenty hours on 2026-09-23 while their klines had long since
+    stopped, and the only thing that fixed either was a human restarting them.
+
+    Raising this converts "no data" into an error the existing backoff and
+    resubscribe path already knows how to recover from.
+    """
+
+
 BINANCE_USDM_ROOT = "wss://fstream.binance.com"
 
 #: Which venue category serves each of this application's two channels.
@@ -64,6 +87,7 @@ class PriceActionPublicStream:
                  quote_sink: Callable[[dict], None] | None = None,
                  clock: Callable[[], datetime] | None = None,
                  quote_mismatch_bps: float = 100.0,
+                 silence_limit_seconds: float = SILENT_SOCKET_SECONDS,
                  quotes_enabled: bool = True):
         self.rest_loader = rest_loader
         self.max_bars = max_bars
@@ -119,6 +143,11 @@ class PriceActionPublicStream:
         self._socket = None
         self._public_socket = None
         self._request_id = 0
+        self.silence_limit_seconds = float(silence_limit_seconds)
+        #: Reconnects caused by silence rather than by a socket error. Counted
+        #: separately because they mean something different: an ordinary
+        #: reconnect is the network, this one is a socket that lied.
+        self.silent_reconnects = 0
 
     def _set_state(self, state: str, error: str = "") -> None:
         if state not in CONNECTION_STATES:
@@ -414,9 +443,20 @@ class PriceActionPublicStream:
                         "id": self._request_id}))
                     if channel == "market":
                         await self.reconcile()
-                    async for raw in socket:
-                        if self._stop.is_set():
-                            break
+                    while not self._stop.is_set():
+                        # Bounded, so a socket that stops delivering raises
+                        # instead of parking this task forever. An unbounded
+                        # `async for` waits on a dead connection for as long
+                        # as the process lives.
+                        try:
+                            raw = await asyncio.wait_for(
+                                socket.recv(), timeout=self.silence_limit_seconds)
+                        except asyncio.TimeoutError:
+                            self.silent_reconnects += 1
+                            raise SilentSocket(
+                                f"{channel} channel delivered nothing for "
+                                f"{self.silence_limit_seconds:.0f}s while connected; "
+                                "reconnecting") from None
                         message = json.loads(raw)
                         if self._consume_control_frame(channel, message):
                             continue
@@ -728,6 +768,8 @@ class PriceActionPublicStream:
                     "quote": dict(self._quote),
                     "transport_channels": dict(self._channel_states),
                     "transport_errors": dict(self._channel_errors),
+                    "silent_reconnects": self.silent_reconnects,
+                    "silence_limit_seconds": self.silence_limit_seconds,
                     "duplicate_events": self.duplicate_events, "missing_candles": self.missing_candles,
                     "reconciled_candles": self.reconciled_candles, "last_error": self.last_error,
                     "persistence_blocked_events": self.persistence_blocked_events,
