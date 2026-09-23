@@ -65,7 +65,7 @@ const PA_CANDLES = Array.from({ length: 80 }, (_, index) => ({
   open: 100 + index * .1, high: 101 + index * .1, low: 99 + index * .1,
   close: 100.5 + index * .1, volume: 1000,
 }));
-const PA_CHART = {
+export const PA_CHART = {
   research_id: "PRICE_ACTION_NATIVE_V1_RESEARCH", research_only: true,
   execution_allowed: false, paper_execution_allowed: true, symbol: "BTCUSDT", timeframe: "5m",
   candles: PA_CANDLES, swings: [], zones: [], events: [], setups: [], proposals: [], orders: [], trades: [],
@@ -86,7 +86,7 @@ const PA_CHART = {
     new_entries_paused: false, execution_uses_closed_bars_only: true },
   data_provenance: { exchange: "Binance USDⓈ-M Futures", closed_candles_used: 80 },
 };
-const PA_PAPER = {
+export const PA_PAPER = {
   account_scope: "PRICE_ACTION_VISUAL_LAB_ONLY", currency: "USDT", execution_mode: "PAPER",
   real_funds: false, live_execution_allowed: false,
   session: { id: "pa-session-1", started_at: "2026-01-01T00:00:00Z", status: "active", mode: "LIVE_PAPER",
@@ -117,7 +117,7 @@ const SMC_SOURCE = {
     narrative: "Sweep reversal", ordered_rules: ["HTF bias", "location", "sweep"] },
   ordered_condition_results: [], trade_plan: null,
 };
-const SMC_CHART = {
+export const SMC_CHART = {
   research_id: "SMC_NATIVE_V1_RESEARCH", execution_allowed: false, candles: PA_CANDLES,
   pivots: [], events: [], fair_value_gaps: [], order_blocks: [], proposals: [], setups: [],
   snapshot: SMC_SNAPSHOT, selected_snapshot: SMC_SNAPSHOT, snapshot_ledger: [SMC_SNAPSHOT],
@@ -133,7 +133,7 @@ const SMC_CHART = {
     closed_candles_loaded: 80, closed_candles_visible: 80, forming_candle_excluded: true,
     execution_allowed: false },
 };
-const SMC_PAPER = {
+export const SMC_PAPER = {
   paper_only: true, real_execution_allowed: false,
   session: { id: "smc-session-1", mode: "LIVE_PAPER", symbol: "BTCUSDT", timeframe: "5m",
     operating_mode: "signals_only", model_id: "SMC_M1_SWEEP_REVERSAL", risk_pct: .5 },

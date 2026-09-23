@@ -236,8 +236,9 @@ class PriceActionPublicStream:
     def _refresh_transport_state(self) -> None:
         """Aggregate the required routed Binance transports into one state."""
         with self._lock:
-            states = dict(self._channel_states)
-            errors = {key: value for key, value in self._channel_errors.items() if value}
+            required = ("market", "public") if self.quotes_enabled else ("market",)
+            states = {key: self._channel_states[key] for key in required}
+            errors = {key: self._channel_errors[key] for key in required if self._channel_errors[key]}
             reconciliation_pending = self.history_loaded and not self.reconciliation_complete
         if all(value == "CONNECTED" for value in states.values()):
             state = "DELAYED" if reconciliation_pending else "CONNECTED"

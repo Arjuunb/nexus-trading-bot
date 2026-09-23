@@ -54,6 +54,24 @@ def _hub():
     return ForwardPaperMarketDataHub(lambda *_a, **_k: [], stream_factory=FakeStream)
 
 
+def test_slow_audit_does_not_block_socket_event_delivery():
+    hub = _hub()
+    entered, release = threading.Event(), threading.Event()
+    def audit(_event):
+        entered.set()
+        release.wait(3)
+    sub = hub.subscription("AUDIT", event_sink=audit)
+    sub.start("BTCUSDT", "5m")
+    try:
+        before = time.monotonic()
+        hub._for("AUDIT").stream.event_sink({"state": "CONNECTED"})
+        assert time.monotonic() - before < .5
+        assert entered.wait(1)
+    finally:
+        release.set()
+        sub.stop()
+
+
 def test_a_slow_sink_does_not_block_the_emitting_thread():
     hub = _hub()
     released = threading.Event()

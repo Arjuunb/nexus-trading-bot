@@ -432,6 +432,7 @@ export default function PriceActionVisual() {
   const [controlsOpen, setControlsOpen] = useState(() => typeof window === "undefined" || window.innerWidth > 820);
   const identityInitialized = useRef(false);
   const chartRequestSequence = useRef(0);
+  const chartInFlight = useRef<{ key: string; sequence: number } | null>(null);
   const marketSwitchSequence = useRef(0);
   const marketSwitchQueue = useRef<Promise<void>>(Promise.resolve());
 
@@ -500,7 +501,11 @@ export default function PriceActionVisual() {
   }, [paper?.session.id, symbol, timeframe, journalFilters]);
   const loadChart = useCallback(async () => {
     if (!savedSession?.id) return;
+    const key = `${savedSession.id}:${mode}:${symbol}:${timeframe}:${cursor}`;
+    // A slow response must be allowed to complete, not superseded every 3s.
+    if (chartInFlight.current?.key === key) return;
     const sequence = ++chartRequestSequence.current;
+    chartInFlight.current = { key, sequence };
     const requestId = `${savedSession.id}:${mode}:${symbol}:${timeframe}:${sequence}`;
     setLoading(true);
     const path = mode === "live"
@@ -522,6 +527,7 @@ export default function PriceActionVisual() {
         setError(reason instanceof Error ? reason.message : "Price Action data unavailable");
       }
     } finally {
+      if (chartInFlight.current?.sequence === sequence) chartInFlight.current = null;
       if (sequence === chartRequestSequence.current) setLoading(false);
     }
   }, [mode, symbol, timeframe, cursor, savedSession?.id]);
@@ -586,8 +592,9 @@ export default function PriceActionVisual() {
   ];
   const selectedMetrics = state?.metrics.by_strategy?.[activeStrategy];
   const aggregateMetrics = state?.metrics;
-  const healthState = mode === "replay" ? "REPLAY" : state?.live_display?.connection_state ?? "CONNECTING";
-  const feedReliable = mode === "replay" || state?.live_display?.reliable === true;
+  const healthState = error ? "ERROR" : marketBusy ? "CONNECTING" : mode === "replay" ? "REPLAY" : state?.live_display?.connection_state ?? "CONNECTING";
+  const feedReliable = !error && !marketBusy && (mode === "replay" ||
+    (state?.live_display?.reliable === true && state.live_display.new_entries_paused !== true));
   const lastClosed = state?.candles[state.candles.length - 1];
   const marketSelection = pendingMarket ?? { symbol, timeframe, mode };
   const focusedObjectIds = focusedSetup ? [focusedSetup.id, focusedSetup.zone_id, focusedSetup.trigger_event_id].filter((row): row is string => Boolean(row)) : [];
@@ -690,8 +697,9 @@ export default function PriceActionVisual() {
       try {
         const updated = await apiPostJson<PaperState>("/research/price-action/sessions/current/configuration", {
           mode: nextMode === "live" ? "LIVE_PAPER" : "HISTORICAL", symbol: nextSymbol,
-          timeframe: nextTimeframe, operating_mode: operatingMode,
-          strategy_id: activeStrategy, risk_pct: Number(riskPct),
+          timeframe: nextTimeframe, operating_mode: savedSession?.operating_mode,
+          strategy_id: savedSession?.execution_config?.strategy_id,
+          risk_pct: savedSession?.execution_config?.risk_pct,
         });
         if (sequence !== marketSwitchSequence.current) return;
         chartRequestSequence.current += 1;
@@ -770,7 +778,7 @@ export default function PriceActionVisual() {
           {aggregateMetrics ? <div className="pa-metric-scope"><b>Selected strategy shown above</b><span>All PA1–PA4 aggregate remains {aggregateMetrics.net_r.toFixed(2)}R across {aggregateMetrics.closed} closed trades; it is not the selected-strategy result.</span><span>Dataset {String(state?.metrics_scope?.dataset_start ?? "—")} → {String(state?.metrics_scope?.dataset_end ?? "—")}</span><span>Config {String(state?.metrics_scope?.configuration_id ?? "—").slice(0, 12)} · funding {String(state?.metrics_scope?.cost_model?.funding_coverage ?? "—")}</span></div> : null}
           {error ? <div className="pa-error"><b>Market data unavailable</b><span>{error}</span><button onClick={() => void loadChart()}>Retry</button></div> : null}
           {!chart ? <div className="pa-loading">{loading ? "Loading and reconciling Binance market streams…" : "No identity-verified candle state"}</div> : <NativeSMCChartOverlay state={chart} timeframe={timeframe} rightOffsetBars={8} initialVisibleBars={visibleBars} filters={filters} highlightedObjectIds={focusedObjectIds} centerTimestamp={focusedSetup?.created_at} onCandleSelect={() => undefined} fitContentSignal={fitSignal} latestSignal={latestSignal} modelLabel="native price action" height="clamp(520px, 58vh, 680px)" liveDataStale={!feedReliable || Boolean(error)} />}
-          <div className={`pa-stream-truth ${feedReliable ? "is-healthy" : "is-stale"}`}><b>{healthState}</b><span>{mode === "replay" ? "Historical replay is isolated from live streams" : state?.live_display?.health_reason ?? "Waiting for identity-bound feed reconciliation"}</span><span>Transport {state?.live_display?.transport_state ?? "—"} · entries {state?.live_display?.new_entries_paused ? "PAUSED" : "ELIGIBLE ON CLOSED BARS"}</span></div>
+          <div className={`pa-stream-truth ${feedReliable ? "is-healthy" : "is-stale"}`}><b>{healthState}</b><span>{mode === "replay" ? "Historical replay is isolated from live streams" : error ?? state?.live_display?.health_reason ?? "Waiting for identity-bound feed reconciliation"}</span><span>Transport {state?.live_display?.transport_state ?? "—"} · entries {!feedReliable ? "PAUSED" : "ELIGIBLE ON CLOSED BARS"}</span></div>
           <div className="pa-market-readout"><span>Last completed candle<b>{lastClosed ? `${stamp(lastClosed.timestamp)} · C ${lastClosed.close.toLocaleString()}` : "—"}</b><small>Age {age(state?.live_display?.closed_candle_age_seconds)}</small></span><span>Forming candle · display only<b>{state?.forming_candle ? `${stamp(state.forming_candle.timestamp)} · O ${state.forming_candle.open.toLocaleString()} H ${state.forming_candle.high.toLocaleString()} L ${state.forming_candle.low.toLocaleString()} C ${state.forming_candle.close.toLocaleString()}` : "Not available"}</b><small>Stream age {age(state?.live_display?.candle_age_seconds)}</small></span><span>Live bid / ask<b>{state?.live_display?.bid?.toLocaleString() ?? "—"} / {state?.live_display?.ask?.toLocaleString() ?? "—"}</b><small>Age {age(state?.live_display?.quote_age_seconds)}</small></span><span>Mark price<b>{state?.live_display?.mark?.toLocaleString() ?? "—"}</b><small>Age {age(state?.live_display?.mark_age_seconds)} · deviation {state?.live_display?.candle_quote_deviation_bps?.toFixed(2) ?? "—"} bps</small></span></div>
           <div className="pa-chart-foot"><span><i className={feedReliable ? "live" : "stale"} />{mode === "live" ? `Binance · ${healthState}` : "Verified historical cache"}</span><span>Updated {stamp(state?.live_display?.last_update)}</span><span>Quote source {state?.live_display?.quote_source ?? "—"}</span><span>Closed candles used: {String(state?.data_provenance?.closed_candles_used ?? state?.candles.length ?? 0)}</span><span>Forming candle excluded from strategy: {state?.forming_candle ? "YES" : "N/A"}</span><b>PAPER · NO LIVE EXECUTION PATH</b></div>
         </div>
@@ -796,7 +804,7 @@ export default function PriceActionVisual() {
             {tab === "journal" ? <JournalPanel journal={journal} selected={selectedJournal} selectedId={selectedJournalId} onSelect={selectJournal} filters={journalFilters} onFilters={setJournalFilters} sessionId={paper?.session.id} symbol={symbol} timeframe={timeframe} /> : null}
             {tab === "learning" ? <LearningPanel analysis={learning} candidates={learningCandidates} /> : null}
             {tab === "session" ? <><div className="pa-session"><span>Session ID<b>{paper?.session.id ?? "—"}</b></span><span>Started<b>{stamp(paper?.session.started_at)}</b></span><span>Starting balance<b>{money(paper?.session.starting_balance)} USDT</b></span><span>Status<b>{paper?.session.status?.toUpperCase() ?? "—"}</b></span><span>Operating mode<b>{sessionLoaded ? pretty(savedSession?.operating_mode ?? "") : "Loading"}</b></span></div><div className="pa-order-ticket"><select aria-label="Saved Price Action session" value={selectedSession} onChange={(event) => setSelectedSession(event.target.value)}>{sessions.map((row) => <option key={row.id} value={row.id}>{row.symbol} · {row.timeframe} · {row.status} · {stamp(row.started_at)}</option>)}</select><button onClick={() => void sessionAction("start")}>Start new</button><button disabled={!selectedSession} onClick={() => void sessionAction("resume")}>Resume</button><button disabled={!selectedSession} onClick={() => void sessionAction("duplicate")}>Duplicate</button><button disabled={!paper?.session.id} onClick={() => void sessionAction("end")}>End</button><button className="pa-export" onClick={() => void apiDownload("/research/price-action/paper/export", `price-action-session-${paper?.session.id ?? "current"}.json`)}>Export</button><button className="btn-danger" onClick={() => void resetSession()}>Reset</button></div><DataTable rows={paper?.activity ?? []} empty="No session audit events yet." /></> : null}
-            {tab === "connection" ? <div className="pa-session"><span>Exchange<b>Binance USDⓈ-M Futures</b></span><span>Overall health<b>{healthState}</b></span><span>Transport<b>{state?.live_display?.transport_state ?? (mode === "replay" ? "ISOLATED" : "CONNECTING")}</b></span><span>Candle stream<b>{age(state?.live_display?.candle_age_seconds)}</b></span><span>Bid / ask stream<b>{age(state?.live_display?.quote_age_seconds)}</b></span><span>Mark stream<b>{age(state?.live_display?.mark_age_seconds)}</b></span><span>Failing dependency<b>{state?.live_display?.failing_dependency ?? "None"}</b></span><span>Last successful event<b>{state?.live_display?.last_successful_event ? `${state.live_display.last_successful_event.kind} · ${state.live_display.last_successful_event.at}` : "—"}</b></span><span>Retry state<b>{state?.live_display?.retry_state?.automatic_retry ? `automatic · attempt ${state.live_display.retry_state.attempt ?? 0}` : "—"}</b></span><span>Reconciliation<b>{state?.live_display?.health_reason ?? "—"}</b></span><span>New entries<b>{state?.live_display?.new_entries_paused ? "PAUSED · FAIL CLOSED" : "CLOSED BARS ONLY"}</b></span><span>Real execution<b>DISABLED</b></span></div> : null}
+            {tab === "connection" ? <div className="pa-session"><span>Exchange<b>Binance USDⓈ-M Futures</b></span><span>Overall health<b>{healthState}</b></span><span>Transport<b>{state?.live_display?.transport_state ?? (mode === "replay" ? "ISOLATED" : "CONNECTING")}</b></span><span>Candle stream<b>{age(state?.live_display?.candle_age_seconds)}</b></span><span>Bid / ask stream<b>{age(state?.live_display?.quote_age_seconds)}</b></span><span>Mark stream<b>{age(state?.live_display?.mark_age_seconds)}</b></span><span>Failing dependency<b>{state?.live_display?.failing_dependency ?? "None"}</b></span><span>Last successful event<b>{state?.live_display?.last_successful_event ? `${state.live_display.last_successful_event.kind} · ${state.live_display.last_successful_event.at}` : "—"}</b></span><span>Retry state<b>{state?.live_display?.retry_state?.automatic_retry ? `automatic · attempt ${state.live_display.retry_state.attempt ?? 0}` : "—"}</b></span><span>Reconciliation<b>{state?.live_display?.health_reason ?? "—"}</b></span><span>New entries<b>{!feedReliable ? "PAUSED · FAIL CLOSED" : "CLOSED BARS ONLY"}</b></span><span>Real execution<b>DISABLED</b></span></div> : null}
           </div>
         </div>
         <ResearchComparisonPanel engine="PA" />

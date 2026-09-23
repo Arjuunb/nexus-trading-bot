@@ -674,7 +674,7 @@ def test_one_dead_channel_is_visible_instead_of_a_flat_disconnected(
     feed = lab.runtime.bot_status()["feed"]
     diagnostics = feed["transport_diagnostics"]
 
-    assert feed["failing_dependency"] == "BINANCE_USDM_PUBLIC_STREAMS"
+    assert feed["failing_dependency"] == "BINANCE_USDM_MARKET_WEBSOCKET"
     assert diagnostics["available"] is True
     assert diagnostics["channels"] == {"market": "RECONNECTING", "public": "CONNECTED"}
     assert diagnostics["transport_failing_dependency"] == "BINANCE_USDM_MARKET_WEBSOCKET"
