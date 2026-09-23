@@ -16,7 +16,7 @@ import { apiGet } from "../lib/api";
 
 type GateState = "PASS" | "FAIL" | "WAITING" | "NOT_APPLICABLE";
 
-interface Gate { id: string; stage: string; label: string; detail: string;
+export interface Gate { id: string; stage: string; label: string; detail: string;
   state: GateState; blocker: string; explanation: string }
 interface InstanceRow {
   instance_id: string; name: string; strategy_id: string; strategy_label?: string;
@@ -43,7 +43,7 @@ interface Feed {
   health_reason?: string | null; failing_dependency?: string | null;
   market_status?: string | null; current_blocker?: string | null;
 }
-interface Position {
+export interface Position {
   symbol?: string; side?: string; size?: number; entry?: number;
   stop?: number | null; target?: number | null; mark?: number | null;
   unrealized_pnl?: number | null; current_r?: number | null;
@@ -56,7 +56,7 @@ interface LabState {
   current_stage: string; position: Position | null; feed: Feed;
   last_closed_candle?: string | null; data_source?: string | null;
 }
-interface Overlay {
+export interface Overlay {
   kind: string; feature: string; id: string; provenance: Record<string, any>;
   lower?: number; upper?: number; price?: number; label?: string;
   points?: { t: string; v: number }[]; status?: string; direction?: string;
@@ -67,7 +67,7 @@ interface Features {
   overlays: Overlay[]; declared_features: string[]; withheld_features: string[];
   strategy_id: string;
 }
-interface TimelineEvent {
+export interface TimelineEvent {
   id: number; timestamp: string; candle_identity: string; symbol: string;
   timeframe: string; strategy: string; side: string; regime: string;
   htf_bias: string; decision: string; final_state: string; gate_stage: string;
@@ -80,7 +80,7 @@ interface Timeline {
   focus: { last_accepted: TimelineEvent | null; last_rejected: TimelineEvent | null;
            last_trade: TimelineEvent | null };
 }
-interface Candle { t: string; o: number; h: number; l: number; c: number; v?: number }
+export interface Candle { t: string; o: number; h: number; l: number; c: number; v?: number }
 /** The platform's one freshness verdict, as services/market_data_freshness.py
  *  returns it. Never recomputed here -- a second opinion about the same candle
  *  is how a page ends up disagreeing with the bot it is watching. */
@@ -131,7 +131,7 @@ const MARK: Record<GateState, string> = {
   PASS: "✓", FAIL: "✗", WAITING: "…", NOT_APPLICABLE: "–" };
 
 /** Feature -> the toggle group it belongs to. Only declared ones are offered. */
-const TOGGLE_GROUP: Record<string, string> = {
+export const TOGGLE_GROUP: Record<string, string> = {
   support: "S/R", resistance: "S/R", supply: "Supply/Demand", demand: "Supply/Demand",
   fvg: "FVG", liquidity: "Liquidity", liquidity_sweep: "Liquidity",
   bos: "Structure", choch: "Structure", swing_high_low: "Structure",
@@ -208,7 +208,9 @@ function Frame({ ticks }: { ticks: { y: number; label: string }[] }) {
   </g>;
 }
 
-function Chart({ candles, forming, overlays, events, position, enabled,
+/** Shared by every lab that draws an instance-path strategy: one chart, one
+ * implementation (see the Adaptive MTF lab). */
+export function Chart({ candles, forming, overlays, events, position, enabled,
                  showDecisionMarkers, focus, view, fit, unavailable,
                  onPick, onPickOverlay }: ChartProps) {
   const all = forming && candles[candles.length - 1]?.t !== forming.t

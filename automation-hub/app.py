@@ -575,6 +575,20 @@ def _start_auto_engine() -> None:
         if webhook_api.instance_supervisor.start():
             print("[startup] instance supervisor started "
                   f"(interval={webhook_api.instance_supervisor.interval_s}s)", flush=True)
+    # The Adaptive MTF lab's private bot: restore its saved mode, and on its
+    # very first start arm the XRPUSDT bot so the lab has something to show.
+    # HUB_ADAPTIVE_LAB_AUTOSTART=0 leaves it idle until a mode is chosen.
+    if ("PYTEST_CURRENT_TEST" not in os.environ
+            and os.environ.get("HUB_ADAPTIVE_LAB_AUTOSTART", "1").strip().lower()
+            not in ("0", "false", "no", "off")):
+        try:
+            webhook_api.adaptive_lab.restore()
+            webhook_api.adaptive_lab.ensure_started()
+        except Exception as exc:  # noqa: BLE001 — the supervisor retries it
+            print(f"[startup] adaptive lab restoration failed, supervisor will retry: "
+                  f"{type(exc).__name__}: {exc}", flush=True)
+        if webhook_api.adaptive_lab_supervisor.start():
+            print("[startup] adaptive lab supervisor started", flush=True)
     if restored_instances:
         print(f"[startup] restored {len(restored_instances)} trading instance worker(s); "
               "legacy autonomous engine remains stopped", flush=True)
@@ -608,7 +622,9 @@ def _shutdown_all_runtimes() -> None:
     # Stop supervising before quiescing workers, or the supervisor would treat
     # an intentionally stopping worker as a fault and start a replacement.
     run("instance_supervisor", webhook_api.instance_supervisor.stop)
+    run("adaptive_lab_supervisor", webhook_api.adaptive_lab_supervisor.stop)
     run("trading_instances", webhook_api.instance_manager.shutdown)
+    run("adaptive_lab", webhook_api.adaptive_lab.shutdown)
     run("autonomous_engine_checkpoint", webhook_api.engine.flush_runtime_state)
     run("autonomous_engine", lambda: webhook_api.engine.stop("Process shutdown"))
     run("legacy_bot_runners", manager.emergency_stop_all)

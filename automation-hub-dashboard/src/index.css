@@ -1693,6 +1693,9 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .pa-details[open] > summary::after { content: " ▾"; }
 .pa-details[open] { display: grid; gap: 8px; }
 .pa-details .pa-legend { display: grid; gap: 6px; }
+.adaptive-gates { display: flex; flex-wrap: wrap; gap: 6px; }
+.adaptive-gates em { font-style: normal; font-size: 9px; padding: 2px 6px; border-radius: 4px; background: #11151b; color: var(--dim); }
+.adaptive-gates em.gate-pass { color: #58d18a; } .adaptive-gates em.gate-fail { color: #ef5b5b; } .adaptive-gates em.gate-waiting { color: #e3b341; }
 .pa-segment { display: grid; grid-template-columns: 1fr 1fr; padding: 2px; border: 1px solid var(--card-border-soft); border-radius: 6px; background: #090b0e; }
 .pa-segment button, .pa-toolbar button, .pa-timeframes button, .pa-replay button { border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: pointer; font: 750 10px/1 var(--font-sans); }
 .pa-segment button { padding: 7px 5px; }

@@ -973,6 +973,26 @@ if ("PYTEST_CURRENT_TEST" not in _os.environ and
 instance_manager.market_hub = forward_paper_market_hub
 instance_manager.symbol_rules_provider = v2_market_data.usdm_symbol_rules
 
+# Adaptive MTF Trend Pullback Lab: one private paper bot on the same execution
+# path as Trading Instances, with its own ledger so none of its state reaches
+# the instance list, slots or journal. It shares only the market-data hub.
+if _os.path.abspath(settings.adaptive_lab_db) == _os.path.abspath(str(settings.ledger_path)):
+    raise RuntimeError("HUB_ADAPTIVE_LAB_DB must not share the Trading Instances ledger")
+from data.decision_store import DecisionStore as _AdaptiveDecisionStore  # noqa: E402
+from data.historical import SYMBOLS as _ADAPTIVE_SYMBOLS  # noqa: E402
+from data.ledger import SqliteLedger as _AdaptiveLedger  # noqa: E402
+from services.adaptive_lab import STRATEGY_KEY as _ADAPTIVE_KEY, AdaptiveLab  # noqa: E402
+adaptive_lab = AdaptiveLab(
+    _AdaptiveLedger(settings.adaptive_lab_db),
+    strategy_factory=_make_instance_strategy,
+    strategy_version=next((row.get("version") for row in _STRATEGY_CATALOG
+                           if row["key"] == _ADAPTIVE_KEY), None) or "unversioned",
+    live_poll_s=settings.live_poll_s,
+    decision_store=_AdaptiveDecisionStore(settings.adaptive_lab_decisions_db),
+    market_hub=forward_paper_market_hub,
+    symbol_rules_provider=v2_market_data.usdm_symbol_rules,
+    supported_symbols=tuple(_ADAPTIVE_SYMBOLS))
+
 # The process, not the browser, owns instance uptime. This supervisor is the
 # component that makes that true after the first minute: startup restoration
 # runs once, the legacy Watchdog only watches the singleton engine, and the
@@ -981,6 +1001,10 @@ instance_manager.symbol_rules_provider = v2_market_data.usdm_symbol_rules
 from services.instance_supervisor import InstanceSupervisor  # noqa: E402
 instance_supervisor = InstanceSupervisor(
     instance_manager,
+    interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
+# The lab's bot gets the same repair loop, over the lab's own manager.
+adaptive_lab_supervisor = InstanceSupervisor(
+    adaptive_lab.manager,
     interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
@@ -1280,6 +1304,7 @@ import routers.native_smc  # noqa: E402
 import routers.price_action  # noqa: E402
 import routers.pa_rulebook  # noqa: E402
 import routers.instance_visual_lab  # noqa: E402
+import routers.adaptive_lab  # noqa: E402
 import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 router.include_router(routers.analytics.router)
@@ -1301,6 +1326,7 @@ router.include_router(routers.native_smc.router)
 router.include_router(routers.price_action.router)
 router.include_router(routers.pa_rulebook.router)
 router.include_router(routers.instance_visual_lab.router)
+router.include_router(routers.adaptive_lab.router)
 router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 

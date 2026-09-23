@@ -163,6 +163,13 @@ class Settings:
     # journal so a restart does not silently change how the agent trades.
     smc_agent_policy_file: str = field(default_factory=lambda: os.environ.get(
         "HUB_SMC_AGENT_POLICY_FILE", str(DATA_DIR / "smc_agent_policy.json")))
+    # Adaptive MTF Trend Pullback Lab: its private bot manager keeps positions,
+    # trades, leases and settings in this ledger, and its decisions in the
+    # second file -- never in the Trading Instances ledger.
+    adaptive_lab_db: str = field(default_factory=lambda: os.environ.get(
+        "HUB_ADAPTIVE_LAB_DB", str(DATA_DIR / "adaptive_lab.db")))
+    adaptive_lab_decisions_db: str = field(default_factory=lambda: os.environ.get(
+        "HUB_ADAPTIVE_LAB_DECISIONS_DB", str(DATA_DIR / "adaptive_lab_decisions.db")))
     price_action_research_db: str = field(default_factory=lambda: os.environ.get(
         "HUB_PRICE_ACTION_RESEARCH_DB", str(DATA_DIR / "price_action_research.db")))
     shadow_research_db: str = field(default_factory=lambda: os.environ.get(

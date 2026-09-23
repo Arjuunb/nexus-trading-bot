@@ -126,9 +126,10 @@ def instances():
             "real_execution_allowed": False}
 
 
-def _status(instance_id: str) -> dict:
+def _status(instance_id: str, manager=None) -> dict:
+    manager = _wa.instance_manager if manager is None else manager
     try:
-        return _wa.instance_manager.status(instance_id)
+        return manager.status(instance_id)
     except KeyError as exc:
         raise HTTPException(404, {"code": "NO_SUCH_INSTANCE",
                                   "message": f"no instance {instance_id}"}) from exc
@@ -137,10 +138,9 @@ def _status(instance_id: str) -> dict:
                                   "message": str(exc)}) from exc
 
 
-@router.get("/state")
-def state(instance_id: str = Query(..., min_length=1)):
+def state_payload(instance_id: str, *, manager=None) -> dict:
     """What this instance is doing, and what stands between it and an order."""
-    status = _status(instance_id)
+    status = _status(instance_id, manager)
     engine = status.get("engine") or {}
     market = status.get("market") or {}
     strategy_id = _strategy_id_of(status)
@@ -248,14 +248,14 @@ def _feed_panel(status: dict) -> dict:
     }
 
 
-def _live_strategy(instance_id: str, symbol: str):
+def _live_strategy(instance_id: str, symbol: str, manager=None):
     """The very strategy object the run loop is driving, or None.
 
     Reached through the engine's published reference rather than rebuilt: a
     freshly constructed strategy would hold no zones, no pivots and no
     structure, and would quietly show an empty chart for a busy market.
     """
-    manager = _wa.instance_manager
+    manager = _wa.instance_manager if manager is None else manager
     runtime = getattr(manager, "_runtime", {}).get(instance_id)
     if not runtime:
         return None
@@ -264,8 +264,7 @@ def _live_strategy(instance_id: str, symbol: str):
     return live.get(symbol) or live.get(str(symbol).upper())
 
 
-@router.get("/features")
-def features(instance_id: str = Query(..., min_length=1)):
+def features_payload(instance_id: str, *, manager=None) -> dict:
     """Chart overlays read from the running strategy's own state.
 
     Refuses rather than returns an empty set when the runtime does not expose
@@ -274,13 +273,13 @@ def features(instance_id: str = Query(..., min_length=1)):
     """
     from services import strategy_visual_features as features_module
 
-    status = _status(instance_id)
+    status = _status(instance_id, manager)
     strategy_id = _strategy_id_of(status)
     adapter = adapter_for(strategy_id)
     if adapter is None:
         raise HTTPException(501, {"code": "NO_VISUAL_ADAPTER", "strategy_id": strategy_id,
                                   "message": f"no visual adapter for '{strategy_id}'"})
-    strategy = _live_strategy(instance_id, str(status.get("symbol") or ""))
+    strategy = _live_strategy(instance_id, str(status.get("symbol") or ""), manager)
     if strategy is None:
         raise HTTPException(503, {
             "code": "STRATEGY_NOT_RUNNING", "retryable": True,
@@ -382,10 +381,8 @@ def _venue_key(status: dict) -> str:
     return "binance_usdm"
 
 
-@router.get("/candles")
-def candles(instance_id: str = Query(..., min_length=1),
-            timeframe: Optional[str] = Query(None),
-            limit: int = Query(300, ge=20, le=1500)):
+def candles_payload(instance_id: str, timeframe: Optional[str] = None,
+                    limit: int = 300, *, manager=None) -> dict:
     """The closed candles this instance decides on, freshest real source first.
 
     Three real sources, tried in order, each judged by the one freshness
@@ -412,7 +409,7 @@ def candles(instance_id: str = Query(..., min_length=1),
     it, so nothing downstream has to assume the data is current -- or can
     quietly claim it is.
     """
-    status = _status(instance_id)
+    status = _status(instance_id, manager)
     symbol = str(status.get("symbol") or "")
     instance_tf = str(status.get("timeframe") or "")
     requested = str(timeframe or instance_tf or "")
@@ -423,7 +420,7 @@ def candles(instance_id: str = Query(..., min_length=1),
         raise HTTPException(400, {"code": "UNKNOWN_TIMEFRAME", "timeframe": requested,
                                   "message": f"unsupported timeframe '{requested}'"})
 
-    strategy = _live_strategy(instance_id, symbol)
+    strategy = _live_strategy(instance_id, symbol, manager)
     market = status.get("market") or {}
     venue = _venue_key(status)
     envelope = {
@@ -500,10 +497,8 @@ def candles(instance_id: str = Query(..., min_length=1),
             "freshness": verdict.to_dict(), "attempts": attempts}
 
 
-@router.get("/timeline")
-def timeline(instance_id: str = Query(..., min_length=1),
-             limit: int = Query(100, ge=1, le=500),
-             decision: Optional[str] = Query(None, pattern="^(accepted|rejected)$")):
+def timeline_payload(instance_id: str, limit: int = 100, decision: Optional[str] = None,
+                     *, manager=None, decisions=None) -> dict:
     """The recorded decisions for this instance, newest first.
 
     Read straight from the ``decisions`` table the engine already writes, so a
@@ -515,10 +510,10 @@ def timeline(instance_id: str = Query(..., min_length=1),
     row each, which is stated here because an empty timeline otherwise reads as
     "nothing happened" when it means "nothing reached a signal".
     """
-    status = _status(instance_id)
+    status = _status(instance_id, manager)
+    store = _wa.decision_store if decisions is None else decisions
     try:
-        rows = _wa.decision_store.list(instance_id=instance_id, limit=limit,
-                                       decision=decision)
+        rows = store.list(instance_id=instance_id, limit=limit, decision=decision)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(503, {"code": "DECISIONS_UNAVAILABLE",
                                   "message": str(exc)}) from exc
@@ -560,3 +555,37 @@ def timeline(instance_id: str = Query(..., min_length=1),
                      "blocker, not as a row each."),
         "real_execution_allowed": False,
     }
+
+
+# --------------------------------------------------------------- the routes
+# Thin GET wrappers over the payload functions above. The functions take the
+# manager (and decision store) to read from so another read-only lab -- the
+# Adaptive MTF lab, whose private bot manager has its own database -- can
+# serve the same evidence without a second copy of this logic.
+
+@router.get("/state")
+def state(instance_id: str = Query(..., min_length=1)):
+    """What this instance is doing, and what stands between it and an order."""
+    return state_payload(instance_id)
+
+
+@router.get("/features")
+def features(instance_id: str = Query(..., min_length=1)):
+    """Chart overlays read from the running strategy's own state."""
+    return features_payload(instance_id)
+
+
+@router.get("/candles")
+def candles(instance_id: str = Query(..., min_length=1),
+            timeframe: Optional[str] = Query(None),
+            limit: int = Query(300, ge=20, le=1500)):
+    """The closed candles this instance decides on, freshest real source first."""
+    return candles_payload(instance_id, timeframe, limit)
+
+
+@router.get("/timeline")
+def timeline(instance_id: str = Query(..., min_length=1),
+             limit: int = Query(100, ge=1, le=500),
+             decision: Optional[str] = Query(None, pattern="^(accepted|rejected)$")):
+    """The recorded decisions for this instance, newest first."""
+    return timeline_payload(instance_id, limit, decision)

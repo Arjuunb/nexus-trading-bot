@@ -35,6 +35,7 @@ const ForwardValidationPage = lazy(() => import("./pages/ForwardValidation"));
 const NativeSMCVisualPage = lazy(() => import("./pages/NativeSMCVisual"));
 const SMCStrategyLabPage = lazy(() => import("./pages/SMCStrategyLab"));
 const SMCAgentPage = lazy(() => import("./pages/SMCAgent"));
+const AdaptiveLabPage = lazy(() => import("./pages/AdaptiveLab"));
 const PriceActionVisualPage = lazy(() => import("./pages/PriceActionVisual"));
 const InstanceVisualLabPage = lazy(() => import("./pages/InstanceVisualLab"));
 import { AppContext, parseHash, slug } from "./app-context";
@@ -132,6 +133,7 @@ export default function App() {
       case "Forward Validation": return <ForwardValidationPage />;
       case "SMC Strategy Lab": return <SMCStrategyLabPage />;
       case "SMC Agent": return <SMCAgentPage />;
+      case "Adaptive MTF Lab": return <AdaptiveLabPage />;
       case "SMC Visual Lab": return <NativeSMCVisualPage />;
       case "Price Action Lab": return <PriceActionVisualPage />;
       case "Instance Visual Lab": return <InstanceVisualLabPage />;
