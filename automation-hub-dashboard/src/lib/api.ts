@@ -255,23 +255,30 @@ function _subscribe(path: string, sub: _Sub): () => void {
 
 /** Poll a GET endpoint every `intervalMs` and expose data/error/loading.
  *  Identical paths share one deduped, backoff-aware, tab-visibility-aware poller. */
-export function useLive<T>(path: string, intervalMs = 2500): LiveState<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+export function useLive<T>(path: string | null, intervalMs = 2500): LiveState<T> {
+  const [snapshot, setSnapshot] = useState<{ path: string | null; data: T | null; error: string | null; loading: boolean }>({ path: null, data: null, error: null, loading: true });
 
   useEffect(() => {
-    setLoading(true);
+    if (!path) return;
+    let active = true;
+    const update = (patch: Partial<LiveState<T>>) => {
+      if (active) setSnapshot((previous) => ({
+        ...(previous.path === path ? previous : { data: null, error: null, loading: true }),
+        ...patch, path,
+      }));
+    };
     const sub: _Sub = {
       interval: intervalMs,
-      onData: (d) => setData(d as T),
-      onError: setError,
-      onLoading: setLoading,
+      onData: (d) => update({ data: d as T }),
+      onError: (error) => update({ error }),
+      onLoading: (loading) => update({ loading }),
     };
-    return _subscribe(path, sub);
+    const unsubscribe = _subscribe(path, sub);
+    return () => { active = false; unsubscribe(); };
   }, [path, intervalMs]);
 
   const refetch = useCallback(async () => {
+    if (!path) return false;
     const p = _pollers.get(path);
     if (p) {
       if (p.timer) clearTimeout(p.timer);
@@ -281,7 +288,9 @@ export function useLive<T>(path: string, intervalMs = 2500): LiveState<T> {
     return false;
   }, [path]);
 
-  return { data, error, loading, refetch };
+  // Never render the previous market's candles under a new request identity.
+  const current = snapshot.path === path && path ? snapshot : { data: null, error: null, loading: Boolean(path) };
+  return { data: current.data, error: current.error, loading: current.loading, refetch };
 }
 
 // ---- response shapes (match the FastAPI endpoints) ----

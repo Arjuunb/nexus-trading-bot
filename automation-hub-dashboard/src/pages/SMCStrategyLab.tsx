@@ -259,6 +259,8 @@ export default function SMCStrategyLabPage() {
   const [leverage, setLeverage] = useState("1");
   const [resetPhrase, setResetPhrase] = useState("");
   const [busy, setBusy] = useState(false);
+  const [marketBusy, setMarketBusy] = useState(false);
+  const marketSwitchInFlight = useRef(false);
   const [order, setOrder] = useState({ side: "buy", type: "market", quantity: "0.001", price: "", stop_loss: "", target_1: "", target_2: "" });
   const [priceViewport, setPriceViewport] = useState<ChartPriceViewport>({ auto: true, scale: 1, offset: 0 });
   const [timeViewport, setTimeViewport] = useState<ChartTimeViewport | null>(null);
@@ -280,8 +282,9 @@ export default function SMCStrategyLabPage() {
   const chartPath = chartFeed === "checkpoint"
     ? `/research/smc/chart?symbol=${symbol}&timeframe=${timeframe}&window=800&model_id=${encodeURIComponent(selectedModelId)}${focusedAt ? `&at=${encodeURIComponent(focusedAt)}` : ""}`
     : `/research/smc/live-chart?symbol=${symbol}&timeframe=${timeframe}&venue=binance_usdm&window=800&visible=800&model_id=${encodeURIComponent(selectedModelId)}`;
-  const chartState = useLive<NativeState>(chartPath, chartFeed === "checkpoint" ? 5_000 : 2_500);
-  const sourceStrategy = useLive<SMCSourceStrategyEvaluation>(`/research/smc/strategy-v1/evaluate?symbol=${symbol}&timeframe=${timeframe}&model_id=${encodeURIComponent(selectedModelId)}${focusedAt ? `&at=${encodeURIComponent(focusedAt)}` : ""}`, 5_000);
+  const chartIdentityReady = chartFeed === "checkpoint" || (savedSession?.symbol === symbol && savedSession?.timeframe === timeframe);
+  const chartState = useLive<NativeState>(sessionLoaded && !marketBusy && chartIdentityReady ? chartPath : null, chartFeed === "checkpoint" ? 5_000 : 2_500);
+  const sourceStrategy = useLive<SMCSourceStrategyEvaluation>(chartFeed === "checkpoint" ? `/research/smc/strategy-v1/evaluate?symbol=${symbol}&timeframe=${timeframe}&model_id=${encodeURIComponent(selectedModelId)}${focusedAt ? `&at=${encodeURIComponent(focusedAt)}` : ""}` : null, 5_000);
   const data = chartState.data;
   const chartData = useMemo(() => data ? { ...data, candles: mergeCandles(olderCandles, data.candles) } : null, [data, olderCandles]);
   const candidates = data?.strategy_ladder?.candidates ?? [];
@@ -304,7 +307,7 @@ export default function SMCStrategyLabPage() {
     setTimeframe(savedSession.timeframe);
     setSelectedModelId(savedSession.model_id);
     if (paper.data) setLeverage(String(paper.data.account.leverage));
-  }, [paper.data?.account.leverage, savedSession?.id, savedSession?.operating_mode, savedSession?.risk_pct]);
+  }, [paper.data?.account.leverage, savedSession?.id, savedSession?.symbol, savedSession?.timeframe, savedSession?.operating_mode, savedSession?.risk_pct]);
 
   useEffect(() => {
     historyRequestRef.current = false;
@@ -318,7 +321,7 @@ export default function SMCStrategyLabPage() {
   const feedReliable = chartFeed === "checkpoint"
     ? Boolean(data?.candles.length)
     : Boolean(data?.live_display?.reliable && !data.live_display.new_entries_paused && !chartState.error);
-  const healthState = chartFeed === "checkpoint" ? "FROZEN_REVIEW" : data?.live_display?.connection_state ?? (chartState.error ? "ERROR" : "CONNECTING");
+  const healthState = chartFeed === "checkpoint" ? "FROZEN_REVIEW" : chartState.error ? "ERROR" : data?.live_display?.connection_state ?? "CONNECTING";
   const lastClosed = data?.candles[data.candles.length - 1];
   const rejected = paper.data?.candidates.filter((row) => ["DATA_PAUSED", "REJECTED", "EXPIRED", "CONFLICT"].includes(row.status)) ?? [];
 
@@ -330,13 +333,30 @@ export default function SMCStrategyLabPage() {
     setChartPreset("debug");
     setFilters((current) => ({ ...current, [key]: !current[key] }));
   };
-  const switchMarket = (nextSymbol: string, nextTimeframe = timeframe) => {
-    if (chartFeed === "checkpoint" && (nextSymbol !== "BTCUSDT" || nextTimeframe !== "5m")) setChartFeed("binance_usdm");
-    setSymbol(nextSymbol);
-    setTimeframe(nextTimeframe);
-    setSelectedId("");
-    setSelectedCandle("");
-    setLatestSignal((value) => value + 1);
+  const switchMarket = async (nextSymbol: string, nextTimeframe = timeframe) => {
+    if (!savedSession || marketSwitchInFlight.current || (nextSymbol === symbol && nextTimeframe === timeframe)) return;
+    marketSwitchInFlight.current = true;
+    setMarketBusy(true);
+    try {
+      // Changing a chart must not silently apply draft risk/model/mode edits.
+      const updated = await apiPostJson<SMCPaperState>("/research/smc/sessions/current/configuration", {
+        symbol: nextSymbol, timeframe: nextTimeframe, mode: "LIVE_PAPER",
+        operating_mode: savedSession.operating_mode, model_id: savedSession.model_id,
+        risk_pct: savedSession.risk_pct,
+      });
+      setSymbol(updated.session.symbol);
+      setTimeframe(updated.session.timeframe);
+      setChartFeed("binance_usdm");
+      setSelectedId(""); setSelectedCandle("");
+      setLatestSignal((value) => value + 1);
+      await Promise.all([paper.refetch(), identity.refetch()]);
+      toast(`SMC session changed to ${updated.session.symbol} ${updated.session.timeframe}`, "success");
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "SMC market change failed", "error");
+    } finally {
+      marketSwitchInFlight.current = false;
+      setMarketBusy(false);
+    }
   };
   const focusCandidate = () => {
     const objectId = selectedCandidate?.selected_trace?.supporting_object_ids[0] ?? evaluation?.native_object_ids[0];
@@ -440,8 +460,8 @@ export default function SMCStrategyLabPage() {
 
     <div className="pa-workspace">
       <aside className={`pa-sidebar ${controlsOpen ? "is-open" : ""}`} aria-label="SMC Strategy controls">
-        <section><h2>SMC session market</h2><label>Binance USDⓈ-M contract<select aria-label="SMC session symbol" value={symbol} onChange={(event) => switchMarket(event.target.value)}>{SYMBOLS.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button type="button" className={chartFeed === "binance_usdm" ? "active" : ""} onClick={() => setChartFeed("binance_usdm")}>Live paper</button><button type="button" className={chartFeed === "checkpoint" ? "active" : ""} onClick={() => { setChartFeed("checkpoint"); switchMarket("BTCUSDT", "5m"); }}>Frozen review</button></div><small className="pa-context-note">Independent SMC paper session. Pine reference and parity review remain in the separate <button type="button" className="link-button" onClick={() => { window.location.hash = "/smc-visual-lab"; }}>SMC Visual Lab</button>, which is reachable from here rather than from the sidebar.</small></section>
-        <section><h2>Strategy &amp; execution</h2><label>Visible SMC entry model<select aria-label="SMC entry model" value={selectedModelId} onChange={(event) => setSelectedModelId(event.target.value)}>{(sourceModels.data?.models ?? []).map((model) => <option key={model.id} value={model.id} disabled={model.status === "PARKED"}>{model.label} · {model.status === "PARKED" ? "Parked" : "Active"}</option>)}</select></label><label>Paper operating mode<select disabled={!sessionLoaded} value={operatingMode} onChange={(event) => setOperatingMode(event.target.value)}>{!sessionLoaded && <option value="">Loading saved mode…</option>}<option value="signals_only">Signals only</option><option value="manual_approval">Agent decides · no human approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%)<input value={riskPct} onChange={(event) => setRiskPct(event.target.value)} inputMode="decimal" /></label><button type="button" className="pa-export" disabled={busy || !sessionLoaded} onClick={() => void applyConfiguration()}>Apply paper configuration</button><small>Agent decides: the SMC strategy stages the entry, then the agent checks reward-to-risk, sizes it and places it &mdash; nobody presses approve. Automatic paper places the strategy&rsquo;s entry with no agent judgement at all. Visible evidence follows this model; existing paper orders retain immutable configuration snapshots.</small></section>
+        <section><h2>SMC session market</h2><label>Binance USDⓈ-M contract<select aria-label="SMC session symbol" disabled={marketBusy || !sessionLoaded} value={symbol} onChange={(event) => switchMarket(event.target.value)}>{SYMBOLS.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button type="button" className={chartFeed === "binance_usdm" ? "active" : ""} onClick={() => { if (savedSession) { setSymbol(savedSession.symbol); setTimeframe(savedSession.timeframe); } setChartFeed("binance_usdm"); }}>Live paper</button><button type="button" className={chartFeed === "checkpoint" ? "active" : ""} onClick={() => { setChartFeed("checkpoint"); setSymbol("BTCUSDT"); setTimeframe("5m"); }}>Frozen review</button></div><small className="pa-context-note">Independent SMC paper session. Pine reference and parity review remain in the separate <button type="button" className="link-button" onClick={() => { window.location.hash = "/smc-visual-lab"; }}>SMC Visual Lab</button>, which is reachable from here rather than from the sidebar.</small></section>
+        <section><h2>Strategy &amp; execution</h2><label>Visible SMC entry model<select aria-label="SMC entry model" value={selectedModelId} onChange={(event) => setSelectedModelId(event.target.value)}>{(sourceModels.data?.models ?? []).map((model) => <option key={model.id} value={model.id} disabled={model.status === "PARKED"}>{model.label} · {model.status === "PARKED" ? "Parked" : "Active"}</option>)}</select></label><label>Paper operating mode<select disabled={!sessionLoaded} value={operatingMode} onChange={(event) => setOperatingMode(event.target.value)}>{!sessionLoaded && <option value="">Loading saved mode…</option>}<option value="signals_only">Signals only</option><option value="manual_approval">Agent decides · no human approval</option><option value="automatic">Automatic paper</option></select></label><label>Risk per trade (%)<input value={riskPct} onChange={(event) => setRiskPct(event.target.value)} inputMode="decimal" /></label><button type="button" className="pa-export" disabled={busy || marketBusy || !sessionLoaded} onClick={() => void applyConfiguration()}>Apply paper configuration</button><small>Agent decides: the SMC strategy stages the entry, then the agent checks reward-to-risk, sizes it and places it &mdash; nobody presses approve. Automatic paper places the strategy&rsquo;s entry with no agent judgement at all. Visible evidence follows this model; existing paper orders retain immutable configuration snapshots.</small></section>
         <section><h2>Chart layers</h2><label className="pa-layer-mode">Preset<select aria-label="SMC chart layer preset" value={chartPreset} onChange={(event) => applyPreset(event.target.value as ChartPreset)}>{(Object.keys(PRESETS) as ChartPreset[]).map((preset) => <option key={preset} value={preset}>{pretty(preset)}</option>)}</select></label>{([[
           "pivots", "Swings"], ["structure", "Events"], ["liquidity", "Liquidity"], ["fvg", "Fair value gaps"], ["orderBlocks", "Order blocks"], ["mitigated", "Invalidated · lifecycle"], ["labels", "Labels"]] as [keyof NativeSMCOverlayFilters, string][]).map(([key, label]) => <label className="pa-check" key={key}><input type="checkbox" checked={filters[key]} onChange={() => toggleLayer(key)} /><span>{label}</span></label>)}<label className="pa-layer-mode">Selected setup<select aria-label="Selected SMC setup" value={selectedCandidate?.strategy_id ?? selectedCandidateId} onChange={(event) => setSelectedCandidateId(event.target.value)}>{candidates.map((candidate) => <option key={candidate.strategy_id} value={candidate.strategy_id}>{pretty(candidate.strategy_id)} · {candidate.state}</option>)}</select></label><button type="button" className="pa-focus-setup" disabled={!selectedCandidate && !evaluation} onClick={focusCandidate}>Focus selected setup</button><small>Presets affect rendering only. SMC decisions, orders and journal evidence remain unchanged.</small></section>
         <section><h2>Virtual account</h2><div className="pa-account"><span>Balance<b>{money(paper.data?.account.balance)} USDT</b></span><span>Equity<b>{money(paper.data?.account.equity)} USDT</b></span><span>Open P&amp;L<b className={(paper.data?.account.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(paper.data?.account.unrealized_pnl)}</b></span><span>Free margin<b>{money(paper.data?.account.available_margin)}</b></span></div><label>Isolated leverage<select value={leverage} onChange={(event) => void applyLeverage(event.target.value)}>{[1, 2, 3, 5, 10].map((value) => <option key={value} value={value}>{value}×</option>)}</select></label><small>Persistent and isolated from every other paper account.</small></section>
@@ -449,7 +469,7 @@ export default function SMCStrategyLabPage() {
       </aside>
 
       <main className="pa-main">
-        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable ? "live" : "stale"} />{symbol}<span>SMC SESSION · PERPETUAL</span></div><div className="pa-timeframes">{(data?.mtf_policy?.available_entry_timeframes ?? ["5m"]).map((row) => <button type="button" key={row} className={row === timeframe ? "active" : ""} onClick={() => switchMarket(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible SMC chart candles" value={visibleBars} onChange={(event) => { setVisibleBars(Number(event.target.value)); setTimeViewport(null); setFitSignal((value) => value + 1); }}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button type="button" onClick={() => { setTimeViewport(null); setPriceViewport({ auto: true, scale: 1, offset: 0 }); setFitSignal((value) => value + 1); }}>Fit</button><button type="button" onClick={onGoLatest}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{healthState}</span></div>
+        <div className="pa-toolbar"><div className="pa-symbol"><i className={feedReliable ? "live" : "stale"} />{symbol}<span>SMC SESSION · PERPETUAL</span></div><div className="pa-timeframes">{(data?.mtf_policy?.available_entry_timeframes ?? ["1m", "5m", "15m", "1h", "4h"]).map((row) => <button type="button" key={row} disabled={marketBusy || !sessionLoaded} className={row === timeframe ? "active" : ""} onClick={() => switchMarket(symbol, row)}>{row}</button>)}</div><label className="pa-view-bars">View<select aria-label="Visible SMC chart candles" value={visibleBars} onChange={(event) => { setVisibleBars(Number(event.target.value)); setTimeViewport(null); setFitSignal((value) => value + 1); }}>{[48, 72, 120, 240].map((value) => <option key={value} value={value}>{value} bars</option>)}</select></label><button type="button" onClick={() => { setTimeViewport(null); setPriceViewport({ auto: true, scale: 1, offset: 0 }); setFitSignal((value) => value + 1); }}>Fit</button><button type="button" onClick={onGoLatest}>Latest</button><button type="button" className="pa-clean-view" onClick={() => applyPreset("clean")}>Clean view</button><span className={`pa-mode-chip ${feedReliable ? "" : "is-stale"}`}>{healthState}</span></div>
 
         <div className="pa-chart-shell" aria-label="Native SMC chart workspace">
           <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{data?.mtf_policy?.label ?? "Native MTF context loading"}</span><span>{data?.data_provenance?.venue ?? "Binance USDⓈ-M Futures"} · session {savedSession?.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{evaluation ? `${evaluation.model.label} · ${evaluation.state} · ${evaluation.next_required_event}` : "SMC strategy evidence loading"}</span><span>{data?.snapshot?.swing_bias === 1 ? "BULLISH" : data?.snapshot?.swing_bias === -1 ? "BEARISH" : "NEUTRAL"}</span><b>{evaluation?.state === "ENTRY_READY" ? "READY" : "WAIT"}</b></div></div>

@@ -104,7 +104,8 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
     """The lab runtime with the independent SMC agent attached downstream."""
 
     def __init__(self, market, account: SMCPaperAccount, *, agent=None, **kwargs):
-        super().__init__(market, account, **kwargs)
+        from services.smc_lab_display import SMCLabDisplay
+        self._display = SMCLabDisplay()
         #: The independent agent. ``None`` means the runtime behaves exactly
         #: like the lab runtime it inherits from.
         self.agent = agent
@@ -119,6 +120,8 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         self.last_agent_result: dict = {
             "enabled": agent is not None, "executed": False,
             "reason": "the agent has not observed a tick yet"}
+        # Parent autostarts the worker; subclass state must already exist.
+        super().__init__(market, account, **kwargs)
 
     # ------------------------------------------------------------- capture
     def reconcile_visual(self, visual: dict, **kwargs):
@@ -132,7 +135,41 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         reconciled, quote = super().reconcile_visual(visual, **kwargs)
         if getattr(self._capture, "armed", False):
             self._capture.visual = reconciled
+            self._display.publish(self.account.session() or {}, reconciled)
         return reconciled, quote
+
+    def live_state(self, symbol, timeframe, *, visible=240, window=800,
+                   model_id="SMC_M1_SWEEP_REVERSAL"):
+        """Render the worker's result, not another 800-bar strategy replay."""
+        from services.native_smc_live_visual import NativeSMCLiveDataUnavailable
+        from services.smc_lab_display import current_health
+        session = self.account.session() or {}
+        if (session.get("symbol"), session.get("timeframe")) != (symbol.upper(), timeframe):
+            raise ValueError("requested market does not match the saved SMC session")
+        visual = self._display.read(session)
+        if visual is None or model_id != session.get("model_id"):
+            raise NativeSMCLiveDataUnavailable("SMC_WORKER_WARMUP: waiting for the saved session's closed-candle snapshot")
+        snapshot = self.stream.snapshot() if self.stream else {}
+        connection = snapshot.get("connection") or {"state": "DISCONNECTED", "reliable": False,
+                                                      "new_entries_paused": True}
+        health = current_health(visual.get("live_display") or {}, connection)
+        bars = snapshot.get("closed_bars") or []
+        latest = bars[-1].timestamp.isoformat() if bars else None
+        if health.get("reliable") and latest != visual.get("data_provenance", {}).get("last_closed_candle"):
+            health.update(state="SYNCING", connection_state="SYNCING", reliable=False,
+                          new_entries_paused=True, failing_dependency="COMPLETED_CANDLE_RECONCILIATION",
+                          health_reason="worker has not reconciled the latest closed candle yet")
+        forming = snapshot.get("forming")
+        visual["forming_candle"] = ({"timestamp": forming.timestamp.isoformat(),
+            **{key: getattr(forming, key) for key in ("open", "high", "low", "close", "volume")}}
+            if forming is not None else None)
+        quote = snapshot.get("quote") or {}
+        health.update({key: value for key, value in quote.items() if value is not None})
+        health["last_price"] = quote.get("last")
+        visual["live_display"] = health
+        visual["candles"] = visual.get("candles", [])[-max(20, min(int(visible), 1000)):]
+        visual.update(session_id=session.get("id"), operating_mode=session.get("operating_mode"))
+        return visual
 
     @staticmethod
     def _closed_candle_time(visual: dict) -> str:
@@ -191,7 +228,19 @@ class AgentSMCStrategyLabRuntime(SMCStrategyLabRuntime):
         agent really is the approver — every other blocker the lab raised
         still blocks, and a session the lab called ERROR stays ERROR.
         """
-        status = super().bot_status()
+        from copy import copy
+        from services.smc_lab_display import current_health
+        view = copy(self)
+        if self.stream is not None:
+            try:
+                raw = self.stream.status()
+            except Exception as exc:
+                raw = {"state": "ERROR", "reliable": False, "new_entries_paused": True,
+                       "failing_dependency": "SMC_FEED_STATUS",
+                       "health_reason": f"feed status unavailable: {type(exc).__name__}: {exc}"}
+                view.stream = None  # do not repeat the failing read in the parent
+            view.last_market_health = current_health(self.last_market_health, raw)
+        status = SMCStrategyLabRuntime.bot_status(view)
         self._attach_transport_diagnostics(status)
         approver = self.agent_is_approver()
         status["agent"] = {
