@@ -1683,8 +1683,16 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .pa-sidebar section:last-child { border-bottom: 0; }
 .pa-sidebar h2 { margin: 0 0 2px; color: #dbe4f1; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
 .pa-sidebar label:not(.pa-check) { display: grid; gap: 5px; color: var(--dim); font-size: 9px; font-weight: 700; }
-.pa-sidebar select, .pa-order-ticket select, .pa-order-ticket input { height: 32px; min-width: 0; padding: 5px 8px; border: 1px solid var(--card-border-soft); border-radius: 5px; background: #11151b; color: var(--text); font-size: 11px; }
+.pa-sidebar select, .pa-sidebar input:not([type=checkbox]), .pa-order-ticket select, .pa-order-ticket input { height: 32px; min-width: 0; padding: 5px 8px; border: 1px solid var(--card-border-soft); border-radius: 5px; background: #11151b; color: var(--text); font-size: 11px; }
 .pa-sidebar small { color: #7f8b9d; font-size: 9px; line-height: 1.45; }
+.pa-saved-config { display: grid; gap: 3px; margin: 0; padding: 9px 10px; border: 1px solid rgba(88,209,138,.28); border-radius: 6px; background: rgba(88,209,138,.06); }
+.pa-saved-config b { color: #e8eef7; font-size: 13px; }
+.pa-saved-config span { color: #9fb0c4; font-size: 10px; }
+.pa-details > summary { cursor: pointer; color: #dbe4f1; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; list-style: none; }
+.pa-details > summary::after { content: " ▸"; color: var(--dim); }
+.pa-details[open] > summary::after { content: " ▾"; }
+.pa-details[open] { display: grid; gap: 8px; }
+.pa-details .pa-legend { display: grid; gap: 6px; }
 .pa-segment { display: grid; grid-template-columns: 1fr 1fr; padding: 2px; border: 1px solid var(--card-border-soft); border-radius: 6px; background: #090b0e; }
 .pa-segment button, .pa-toolbar button, .pa-timeframes button, .pa-replay button { border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: pointer; font: 750 10px/1 var(--font-sans); }
 .pa-segment button { padding: 7px 5px; }

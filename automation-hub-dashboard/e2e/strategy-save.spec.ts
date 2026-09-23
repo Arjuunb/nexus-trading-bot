@@ -85,13 +85,16 @@ test("SMC refused strategy change says why and shows the strategy that is really
   expect(server.current().model_id).toBe("SMC_M1_SWEEP_REVERSAL");
 });
 
-test("SMC strategies that are not built cannot be picked, and the setup list says it is view only", async ({ page }) => {
+test("SMC strategies that are not built cannot be picked, and the setup highlighter is chart-only and tucked away", async ({ page }) => {
   await smcServer(page);
   await page.goto("/#/smc-strategy-lab");
   const parked = page.getByLabel("SMC entry model").locator("option", { hasText: "Displacement FVG" });
   await expect(parked).toHaveText(/not built yet/);
   await expect(parked).toHaveJSProperty("disabled", true);
-  await expect(page.getByText("Chart focus · view only, not a strategy")).toBeAttached();
+  // The setup highlighter is tucked into the collapsed chart panel and says it is chart-only.
+  await expect(page.getByText("Highlight a setup · chart only")).toBeHidden();
+  await page.getByText("Chart display", { exact: true }).click();
+  await expect(page.getByText("Highlight a setup · chart only")).toBeVisible();
 });
 
 /** A stateful Price Action backend: a save changes what every later read returns. */
