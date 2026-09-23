@@ -92,6 +92,10 @@ def diagnose(status: dict, agent: dict, paper: dict, policy: dict) -> tuple[list
     lines: list[str] = []
     verdict: list[str] = []
     mode = str(status.get("operating_mode") or (paper.get("session") or {}).get("operating_mode") or "?")
+    # The dashboard's "Agent decides" option is saved as manual_approval.
+    agent_decides = mode == "manual_approval" and bool(
+        (status.get("agent") or agent.get("agent") or {}).get("is_approver"))
+    shown_mode = "AGENT DECIDES (saved as manual_approval)" if agent_decides else mode
     # bot-status is read last, so it is the current answer. The agent endpoint
     # carries its own copy from a few seconds earlier; mixing the two once
     # reported a lab as BLOCKED by a reconnect that had already recovered.
@@ -102,7 +106,7 @@ def diagnose(status: dict, agent: dict, paper: dict, policy: dict) -> tuple[list
 
     lines.append("== LAB ==")
     lines.append(f"  {status.get('symbol') or agent.get('symbol')} "
-                 f"{status.get('timeframe') or agent.get('timeframe')}  mode={mode}  "
+                 f"{status.get('timeframe') or agent.get('timeframe')}  mode={shown_mode}  "
                  f"execution_state={current.get('execution_state')}")
     lines.append(f"  feed={feed.get('state')} reliable={feed.get('reliable')}  "
                  f"blockers={blockers or 'none'}")

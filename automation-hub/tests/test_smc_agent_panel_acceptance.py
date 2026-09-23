@@ -86,3 +86,18 @@ def test_the_page_explains_the_stood_down_case():
 
     assert "STOOD DOWN" in page
     assert "Automatic paper" in page
+
+
+def test_the_smc_card_calls_agent_mode_the_agent_deciding():
+    """manual_approval is the saved value of the "Agent decides" option. While
+    the server reports the agent as the approver, a MANUAL_APPROVAL badge told
+    an operator who had chosen the agent that the bot was waiting for them."""
+    page = (DASHBOARD / "pages" / "SMCStrategyLab.tsx").read_text()
+    assert '<option value="manual_approval">Agent decides' in page
+
+    card = (DASHBOARD / "components" / "cards" / "LabBotCards.tsx").read_text()
+    badge = next(line for line in card.splitlines() if 'case "manual_approval"' in line)
+    assert "status.agent?.is_approver" in badge
+    assert '"AGENT_DECIDES"' in badge
+    # Without the agent approving, the same value really is manual approval.
+    assert '"MANUAL_APPROVAL"' in badge

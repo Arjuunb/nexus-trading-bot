@@ -139,6 +139,8 @@ export interface LabBotStatus {
   symbol?: string | null;
   timeframe?: string | null;
   mode?: string | null;
+  /** SMC only: whether the agent, not a person, approves this session's entries. */
+  agent?: { attached?: boolean; is_approver?: boolean } | null;
   saved_configuration: Record<string, unknown>;
   feed: Record<string, any>;
   decision_state: string;

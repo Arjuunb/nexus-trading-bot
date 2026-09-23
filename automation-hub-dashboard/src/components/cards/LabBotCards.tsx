@@ -43,12 +43,18 @@ function PerformanceScope({ title, data }: { title: string; data: Record<string,
  * a person approves each proposal — was indistinguishable from an armed one.
  * Only operating_mode "automatic" arms execution, so the three modes must read
  * as three different things.
+ *
+ * On the SMC lab the SAME saved value is the "Agent decides" mode whenever the
+ * server reports the agent as the approver: nobody presses approve there.
+ * Reading it as MANUAL_APPROVAL told an operator who had chosen the agent that
+ * the bot was waiting for them. The server says who approves; the badge only
+ * repeats it.
  */
 function modeBadge(status: LabBotStatus | null): string {
   if (!status?.session_id || !status.mode) return "LOADING SESSION";
   switch (status.mode) {
     case "signals_only": return "SIGNALS_ONLY";
-    case "manual_approval": return "MANUAL_APPROVAL";
+    case "manual_approval": return status.agent?.is_approver ? "AGENT_DECIDES" : "MANUAL_APPROVAL";
     case "automatic": return "ISOLATED_FORWARD_PAPER";
     default: return String(status.mode).toUpperCase();
   }
