@@ -1696,6 +1696,16 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .adaptive-gates { display: flex; flex-wrap: wrap; gap: 6px; }
 .adaptive-gates em { font-style: normal; font-size: 9px; padding: 2px 6px; border-radius: 4px; background: #11151b; color: var(--dim); }
 .adaptive-gates em.gate-pass { color: #58d18a; } .adaptive-gates em.gate-fail { color: #ef5b5b; } .adaptive-gates em.gate-waiting { color: #e3b341; }
+/* Off is an operator choice, not a fault: neutral, never the stale/error red. */
+.pa-health-scope.is-off, .pa-stream-truth.is-off { border-color: var(--card-border); background: rgba(255,255,255,.02); color: var(--dim); }
+.pa-feed-badge.is-off { color: var(--dim); border-color: var(--card-border); }
+.adaptive-off { align-content: center; gap: 12px; text-align: center; font-size: 12px; }
+.adaptive-off b { color: var(--text); font-size: 15px; }
+.adaptive-off span { max-width: 460px; color: var(--dim); }
+.adaptive-off-actions { display: flex; gap: 10px; justify-content: center; }
+.adaptive-off-actions button { padding: 8px 14px; border-radius: 6px; border: 1px solid rgba(88,209,138,.45); background: rgba(88,209,138,.08); color: #58d18a; font-weight: 600; cursor: pointer; }
+.adaptive-off-actions button + button { border-color: var(--card-border); background: transparent; color: var(--text); }
+.adaptive-off-actions button:disabled { opacity: .5; cursor: wait; }
 .adaptive-journal-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 10px; color: var(--dim); font-size: 10px; }
 .adaptive-journal-head b { color: #dbe4f1; }
 .pa-table tr.is-signal td { color: #58d18a; }

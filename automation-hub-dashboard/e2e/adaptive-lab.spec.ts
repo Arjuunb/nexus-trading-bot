@@ -51,9 +51,10 @@ function statusFor(session: { symbol: string; mode: string; risk_pct: number }) 
   };
 }
 
-async function labServer(page: Page, { refuse = "" } = {}) {
-  let session = { symbol: "XRPUSDT", mode: "automatic", risk_pct: 0.5 };
+async function labServer(page: Page, { refuse = "", mode = "automatic" } = {}) {
+  let session = { symbol: "XRPUSDT", mode, risk_pct: 0.5 };
   const saves: any[] = [];
+  const feedCalls: string[] = [];
   await mockApi(page);
   await page.route("**/research/adaptive-lab/**", async (route) => {
     const url = new URL(route.request().url());
@@ -82,11 +83,16 @@ async function labServer(page: Page, { refuse = "" } = {}) {
         { id: "pullback", stage: "SETUP", label: "Pullback into trend support", detail: "", state: "PASS", blocker: "", explanation: "" },
         { id: "resume", stage: "CONFIRMATION", label: "Trend resumption confirmed", detail: "", state: "WAITING", blocker: "", explanation: "" },
       ] } });
-    if (path === "/live-chart") return route.fulfill({ json: { ...LIVE_CHART, symbol: session.symbol } });
+    if (path === "/live-chart") {
+      feedCalls.push(session.mode);
+      // The real server has no feed for an off bot (503 NO_LIVE_FEED).
+      if (session.mode === "off") return route.fulfill({ status: 503, json: { detail: `the ${session.symbol} bot is off, so it has no live feed to show` } });
+      return route.fulfill({ json: { ...LIVE_CHART, symbol: session.symbol } });
+    }
     if (path === "/journal") return route.fulfill({ json: JOURNAL });
     return route.fallback();
   });
-  return { saves };
+  return { saves, feedCalls };
 }
 
 test("Adaptive MTF Lab shows its bot, orders and journal, and saves each change at once", async ({ page }) => {
@@ -146,4 +152,28 @@ test("Adaptive MTF Lab refused change says why and keeps what is saved", async (
   await expect(page.locator(".toast.error")).toContainText(/Not saved: .*open paper position/);
   await expect(page.getByLabel("Adaptive lab symbol")).toHaveValue("XRPUSDT");
   await expect(page.getByTestId("adaptive-saved-configuration")).toContainText("XRPUSDT");
+});
+
+test("Adaptive MTF Lab that is off says so plainly, polls no feed, and turns on from the chart", async ({ page }) => {
+  const server = await labServer(page, { mode: "off" });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("/#/adaptive-mtf-lab");
+  const off = page.getByTestId("adaptive-off");
+  await expect(off).toContainText("The bot is off");
+  await expect(page.locator(".pa-health-scope")).toContainText("BOT OFF");
+  await expect(page.locator(".pa-health-scope")).not.toContainText("ERROR");
+  await expect(page.locator(".pa-error")).toHaveCount(0);            // off is not a fault
+  await page.waitForTimeout(3_000);                                  // longer than one feed poll
+  expect(server.feedCalls).toEqual([]);                              // no feed asked of an off bot
+  await page.screenshot({ path: "test-results/adaptive-lab-off.png", fullPage: false });
+  await page.locator(".pa-bottom nav").getByRole("button", { name: /journal/ }).click();
+  await expect(page.getByTestId("adaptive-journal")).toContainText("ENTER LONG");   // history stays
+
+  await off.getByRole("button", { name: "Turn on · Automatic paper" }).click();
+  await expect.poll(() => server.saves.length).toBe(1);
+  expect(server.saves[0]).toEqual({ mode: "automatic" });
+  await expect(page.getByTestId("adaptive-off")).toHaveCount(0);
+  await expect(page.locator(".smc-chart-canvas canvas").first()).toBeVisible();
+  await expect(page.locator(".pa-market-readout")).toContainText("0.5462 / 0.5464");
+  await expect(page.getByTestId("adaptive-saved-configuration")).toContainText("Automatic paper");
 });

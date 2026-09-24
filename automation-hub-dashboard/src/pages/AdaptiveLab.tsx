@@ -71,10 +71,13 @@ export default function AdaptiveLab() {
   const { toast } = useApp();
   const status = useLive<LabStatus>("/research/adaptive-lab/status", 5_000);
   const hasBot = Boolean(status.data?.bot);
+  // Off means no worker and therefore no feed: nothing to poll, and nothing
+  // to call an error. The chart only ever draws the running bot's own feed.
+  const isOff = status.data?.mode === "off";
   const paper = useLive<Paper>(hasBot ? "/research/adaptive-lab/paper" : null, 5_000);
   const state = useLive<{ gates: Gate[]; required_next: string | null }>(
     hasBot ? "/research/adaptive-lab/state" : null, 5_000);
-  const live = useLive<LiveChart>(hasBot ? "/research/adaptive-lab/live-chart?window=400" : null, 2_500);
+  const live = useLive<LiveChart>(hasBot && !isOff ? "/research/adaptive-lab/live-chart?window=400" : null, 2_500);
   const journal = useLive<{ entries: JournalEntry[]; state_counts: Record<string, number> }>(
     hasBot ? "/research/adaptive-lab/journal?limit=300" : null, 10_000);
   const [tab, setTab] = useState<Tab>("positions");
@@ -94,7 +97,7 @@ export default function AdaptiveLab() {
   [paper.data?.orders]);
   const feed = live.data?.live_display;
   const reliable = Boolean(feed?.reliable) && !live.error;
-  const health = live.error ? "ERROR" : feed?.connection_state ?? "CONNECTING";
+  const health = isOff ? "BOT OFF" : live.error ? "ERROR" : feed?.connection_state ?? "CONNECTING";
   const chartState = useMemo<NativeSMCChartState | null>(() => live.data?.candles.length ? {
     research_id: "adaptive-mtf-lab", execution_allowed: false, candles: live.data.candles,
     pivots: [], events: [], fair_value_gaps: [], order_blocks: [], proposals: [],
@@ -161,9 +164,9 @@ export default function AdaptiveLab() {
         <p>{lab?.strategy.label ?? "Adaptive MTF Trend Pullback"} {lab?.strategy.version ?? ""} · live Binance USD-M data · its own paper account · no exchange routing</p></div>
       <div className="pa-safety"><b>{lab ? modeLabel(lab.mode).toUpperCase() : "LOADING"}</b><span>LIVE ROUTING DISABLED</span></div>
     </header>
-    <div className={`pa-health-scope ${reliable ? "is-healthy" : "is-stale"}`}>
+    <div className={`pa-health-scope ${reliable ? "is-healthy" : isOff ? "is-off" : "is-stale"}`}>
       <b>ADAPTIVE MTF BOT</b><span>Candles / quote / mark: {health}</span>
-      <span>Decision readiness: {reliable ? "CLOSED-BAR ELIGIBLE" : "PAUSED · FAIL CLOSED"}</span>
+      <span>Decision readiness: {reliable ? "CLOSED-BAR ELIGIBLE" : isOff ? "NOT RUNNING" : "PAUSED · FAIL CLOSED"}</span>
       <span>Paper execution: {reliable && lab?.mode === "automatic" ? "ELIGIBLE" : "BLOCKED"}</span>
     </div>
 
@@ -194,7 +197,7 @@ export default function AdaptiveLab() {
           <label className="pa-view-bars">View<select aria-label="Visible adaptive chart candles" value={visibleBars} onChange={(event) => setVisibleBars(Number(event.target.value))}>{[48, 96, 160, 240].map((row) => <option key={row} value={row}>{row} bars</option>)}</select></label>
           <button type="button" onClick={() => setFitSignal((value) => value + 1)}>Fit</button>
           <button type="button" onClick={() => setLatestSignal((value) => value + 1)}>Latest</button>
-          <span className={`pa-feed-badge ${reliable ? "is-live" : "is-stale"}`}>{health}</span></div>
+          <span className={`pa-feed-badge ${reliable ? "is-live" : isOff ? "is-off" : "is-stale"}`}>{health}</span></div>
         <div className="pa-chart-shell" aria-label="Adaptive MTF chart workspace">
           <div className="pa-chart-head"><div><b>{lab?.symbol ?? "—"} · 5m</b><span>1h regime · 15m pullback · 5m confirmation</span><span>Binance USDⓈ-M Futures · bot {lab?.bot_id?.slice(0, 8) ?? "—"}</span></div>
             <div><span>{decision?.decision ?? "—"}</span><b>{decision?.state === "ORDER_PENDING" || paper.data?.positions.length ? "IN PLAY" : "WAIT"}</b></div></div>
@@ -202,6 +205,13 @@ export default function AdaptiveLab() {
             {state.data?.gates?.length ? <span className="adaptive-gates">{state.data.gates.map((gate) => <em key={gate.id} title={gate.explanation || gate.detail} className={`gate-${gate.state.toLowerCase()}`}>{MARK[gate.state] ?? "·"} {gate.label}</em>)}</span> : null}</div>
           {live.error ? <div className="pa-error"><b>Live feed unavailable</b><span>{live.error}</span><button type="button" onClick={() => void live.refetch()}>Retry</button></div> : null}
           {!bot ? <div className="pa-loading">No bot yet — choose a mode to start one.</div>
+            : isOff ? <div className="pa-loading adaptive-off" data-testid="adaptive-off">
+                <b>The bot is off</b>
+                <span>An off bot has no live feed, so there are no live candles, forming candle or bid/ask to draw. Its journal and history stay below.</span>
+                <span className="adaptive-off-actions">
+                  <button type="button" disabled={busy} onClick={() => void save({ mode: "automatic" }, "mode Automatic paper")}>Turn on · Automatic paper</button>
+                  <button type="button" disabled={busy} onClick={() => void save({ mode: "signals_only" }, "mode Signals only")}>Turn on · Signals only</button>
+                </span></div>
             : !chartState ? <div className="pa-loading">Loading the bot&rsquo;s Binance candles, quote and mark…</div>
             : <NativeSMCChartOverlay state={chartState} timeframe="5m" rightOffsetBars={8}
                 initialVisibleBars={visibleBars} filters={NO_SMC_LAYERS} onCandleSelect={() => undefined}
@@ -209,7 +219,7 @@ export default function AdaptiveLab() {
                 modelLabel="adaptive MTF trend pullback" liveDataStale={!reliable}
                 tradePlan={live.data?.trade_plan ?? undefined} fillMarkers={live.data?.fills ?? []}
                 height="clamp(480px, 56vh, 660px)" />}
-          <div className={`pa-stream-truth ${reliable ? "is-healthy" : "is-stale"}`}><b>{health}</b><span>{feed?.health_reason ?? "Waiting for the bot's reconciled Binance candles, quote and mark"}</span><span>Entries {reliable ? "ELIGIBLE ON CLOSED BARS" : "PAUSED"}</span></div>
+          <div className={`pa-stream-truth ${reliable ? "is-healthy" : isOff ? "is-off" : "is-stale"}`}><b>{health}</b><span>{isOff ? "The bot is off; it subscribes to no market data until it is turned on" : feed?.health_reason ?? "Waiting for the bot's reconciled Binance candles, quote and mark"}</span><span>Entries {reliable ? "ELIGIBLE ON CLOSED BARS" : isOff ? "OFF" : "PAUSED"}</span></div>
           <div className="pa-market-readout">
             <span>Last completed candle<b>{lastClosed ? `${stamp(lastClosed.timestamp)} · C ${price(lastClosed.close)}` : "—"}</b><small>{live.data?.data_provenance.closed_candles_loaded ?? 0} closed candles loaded</small></span>
             <span>Forming candle · display only<b>{forming ? `${stamp(forming.timestamp)} · O ${price(forming.open)} H ${price(forming.high)} L ${price(forming.low)} C ${price(forming.close)}` : "Not available"}</b><small>Excluded from decisions: {forming ? "YES" : "N/A"}</small></span>
