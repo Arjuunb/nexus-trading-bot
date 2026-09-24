@@ -71,6 +71,10 @@ BEFORE DELETE ON audit_entries
 BEGIN SELECT RAISE(ABORT, 'audit log is append-only'); END;
 CREATE INDEX IF NOT EXISTS audit_entries_actor ON audit_entries(actor);
 CREATE INDEX IF NOT EXISTS audit_entries_path ON audit_entries(path);
+-- Bookkeeping about the log (e.g. how far the external export has got). Not
+-- part of the chain and deliberately not append-only: it records progress,
+-- not events.
+CREATE TABLE IF NOT EXISTS audit_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 
@@ -161,6 +165,23 @@ class AuditLog:
         args.append(max(1, min(int(limit), 1000)))
         with self._lock:
             return [dict(r) for r in self._c.execute(sql, args)]
+
+    def entries_after(self, seq: int, *, limit: int = 500) -> list[dict]:
+        """Entries with ``seq`` greater than the given one, oldest first."""
+        with self._lock:
+            return [dict(r) for r in self._c.execute(
+                "SELECT * FROM audit_entries WHERE seq > ? ORDER BY seq ASC LIMIT ?",
+                (int(seq), max(1, min(int(limit), 5000))))]
+
+    def get_state(self, key: str) -> Optional[str]:
+        with self._lock:
+            row = self._c.execute("SELECT value FROM audit_state WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else None
+
+    def set_state(self, key: str, value: str) -> None:
+        with self._lock:
+            self._c.execute("INSERT INTO audit_state(key,value) VALUES (?,?) "
+                            "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
 
     def _iter_all(self) -> Iterator[dict]:
         with self._lock:

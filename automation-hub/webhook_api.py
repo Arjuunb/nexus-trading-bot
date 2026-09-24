@@ -1037,6 +1037,16 @@ status_monitor = _status.StatusMonitor(
     notify=_status_alert,
     interval_s=float(_os.environ.get("HUB_STATUS_INTERVAL", "60")))
 
+# Scheduled copy of the audit log to storage the operator controls
+# (services/audit_shipper.py). Inert until HUB_AUDIT_EXPORT_URL is set.
+from services.audit_shipper import AuditExporter  # noqa: E402
+from services import audit_log as _audit_log  # noqa: E402
+audit_exporter = AuditExporter(
+    _audit_log.default_log,
+    url=_os.environ.get("HUB_AUDIT_EXPORT_URL", ""),
+    token=_os.environ.get("HUB_AUDIT_EXPORT_TOKEN", ""),
+    interval_s=float(_os.environ.get("HUB_AUDIT_EXPORT_INTERVAL", "900")))
+
 # The lab's bot gets the same repair loop, over the lab's own manager.
 adaptive_lab_supervisor = InstanceSupervisor(
     adaptive_lab.manager,

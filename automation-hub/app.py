@@ -563,6 +563,9 @@ def _start_auto_engine() -> None:
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.status_monitor.start():
         print(f"[startup] status monitor started "
               f"(interval={webhook_api.status_monitor.interval_s:.0f}s)", flush=True)
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
+        print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
+              f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)
     backend = type(webhook_api.ledger).__name__
     print(f"[startup] ledger backend = {backend} "
           f"(Supabase active: {backend == 'SupabaseLedger'})", flush=True)
@@ -665,6 +668,7 @@ def _shutdown_all_runtimes() -> None:
     # an intentionally stopping worker as a fault and start a replacement.
     run("instance_supervisor", webhook_api.instance_supervisor.stop)
     run("status_monitor", webhook_api.status_monitor.stop)
+    run("audit_exporter", webhook_api.audit_exporter.stop)
     run("adaptive_lab_supervisor", webhook_api.adaptive_lab_supervisor.stop)
     run("trading_instances", webhook_api.instance_manager.shutdown)
     run("adaptive_lab", webhook_api.adaptive_lab.shutdown)

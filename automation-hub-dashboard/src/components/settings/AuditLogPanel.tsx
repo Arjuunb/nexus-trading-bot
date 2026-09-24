@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { apiDownload, apiGet, useLive } from "../../lib/api";
+import { apiDownload, apiGet, apiPost, useLive } from "../../lib/api";
 import SettingsSection from "./SettingsSection";
 
 interface AuditEntry {
@@ -8,6 +8,19 @@ interface AuditEntry {
 }
 interface AuditPage { entries: AuditEntry[]; head: { seq: number; hash: string; ts: string | null } }
 interface Verify { ok: boolean; entries: number; first_bad_seq: number | null; reason: string; head_hash: string }
+interface ExportStatus {
+  configured: boolean; problem: string; destination: string; pending: number;
+  last_exported_seq: number; last_success_at: string | null; last_error: string;
+}
+
+/** Where the external copy stands, in one line. */
+function exportLine(ex: ExportStatus | undefined): [string, string] {
+  if (!ex) return ["—", "dim"];
+  if (!ex.configured) return ["Off · set HUB_AUDIT_EXPORT_URL to keep a copy elsewhere", "dim"];
+  if (ex.last_error) return [`Failing · ${ex.last_error} · ${ex.pending} waiting`, "neg"];
+  if (!ex.pending) return [`Up to date · ${ex.destination}`, "pos"];
+  return [`${ex.pending} entries waiting · ${ex.destination}`, ""];
+}
 
 const AUTH_LABEL: Record<string, string> = {
   session: "session", control_key: "control key", webhook: "webhook", password: "password", none: "none",
@@ -28,6 +41,8 @@ export default function AuditLogPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [open, setOpen] = useState<number | null>(null);
+  const security = useLive<{ audit_export?: ExportStatus }>("/security/status", 20000);
+  const [pushing, setPushing] = useState(false);
 
   const runVerify = async () => {
     setBusy(true); setError("");
@@ -41,6 +56,15 @@ export default function AuditLogPanel() {
     catch (e) { setError(e instanceof Error ? e.message : "Export failed."); }
   };
 
+  const pushNow = async () => {
+    setPushing(true); setError("");
+    try { await apiPost("/security/audit/export/run"); await security.refetch(); }
+    catch (e) { setError(e instanceof Error ? e.message : "Export failed."); }
+    finally { setPushing(false); }
+  };
+
+  const ex = security.data?.audit_export;
+  const [exportText, exportTone] = exportLine(ex);
   const head = page.data?.head;
   const entries = page.data?.entries ?? [];
   return <SettingsSection title="Audit log" description="Every state-changing request and every recorded change, append-only and chained with SHA-256. Secrets are removed before an entry is written.">
@@ -51,10 +75,12 @@ export default function AuditLogPanel() {
         {verify ? (verify.ok ? `Intact · ${verify.entries.toLocaleString()} entries checked`
           : `Broken at #${verify.first_bad_seq} · ${verify.reason}`) : "Not checked yet"}
       </b></div>
+      <div className="risk-item"><span>External copy</span><b className={exportTone}>{exportText}</b></div>
     </div>
     <div className="row-actions" style={{ justifyContent: "flex-start" }}>
       <button className="btn btn-primary" disabled={busy} onClick={() => void runVerify()}>{busy ? "Checking…" : "Verify chain"}</button>
       <button className="btn btn-ghost" onClick={() => void exportLog()}>Export JSONL</button>
+      {ex?.configured && <button className="btn btn-ghost" disabled={pushing} onClick={() => void pushNow()}>{pushing ? "Sending…" : "Send external copy now"}</button>}
       <label className="audit-filter"><input type="checkbox" checked={changesOnly} onChange={(e) => setChangesOnly(e.target.checked)} /> Changes only</label>
     </div>
     {(error || page.error) && <p className="neg">{error || page.error}</p>}
@@ -78,7 +104,7 @@ export default function AuditLogPanel() {
         </tbody>
       </table>
     </div>
-    <p className="dim">Reads are not recorded. Refused attempts are. Export a copy regularly: an external copy of the head hash is what shows the newest entries were never cut off.</p>
+    <p className="dim">Reads are not recorded. Refused attempts are. A copy kept elsewhere is what shows the newest entries were never cut off: with HUB_AUDIT_EXPORT_URL set, new entries are sent there automatically.</p>
   </SettingsSection>;
 }
 

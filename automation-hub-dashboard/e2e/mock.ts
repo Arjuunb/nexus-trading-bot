@@ -252,6 +252,10 @@ const SECURITY_STATUS = {
   keys: [{ id: "k1", venue: "binance", label: "Main", key_hint: "…9Q2x", status: "active", created_at: "2026-09-24T12:00:00Z",
     retired_at: null, scope: { allowed: true, refusals: [], warnings: [], read_only: false, can_trade: ["enableFutures"],
       ip_restricted: true, checked_at: 0 } }],
+  audit_export: { configured: true, problem: "", destination: "https://siem.example.com", interval_s: 900,
+    last_exported_seq: 3, head_seq: 3, pending: 0, last_success_at: "2026-09-24T12:00:00Z", last_attempt_at: "2026-09-24T12:00:00Z", last_error: "" },
+  backups: { encrypting: true, count: 3, keep: 7, unencrypted_kept: 1, problem: "",
+    latest: { snapshot: "20260924T080000Z", encrypted: true, bytes: 2_400_000, files: 14 } },
   live_routing_locked: true,
 };
 const AUDIT_ENTRY = (seq: number, actor: string, action: string, status: number) => ({
@@ -268,6 +272,7 @@ const SHAPES: [string, unknown][] = [
   ["/security/status", SECURITY_STATUS],
   ["/security/audit/verify", { ok: true, entries: 3, first_bad_seq: null, reason: "", head_hash: SECURITY_STATUS.audit.head.hash }],
   ["/security/audit", SECURITY_AUDIT],
+  ["/security/backups/", { ok: true, snapshot: "20260924T080000Z", encrypted: true, databases: { "ledger.db": { ok: true }, "audit.db": { ok: true } } }],
   ["/research/price-action/live-chart", PA_CHART],
   ["/research/price-action/contracts", { exchange: "Binance USDⓈ-M Futures", contracts: ["BTCUSDT", "ETHUSDT"], timeframes: ["5m"], real_execution_allowed: false }],
   ["/research/price-action/sessions/current/configuration", PA_PAPER],

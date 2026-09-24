@@ -57,6 +57,29 @@ def audit_export(x_webhook_secret: Optional[str] = Header(default=None)):
                  "X-Audit-Head-Hash": head["hash"], "Cache-Control": "no-store"})
 
 
+@router.post("/audit/export/run")
+def audit_export_run(x_webhook_secret: Optional[str] = Header(default=None)):
+    """Push every entry not yet exported to HUB_AUDIT_EXPORT_URL now."""
+    _wa._check_secret(x_webhook_secret)
+    result = _wa.audit_exporter.export_once()
+    if not _wa.audit_exporter.configured:
+        raise HTTPException(409, result["error"])
+    return {**result, "export": _wa.audit_exporter.status()}
+
+
+# ---------------------------------------------------------------- backups
+@router.post("/backups/{snapshot}/verify")
+def backup_verify(snapshot: str, x_webhook_secret: Optional[str] = Header(default=None)):
+    """Decrypt a snapshot into a scratch directory and open every database in
+    it -- proof that the backup can actually be restored."""
+    _wa._check_secret(x_webhook_secret)
+    import config as _cfg
+    from services.backup import restore_check
+    if not snapshot.replace("T", "").replace("Z", "").isdigit():
+        raise HTTPException(400, "Unknown snapshot name.")
+    return restore_check(str(_cfg.DATA_DIR), snapshot)
+
+
 # ------------------------------------------------------------ key custody
 def _vault():
     from services.key_vault import default_vault
@@ -159,5 +182,16 @@ def security_status(request: Request, x_webhook_secret: Optional[str] = Header(d
         "redaction": {"active": True, "live_secrets_guarded": len(redaction.known_secrets())},
         "vault": vault.status(),
         "keys": vault.list(_tenant(request)),
+        "audit_export": _wa.audit_exporter.status(),
+        "backups": _backup_status(),
         "live_routing_locked": True,
     }
+
+
+def _backup_status() -> dict:
+    import config as _cfg
+    from services.backup import status
+    try:
+        return status(str(_cfg.DATA_DIR))
+    except Exception as exc:  # noqa: BLE001 -- a listing problem must not hide the rest
+        return {"encrypting": False, "count": 0, "problem": f"Backups could not be listed ({type(exc).__name__})."}
