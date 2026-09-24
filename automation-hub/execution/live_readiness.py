@@ -33,20 +33,46 @@ def make_live_broker():
     if os.environ.get("HUB_ENABLE_EXTERNAL_LIVE", "0").lower() not in (
             "1", "true", "yes", "on"):
         raise RuntimeError("HUB_ENABLE_EXTERNAL_LIVE is disabled")
-    key = os.environ.get("HUB_EXCHANGE_API_KEY", "")
-    secret = os.environ.get("HUB_EXCHANGE_API_SECRET", "")
+    exchange_id = os.environ.get("HUB_EXCHANGE", "binance")
+    key, secret = exchange_credentials(exchange_id)
     if not key or not secret:
-        raise RuntimeError("HUB_EXCHANGE_API_KEY / HUB_EXCHANGE_API_SECRET not set — cannot "
-                           "connect to an exchange")
+        raise RuntimeError("No exchange key attached and HUB_EXCHANGE_API_KEY / "
+                           "HUB_EXCHANGE_API_SECRET not set — cannot connect to an exchange")
+    if not is_testnet():
+        # Real money: the key must not be able to move funds out, whichever
+        # way it arrived (the vault checked it on attach; the environment
+        # never did). Testnet keys have no withdrawal endpoint to ask.
+        from services import key_scope
+        try:
+            scope = key_scope.check(exchange_id, key, secret)
+        except key_scope.ScopeCheckUnavailable as exc:
+            raise RuntimeError(f"Exchange key scope could not be confirmed: {exc}") from None
+        if not scope["allowed"]:
+            raise RuntimeError("Exchange key refused: it " + "; it ".join(scope["refusals"]))
     from config import DATA_DIR
     state_path = os.environ.get("HUB_ORDER_STATE_DB", str(DATA_DIR / "execution_orders.db"))
     from bot.brokers.ccxt_broker import CCXTBroker
     return CCXTBroker(
-        exchange_id=os.environ.get("HUB_EXCHANGE", "binance"),
+        exchange_id=exchange_id,
         api_key=key, api_secret=secret,
         sandbox=os.environ.get("HUB_TESTNET", "1") != "0",
         state_path=state_path,
     )
+
+
+def exchange_credentials(exchange_id: str) -> tuple[str, str]:
+    """The owner's active vault key for the venue (services/key_vault.py),
+    else the environment pair. Decrypted in memory for the caller only."""
+    try:
+        from services.key_vault import default_vault
+        from services.tenancy import OWNER_TENANT
+        pair = default_vault().load_active(OWNER_TENANT, exchange_id)
+        if pair:
+            return pair
+    except Exception:  # noqa: BLE001 -- an unreadable vault falls back to env, never to a guess
+        pass
+    return (os.environ.get("HUB_EXCHANGE_API_KEY", ""),
+            os.environ.get("HUB_EXCHANGE_API_SECRET", ""))
 
 
 def is_testnet() -> bool:
@@ -119,10 +145,10 @@ def live_readiness(broker=None, symbols: Optional[list[str]] = None) -> dict:
     except ImportError:
         check("ccxt installed", False, "pip install ccxt")
 
-    has_keys = bool(os.environ.get("HUB_EXCHANGE_API_KEY")) and bool(
-        os.environ.get("HUB_EXCHANGE_API_SECRET"))
-    check("api keys", has_keys, "HUB_EXCHANGE_API_KEY / HUB_EXCHANGE_API_SECRET set"
-          if has_keys else "HUB_EXCHANGE_API_KEY / HUB_EXCHANGE_API_SECRET not set")
+    has_keys = all(exchange_credentials(os.environ.get("HUB_EXCHANGE", "binance")))
+    check("api keys", has_keys, "exchange key attached or set in the environment"
+          if has_keys else "no exchange key attached and HUB_EXCHANGE_API_KEY / "
+                           "HUB_EXCHANGE_API_SECRET not set")
     enabled = os.environ.get("HUB_ENABLE_EXTERNAL_LIVE", "0").lower() in (
         "1", "true", "yes", "on")
     check("external live feature flag", enabled, "explicitly enabled" if enabled else "disabled")

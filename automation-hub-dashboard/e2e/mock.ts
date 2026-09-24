@@ -244,7 +244,30 @@ const MEM_ASK = { query: "show all losing BTC trades", kind: "filter",
   answer: "Found 1 loss BTCUSDT trades.", trades: [MEM_ROW] };
 
 // exact shapes keyed by pathname substring (first match wins)
+const SECURITY_STATUS = {
+  audit: { available: true, head: { seq: 3, hash: "a199502f59b7fa8ee0f865b9ca8f3aea73eca81b189ac1102806a46c4813bd7c", ts: "2026-09-24T12:00:00Z" } },
+  redaction: { active: true, live_secrets_guarded: 5 },
+  vault: { configured: true, encryption: "AES-256-GCM envelope (per-tenant data keys)", master_key_id: "24072e65c0260f9f",
+    active_keys: 1, problem: "", scope_check_venues: ["binance"] },
+  keys: [{ id: "k1", venue: "binance", label: "Main", key_hint: "…9Q2x", status: "active", created_at: "2026-09-24T12:00:00Z",
+    retired_at: null, scope: { allowed: true, refusals: [], warnings: [], read_only: false, can_trade: ["enableFutures"],
+      ip_restricted: true, checked_at: 0 } }],
+  live_routing_locked: true,
+};
+const AUDIT_ENTRY = (seq: number, actor: string, action: string, status: number) => ({
+  seq, ts: "2026-09-24T12:00:00Z", kind: "request", actor, auth: "session", ip: "127.0.0.1", method: "POST",
+  path: action.split(" ")[1], status, action, detail: "{\"body\": {\"password\": \"[redacted]\"}}", hash: `${seq}`.repeat(64).slice(0, 64),
+});
+const SECURITY_AUDIT = {
+  entries: [AUDIT_ENTRY(3, "admin", "POST /settings", 200), AUDIT_ENTRY(2, "anonymous", "POST /settings", 401),
+    AUDIT_ENTRY(1, "admin", "POST /login", 303)],
+  head: SECURITY_STATUS.audit.head,
+};
+
 const SHAPES: [string, unknown][] = [
+  ["/security/status", SECURITY_STATUS],
+  ["/security/audit/verify", { ok: true, entries: 3, first_bad_seq: null, reason: "", head_hash: SECURITY_STATUS.audit.head.hash }],
+  ["/security/audit", SECURITY_AUDIT],
   ["/research/price-action/live-chart", PA_CHART],
   ["/research/price-action/contracts", { exchange: "Binance USDⓈ-M Futures", contracts: ["BTCUSDT", "ETHUSDT"], timeframes: ["5m"], real_execution_allowed: false }],
   ["/research/price-action/sessions/current/configuration", PA_PAPER],

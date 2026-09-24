@@ -15,6 +15,7 @@ production shape later phases fill in.
 """
 from __future__ import annotations
 
+import hmac
 import queue
 import secrets
 import sys
@@ -347,6 +348,41 @@ async def _require_auth(request: Request, call_next):
         return await call_next(request)
     from fastapi.responses import JSONResponse
     return JSONResponse({"error": "Sign in required"}, status_code=401)
+
+
+# Secret redaction for every JSON response (services/redaction.py). Added after
+# the middleware above, so it wraps them and sees every body the app produces --
+# a route returning its own JSONResponse is covered as well as one returning a
+# dict. The two paths below exist to hand a credential to its owner, so they
+# keep name-based fields; live secret VALUES are still removed from them.
+from services.redaction import RedactionMiddleware  # noqa: E402
+app.add_middleware(RedactionMiddleware, credential_paths=("/auth/login", "/auth/2fa/setup"))
+
+
+def _audit_identify(scope: dict, client_headers: dict) -> tuple[str, str]:
+    """Who made a state-changing request, and how they proved it -- judged
+    on the headers the client actually sent (see services/audit_middleware)."""
+    path = scope.get("path", "")
+    if path.startswith("/webhook"):
+        return "tradingview-webhook", "webhook"  # the status says whether its secret was accepted
+    try:
+        user = _user(Request(scope))
+    except Exception:  # noqa: BLE001 -- an unreadable session is simply no session
+        user = None
+    if user:
+        return str(user), "session"
+    presented = client_headers.get("x-webhook-secret", "")
+    if presented and hmac.compare_digest(presented, settings.admin_key):
+        return "control-key", "control_key"
+    return "anonymous", "none"
+
+
+# The security audit log (services/audit_log.py). Outermost of all, so refused
+# requests (401/403/429) are recorded alongside the ones that succeeded.
+from services import audit_log as _audit_log  # noqa: E402
+from services.audit_middleware import AuditMiddleware  # noqa: E402
+app.add_middleware(AuditMiddleware, log_factory=_audit_log.default_log, identify=_audit_identify,
+                   sign_in_paths=("/login", "/auth/login"))
 
 # Single-origin UI: when the React build is present (copied into ./webui by the
 # Docker image), serve it from this backend so Render shows the SAME dashboard as

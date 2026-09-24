@@ -127,6 +127,13 @@ class Settings:
     trading_days_mask: int = field(default_factory=lambda: int(os.environ.get("HUB_TRADING_DAYS", "127")))
     settings_path: str = field(default_factory=lambda: os.environ.get(
         "HUB_SETTINGS_PATH", str(DATA_DIR / "runtime_settings.json")))
+    # Security: the hash-chained audit log and the encrypted exchange-key vault
+    # (services/audit_log.py, services/key_vault.py). Both live on the
+    # persistent disk; neither holds anything readable without the app.
+    audit_path: str = field(default_factory=lambda: os.environ.get(
+        "HUB_AUDIT_PATH", str(DATA_DIR / "audit.db")))
+    key_vault_path: str = field(default_factory=lambda: os.environ.get(
+        "HUB_KEY_VAULT_PATH", str(DATA_DIR / "key_vault.db")))
     custom_path: str = field(default_factory=lambda: os.environ.get(
         "HUB_CUSTOM_PATH", str(DATA_DIR / "custom_strategies.json")))
     # Evolution Engine stores

@@ -72,6 +72,19 @@ def _is_duplicate_key(exc: Exception) -> bool:
             or "duplicate key" in str(exc).lower())
 
 
+def _scrub(text):
+    """Log lines and alerts are shown in the dashboard and kept in the ledger;
+    a secret that reaches one through an exception message must not be
+    stored. See services/redaction.py."""
+    if not isinstance(text, str) or not text:
+        return text
+    try:
+        from services.redaction import scrub_text
+        return scrub_text(text)
+    except Exception:  # noqa: BLE001 -- never lose the log line over redaction
+        return text
+
+
 def write_log_row(operation) -> bool:
     """Write one log row. A log line is a record, never a reason to stop a worker.
 
@@ -682,6 +695,7 @@ class SqliteLedger:
 
     # ----------------------------------------------------------- logs / alerts
     def log(self, *, level, stage, message, symbol="", instance_id=""):
+        message = _scrub(message)
         with self._lock:
             self._c.execute(
                 "INSERT INTO bot_logs(id,ts,symbol,level,stage,message,instance_id) VALUES (?,?,?,?,?,?,?)",
@@ -700,6 +714,7 @@ class SqliteLedger:
             return [dict(r) for r in self._c.execute(query, args)]
 
     def add_alert(self, *, severity, category, title, detail="", instance_id=""):
+        title, detail = _scrub(title), _scrub(detail)
         with self._lock:
             self._c.execute(
                 "INSERT INTO alerts(id,ts,severity,category,title,detail,read,instance_id) VALUES (?,?,?,?,?,?,0,?)",
@@ -986,7 +1001,7 @@ class SupabaseLedger:
 
     def log(self, *, level, stage, message, symbol="", instance_id=""):
         row = {"id": _id(), "ts": _now(), "symbol": symbol,
-               "level": level, "stage": stage, "message": message}
+               "level": level, "stage": stage, "message": _scrub(message)}
         if instance_id:
             row["instance_id"] = instance_id
         write_log_row(lambda: self._t("bot_logs").insert(row).execute())
@@ -1001,7 +1016,7 @@ class SupabaseLedger:
 
     def add_alert(self, *, severity, category, title, detail="", instance_id=""):  # pragma: no cover
         row = {"id": _id(), "ts": _now(), "severity": severity,
-               "category": category, "title": title, "detail": detail, "read": 0}
+               "category": category, "title": _scrub(title), "detail": _scrub(detail), "read": 0}
         if instance_id:
             row["instance_id"] = instance_id
         self._t("alerts").insert(row).execute()

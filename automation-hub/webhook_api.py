@@ -1313,6 +1313,7 @@ import routers.instance_visual_lab  # noqa: E402
 import routers.adaptive_lab  # noqa: E402
 import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
+import routers.security  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
@@ -1335,6 +1336,7 @@ router.include_router(routers.instance_visual_lab.router)
 router.include_router(routers.adaptive_lab.router)
 router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
+router.include_router(routers.security.router)
 
 
 # ───────────────────────────── server-side grid (paper, 24/7) ─────────────────
