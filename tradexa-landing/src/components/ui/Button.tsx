@@ -38,7 +38,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || loading}
         className={cn(
-          "group relative inline-flex select-none items-center justify-center gap-2 overflow-hidden whitespace-nowrap font-medium transition-all duration-200",
+          "group relative inline-flex select-none items-center justify-center gap-2 overflow-hidden whitespace-nowrap font-medium transition-all duration-200 active:scale-[0.98]",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/70 focus-visible:ring-offset-2 focus-visible:ring-offset-ink",
           "disabled:pointer-events-none disabled:opacity-60",
           SIZES[size],
@@ -51,7 +51,10 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         {/* sheen sweep on hover */}
         <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-700 group-hover:translate-x-full" />
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-        <span className="relative">{children}</span>
+        {/* inline-flex, not a plain span: Tailwind's base makes every <svg>
+            display:block, so an icon inside an inline span broke onto its own
+            line ("Launch Platform" with the arrow underneath). */}
+        <span className="relative inline-flex items-center gap-2">{children}</span>
       </button>
     );
   },

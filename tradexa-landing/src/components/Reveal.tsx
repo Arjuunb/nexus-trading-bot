@@ -1,6 +1,7 @@
 import { motion, useReducedMotion } from "framer-motion";
-import { Children, type ReactNode } from "react";
+import { Children, Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { cn } from "@/lib/utils";
 
 // One easing curve for the whole site. A gentle overshoot-free ease-out: motion
 // decelerates into place rather than stopping dead, which is what makes a
@@ -88,6 +89,61 @@ export function RevealGroup({ children, className, stagger = 0.06, delay = 0,
   );
 }
 
+interface WordRevealProps {
+  text: string;
+  className?: string;
+  /** Extra classes for each word (e.g. a gradient that must sit on the glyphs). */
+  wordClassName?: string;
+  delay?: number;
+  stagger?: number;
+  /** "view": when scrolled into view (sections). "mount": immediately (hero). */
+  trigger?: "view" | "mount";
+}
+
+/**
+ * Words rising out of a mask, one after another.
+ *
+ * Each word sits in its own overflow-hidden box and travels up from just
+ * below it, so the line appears to be set in place rather than faded in. The
+ * boxes are inline-block, so wrapping, text-balance and the heading's own
+ * line-height all behave exactly as they would for plain text, and assistive
+ * technology reads the words as the one sentence they are -- they are real
+ * text with real spaces between them, nothing is hidden or relabelled.
+ */
+export function WordReveal({ text, className, wordClassName, delay = 0, stagger = 0.06,
+                             trigger = "view" }: WordRevealProps) {
+  const reduced = useReducedMotion();
+  const words = text.split(" ");
+  const play = trigger === "mount" ? { animate: "shown" } : { whileInView: "shown", viewport: VIEWPORT };
+  return (
+    <motion.span
+      className={className}
+      initial="hidden"
+      {...play}
+      variants={{ hidden: {}, shown: { transition: { staggerChildren: reduced ? 0 : stagger, delayChildren: delay } } }}
+    >
+      {words.map((word, i) => (
+        // The space sits between the boxes: inside an inline-block a trailing
+        // space is trimmed and the words would run together.
+        <Fragment key={`${word}-${i}`}>
+          <span className="inline-block overflow-hidden pb-[0.12em] -mb-[0.12em] align-bottom">
+            <motion.span
+              className={cn("inline-block", wordClassName)}
+              variants={{
+                hidden: reduced ? { opacity: 0 } : { y: "105%", opacity: 0, filter: "blur(6px)" },
+                shown: { y: "0%", opacity: 1, filter: "blur(0px)", transition: { duration: 0.7, ease: EASE } },
+              }}
+            >
+              {word}
+            </motion.span>
+          </span>
+          {i < words.length - 1 ? " " : null}
+        </Fragment>
+      ))}
+    </motion.span>
+  );
+}
+
 interface SectionHeadingProps {
   eyebrow: string;
   title: ReactNode;
@@ -105,17 +161,41 @@ interface SectionHeadingProps {
   link?: string;
 }
 
+/** The eyebrow label, flanked by two hairlines that draw outward on reveal. */
+function Eyebrow({ children, hover }: { children: ReactNode; hover?: boolean }) {
+  const reduced = useReducedMotion();
+  const line = (side: "left" | "right") => (
+    <motion.span
+      aria-hidden
+      className={cn("h-px w-6 sm:w-8",
+        side === "left" ? "origin-right bg-gradient-to-r from-transparent to-gold/60"
+                        : "origin-left bg-gradient-to-l from-transparent to-gold/60")}
+      initial={{ scaleX: reduced ? 1 : 0 }}
+      whileInView={{ scaleX: 1 }}
+      viewport={VIEWPORT}
+      transition={{ duration: 0.8, delay: 0.15, ease: EASE }}
+    />
+  );
+  return (
+    <span className={cn("eyebrow", hover && "transition-colors group-hover:text-gold")}>
+      {line("left")}
+      {children}
+      {line("right")}
+    </span>
+  );
+}
+
 /** Consistent centered section header. */
 export function SectionHeading({ eyebrow, title, subtitle, className, link }: SectionHeadingProps) {
   const isRoute = !!link && link.startsWith("/");
   const heading = (
     <h2 className="mt-4 text-balance text-3xl font-bold tracking-tight text-white sm:text-4xl">
-      {title}
+      {typeof title === "string" ? <WordReveal text={title} delay={0.05} /> : title}
     </h2>
   );
   const inner = (
     <>
-      <span className="eyebrow transition-colors group-hover:text-gold">{eyebrow}</span>
+      <Eyebrow hover>{eyebrow}</Eyebrow>
       <span className="relative block">
         {heading}
         <span
@@ -129,7 +209,7 @@ export function SectionHeading({ eyebrow, title, subtitle, className, link }: Se
   );
 
   return (
-    <Reveal className={className}>
+    <Reveal className={className} y={14}>
       <div className="mx-auto max-w-2xl text-center">
         {link ? (
           isRoute ? (
@@ -143,7 +223,7 @@ export function SectionHeading({ eyebrow, title, subtitle, className, link }: Se
           )
         ) : (
           <>
-            <span className="eyebrow">{eyebrow}</span>
+            <Eyebrow>{eyebrow}</Eyebrow>
             {heading}
           </>
         )}
