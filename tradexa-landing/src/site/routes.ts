@@ -140,7 +140,7 @@ const SECONDARY: SitePage[] = [
     label: "Performance",
     title: "Performance — what is verified, and what is not",
     description:
-      "TradeLogX Nexus publishes no performance figure it cannot back. See the platform's recorded strategy validation and the method a result must pass before it appears.",
+      "TradeLogX Nexus publishes no performance figure it cannot back. See the recorded strategy validation and the method a result must pass to appear here.",
     accent: "emerald",
     blurb: "Recorded validation and method",
     themeColor: "#06090B",
