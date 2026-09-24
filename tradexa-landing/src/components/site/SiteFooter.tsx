@@ -74,8 +74,10 @@ function MarketTape() {
         ))}
       </div>
 
-      <span className="sr-only">
-        Illustrative market tape. These are representative instruments, not live prices.
+      {/* The tape's prices are written by hand, not streamed. That was said
+          only to screen readers; sighted visitors saw prices that looked live. */}
+      <span className="absolute left-0 top-1/2 z-20 -translate-y-1/2 rounded-r-md border border-l-0 border-white/[0.08] bg-black px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-white/40">
+        Illustrative · not live prices
       </span>
     </div>
   );
@@ -261,6 +263,7 @@ export function SiteFooter() {
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/35">
               Exchanges
             </p>
+            <p className="mt-1.5 text-[11px] text-white/30">Live market data · paper execution everywhere</p>
             <ul className="mt-3 flex flex-wrap gap-1.5">
               {VENUES.map((v) => (
                 <li key={v.name}>
@@ -279,7 +282,7 @@ export function SiteFooter() {
                       )}
                     />
                     {v.name}
-                    {!v.live && <span className="text-white/20">soon</span>}
+                    {!v.live && <span className="text-white/20">roadmap</span>}
                   </span>
                 </li>
               ))}

@@ -291,11 +291,11 @@ export const FEATURES: FeatureEntry[] = [
     icon: Building2,
     category: "execution",
     title: "Exchange connectivity",
-    summary: "Connects to the venues you already trade on, through one internal interface.",
+    summary: "One internal interface for every venue. Live Binance market data today.",
     detail:
       "Venue differences — symbol formats, precision rules, rate limits, funding conventions — are absorbed at the adapter boundary, so strategies are written once and the same code runs anywhere. Adding a venue does not touch strategy or risk logic.",
     bullets: [
-      "Binance, Bybit and OKX live; Hyperliquid in progress",
+      "Binance USDⓈ-M live market data; Bybit, OKX and Hyperliquid on the roadmap",
       "Per-venue precision, lot and rate-limit rules encoded",
       "One internal order interface across all adapters",
     ],

@@ -2,16 +2,17 @@
  * Platform facts shown in the footer.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * READ THIS BEFORE LAUNCH.
+ * `PLATFORM_STATS` used to be operating metrics written by hand — "99.98%
+ * uptime, trailing 90 days", "3,400+ active accounts", "48.2M decisions
+ * processed since launch" — shown in the footer as if measured. Nothing
+ * produced them, so they are gone.
  *
- * `PLATFORM_STATS` are placeholders. They are presented in the footer as
- * current operating metrics, and right now nothing produces them — they are
- * numbers written by hand in this file. Wire them to real telemetry (the
- * status service already tracks uptime and latency; trade and account counts
- * come from the platform database) before this is public, or remove the band.
- *
- * They are deliberately all in one place, with one shape, so that swapping the
- * source is a single change rather than a hunt through JSX.
+ * What is here instead are properties of how the platform is built, each one
+ * true in the code today (automation-hub): live order routing is locked on
+ * every venue (services/broker.py), forward-paper decisions use closed candles
+ * only, every candle gets a decision report including WAIT, and the live feed
+ * is Binance USD-M. If real telemetry is wired later, measured numbers can
+ * come back — with their source — in this same shape.
  * ─────────────────────────────────────────────────────────────────────────
  */
 
@@ -25,18 +26,23 @@ export interface PlatformStat {
 }
 
 export const PLATFORM_STATS: PlatformStat[] = [
-  { label: "Uptime", value: "99.98%", note: "trailing 90 days" },
-  { label: "Decision latency", value: "62 ms", note: "p95, close to order" },
-  { label: "Active accounts", value: "3,400+", note: "connected exchanges" },
-  { label: "Decisions processed", value: "48.2M", note: "since launch" },
+  { label: "Execution mode", value: "Paper", note: "live order routing locked by design" },
+  { label: "Candles traded on", value: "Closed", note: "the forming candle never trades" },
+  { label: "Candles explained", value: "Every", note: "a decision report, WAIT included" },
+  { label: "Live market data", value: "Binance", note: "USDⓈ-M futures feed" },
 ];
 
 /**
- * Venues the execution layer can connect to.
+ * Venues, and which of them is live.
  *
- * `live` is the honest distinction: a venue that is written but not shipped is
- * marked, rather than listed alongside the others and quietly qualified in a
- * footnote nobody reads.
+ * The one list every venue mention on the site reads — the footer, the
+ * landing status bar and the Features card — so they cannot disagree again.
+ * They did: the footer and status bar showed Bybit and OKX as connected while
+ * the Connectivity section said, correctly, that they are on the roadmap.
+ *
+ * `live` means Nexus streams live market data from the venue today. Order
+ * execution is paper on every venue, including Binance; a venue's live
+ * routing unlocks only when its integration passes safety review.
  */
 export interface Venue {
   name: string;
@@ -45,8 +51,8 @@ export interface Venue {
 
 export const VENUES: Venue[] = [
   { name: "Binance", live: true },
-  { name: "Bybit", live: true },
-  { name: "OKX", live: true },
+  { name: "Bybit", live: false },
+  { name: "OKX", live: false },
   { name: "Hyperliquid", live: false },
   { name: "Coinbase", live: false },
 ];

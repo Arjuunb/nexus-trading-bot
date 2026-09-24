@@ -26,7 +26,7 @@ const STAGES: Stage[] = [
   { icon: Waypoints, name: "Structure & Trend", detail: "Reads market structure, trend shifts and confirmations.", metric: "analyze", tone: "dim" },
   { icon: BrainCircuit, name: "Decision Brain", detail: "Scores every setup 0–100. Only high-quality trades pass.", metric: "score ≥ 60", tone: "gold" },
   { icon: ShieldCheck, name: "Risk Gate", detail: "Position size, stop, take-profit and daily-loss guard.", metric: "enforced", tone: "emerald" },
-  { icon: Zap, name: "Execution", detail: "Routes the order in paper or connected mode, sub-100ms.", metric: "< 100ms", tone: "emerald" },
+  { icon: Zap, name: "Execution", detail: "Places the order on the paper broker, sub-100ms. Live routing is locked.", metric: "< 100ms", tone: "emerald" },
   { icon: Database, name: "Journal & Memory", detail: "Every trade is stored, reviewed and learned from — forever.", metric: "persisted", tone: "gold" },
 ];
 

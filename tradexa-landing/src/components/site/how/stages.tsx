@@ -36,9 +36,9 @@ export const STAGES: Stage[] = [
     textClass: "text-signal-soft",
     borderClass: "border-signal/40",
     headline: "It starts with a connection you control",
-    body: "You connect the venues you already trade on with keys that cannot withdraw. Feeds arrive over websockets and are normalised into one internal representation — the same candle, the same book, whatever the venue calls it. Gaps and duplicate frames are detected and backfilled before anything downstream sees them, so no strategy silently trades a hole in its own history.",
+    body: "Nexus connects to Binance USDⓈ-M for live market data today, with more venues on the roadmap. Feeds arrive over websockets and are normalised into one internal representation — the same candle, the same book, whatever the venue calls it. Gaps and duplicate frames are detected and backfilled before anything downstream sees them, so no strategy silently trades a hole in its own history.",
     facts: [
-      ["Venues", "Binance · Bybit · OKX"],
+      ["Live venue", "Binance · more on the roadmap"],
       ["Key scope", "Trade only, never withdraw"],
       ["Feed", "Normalised · gap-checked"],
     ],
@@ -181,19 +181,28 @@ export function StageVisual({ stage, active }: { stage: Stage; active: boolean }
 /* ── Individual diagrams ─────────────────────────────────────────────── */
 
 function ExchangeViz({ color, play }: { color: string; play: boolean }) {
-  const venues = ["Binance", "Bybit", "OKX"];
+  // Only Binance streams today; the other two are drawn as roadmap —
+  // dashed, dimmed, and with no data flowing along their line.
+  const venues = [{ name: "Binance", live: true }, { name: "Bybit", live: false }, { name: "OKX", live: false }];
   return (
     <svg viewBox="0 0 320 240" className="relative w-full max-w-[380px]">
-      {venues.map((v, i) => {
+      {venues.map(({ name: v, live }, i) => {
         const y = 60 + i * 60;
         return (
-          <g key={v}>
-            <rect x="18" y={y - 15} width="86" height="30" rx="7" fill="#0E1219" stroke={color} strokeOpacity="0.5" />
-            <text x="61" y={y + 4} textAnchor="middle" fill="#9FB0C4" style={{ fontSize: 10 }}>
+          <g key={v} opacity={live ? 1 : 0.45}>
+            <rect x="18" y={y - 15} width="86" height="30" rx="7" fill="#0E1219" stroke={color}
+                  strokeOpacity="0.5" strokeDasharray={live ? undefined : "3 3"} />
+            <text x="61" y={live ? y + 4 : y} textAnchor="middle" fill="#9FB0C4" style={{ fontSize: 10 }}>
               {v}
             </text>
-            <path d={`M104 ${y} C 148 ${y}, 148 120, 196 120`} fill="none" stroke={color} strokeOpacity="0.3" strokeWidth="1.2" />
-            {play && (
+            {!live && (
+              <text x="61" y={y + 10} textAnchor="middle" fill="#9FB0C4" className="font-mono" style={{ fontSize: 6.5 }}>
+                roadmap
+              </text>
+            )}
+            <path d={`M104 ${y} C 148 ${y}, 148 120, 196 120`} fill="none" stroke={color} strokeOpacity="0.3"
+                  strokeWidth="1.2" strokeDasharray={live ? undefined : "3 4"} />
+            {play && live && (
               <circle r="2.6" fill={color}>
                 <animateMotion
                   dur={`${2.2 + i * 0.4}s`}

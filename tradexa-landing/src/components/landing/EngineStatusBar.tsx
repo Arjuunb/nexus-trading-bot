@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { VENUES } from "@/site/platform";
 
 /**
  * Thin monospace telemetry strip — the kind of status line a real trading
@@ -8,12 +9,9 @@ import { cn } from "@/lib/utils";
  * rather than a marketing hero. Values are representative, labelled preview.
  */
 
-const EXCHANGES = [
-  { name: "Binance", up: true },
-  { name: "Bybit", up: true },
-  { name: "OKX", up: true },
-  { name: "Hyperliquid", up: false },
-];
+// From the one venue list, so this strip cannot claim a connection the
+// footer and the Connectivity section do not.
+const EXCHANGES = VENUES.slice(0, 4).map((v) => ({ name: v.name, up: v.live }));
 
 function Seg({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
