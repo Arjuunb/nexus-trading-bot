@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
+from functools import wraps
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -38,7 +40,22 @@ TAKEN = "TAKEN"            # the agent opened a trade on this signal
 REJECTED = "REJECTED"      # SMC offered a trade; an AGENT gate refused it
 NOT_READY = "NOT_READY"    # SMC itself was not ready — nothing was offered
 MISSED = "MISSED"          # SMC offered a trade and the agent failed to act
-DECISION_OUTCOMES = (TAKEN, REJECTED, NOT_READY, MISSED)
+EXECUTION_FAILED = "EXECUTION_FAILED"
+EXECUTION_UNCERTAIN = "EXECUTION_UNCERTAIN"
+RECONCILED = "RECONCILED"
+DECISION_OUTCOMES = (TAKEN, REJECTED, NOT_READY, MISSED,
+                     EXECUTION_FAILED, EXECUTION_UNCERTAIN, RECONCILED)
+
+# Durable execution lifecycle.  These states belong to the execution intent,
+# not to the strategy decision: the strategy remains read-only while the
+# broker/journal boundary is recovered after partial failure.
+DECISION_APPROVED = "DECISION_APPROVED"
+EXECUTION_PENDING = "EXECUTION_PENDING"
+EXECUTED = "EXECUTED"
+EXECUTION_COMPLETE = "COMPLETE"
+EXECUTION_STATES = (DECISION_APPROVED, EXECUTION_PENDING, EXECUTED,
+                    EXECUTION_FAILED, EXECUTION_UNCERTAIN, RECONCILED,
+                    EXECUTION_COMPLETE)
 
 #: How a closed trade is judged. Deliberately separate from win/loss.
 CORRECT = "CORRECT"                    # followed the rules
@@ -70,19 +87,40 @@ def _load(raw: Optional[str]) -> Any:
 
 
 _TABLES = ("agent_decisions", "agent_trades", "agent_reviews",
-           "agent_lessons", "agent_weekly_reviews", "agent_proposed_improvements")
+           "agent_lessons", "agent_weekly_reviews", "agent_proposed_improvements",
+           "execution_intent_events")
+
+
+def _serialized(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return call
+
+
+def _atomic(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self.transaction():
+            return method(self, *args, **kwargs)
+    return call
 
 
 class SMCAgentJournal:
     """Append-only store for the agent's decisions, trades and reviews."""
 
     def __init__(self, path: str | Path = ":memory:"):
+        self._lock = threading.RLock()
+        self._execution_lock = threading.RLock()
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(self.path, check_same_thread=False)
+        self._db = sqlite3.connect(self.path, check_same_thread=False, timeout=10)
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA busy_timeout=10000")
+        self._db.execute("PRAGMA synchronous=FULL")
         self._depth = 0
         self._migrate()
 
@@ -93,30 +131,58 @@ class SMCAgentJournal:
             self._db.commit()
 
     @contextmanager
-    def transaction(self):
-        """Make several journal writes land together or not at all.
+    def execution_guard(self):
+        """Serialize submit/reconcile across threads and local processes.
 
-        Used where a journal row and a real side effect have to agree. The
-        writes inside are ordered BEFORE the side effect so a journal that
-        cannot accept them raises first and the side effect never happens;
-        the commit comes after, so a side effect that fails takes its rows
-        with it. Nothing here weakens append-only: rows that roll back were
-        never visible, and committed rows remain immutable.
+        This is an advisory OS lock, NOT a SQLite transaction. A process crash
+        releases it automatically; another worker can then safely establish
+        absence in the authoritative broker without racing an in-flight submit.
+        Every worker using this journal must share its configured persistent path.
         """
-        if self._depth:
-            yield self
-            return
-        self._db.execute("BEGIN IMMEDIATE")
-        self._depth = 1
-        try:
-            yield self
-        except BaseException:
-            self._depth = 0
-            self._db.rollback()
-            raise
-        else:
-            self._depth = 0
-            self._db.commit()
+        import fcntl
+        import os
+        import time
+        with self._execution_lock:
+            if self.path == ":memory:":
+                yield
+                return
+            # Lock the persistent directory, not the database: BSD platforms
+            # can make flock conflict with SQLite's own database locks.
+            # This conservatively serializes agent journals in one directory
+            # without writing a lock file or holding any database transaction.
+            descriptor = os.open(str(Path(self.path).resolve().parent), os.O_RDONLY)
+            try:
+                deadline = time.monotonic() + 10
+                while True:
+                    try:
+                        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError("execution coordinator is busy")
+                        time.sleep(0.01)
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                os.close(descriptor)
+
+    @contextmanager
+    def transaction(self):
+        """Short journal-only atomic boundary; never enclose broker work."""
+        with self._lock:
+            if self._depth:
+                yield self
+                return
+            self._db.execute("BEGIN IMMEDIATE")
+            self._depth = 1
+            try:
+                yield self
+                self._db.commit()
+            except BaseException:
+                self._db.rollback()
+                raise
+            finally:
+                self._depth = 0
 
     # ------------------------------------------------------------- schema
     def _migrate(self) -> None:
@@ -174,6 +240,26 @@ class SMCAgentJournal:
         CREATE INDEX IF NOT EXISTS ix_decisions_outcome ON agent_decisions(outcome, at);
         CREATE INDEX IF NOT EXISTS ix_trades_opened ON agent_trades(opened_at);
         CREATE INDEX IF NOT EXISTS ix_reviews_trade ON agent_reviews(trade_id);
+        -- The intent is written before the broker call.  It is deliberately
+        -- separate from the append-only decision/trade tables because its
+        -- current state must advance as the external paper broker responds.
+        CREATE TABLE IF NOT EXISTS execution_intents(
+            id TEXT PRIMARY KEY, execution_key TEXT NOT NULL UNIQUE,
+            decision_id TEXT, session_id TEXT NOT NULL DEFAULT '',
+            symbol TEXT NOT NULL, timeframe TEXT NOT NULL,
+            candle_time TEXT, proposal_id TEXT, state TEXT NOT NULL,
+            broker_order_id TEXT, trade_id TEXT, error TEXT,
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS execution_intent_events(
+            id TEXT PRIMARY KEY, execution_key TEXT NOT NULL,
+            state TEXT NOT NULL, broker_order_id TEXT, trade_id TEXT,
+            error TEXT, payload_json TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS ix_execution_intents_state
+          ON execution_intents(state, updated_at);
+        CREATE INDEX IF NOT EXISTS ix_execution_events_key
+          ON execution_intent_events(execution_key, created_at);
         """)
         # A journal that can be rewritten after the outcome is known is a story,
         # not evidence. Closing a trade is the one legitimate update, so it goes
@@ -200,6 +286,30 @@ class SMCAgentJournal:
                                    ("order_id", "order_id TEXT")):
             if column not in present:
                 c.execute(f"ALTER TABLE agent_trades ADD COLUMN {definition}")
+
+        # Execution intents were introduced after the journal table. Keep old
+        # files usable while making the session part of the durable identity;
+        # an empty value is retained for pre-session direct-agent callers.
+        intent_columns = {row["name"] for row in c.execute(
+            "PRAGMA table_info(execution_intents)")}
+        if "session_id" not in intent_columns:
+            c.execute("ALTER TABLE execution_intents ADD COLUMN session_id TEXT NOT NULL DEFAULT ''")
+        c.execute("CREATE INDEX IF NOT EXISTS ix_execution_intents_proposal "
+                  "ON execution_intents(session_id, proposal_id)")
+        c.executescript("""
+        CREATE TRIGGER IF NOT EXISTS execution_identity_is_fixed
+          BEFORE UPDATE ON execution_intents
+          WHEN NEW.execution_key IS NOT OLD.execution_key
+            OR NEW.session_id IS NOT OLD.session_id
+            OR NEW.symbol IS NOT OLD.symbol OR NEW.timeframe IS NOT OLD.timeframe
+            OR NEW.candle_time IS NOT OLD.candle_time
+            OR NEW.proposal_id IS NOT OLD.proposal_id
+            OR NEW.payload_json IS NOT OLD.payload_json
+          BEGIN SELECT RAISE(ABORT, 'execution identity and approved evidence are immutable'); END;
+        CREATE TRIGGER IF NOT EXISTS execution_intents_no_delete
+          BEFORE DELETE ON execution_intents
+          BEGIN SELECT RAISE(ABORT, 'execution intents cannot be deleted'); END;
+        """)
 
         # An open trade may be closed exactly once, and nothing else about it
         # may move — not the entry, not the stop, not the planned RR.
@@ -251,20 +361,173 @@ class SMCAgentJournal:
         c.commit()
 
     # ----------------------------------------------------------- decisions
+    # ----------------------------------------------------- execution intents
+    @staticmethod
+    def _intent(row: sqlite3.Row | None) -> Optional[dict]:
+        if row is None:
+            return None
+        out = dict(row)
+        out["payload"] = _load(out.pop("payload_json", None)) or {}
+        return out
+
+    @_atomic
+    def create_execution_intent(self, *, execution_key: str, symbol: str,
+                                timeframe: str, candle_time: str = "",
+                                proposal_id: str = "", session_id: str = "",
+                                payload: Any = None,
+                                decision_id: str = "") -> dict:
+        """Durably claim one execution key before touching the broker."""
+        key = str(execution_key or "").strip()
+        if not key:
+            raise ValueError("execution intent requires a stable execution key")
+        existing = self._db.execute(
+            "SELECT * FROM execution_intents WHERE execution_key=?", (key,)
+        ).fetchone()
+        if existing:
+            return self._intent(existing)  # type: ignore[return-value]
+        now, intent_id = _now(), _id()
+        self._db.execute(
+            "INSERT INTO execution_intents(id,execution_key,decision_id,session_id,symbol,"
+            "timeframe,candle_time,proposal_id,state,payload_json,created_at,updated_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (intent_id, key, decision_id or None, session_id or "", symbol,
+             timeframe, candle_time, proposal_id, DECISION_APPROVED,
+             _dump(payload or {}), now, now),
+        )
+        self._db.execute(
+            "INSERT INTO execution_intent_events(id,execution_key,state,payload_json,created_at)"
+            " VALUES (?,?,?,?,?)", (_id(), key, DECISION_APPROVED,
+                                     _dump(payload or {}), now))
+        self._commit()
+        return self.execution_intent(key)  # type: ignore[return-value]
+
+    @_serialized
+    def execution_intent(self, execution_key: str) -> Optional[dict]:
+        row = self._db.execute(
+            "SELECT * FROM execution_intents WHERE execution_key=?",
+            (str(execution_key),)).fetchone()
+        return self._intent(row)
+
+    @_serialized
+    def execution_intents(self, *, states: Iterable[str] = ()) -> list[dict]:
+        wanted = tuple(str(state) for state in states)
+        if not wanted:
+            rows = self._db.execute(
+                "SELECT * FROM execution_intents ORDER BY created_at").fetchall()
+        else:
+            marks = ",".join("?" for _ in wanted)
+            rows = self._db.execute(
+                f"SELECT * FROM execution_intents WHERE state IN ({marks}) "
+                "ORDER BY created_at", wanted).fetchall()
+        return [self._intent(row) for row in rows]
+
+    @_serialized
+    def legacy_intent_for_proposal(self, session_id: str, proposal_id: str) -> Optional[dict]:
+        """Bridge older safety builds without replacing their authoritative key."""
+        if not session_id or not proposal_id:
+            return None
+        rows = self._db.execute(
+            "SELECT * FROM execution_intents WHERE session_id=? AND proposal_id=?",
+            (session_id, proposal_id)).fetchall()
+        legacy = [self._intent(row) for row in rows]
+        legacy = [row for row in legacy if "candidate_id" not in row["payload"]]
+        if len(legacy) > 1:
+            raise RuntimeError("conflicting legacy execution identities; new entries blocked")
+        return legacy[0] if legacy else None
+
+    @_atomic
+    def transition_execution(self, execution_key: str, state: str, *,
+                             broker_order_id: str = "", trade_id: str = "",
+                             decision_id: str = "", error: str = "",
+                             payload: Any = None) -> dict:
+        """Record a durable state transition and its immutable event."""
+        if state not in EXECUTION_STATES:
+            raise ValueError(f"unknown execution state {state!r}")
+        current = self.execution_intent(execution_key)
+        if current is None:
+            raise KeyError(execution_key)
+        transitions = {
+            DECISION_APPROVED: {EXECUTION_PENDING, EXECUTION_FAILED, EXECUTION_UNCERTAIN, EXECUTED},
+            EXECUTION_PENDING: {EXECUTION_PENDING, EXECUTED, EXECUTION_FAILED, EXECUTION_UNCERTAIN},
+            EXECUTED: {EXECUTED, EXECUTION_COMPLETE, EXECUTION_UNCERTAIN},
+            EXECUTION_UNCERTAIN: {EXECUTED, EXECUTION_UNCERTAIN, EXECUTION_FAILED},
+            RECONCILED: {EXECUTED, EXECUTION_COMPLETE, EXECUTION_UNCERTAIN},
+            EXECUTION_FAILED: {EXECUTION_FAILED},
+            EXECUTION_COMPLETE: {EXECUTION_COMPLETE},
+        }
+        if state not in transitions.get(current["state"], set()):
+            raise ValueError(f"illegal execution transition {current['state']} -> {state}")
+        if state == EXECUTION_FAILED and current.get("broker_order_id"):
+            raise ValueError("a known broker order cannot become a no-order failure")
+        if decision_id and current.get("decision_id") and decision_id != current["decision_id"]:
+            raise ValueError("execution decision identity cannot change")
+        now = _now()
+        order_id = broker_order_id or current.get("broker_order_id") or None
+        linked_trade = trade_id or current.get("trade_id") or None
+        linked_decision = decision_id or current.get("decision_id") or None
+        detail = error or None
+        if (state == current["state"] and order_id == current.get("broker_order_id")
+                and linked_trade == current.get("trade_id")
+                and linked_decision == current.get("decision_id")
+                and detail == current.get("error") and not payload):
+            return current
+        if current["state"] == EXECUTION_COMPLETE and state != EXECUTION_COMPLETE:
+            raise ValueError("a completed execution cannot regress")
+        if current.get("broker_order_id") and broker_order_id and current["broker_order_id"] != broker_order_id:
+            raise ValueError("execution broker identity cannot change")
+        self._db.execute(
+            "UPDATE execution_intents SET state=?,decision_id=?,broker_order_id=?,"
+            "trade_id=?,error=?,updated_at=? WHERE execution_key=?",
+            (state, linked_decision, order_id, linked_trade, detail, now,
+             str(execution_key)),
+        )
+        self._db.execute(
+            "INSERT INTO execution_intent_events(id,execution_key,state,"
+            "broker_order_id,trade_id,error,payload_json,created_at) VALUES (?,?,?,?,?,?,?,?)",
+            (_id(), str(execution_key), state, order_id, linked_trade, detail,
+             _dump(payload or {}), now),
+        )
+        self._commit()
+        return self.execution_intent(execution_key)  # type: ignore[return-value]
+
+    # ----------------------------------------------------------- decisions
+    @_serialized
+    def execution_order_request(self, execution_key: str) -> Optional[dict]:
+        rows = self._db.execute(
+            "SELECT payload_json FROM execution_intent_events WHERE execution_key=? "
+            "ORDER BY rowid", (execution_key,)).fetchall()
+        requests = [(_load(row[0]) or {}).get("order_request") for row in rows]
+        return next((request for request in requests if request), None)
+
+    @_atomic
+    def prepare_order_request(self, execution_key: str, request: dict) -> None:
+        existing = self.execution_order_request(execution_key)
+        if existing is not None:
+            if existing != request:
+                raise ValueError("prepared execution request is immutable")
+            return
+        intent = self.execution_intent(execution_key)
+        if not intent or intent["state"] != EXECUTION_PENDING:
+            raise ValueError("broker submission requires a pending durable intent")
+        self.transition_execution(execution_key, EXECUTION_PENDING,
+                                  payload={"order_request": request})
+
+    @_atomic
     def record_decision(self, *, symbol: str, timeframe: str, smc_state: str,
                         outcome: str, reason_code: str, reason: str,
                         candle_time: str = "", setup_id: str = "",
                         proposal_id: str = "", conditions: Any = None,
                         missing: Any = None, plan: Any = None, gates: Any = None,
                         market: Any = None, strategy_fingerprint: str = "",
-                        trade_id: str = "", at: Optional[str] = None) -> str:
+                        trade_id: str = "", at: Optional[str] = None,
+                        decision_id: str = "") -> str:
         """Record one observation. Every look at the market leaves a row."""
         if outcome not in DECISION_OUTCOMES:
             raise ValueError(f"unknown decision outcome {outcome!r}")
         if not reason_code or not reason:
             raise ValueError("a decision must say why — reason_code and reason "
                              "are how the journal answers 'why did I skip that?'")
-        row_id = _id()
+        row_id = decision_id or _id()
         self._db.execute(
             "INSERT INTO agent_decisions VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (row_id, at or _now(), candle_time, symbol, timeframe, smc_state,
@@ -274,6 +537,13 @@ class SMCAgentJournal:
         self._commit()
         return row_id
 
+    @_serialized
+    def decision_by_id(self, decision_id: str) -> Optional[dict]:
+        row = self._db.execute("SELECT * FROM agent_decisions WHERE id=?",
+                               (decision_id,)).fetchone()
+        return self._decision(row) if row else None
+
+    @_serialized
     def decision_for_candle(self, *, symbol: str, timeframe: str,
                             candle_time: str) -> Optional[dict]:
         """The decision already recorded for this closed candle, if any.
@@ -291,6 +561,7 @@ class SMCAgentJournal:
             (symbol, timeframe, candle_time)).fetchone()
         return self._decision(row) if row else None
 
+    @_serialized
     def decision_for_proposal(self, proposal_id: str) -> Optional[dict]:
         """The decision already recorded against this SMC proposal, if any.
 
@@ -305,6 +576,7 @@ class SMCAgentJournal:
             "ORDER BY at LIMIT 1", (proposal_id, TAKEN)).fetchone()
         return self._decision(row) if row else None
 
+    @_serialized
     def decisions(self, *, outcome: str = "", since: str = "",
                   limit: int = 500) -> list[dict]:
         q = "SELECT * FROM agent_decisions WHERE 1=1"
@@ -327,6 +599,7 @@ class SMCAgentJournal:
         return out
 
     # -------------------------------------------------------------- trades
+    @_atomic
     def open_trade(self, *, decision_id: str, symbol: str, timeframe: str,
                    direction: str, entry: float, stop: float, target: float,
                    planned_rr: float, size: float, why: str,
@@ -360,6 +633,7 @@ class SMCAgentJournal:
         self._commit()
         return trade_id
 
+    @_atomic
     def close_trade(self, trade_id: str, *, exit_price: float, realised_r: float,
                     result: str, close_reason: str,
                     closed_at: Optional[str] = None) -> dict:
@@ -373,6 +647,7 @@ class SMCAgentJournal:
             raise ValueError(f"no open trade {trade_id!r} to close")
         return self.trade(trade_id)
 
+    @_serialized
     def trade(self, trade_id: str) -> dict:
         row = self._db.execute("SELECT * FROM agent_trades WHERE id=?",
                                (trade_id,)).fetchone()
@@ -380,6 +655,7 @@ class SMCAgentJournal:
             raise ValueError(f"unknown trade {trade_id!r}")
         return self._trade(row)
 
+    @_serialized
     def trades(self, *, open_only: bool = False, closed_only: bool = False,
                since: str = "", limit: int = 500) -> list[dict]:
         q = "SELECT * FROM agent_trades WHERE 1=1"
@@ -406,6 +682,7 @@ class SMCAgentJournal:
 
     # ------------------------------------------------------------- reviews
     # --------------------------------------------------------- stop moves
+    @_atomic
     def record_stop_move(self, *, trade_id: str, symbol: str, from_price: float,
                          to_price: float, reason_code: str, reason: str,
                          candle_time: str = "", progress_r: Optional[float] = None,
@@ -428,6 +705,7 @@ class SMCAgentJournal:
         self._commit()
         return row_id
 
+    @_serialized
     def stop_moves(self, *, trade_id: str = "", limit: int = 500) -> list[dict]:
         q = "SELECT * FROM agent_stop_moves"
         args: list = []
@@ -438,6 +716,7 @@ class SMCAgentJournal:
         args.append(int(limit))
         return [dict(row) for row in self._db.execute(q, args)]
 
+    @_atomic
     def record_review(self, *, trade_id: str, verdict: str, followed_rules: bool,
                       why: str, did_well: Iterable[str] = (),
                       did_badly: Iterable[str] = (),
@@ -455,6 +734,7 @@ class SMCAgentJournal:
         self._commit()
         return row_id
 
+    @_serialized
     def reviews(self, *, trade_id: str = "", since: str = "",
                 limit: int = 500) -> list[dict]:
         q = "SELECT * FROM agent_reviews WHERE 1=1"
@@ -477,6 +757,7 @@ class SMCAgentJournal:
         return out
 
     # ------------------------------------------------------------- lessons
+    @_atomic
     def record_lesson(self, *, pattern: str, occurrences: int, detail: str,
                       evidence: Any = None, first_seen: str = "",
                       last_seen: str = "", at: Optional[str] = None) -> str:
@@ -488,6 +769,7 @@ class SMCAgentJournal:
         self._commit()
         return row_id
 
+    @_serialized
     def lessons(self, limit: int = 200) -> list[dict]:
         rows = self._db.execute(
             "SELECT * FROM agent_lessons ORDER BY at DESC LIMIT ?", (int(limit),))
@@ -499,6 +781,7 @@ class SMCAgentJournal:
         return out
 
     # ------------------------------------------------------- weekly review
+    @_atomic
     def record_weekly_review(self, *, period_start: str, period_end: str,
                              summary: dict, agent_findings: Iterable[dict] = (),
                              lessons: Iterable[dict] = (),
@@ -511,6 +794,7 @@ class SMCAgentJournal:
         self._commit()
         return row_id
 
+    @_serialized
     def weekly_reviews(self, limit: int = 52) -> list[dict]:
         rows = self._db.execute(
             "SELECT * FROM agent_weekly_reviews ORDER BY at DESC LIMIT ?",
@@ -524,6 +808,7 @@ class SMCAgentJournal:
         return out
 
     # ------------------------------------------- proposed improvements only
+    @_atomic
     def propose_improvement(self, *, target: str, title: str, rationale: str,
                             evidence: Any = None, at: Optional[str] = None) -> str:
         """Record an idea. Recording is the ONLY thing that happens to it.
@@ -542,6 +827,7 @@ class SMCAgentJournal:
         self._commit()
         return row_id
 
+    @_serialized
     def proposed_improvements(self, *, target: str = "",
                               limit: int = 200) -> list[dict]:
         q = "SELECT * FROM agent_proposed_improvements WHERE 1=1"
@@ -559,5 +845,6 @@ class SMCAgentJournal:
             out.append(item)
         return out
 
+    @_serialized
     def close(self) -> None:
         self._db.close()

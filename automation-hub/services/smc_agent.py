@@ -28,14 +28,19 @@ willing to put at risk on a signal the strategy already validated.
 from __future__ import annotations
 
 import hashlib
+from functools import wraps
+import json
 import math
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from services.smc_agent_journal import (MISSED, NOT_READY, REJECTED, TAKEN,
-                                        SMCAgentJournal)
+from services.smc_agent_journal import (DECISION_APPROVED, EXECUTED,
+                                        EXECUTION_COMPLETE, EXECUTION_FAILED,
+                                        EXECUTION_PENDING, EXECUTION_UNCERTAIN,
+                                        MISSED, NOT_READY, RECONCILED, REJECTED,
+                                        TAKEN, SMCAgentJournal)
 
 #: The operator's floor. A plan that cannot offer three times its risk is not
 #: taken, however clean the setup looked.
@@ -116,8 +121,8 @@ class Gate:
     limit: Optional[float] = None
 
 
-class _ExecutionDeclined(Exception):
-    """The execution layer ran and chose not to place an order."""
+class ExecutionFailed(Exception):
+    """The caller proved that broker submission did not create an order."""
 
 
 def _order_id_of(placed: object) -> str:
@@ -148,6 +153,14 @@ def reward_to_risk(entry: float, stop: float, target: float) -> Optional[float]:
     if risk <= 0:
         return None
     return abs(float(target) - float(entry)) / risk
+
+
+def _execution_serialized(method):
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self.journal.execution_guard():
+            return method(self, *args, **kwargs)
+    return call
 
 
 class SMCAgent:
@@ -188,8 +201,10 @@ class SMCAgent:
     def _record(self, evaluation: dict, *, outcome: str, reason_code: str,
                 reason: str, gates: list[Gate] | None = None,
                 plan: dict | None = None, market: dict | None = None,
-                trade_id: str = "", candle_time: str = "") -> str:
+                trade_id: str = "", candle_time: str = "", decision_id: str = "") -> str:
         symbol, timeframe, candle = self._identity(evaluation, candle_time)
+        if not decision_id and (market or {}).get("session_id"):
+            decision_id = self.execution_key_for(evaluation, candle, market["session_id"])
         return self.journal.record_decision(
             symbol=symbol, timeframe=timeframe,
             smc_state=str(evaluation.get("state") or ""),
@@ -202,7 +217,201 @@ class SMCAgent:
             plan=plan if plan is not None else evaluation.get("trade_plan"),
             gates=[asdict(g) for g in (gates or [])],
             market=market, strategy_fingerprint=strategy_fingerprint(),
-            trade_id=trade_id, at=self._now())
+            trade_id=trade_id, at=self._now(), decision_id=decision_id)
+
+    @classmethod
+    def execution_key_for(cls, evaluation: dict, candle_time: str = "",
+                          session_id: str = "") -> str:
+        """Return the stable idempotency key for one approved decision.
+
+        The complete decision identity is hashed as a JSON tuple rather than
+        concatenated with ambiguous separators.  This keeps legitimate
+        decisions distinct across sessions, setups, symbols, timeframes,
+        strategy versions and closed candles while yielding the same key when
+        a process replays the exact same decision after a restart.
+        """
+        symbol, timeframe, candle = cls._identity(evaluation, candle_time)
+        # A staged proposal can remain visible on later dashboard candles.
+        # Its original signal candle, not the poll/display candle, owns execution.
+        if evaluation.get("state") == ENTRY_READY:
+            candle = str((evaluation.get("proposal") or {}).get("signal_timestamp") or candle)
+        proposal_id = str(evaluation.get("proposal_id") or
+                          (evaluation.get("proposal") or {}).get("id") or "")
+        setup_id = str(evaluation.get("setup_id") or
+                       (evaluation.get("proposal") or {}).get("setup_id") or "")
+        material = ["SMC_AGENT", str(session_id or ""), symbol, timeframe,
+                    candle, setup_id, proposal_id,
+                    str(evaluation.get("strategy_id") or SOURCE_STRATEGY_ID),
+                    str(evaluation.get("version") or "")]
+        encoded = json.dumps(material, ensure_ascii=True, separators=(",", ":"))
+        return "smc-agent:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _gate_objects(raw: list[dict]) -> list[Gate]:
+        return [Gate(name=str(row.get("name") or ""),
+                     passed=bool(row.get("passed")),
+                     detail=str(row.get("detail") or ""),
+                     value=row.get("value"), limit=row.get("limit"))
+                for row in raw or []]
+
+    def _intent_payload(self, evaluation: dict, *, plan: dict,
+                        market: dict | None, gates: list[Gate],
+                        sizing: Sizing, why: str) -> dict:
+        """Capture enough immutable context to finish after a restart."""
+        return {
+            "candidate_id": str(evaluation.get("proposal_id") or ""),
+            "side": (evaluation.get("proposal") or {}).get("direction"),
+            "quantity": sizing.executed,
+            "entry": plan.get("entry"), "stop": plan.get("stop"),
+            "target_1": plan.get("target_1"), "target_2": plan.get("target_2"),
+            "planned_rr": reward_to_risk(plan["entry"], plan["stop"], plan["target_2"]),
+            "evaluation": evaluation,
+            "plan": plan,
+            "market": market,
+            "gates": [asdict(gate) for gate in gates],
+            "sizing": asdict(sizing),
+            "why": why,
+        }
+
+    def _finalize_intent(self, intent: dict, *, order_id: str, evidence: dict | None = None) -> dict:
+        """Write the decision/trade and close the intent in one journal tx."""
+        if not intent:
+            raise ValueError("cannot finalize a missing execution intent")
+        execution_key = str(intent["execution_key"])
+        payload = intent.get("payload") or {}
+        evaluation = payload.get("evaluation") or {}
+        plan = payload.get("plan") or evaluation.get("trade_plan") or {}
+        sizing = Sizing(**(payload.get("sizing") or {}))
+        gates = self._gate_objects(payload.get("gates") or [])
+        symbol, timeframe, candle = self._identity(
+            evaluation, str(intent.get("candle_time") or ""))
+        rr = reward_to_risk(float(plan["entry"]), float(plan["stop"]),
+                            float(plan["target_2"]))
+        market = {**(payload.get("market") or {}),
+                  "execution": {"execution_key": execution_key, "order_id": order_id,
+                                "broker_evidence": evidence or {}}}
+        with self.journal.transaction():
+            # BEGIN IMMEDIATE serializes two restart/reconciliation workers.
+            # If the first one committed the final rows before the second
+            # acquired the lock, the second returns that same trade instead of
+            # appending a duplicate decision/trade.
+            current = self.journal.execution_intent(execution_key)
+            if (current and current.get("state") == EXECUTION_COMPLETE
+                    and current.get("trade_id")):
+                return {"outcome": TAKEN,
+                        "decision_id": current.get("decision_id") or "",
+                        "trade_id": current.get("trade_id") or "",
+                        "order_id": current.get("broker_order_id") or order_id,
+                        "execution_key": execution_key,
+                        "execution_state": EXECUTION_COMPLETE}
+            if current["state"] != EXECUTED:
+                # Retry this transition inside the finalization transaction:
+                # a repeated journal outage must not append two state flips
+                # on every worker heartbeat.
+                self.journal.transition_execution(execution_key, EXECUTED,
+                                                  broker_order_id=order_id)
+            decision_id = self._record(
+                evaluation, outcome=TAKEN, reason_code="ALL_GATES_PASSED",
+                reason=str(payload.get("why") or "all agent gates passed"),
+                gates=gates, plan=plan, market=market,
+                candle_time=candle, decision_id=current.get("decision_id") or "")
+            trade_id = self.journal.open_trade(
+                decision_id=decision_id, symbol=symbol, timeframe=timeframe,
+                direction=str((evaluation.get("proposal") or {}).get("direction") or ""),
+                entry=float(plan["entry"]), stop=float(plan["stop"]),
+                target=float(plan["target_2"]), planned_rr=float(rr or 0.0),
+                size=float(sizing.executed), requested_size=float(sizing.requested),
+                size_capped=bool(sizing.capped),
+                risk_amount=abs(float(plan["entry"]) - float(plan["stop"])) *
+                             float(sizing.executed),
+                setup_id=str(evaluation.get("setup_id") or ""),
+                proposal_id=str(evaluation.get("proposal_id") or ""),
+                conditions=evaluation.get("ordered_condition_results"),
+                market=market, why=str(payload.get("why") or ""),
+                order_id=order_id, strategy_fingerprint=strategy_fingerprint(),
+                opened_at=intent["created_at"])
+            self.journal.transition_execution(
+                execution_key, EXECUTION_COMPLETE,
+                decision_id=decision_id, broker_order_id=order_id,
+                payload={"broker_evidence": evidence or {}},
+                trade_id=trade_id)
+        return {"outcome": TAKEN, "decision_id": decision_id,
+                "trade_id": trade_id, "order_id": order_id,
+                "size": sizing.executed, "requested_size": sizing.requested,
+                "size_capped": sizing.capped,
+                "execution_key": intent["execution_key"],
+                "execution_state": EXECUTION_COMPLETE}
+
+    @_execution_serialized
+    def reconcile_execution_intents(self, lookup: Callable[[str], object]) -> list[dict]:
+        """Recover durable intents before another tick can submit work.
+
+        ``lookup`` must return broker evidence for a key, or ``None`` only
+        when the broker can prove that no order exists.  An uncertain intent is
+        never retried blindly.
+        """
+        recovered = []
+        states = (DECISION_APPROVED, EXECUTION_PENDING, EXECUTED,
+                  EXECUTION_UNCERTAIN, RECONCILED)
+        for intent in self.journal.execution_intents(states=states):
+            try:
+                evidence = lookup(str(intent["execution_key"]))
+            except Exception as exc:  # an unavailable broker is uncertainty
+                self.journal.transition_execution(
+                    intent["execution_key"], EXECUTION_UNCERTAIN,
+                    error=f"reconciliation unavailable: {type(exc).__name__}: {exc}")
+                recovered.append({"execution_key": intent["execution_key"],
+                                  "state": EXECUTION_UNCERTAIN, "error": str(exc)})
+                continue
+            order_id = ""
+            if isinstance(evidence, dict):
+                order = evidence.get("order")
+                order_id = str((order or {}).get("id") or evidence.get("id") or "")
+            if not order_id:
+                if intent.get("broker_order_id"):
+                    raise RuntimeError("previously confirmed broker order is missing; reconciliation blocked")
+                self.journal.transition_execution(
+                    intent["execution_key"], EXECUTION_FAILED,
+                    error="broker reconciliation proved no order exists")
+                recovered.append({"execution_key": intent["execution_key"],
+                                  "state": EXECUTION_FAILED})
+                continue
+            broker_order = (evidence.get("order") if isinstance(evidence, dict)
+                            else None) or {}
+            positions = ((evidence.get("positions") or [])
+                         if isinstance(evidence, dict) else [])
+            position_discovered = any(
+                str(position.get("symbol") or "") == str(intent.get("symbol") or "")
+                for position in positions if isinstance(position, dict))
+            if not intent.get("broker_order_id"):
+                self.journal.transition_execution(
+                    intent["execution_key"], EXECUTED, broker_order_id=order_id,
+                    payload={"broker_evidence": evidence})
+            try:
+                result = self._finalize_intent(
+                    self.journal.execution_intent(intent["execution_key"]),
+                    order_id=order_id, evidence=evidence)
+            except Exception as exc:  # preserve the broker truth
+                self.journal.transition_execution(
+                    intent["execution_key"], EXECUTION_UNCERTAIN,
+                    broker_order_id=order_id,
+                    error=f"journal finalization pending: {type(exc).__name__}: {exc}")
+                recovered.append({"execution_key": intent["execution_key"],
+                                  "state": EXECUTION_UNCERTAIN,
+                                  "order_id": order_id,
+                                  "broker_order_status": broker_order.get("status"),
+                                  "position_count": len(positions),
+                                  "position_discovered": position_discovered,
+                                  "error": str(exc)})
+            else:
+                recovered.append({"execution_key": intent["execution_key"],
+                                  "state": EXECUTION_COMPLETE,
+                                  "order_id": order_id,
+                                  "broker_order_status": broker_order.get("status"),
+                                  "position_count": len(positions),
+                                  "position_discovered": position_discovered,
+                                  **result})
+        return recovered
 
     # --------------------------------------------------------------- gates
     def evaluate_gates(self, plan: dict, symbol: str,
@@ -258,46 +467,81 @@ class SMCAgent:
         return gates, Sizing(requested=raw, executed=allowed, capped=capped)
 
     # ------------------------------------------------------------- observe
+    @_execution_serialized
     def observe(self, evaluation: dict, *, market: Optional[dict] = None,
                 can_trade: bool = True, blocked_reason: str = "",
                 candle_time: str = "",
+                session_id: str = "",
                 sizing_inputs: Optional[SizingInputs] = None,
                 context_gates: Sequence[Gate] = (),
                 executor: Optional[Callable[[Sizing], object]] = None) -> dict:
-        """Look at one SMC evaluation and decide. Always leaves a journal row.
+        """Decide once and execute through a durable intent state machine.
 
-        ``can_trade`` is the agent's own readiness — a stale feed, an existing
-        position, a paused session. When a signal was actionable and this is
-        False the decision is recorded as MISSED rather than skipped, because
-        the strategy did its job and the agent did not.
-
-        ``executor`` places the size it is given once every gate has passed,
-        and returns what it placed. It runs inside a journal transaction,
-        between the writes and their commit, so
-        both failure directions are closed: a journal that cannot accept the
-        rows raises before the executor is ever called and no order exists,
-        and an executor that raises or returns nothing rolls those rows back
-        and leaves a MISSED signal instead of a trade. Writing first and
-        executing after would leave a trade in the book that never reached the
-        broker; executing first and writing after would place an order the
-        journal has no record of. Neither is possible here.
+        The journal transaction cannot include the paper broker's separate
+        SQLite connection.  Therefore an intent is committed first, the
+        broker receives the same stable key, and finalization is allowed to
+        remain ``EXECUTED``/``EXECUTION_UNCERTAIN`` until reconciliation proves
+        that the journal and broker agree.  No post-execution journal error is
+        ever relabelled as a missed trade.
         """
         state = str(evaluation.get("state") or "")
         source = str(evaluation.get("strategy_id") or "")
         symbol, timeframe, candle = self._identity(evaluation, candle_time)
         proposal_id = str(evaluation.get("proposal_id") or "")
+        execution_key = self.execution_key_for(evaluation, candle, session_id)
 
-        # The runtime polls far more often than candles close, and a restart or
-        # a replay re-presents work already done. Deciding again would journal
-        # the same observation repeatedly and, worse, act on one signal twice.
-        seen = self.journal.decision_for_candle(
-            symbol=symbol, timeframe=timeframe, candle_time=candle)
-        if seen is None and proposal_id:
-            seen = self.journal.decision_for_proposal(proposal_id)
+        # Resolve an already-created intent before feed/candidate gates. A
+        # restart or persistent journal outage must surface the existing
+        # uncertainty, never turn it into a fresh MISSED observation.
+        existing_intent = self.journal.execution_intent(execution_key)
+        if existing_intent is None:
+            existing_intent = self.journal.legacy_intent_for_proposal(session_id, proposal_id)
+            if existing_intent is not None:
+                execution_key = existing_intent["execution_key"]
+        if existing_intent is not None:
+            state_now = str(existing_intent.get("state") or "")
+            if state_now == EXECUTION_COMPLETE:
+                return {"outcome": ALREADY_DECIDED,
+                        "decision_id": existing_intent.get("decision_id") or "",
+                        "trade_id": existing_intent.get("trade_id") or "",
+                        "order_id": existing_intent.get("broker_order_id") or "",
+                        "previous_outcome": TAKEN,
+                        "execution_key": execution_key,
+                        "execution_state": state_now, "gates": []}
+            return {"outcome": (EXECUTION_UNCERTAIN if state_now in
+                                 {DECISION_APPROVED, EXECUTION_PENDING, EXECUTED,
+                                  EXECUTION_UNCERTAIN, RECONCILED}
+                                 else ALREADY_DECIDED),
+                    "previous_outcome": EXECUTION_FAILED if state_now == EXECUTION_FAILED else None,
+                    "decision_id": existing_intent.get("decision_id") or "",
+                    "trade_id": existing_intent.get("trade_id") or "",
+                    "order_id": existing_intent.get("broker_order_id") or "",
+                    "execution_key": execution_key, "execution_state": state_now,
+                    "error": existing_intent.get("error") or
+                             "execution intent already exists; reconciliation required",
+                    "gates": []}
+
+        # Runtime observations are session/decision scoped. Legacy standalone
+        # callers retain their candle de-duplication behavior.
+        if session_id:
+            market = {**(market or {}), "session_id": session_id}
+            seen = self.journal.decision_by_id(execution_key)
+        else:
+            seen = self.journal.decision_for_candle(
+                symbol=symbol, timeframe=timeframe, candle_time=candle)
+            if seen is None and proposal_id:
+                seen = self.journal.decision_for_proposal(proposal_id)
         if seen is not None:
             return {"outcome": ALREADY_DECIDED, "decision_id": seen["id"],
                     "trade_id": seen.get("trade_id") or "", "gates": [],
-                    "previous_outcome": seen["outcome"]}
+                    "previous_outcome": seen["outcome"], "execution_key": execution_key}
+
+        outstanding = self.journal.execution_intents(
+            states=(DECISION_APPROVED, EXECUTION_PENDING, EXECUTED, EXECUTION_UNCERTAIN))
+        if outstanding:
+            return {"outcome": EXECUTION_UNCERTAIN, "executed": False,
+                    "execution_state": EXECUTION_UNCERTAIN, "gates": [],
+                    "reason": "PERSISTENCE_BLOCKED: prior execution requires reconciliation"}
 
         if source != SOURCE_STRATEGY_ID:
             decision_id = self._record(
@@ -321,11 +565,6 @@ class SMCAgent:
                     "trade_id": "", "gates": []}
 
         plan_gates, sizing = self.evaluate_gates(plan, symbol, sizing_inputs)
-        # Context first. "Not today" outranks "this reward-to-risk is thin":
-        # the first failed gate becomes the recorded reason, and a trader who
-        # has hit their daily stop did not skip the setup because of its
-        # geometry. Context can only ever ADD a veto -- it cannot clear one
-        # the plan gates raised, because a passing gate contributes nothing.
         gates = list(context_gates) + plan_gates
         size = sizing.executed
         failed = [g for g in gates if not g.passed]
@@ -360,56 +599,85 @@ class SMCAgent:
                f"at size {size:.4f}"
                + (f" (capped down from {sizing.requested:.4f}; this trade risks "
                   "less than planned)" if sizing.capped else ""))
+        payload = self._intent_payload(evaluation, plan=plan, market=market,
+                                       gates=gates, sizing=sizing, why=why)
+        try:
+            intent = self.journal.create_execution_intent(
+                execution_key=execution_key, symbol=symbol, timeframe=timeframe,
+                candle_time=candle, proposal_id=proposal_id,
+                session_id=session_id, payload=payload, decision_id=execution_key)
+            self.journal.transition_execution(execution_key, EXECUTION_PENDING)
+        except Exception as exc:
+            # No intent means the broker must not be called. A journal outage
+            # itself cannot be written into the journal, so expose it directly.
+            try:
+                decision_id = self._record(
+                    evaluation, outcome=EXECUTION_FAILED,
+                    reason_code="INTENT_PERSISTENCE_FAILED",
+                    reason=f"execution intent was not persisted: {type(exc).__name__}: {exc}",
+                    gates=gates, plan=plan, market=market, candle_time=candle)
+            except Exception:
+                decision_id = ""
+            return {"outcome": EXECUTION_FAILED, "executed": False,
+                    "failed": True, "decision_id": decision_id, "trade_id": "",
+                    "execution_key": execution_key,
+                    "execution_state": EXECUTION_FAILED,
+                    "error": f"{type(exc).__name__}: {exc}", "gates": gates}
 
         order_id = ""
         try:
-            with self.journal.transaction():
-                decision_id = self._record(
-                    evaluation, outcome=TAKEN, reason_code="ALL_GATES_PASSED",
-                    reason=why, gates=gates, plan=plan, market=market,
-                    candle_time=candle)
-                if executor is not None:
-                    # The executor is handed the sizing rather than deciding
-                    # its own, so the size in the journal and the size that
-                    # reaches the book cannot disagree.
-                    placed = executor(sizing)
-                    if not placed:
-                        raise _ExecutionDeclined()
-                    order_id = _order_id_of(placed)
-                trade_id = self.journal.open_trade(
-                    decision_id=decision_id, symbol=symbol, timeframe=timeframe,
-                    direction=str((evaluation.get("proposal") or {}).get("direction") or ""),
-                    entry=float(plan["entry"]), stop=float(plan["stop"]),
-                    target=float(plan["target_2"]), planned_rr=float(rr or 0.0),
-                    size=size, requested_size=sizing.requested, size_capped=sizing.capped,
-                    risk_amount=abs(float(plan["entry"]) - float(plan["stop"])) * size,
-                    setup_id=str(evaluation.get("setup_id") or ""),
-                    proposal_id=str(evaluation.get("proposal_id") or ""),
-                    conditions=evaluation.get("ordered_condition_results"),
-                    market=market, why=why, order_id=order_id,
-                    strategy_fingerprint=strategy_fingerprint(), opened_at=self._now())
-        except _ExecutionDeclined:
+            placed = executor(sizing) if executor is not None else {"order": {}}
+            if executor is not None and not _order_id_of(placed):
+                raise RuntimeError("broker returned no execution identity; reconciliation required")
+            order_id = _order_id_of(placed)
+        except ExecutionFailed as exc:
+            self.journal.transition_execution(execution_key, EXECUTION_FAILED,
+                                              error=str(exc))
             decision_id = self._record(
-                evaluation, outcome=MISSED, reason_code="EXECUTION_DECLINED",
-                reason=("every agent gate passed and the execution layer "
-                        "did not place an order"),
+                evaluation, outcome=EXECUTION_FAILED,
+                reason_code="EXECUTION_FAILED",
+                reason=f"broker submission failed: {exc}",
                 gates=gates, plan=plan, market=market, candle_time=candle)
-            return {"outcome": MISSED, "decision_id": decision_id,
-                    "trade_id": "", "gates": gates}
-        except Exception as exc:  # noqa: BLE001 — any failure is a miss
-            # The rows are rolled back, so this records a miss and not a trade.
-            # If the journal is what broke, the line below raises too and the
-            # caller learns the agent is down — which is the safe direction,
-            # because no order was placed either.
-            decision_id = self._record(
-                evaluation, outcome=MISSED, reason_code="EXECUTION_FAILED",
-                reason=("every agent gate passed and the order could not be "
-                        f"placed: {type(exc).__name__}: {exc}"),
-                gates=gates, plan=plan, market=market, candle_time=candle)
-            return {"outcome": MISSED, "decision_id": decision_id,
-                    "trade_id": "", "gates": gates, "error": str(exc)}
+            return {"outcome": EXECUTION_FAILED, "executed": False,
+                    "decision_id": decision_id, "trade_id": "", "gates": gates,
+                    "execution_key": execution_key,
+                    "execution_state": EXECUTION_FAILED, "error": str(exc)}
+        except Exception as exc:
+            # A generic exception cannot prove whether the broker committed.
+            # Keep the intent uncertain; the runtime will reconcile by key.
+            error = f"broker response uncertain: {type(exc).__name__}: {exc}"
+            try:
+                self.journal.transition_execution(execution_key, EXECUTION_UNCERTAIN, error=error)
+            except Exception as journal_error:
+                error += f"; persistence blocked: {journal_error}; durable pending intent requires recovery"
+            return {"outcome": EXECUTION_UNCERTAIN, "executed": None,
+                    "order_presence": "UNKNOWN",
+                    "decision_id": "", "trade_id": "", "order_id": "",
+                    "gates": gates, "execution_key": execution_key,
+                    "execution_state": EXECUTION_UNCERTAIN,
+                    "error": error}
 
-        return {"outcome": TAKEN, "decision_id": decision_id,
-                "trade_id": trade_id, "gates": gates, "size": size,
-                "requested_size": sizing.requested, "size_capped": sizing.capped,
-                "planned_rr": rr, "proposal_id": proposal_id, "order_id": order_id}
+        try:
+            self.journal.transition_execution(execution_key, EXECUTED,
+                                              broker_order_id=order_id,
+                                              payload={"broker_evidence": placed})
+            result = self._finalize_intent(
+                self.journal.execution_intent(execution_key), order_id=order_id,
+                evidence=placed if isinstance(placed, dict) else {})
+        except Exception as exc:
+            # The broker truth is durable even when the final journal write is
+            # not. Do not create a MISSED row or claim that no order exists.
+            error = f"journal finalization pending: {type(exc).__name__}: {exc}"
+            try:
+                self.journal.transition_execution(
+                    execution_key, EXECUTION_UNCERTAIN, broker_order_id=order_id, error=error)
+            except Exception as journal_error:
+                error += f"; persistence blocked: {journal_error}; durable intent requires recovery"
+            return {"outcome": EXECUTION_UNCERTAIN, "executed": bool(order_id),
+                    "decision_id": "", "trade_id": "", "order_id": order_id,
+                    "gates": gates, "execution_key": execution_key,
+                    "execution_state": EXECUTION_UNCERTAIN,
+                    "error": error}
+
+        return {**result, "gates": gates, "planned_rr": rr,
+                "proposal_id": proposal_id}
