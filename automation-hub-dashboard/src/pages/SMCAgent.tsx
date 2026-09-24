@@ -24,7 +24,8 @@ import { apiPostJson, useLive } from "../lib/api";
  * Read-only. Nothing here places, approves, cancels or configures anything.
  */
 
-type Outcome = "TAKEN" | "REJECTED" | "NOT_READY" | "MISSED";
+type Outcome = "TAKEN" | "REJECTED" | "NOT_READY" | "MISSED"
+  | "EXECUTION_FAILED" | "EXECUTION_UNCERTAIN" | "RECONCILED";
 
 interface Decision {
   id: string; at: string; candle_time: string; symbol: string; timeframe: string;
@@ -67,13 +68,17 @@ interface MemoryPolicyShape { enabled: boolean; min_sample: number;
 interface PolicyResponse { trade_management: TradePolicy;
   context: ContextPolicyShape; memory: MemoryPolicyShape; note?: string }
 
-const OUTCOMES: Outcome[] = ["TAKEN", "REJECTED", "NOT_READY", "MISSED"];
+const OUTCOMES: Outcome[] = ["TAKEN", "REJECTED", "NOT_READY", "MISSED",
+  "EXECUTION_FAILED", "EXECUTION_UNCERTAIN", "RECONCILED"];
 
 const BLURB: Record<Outcome, string> = {
   TAKEN: "the agent opened a trade",
   REJECTED: "an agent gate refused a setup the strategy offered",
   NOT_READY: "the strategy offered nothing to judge",
   MISSED: "the strategy offered a setup and the agent could not act",
+  EXECUTION_FAILED: "execution failed before an order was confirmed",
+  EXECUTION_UNCERTAIN: "an order may exist; reconciliation is required",
+  RECONCILED: "execution and journal evidence were reconciled",
 };
 
 function when(value?: string) {
@@ -242,7 +247,7 @@ export default function SMCAgentPage() {
 
     <RulePanel />
 
-    {/* The four outcomes, never collapsed into traded / did not trade. */}
+    {/* Preserve execution uncertainty rather than presenting it as a missed trade. */}
     <section>
       <h2>Decisions</h2>
       <div className="pa-grid">

@@ -11,6 +11,7 @@ import hashlib
 import math
 import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -165,6 +166,8 @@ class PaperBrokerV2:
                 if name not in fill_columns:
                     self._c.execute(f"ALTER TABLE v2_fills ADD COLUMN {name} {ddl}")
             position_columns = {row[1] for row in self._c.execute("PRAGMA table_info(v2_positions)")}
+            if "entry_order_id" not in position_columns:
+                self._c.execute("ALTER TABLE v2_positions ADD COLUMN entry_order_id TEXT")
             if "position_id" not in position_columns:
                 self._c.execute("ALTER TABLE v2_positions ADD COLUMN position_id TEXT")
                 self._c.execute(
@@ -386,19 +389,26 @@ class PaperBrokerV2:
                 ).fetchone()
                 if existing:
                     return self.order(existing["id"])
-            self._c.execute(
-                "INSERT INTO v2_orders(id,symbol,side,type,quantity,remaining,filled,average_price,limit_price,stop_price,trailing_offset,reduce_only,status,reason,created_at,updated_at,triggered_at,protection_stop_loss,protection_take_profit,protection_target_r,protection_tick_size,signal_timestamp,decision_timestamp,signal_price,requested_price,strategy,strategy_version,timeframe,market_data_source,account_id,execution_engine,candle_id,decision_key,order_key,action_class,execution_class) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (oid, symbol, side, order_type, float(quantity), float(quantity), 0.0, None,
-                 limit_price, stop_price, trailing_offset, int(reduce_only), "open", None, now, now, None,
-                 protection_stop_loss, protection_take_profit,
-                 protection_target_r, protection_tick_size,
-                 signal_timestamp, decision_timestamp,
-                 float(signal_price) if signal_price is not None else None,
-                 requested_price, strategy, strategy_version, timeframe,
-                 market_data_source, account_id, self.execution_engine, candle_id,
-                 decision_key, order_key, action_class, execution_class),
-            )
-            self._c.commit()
+            try:
+                self._c.execute(
+                    "INSERT INTO v2_orders(id,symbol,side,type,quantity,remaining,filled,average_price,limit_price,stop_price,trailing_offset,reduce_only,status,reason,created_at,updated_at,triggered_at,protection_stop_loss,protection_take_profit,protection_target_r,protection_tick_size,signal_timestamp,decision_timestamp,signal_price,requested_price,strategy,strategy_version,timeframe,market_data_source,account_id,execution_engine,candle_id,decision_key,order_key,action_class,execution_class) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (oid, symbol, side, order_type, float(quantity), float(quantity), 0.0, None,
+                     limit_price, stop_price, trailing_offset, int(reduce_only), "open", None, now, now, None,
+                     protection_stop_loss, protection_take_profit,
+                     protection_target_r, protection_tick_size,
+                     signal_timestamp, decision_timestamp,
+                     float(signal_price) if signal_price is not None else None,
+                     requested_price, strategy, strategy_version, timeframe,
+                     market_data_source, account_id, self.execution_engine, candle_id,
+                     decision_key, order_key, action_class, execution_class),
+                )
+                self._c.commit()
+            except BaseException:
+                # A commit failure must not leave an uncommitted order visible
+                # to reconciliation on this connection. If commit succeeded
+                # before its response failed, rollback cannot erase that order.
+                self._c.rollback()
+                raise
         return self.order(oid)
 
     def order(self, order_id: str) -> dict:
@@ -476,6 +486,15 @@ class PaperBrokerV2:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
 
+    @contextmanager
+    def _rollback_failed_event(self):
+        """Caller holds _lock; cursor/fills/positions must commit together."""
+        try:
+            yield
+        except BaseException:
+            self._c.rollback()
+            raise
+
     def process_tick(self, symbol: str, quote: dict, *,
                      protections: Optional[dict[str, dict]] = None) -> dict:
         """Fill intents only from a complete public quote after decision time."""
@@ -496,7 +515,7 @@ class PaperBrokerV2:
             symbol, event_at.isoformat(), sequence, bid, ask, mark
         ))
         events: list[dict] = []
-        with self._lock:
+        with self._lock, self._rollback_failed_event():
             cursor = self._c.execute(
                 "SELECT * FROM v2_quote_cursor WHERE symbol=?", (symbol,)
             ).fetchone()
@@ -640,7 +659,7 @@ class PaperBrokerV2:
         """Advance open orders and protective stops using one verified candle."""
         symbol, bar = (symbol or "").upper().replace("/", ""), self._candle(candle)
         events: list[dict] = []
-        with self._lock:
+        with self._lock, self._rollback_failed_event():
             # A trailing-stop order is an explicit close instruction. Its trigger
             # follows the candle's favourable extreme, never a fabricated tick.
             for row in self._c.execute("SELECT * FROM v2_orders WHERE symbol=? AND status IN ('open','partially_filled','triggered')", (symbol,)).fetchall():
@@ -778,6 +797,13 @@ class PaperBrokerV2:
                 self._c.execute("UPDATE v2_orders SET status='rejected',reason=?,updated_at=? WHERE id=?", ("insufficient free margin at fill", _now(), order["id"]))
             return
         pnl = self._apply_position(order["symbol"], side, quantity, price, reduce_only)
+        if not reduce_only and (not pos or (
+                pos["side"] != ("long" if side == "buy" else "short")
+                and quantity > float(pos["size"]))):
+            # Persist origin in the same transaction as the new position/fill.
+            # A later same-symbol position must not be attributed to this order.
+            self._c.execute("UPDATE v2_positions SET entry_order_id=? WHERE symbol=?",
+                            (order["id"], order["symbol"]))
         account = self._account_row()
         self._c.execute("UPDATE v2_account SET balance=?,fees_paid=?,realized_pnl=?,updated_at=? WHERE id=1",
                         (account["balance"] + pnl - fee, account["fees_paid"] + fee,
@@ -1024,9 +1050,9 @@ class PaperBrokerV2:
                 )
                 for row in snapshot["positions"]:
                     keys = ("symbol", "side", "size", "entry_price", "stop_loss", "take_profit",
-                            "trailing_offset", "peak_price", "opened_at", "position_id")
+                            "trailing_offset", "peak_price", "opened_at", "position_id", "entry_order_id")
                     values = [row.get(k) for k in keys]
-                    values[-1] = values[-1] or "position-" + _id()
+                    values[keys.index("position_id")] = row.get("position_id") or "position-" + _id()
                     self._c.execute(
                         f"INSERT INTO v2_positions({','.join(keys)}) "
                         f"VALUES ({','.join('?' for _ in keys)})", values,
