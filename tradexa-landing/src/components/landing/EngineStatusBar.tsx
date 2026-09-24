@@ -4,9 +4,10 @@ import { cn } from "@/lib/utils";
 import { VENUES } from "@/site/platform";
 
 /**
- * Thin monospace telemetry strip — the kind of status line a real trading
- * engine prints. Frames the product as a running system (paper mode, honest)
- * rather than a marketing hero. Values are representative, labelled preview.
+ * Thin monospace strip in the style of an engine status line. It states how
+ * the platform runs — every value is a fact about the product, not a reading.
+ * It used to show "ENGINE RUNNING", "LATENCY 82ms" and "UPTIME 99.9%" under a
+ * "preview telemetry" label: nothing measured them, so they are gone.
  */
 
 // From the one venue list, so this strip cannot claim a connection the
@@ -32,19 +33,19 @@ export function EngineStatusBar() {
         transition={{ duration: 0.6 }}
         className="surface flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3.5"
       >
-        <Seg label="Engine">
+        <Seg label="Mode">
           <span className="inline-flex items-center gap-1.5">
             <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald opacity-60" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-gold opacity-60" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-gold" />
             </span>
-            <span className="text-emerald-soft">RUNNING</span>
+            <span className="text-gold-soft">PAPER</span>
           </span>
         </Seg>
 
         <span className="h-4 w-px bg-line" />
-        <Seg label="Mode">
-          <span className="text-gold-soft">PAPER</span>
+        <Seg label="Data">
+          <span>Binance USDⓈ-M</span>
         </Seg>
 
         <span className="hidden h-4 w-px bg-line sm:block" />
@@ -63,17 +64,17 @@ export function EngineStatusBar() {
         </div>
 
         <span className="hidden h-4 w-px bg-line lg:block" />
-        <Seg label="Latency" className="hidden lg:flex">
-          <span className="tabular">82ms</span>
+        <Seg label="Decides on" className="hidden lg:flex">
+          <span>closed candles</span>
         </Seg>
 
         <span className="hidden h-4 w-px bg-line lg:block" />
-        <Seg label="Uptime" className="hidden lg:flex">
-          <span className="tabular text-emerald-soft">99.9%</span>
+        <Seg label="Live routing" className="hidden lg:flex">
+          <span className="text-white/55">locked</span>
         </Seg>
 
         <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-white/25">
-          preview telemetry
+          how nexus runs today
         </span>
       </motion.div>
     </div>

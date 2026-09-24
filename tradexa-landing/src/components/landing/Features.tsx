@@ -44,7 +44,7 @@ const FEATURES: Feature[] = [
   {
     icon: History,
     title: "Nexus Strategy Lab",
-    body: "Backtest and optimise your strategies against years of historical data before risking a single dollar.",
+    body: "Backtest and optimise your strategies against historical market data before risking a single dollar.",
     demo: "equity",
   },
   {

@@ -220,7 +220,7 @@ export function DashboardPreview() {
           className="glass-strong rounded-xl px-3 py-2 shadow-card"
         >
           <p className="text-[10px] uppercase tracking-wider text-white/40">Execution</p>
-          <p className="tabular text-sm font-semibold text-gold-soft">&lt; 100ms</p>
+          <p className="text-sm font-semibold text-gold-soft">Paper broker</p>
         </motion.div>
       </div>
     </div>
