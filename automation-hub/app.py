@@ -213,7 +213,8 @@ _AUTH_EXEMPT = ("/login", "/signup", "/auth/", "/webhook", "/assets",
                 "/api/v1/docs", "/api/v1/redoc",   # Swagger/ReDoc moved off "/docs"; same audience as before
                 "/nexus-mark", "/apple-touch", "/icon-", "/maskable-", "/mstile-",
                 "/og-image", "/logo-mark", "/site.webmanifest", "/robots.txt",
-                "/sitemap.xml")
+                "/sitemap.xml",
+                "/status/public")  # the public status feed: it must answer people who cannot sign in
 
 # The public marketing site's pages.
 #
@@ -557,6 +558,11 @@ def _start_auto_engine() -> None:
     """Start the autonomous strategy engine when the server boots (real signals
     -> paper execution -> ledger). Disabled under pytest and via HUB_AUTO_ENGINE=0."""
     import os
+    # Status monitoring starts first and unconditionally: the early return
+    # below (primary ledger unreachable) is exactly the case it must report.
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.status_monitor.start():
+        print(f"[startup] status monitor started "
+              f"(interval={webhook_api.status_monitor.interval_s:.0f}s)", flush=True)
     backend = type(webhook_api.ledger).__name__
     print(f"[startup] ledger backend = {backend} "
           f"(Supabase active: {backend == 'SupabaseLedger'})", flush=True)
@@ -658,6 +664,7 @@ def _shutdown_all_runtimes() -> None:
     # Stop supervising before quiescing workers, or the supervisor would treat
     # an intentionally stopping worker as a fault and start a replacement.
     run("instance_supervisor", webhook_api.instance_supervisor.stop)
+    run("status_monitor", webhook_api.status_monitor.stop)
     run("adaptive_lab_supervisor", webhook_api.adaptive_lab_supervisor.stop)
     run("trading_instances", webhook_api.instance_manager.shutdown)
     run("adaptive_lab", webhook_api.adaptive_lab.shutdown)

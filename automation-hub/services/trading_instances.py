@@ -1307,6 +1307,21 @@ class TradingInstanceManager:
         thread = getattr(engine, "_thread", None)
         return bool(engine.running and thread is not None and thread.is_alive())
 
+    def worker_health(self) -> list[dict]:
+        """Every trading instance the operator wants running: is its worker
+        alive, and is its market data current? Read from memory only, so the
+        status monitor can ask every minute without touching storage."""
+        rows = []
+        for inst in list(self._instances.values()):
+            if inst.mode != "trading" or not inst.desired_running:
+                continue
+            runtime = self._runtime.get(inst.id)
+            engine = runtime[0] if runtime else None
+            rows.append({"id": inst.id, "symbol": inst.symbol,
+                         "alive": self.worker_alive(inst.id),
+                         "market_data_status": str(getattr(engine, "market_data_status", "") or "")})
+        return rows
+
     def instance_for(self, instance_id: str, owner_id: str | None = None) -> TradingInstance:
         """Look one instance up, verifying ownership when an owner is supplied.
 

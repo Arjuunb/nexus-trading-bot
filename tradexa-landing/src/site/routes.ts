@@ -243,7 +243,7 @@ const SECONDARY: SitePage[] = [
     label: "Status",
     title: "Status — every service, and its recent history",
     description:
-      "Check TradeLogX Nexus service status for the engine, risk controls, execution, market data, API and dashboard, with uptime and incident history.",
+      "Live TradeLogX Nexus service status, checked every minute: API, trading workers, market data and database, with measured uptime and incident history.",
     accent: "terminal",
     blurb: "Live service health",
     themeColor: "#050708",

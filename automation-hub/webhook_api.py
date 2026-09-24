@@ -1008,6 +1008,35 @@ from services.instance_supervisor import InstanceSupervisor  # noqa: E402
 instance_supervisor = InstanceSupervisor(
     instance_manager,
     interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
+# Measured service status for the public /status page (services/status_monitor.py).
+# The probes read module globals at call time, so tests that rebind ``ledger``
+# or ``instance_manager`` are measured as rebound.
+from services import status_monitor as _status  # noqa: E402
+
+
+def _status_alert(alert: dict) -> None:
+    """A status change goes where every other alert goes: the ledger's alert
+    list and the configured Telegram / Discord / email channels."""
+    from services.alerts import dispatch_alert
+    try:
+        ledger.add_alert(severity=alert["severity"], category="status",
+                         title=alert["title"], detail=alert["detail"])
+    except Exception:  # noqa: BLE001 -- the outage being reported may be this one
+        pass
+    dispatch_alert(alert, alert_channels)
+
+
+status_monitor = _status.StatusMonitor(
+    _os.environ.get("HUB_STATUS_DB", _os.path.join(_os.path.dirname(settings.audit_path), "status.db")),
+    {
+        "api": _status.api_probe,
+        "workers": _status.workers_probe(lambda: instance_manager.worker_health()),
+        "market_data": _status.market_data_probe(lambda: instance_manager.worker_health()),
+        "database": _status.database_probe(lambda: ledger.get_logs(limit=1)),
+    },
+    notify=_status_alert,
+    interval_s=float(_os.environ.get("HUB_STATUS_INTERVAL", "60")))
+
 # The lab's bot gets the same repair loop, over the lab's own manager.
 adaptive_lab_supervisor = InstanceSupervisor(
     adaptive_lab.manager,
@@ -1314,6 +1343,7 @@ import routers.adaptive_lab  # noqa: E402
 import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 import routers.security  # noqa: E402
+import routers.status  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
@@ -1337,6 +1367,7 @@ router.include_router(routers.adaptive_lab.router)
 router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 router.include_router(routers.security.router)
+router.include_router(routers.status.router)
 
 
 # ───────────────────────────── server-side grid (paper, 24/7) ─────────────────
