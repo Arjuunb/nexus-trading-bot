@@ -14,7 +14,7 @@ const EASE = [0.22, 1, 0.36, 1] as const;
  *
  * Black and gold, and almost nothing else. Where /engine is instrumentation and
  * /live-trade is a workspace, this page is a case file: a single candidate at a
- * time, examined against nine checks, with the reasoning written out. The
+ * time, scored on the Decision Brain's eight factors, with the reasoning written out. The
  * restraint is the argument — a page about saying no should not be busy.
  */
 
@@ -36,82 +36,94 @@ interface Setup {
   checks: Check[];
 }
 
+// Three worked EXAMPLES. The factors, weights and minimum score are the real
+// Decision Brain's (automation-hub/strategies/brain.py; HUB_MIN_SCORE=60) and
+// the third example's veto is the real event blackout (services/econ_guard.py).
+// The per-factor scores are illustrative. This used to use a nine-check list
+// with "analogue recall", liquidity and news factors the engine does not have,
+// a threshold of 72, and a trading history the platform does not have.
+const FACTOR = {
+  htf: { label: "Higher-timeframe alignment", weight: 0.22 },
+  regime: { label: "Regime fit", weight: 0.18 },
+  rr: { label: "Reward : risk", weight: 0.14 },
+  momentum: { label: "Momentum", weight: 0.12 },
+  stop: { label: "Stop safety", weight: 0.1 },
+  vol: { label: "Volatility", weight: 0.1 },
+  structure: { label: "Structure", weight: 0.08 },
+  volume: { label: "Volume", weight: 0.06 },
+} as const;
+
+function checks(scores: Record<keyof typeof FACTOR, [number, string]>): Check[] {
+  return (Object.keys(FACTOR) as (keyof typeof FACTOR)[]).map((key) => ({
+    label: FACTOR[key].label,
+    weight: FACTOR[key].weight,
+    score: scores[key][0],
+    note: scores[key][1],
+  }));
+}
+
 const SETUPS: Setup[] = [
   {
     id: "sol",
     symbol: "SOL/USDT",
-    context: "15m · trend · expanding volatility",
+    context: "Example · 15m · trend · expanding volatility",
     verdict: "accepted",
     headline: "Range high reclaimed, retested, and held.",
     reasoning: [
-      "Higher-timeframe trend and the entry timeframe point the same way — the single condition most correlated with this strategy's winners.",
-      "The retest held above prior resistance rather than through it, which puts the invalidation somewhere tight and defensible.",
-      "Analogue recall found eleven similar setups averaging +0.8R. None of them are a guarantee; together they are a reason.",
-      "Correlated exposure is light, so the position is sized at 0.68% of equity rather than reduced.",
+      "The 4h trend and the entry timeframe point the same way — the heaviest factor in the score, worth 22 of the 100 points.",
+      "Reward to risk is 2.4. At 2 or more that factor scores best; below 1 the setup would be blocked outright.",
+      "The stop sits about one ATR away: not so tight that noise takes it, not so wide that the size collapses.",
+      "It clears the minimum of 60, every risk check passes, and it is sized from the stop distance at your risk per trade.",
     ],
-    checks: [
-      { label: "Trend agreement", weight: 0.16, score: 94, note: "4h and 15m aligned" },
-      { label: "Structure quality", weight: 0.15, score: 88, note: "clean reclaim, one retest" },
-      { label: "Volatility regime", weight: 0.12, score: 79, note: "expanding — strategy's domain" },
-      { label: "Liquidity", weight: 0.11, score: 84, note: "resting size above" },
-      { label: "Session", weight: 0.08, score: 72, note: "London open" },
-      { label: "Correlation load", weight: 0.13, score: 81, note: "0.31 against book" },
-      { label: "News proximity", weight: 0.09, score: 90, note: "no scheduled event" },
-      { label: "Analogue recall", weight: 0.09, score: 76, note: "11 matches, +0.8R avg" },
-      { label: "Risk headroom", weight: 0.07, score: 88, note: "day at −0.2% of −3.0%" },
-    ],
+    checks: checks({
+      htf: [95, "4h and 15m aligned"], regime: [90, "trending — suits a continuation"],
+      rr: [86, "2.4 : 1"], momentum: [80, "RSI supports, not exhausted"],
+      stop: [90, "~1 ATR"], vol: [80, "ATR% inside the band"],
+      structure: [100, "above the structural EMA"], volume: [70, "participation confirms"],
+    }),
   },
   {
     id: "eth",
     symbol: "ETH/USDT",
-    context: "1h · range · compressed volatility",
+    context: "Example · 1h · range · compressed volatility",
     verdict: "rejected",
     headline: "The pattern is there. The conditions for it are not.",
     reasoning: [
-      "The shape qualifies — this is a textbook compression break, and a discretionary trader would very likely take it.",
-      "Volatility is compressed, and this strategy's edge in compression has been negative across the record. The pattern is not the edge; the pattern in the right regime is.",
-      "Analogue recall found nine similar setups averaging −0.4R, six of them stopped within two candles.",
-      "Nothing about the setup is wrong. It is simply not one this system has ever made money on.",
+      "The shape qualifies — this is a textbook compression break, and a discretionary trader might well take it.",
+      "But the regime is a tight range and volatility sits below the tradeable band: two factors a pattern on its own cannot satisfy.",
+      "The higher timeframe is flat, so the heaviest factor contributes little.",
+      "It scores below the minimum of 60 and is rejected — with the rules it failed written down, not silently dropped.",
     ],
-    checks: [
-      { label: "Trend agreement", weight: 0.16, score: 51, note: "1h flat, 4h mixed" },
-      { label: "Structure quality", weight: 0.15, score: 82, note: "clean compression" },
-      { label: "Volatility regime", weight: 0.12, score: 24, note: "compressed — outside domain" },
-      { label: "Liquidity", weight: 0.11, score: 58, note: "thin above" },
-      { label: "Session", weight: 0.08, score: 44, note: "late Asia" },
-      { label: "Correlation load", weight: 0.13, score: 62, note: "0.44 against book" },
-      { label: "News proximity", weight: 0.09, score: 88, note: "no scheduled event" },
-      { label: "Analogue recall", weight: 0.09, score: 22, note: "9 matches, −0.4R avg" },
-      { label: "Risk headroom", weight: 0.07, score: 74, note: "day at −0.9% of −3.0%" },
-    ],
+    checks: checks({
+      htf: [40, "1h flat, 4h mixed"], regime: [30, "range — poor fit for a breakout"],
+      rr: [70, "1.6 : 1"], momentum: [55, "neutral"],
+      stop: [80, "reasonable"], vol: [25, "ATR% below the band"],
+      structure: [60, "at the structural EMA"], volume: [40, "thin"],
+    }),
   },
   {
-    id: "arb",
-    symbol: "ARB/USDT",
-    context: "15m · chop · event window",
+    id: "xrp",
+    symbol: "XRP/USDT",
+    context: "Example · 15m · trend · event window",
     verdict: "rejected",
     headline: "Scored well. Vetoed anyway.",
     reasoning: [
-      "Structure and momentum both scored above their individual bars, and on score alone this would have been routed.",
-      "It sits eleven minutes before a scheduled macro release, inside the blackout window the scheduler enforces.",
-      "The risk service does not weigh that against the score. A blackout is a veto, and a veto is not a vote.",
-      "The candidate is recorded with the rule that stopped it, so it appears in the journal as a decision rather than an absence.",
+      "The setup clears the quality score comfortably; on score alone it would go on to the risk checks.",
+      "A high-impact macro release is due shortly, and the event guard blocks new entries inside its blackout window.",
+      "The risk checks do not weigh that against the score. A blackout is a veto, not a vote.",
+      "The candidate is recorded with the rule that stopped it, so it appears as a decision rather than an absence.",
     ],
-    checks: [
-      { label: "Trend agreement", weight: 0.16, score: 78, note: "aligned" },
-      { label: "Structure quality", weight: 0.15, score: 74, note: "acceptable" },
-      { label: "Volatility regime", weight: 0.12, score: 66, note: "borderline" },
-      { label: "Liquidity", weight: 0.11, score: 71, note: "adequate" },
-      { label: "Session", weight: 0.08, score: 64, note: "New York" },
-      { label: "Correlation load", weight: 0.13, score: 69, note: "0.38 against book" },
-      { label: "News proximity", weight: 0.09, score: 4, note: "11 min to release · blackout" },
-      { label: "Analogue recall", weight: 0.09, score: 58, note: "5 matches, +0.1R avg" },
-      { label: "Risk headroom", weight: 0.07, score: 81, note: "day at −0.4% of −3.0%" },
-    ],
+    checks: checks({
+      htf: [85, "aligned"], regime: [75, "trending"],
+      rr: [72, "1.9 : 1"], momentum: [70, "supportive"],
+      stop: [80, "reasonable"], vol: [70, "inside the band"],
+      structure: [90, "above the structural EMA"], volume: [60, "adequate"],
+    }),
   },
 ];
 
-const THRESHOLD = 72;
+// The engine's default minimum quality score (HUB_MIN_SCORE).
+const THRESHOLD = 60;
 
 function weighted(s: Setup) {
   return Math.round(s.checks.reduce((sum, c) => sum + c.score * c.weight, 0));
@@ -214,30 +226,30 @@ function Checklist({ setup }: { setup: Setup }) {
 function DecisionFlow({ setup }: { setup: Setup }) {
   const score = weighted(setup);
   const clearedBar = score >= THRESHOLD;
-  const blackout = setup.id === "arb";
+  const blackout = setup.id === "xrp";
 
   const steps = [
     { label: "Candidate", detail: `${setup.symbol} · ${setup.context}`, state: "pass" as const },
-    { label: "Nine checks", detail: `weighted to ${score}`, state: "pass" as const },
+    { label: "Eight factors", detail: `weighted to ${score}`, state: "pass" as const },
     {
-      label: `Threshold · ${THRESHOLD}`,
-      detail: clearedBar ? `${score} clears the bar` : `${score} is below the bar`,
+      label: `Minimum · ${THRESHOLD}`,
+      detail: clearedBar ? `${score} clears the minimum` : `${score} is below the minimum`,
       state: clearedBar ? ("pass" as const) : ("stop" as const),
     },
     {
-      label: "Risk envelope",
+      label: "Risk checks",
       detail: blackout
         ? "event blackout · 11 min to release"
         : clearedBar
-          ? "budget, exposure and correlation clear"
+          ? "loss limits, exposure and correlation clear"
           : "not reached",
       state: blackout ? ("stop" as const) : clearedBar ? ("pass" as const) : ("skip" as const),
     },
     {
-      label: setup.verdict === "accepted" ? "Routed" : "Declined",
+      label: setup.verdict === "accepted" ? "Paper fill" : "Declined",
       detail:
         setup.verdict === "accepted"
-          ? "sized 0.68% equity · protective orders placed"
+          ? "sized 0.5% of equity · stop and target set"
           : "recorded with the rule that stopped it",
       state: setup.verdict === "accepted" ? ("pass" as const) : ("stop" as const),
     },
@@ -319,9 +331,9 @@ export default function SelectivityPage() {
               transition={{ duration: 0.7, delay: 0.14, ease: EASE }}
               className="mt-7 max-w-xl text-[17px] leading-relaxed text-white/55"
             >
-              Roughly four hundred candidates are scored an hour and around nine become orders.
-              The other three hundred and ninety-one are not failures of the system — they are
-              the system. Every one is scored, explained and kept.
+              Every closed candle on every instance is judged, and most end as WAIT. A signal
+              must then clear the quality score and every risk check. The ones that do not are
+              not failures of the system — they are the system. Every one is explained and kept.
             </motion.p>
 
             <motion.div
@@ -331,9 +343,9 @@ export default function SelectivityPage() {
               className="mt-10 flex flex-wrap gap-x-10 gap-y-5 border-t border-gold/15 pt-6"
             >
               {[
-                ["~2%", "of candidates routed"],
-                ["9", "weighted qualifications"],
-                ["100%", "rejections explained"],
+                ["8", "weighted factors"],
+                ["60", "minimum score"],
+                ["Every", "rejection explained"],
               ].map(([v, k]) => (
                 <div key={k}>
                   <p className="font-mono text-2xl font-semibold tabular text-gold-soft">{v}</p>
@@ -469,13 +481,13 @@ export default function SelectivityPage() {
             </h2>
             <p className="mt-4 max-w-md leading-relaxed text-white/55">
               A high score is permission to be considered, not permission to trade. The risk
-              envelope is checked after the threshold and its verdict is final — which is why the
-              third example on this page scored well enough and still did not happen.
+              checks run after the score and their verdict is final — which is why the third
+              example on this page scored well enough and still did not happen.
             </p>
             <p className="mt-4 max-w-md leading-relaxed text-white/40">
-              Rejections are written to the journal with the rule that produced them. Over a
-              month that record is more useful than the trades: it is the only place you can see
-              what the system nearly did.
+              Rejections are recorded with the rule that produced them. That record is often
+              more useful than the trades: it is the only place you can see what the system
+              nearly did.
             </p>
           </div>
 

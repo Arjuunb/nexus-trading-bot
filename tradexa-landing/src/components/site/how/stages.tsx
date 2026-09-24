@@ -36,11 +36,11 @@ export const STAGES: Stage[] = [
     textClass: "text-signal-soft",
     borderClass: "border-signal/40",
     headline: "It starts with a connection you control",
-    body: "Nexus connects to Binance USDⓈ-M for live market data today, with more venues on the roadmap. Feeds arrive over websockets and are normalised into one internal representation — the same candle, the same book, whatever the venue calls it. Gaps and duplicate frames are detected and backfilled before anything downstream sees them, so no strategy silently trades a hole in its own history.",
+    body: "Nexus connects to Binance USDⓈ-M for live market data today, with more venues on the roadmap. Candles arrive over Binance's public websocket, with REST history to warm indicators up, and only closed candles are used. Duplicate, out-of-order and missing candles are detected, a stale feed pauses new entries rather than trading on a gap, and after a restart missed candles are replayed in order before trading resumes.",
     facts: [
       ["Live venue", "Binance · more on the roadmap"],
       ["Key scope", "Trade only, never withdraw"],
-      ["Feed", "Normalised · gap-checked"],
+      ["Feed", "Closed candles · gap-checked"],
     ],
   },
   {
@@ -52,11 +52,11 @@ export const STAGES: Stage[] = [
     textClass: "text-electric-soft",
     borderClass: "border-electric/40",
     headline: "Prices become a description of the market",
-    body: "Every close, the system extracts what the chart is doing rather than what it costs: trend state on each declared timeframe, swing structure, ranges and their edges, liquidity pockets, and the volatility regime. This is the layer that lets a strategy say “only in expanding volatility” and have that mean something enforceable.",
+    body: "Every close, the strategy reads what the chart is doing rather than what it costs: trend on each timeframe it declares, swing structure, support and resistance, and the market regime. This is the layer that lets a strategy say “only in a trend” and have that mean something enforceable.",
     facts: [
-      ["Extracted", "Trend · structure · liquidity"],
+      ["Extracted", "Trend · structure · S/R"],
       ["Timeframes", "As declared per strategy"],
-      ["Regime", "Classified on 3 horizons"],
+      ["Regime", "Trend · range · volatility"],
     ],
   },
   {
@@ -67,12 +67,12 @@ export const STAGES: Stage[] = [
     color: "#22D3EE",
     textClass: "text-aqua-soft",
     borderClass: "border-aqua/40",
-    headline: "Three models score it, an arbiter decides",
-    body: "The structure, the regime and your open exposure become one feature vector. A structure model, a regime-conditioned momentum model and an analogue-recall model each score it independently and return an attribution rather than a verdict. The arbiter weighs them by how well calibrated each has been in this regime, applies the threshold, and writes down its reasoning in plain language.",
+    headline: "The Decision Brain scores it",
+    body: "The strategy decides where a trade could be; the Decision Brain decides whether it is worth taking. It scores the setup out of 100 from eight weighted factors — higher-timeframe alignment, regime fit, momentum, reward to risk, stop safety, volatility, structure and volume — keeps the rules it passed and failed, and blocks some setups outright, such as reward to risk below 1.",
     facts: [
-      ["Models", "3 · scored independently"],
-      ["Threshold", "72 of 100, configurable"],
-      ["Output", "Decision + written rationale"],
+      ["Factors", "8 · weighted to 100"],
+      ["Minimum", "60 of 100, configurable"],
+      ["Output", "Score + passed and failed rules"],
     ],
   },
   {
@@ -84,11 +84,11 @@ export const STAGES: Stage[] = [
     textClass: "text-emerald-soft",
     borderClass: "border-emerald/40",
     headline: "Then it has to get past risk",
-    body: "A separate service with thirteen responsibilities and veto power. Daily budget, weekly budget, exposure ceiling, correlation load, schedule and blackout windows, venue health, position count, and the sizing itself — any one failing means the order is never created. It fails closed: if risk is unreachable, nothing trades. There is no code path from a model output to an exchange that skips it.",
+    body: "Every order intent passes the risk checks: open-position limit, no pyramiding, correlation, event blackouts, trading day and session, daily and weekly loss limits, cooldown after a loss, trades per day, stop validity, sizing, exposure and the venue's lot rules, then the global risk manager. Any one failing rejects the order with a written reason, and if a check cannot run, nothing trades.",
     facts: [
-      ["Rules", "13 · all mandatory"],
+      ["Checks", "20 · all mandatory"],
       ["On failure", "Fails closed"],
-      ["Bypass", "None exists"],
+      ["Result", "Accepted · or a reason"],
     ],
   },
   {
@@ -99,12 +99,12 @@ export const STAGES: Stage[] = [
     color: "#C9A24B",
     textClass: "text-gold-soft",
     borderClass: "border-gold/40",
-    headline: "The order is placed the way the book allows",
-    body: "Placement is chosen from live conditions — passive when the spread is wide enough to earn, aggressive when it is not, split when depth is thin. Protective stops and targets go to the venue the moment the position exists, so a dropped connection is never an unprotected position. Realised slippage is measured against the decision price on every fill.",
+    headline: "The order fills on paper, at the live price",
+    body: "Approved orders fill on the paper broker against the live Binance price. A limit entry fills only when price trades through it, and expires unfilled after a set number of candles rather than being chased; market and stop orders pay modelled spread and slippage, and every fill pays a fee. Stops and targets are managed by the engine rather than held at an exchange, and live order routing is locked.",
     facts: [
-      ["Placement", "Adaptive per order"],
-      ["Protection", "Resident at the venue"],
-      ["Slippage", "Measured, not assumed"],
+      ["Broker", "Paper"],
+      ["Costs", "Spread · slippage · fees"],
+      ["Live routing", "Locked"],
     ],
   },
   {
@@ -116,11 +116,11 @@ export const STAGES: Stage[] = [
     textClass: "text-gold-soft",
     borderClass: "border-gold/30",
     headline: "Every outcome is written down and kept",
-    body: "The trade closes and becomes memory: the conditions it was taken in, the reasoning at the time, the outcome, what went wrong and the lesson drawn. Rejections are journalled too — the record of what the system nearly did is usually more instructive than the record of what it did. Next time a similar setup appears, this is what gets consulted.",
+    body: "The trade closes and is kept: the decision that opened it, the reasoning at the time, the outcome and a review of what went right or wrong. Rejections are recorded too — the record of what the system nearly did is often more instructive than the record of what it did.",
     facts: [
       ["Stored", "Context · reasoning · outcome"],
-      ["Rejections", "Journalled as decisions"],
-      ["Recall", "At the next similar setup"],
+      ["Rejections", "Recorded as decisions"],
+      ["Where", "Journal · dashboard"],
     ],
   },
   {
@@ -132,11 +132,11 @@ export const STAGES: Stage[] = [
     textClass: "text-signal-soft",
     borderClass: "border-signal/40",
     headline: "And the record tells you what is actually working",
-    body: "Results are decomposed by strategy, symbol, regime, session and hour, with cost drag broken out from gross performance. An equity curve tells you something is working; attribution tells you what — and usually that a comfortable overall profit is one symbol in one session carrying four that are not.",
+    body: "The dashboard's analytics break results down by strategy, symbol and session, with fees already inside every paper fill. An equity curve tells you whether something is working; the breakdown tells you what — and often that one symbol in one session is carrying the rest.",
     facts: [
-      ["Attribution", "5 dimensions"],
-      ["Costs", "Separated from gross"],
-      ["Feeds back", "Into model calibration"],
+      ["Breakdown", "Strategy · symbol · session"],
+      ["Costs", "Inside every fill"],
+      ["Source", "Your paper trades"],
     ],
   },
 ];
@@ -260,9 +260,9 @@ function AnalysisViz({ color, play }: { color: string; play: boolean }) {
 
 function AiViz({ color, play }: { color: string; play: boolean }) {
   const nodes = [
-    { y: 62, label: "structure" },
-    { y: 120, label: "momentum" },
-    { y: 178, label: "analogue" },
+    { y: 62, label: "trend" },
+    { y: 120, label: "reward:risk" },
+    { y: 178, label: "regime" },
   ];
   return (
     <svg viewBox="0 0 320 240" className="relative w-full max-w-[380px]">
@@ -289,8 +289,8 @@ function AiViz({ color, play }: { color: string; play: boolean }) {
         style={{ transformOrigin: "206px 120px" }}
       />
       <text x="206" y="118" textAnchor="middle" fill="#fff" style={{ fontSize: 17, fontWeight: 700 }}>84</text>
-      <text x="206" y="132" textAnchor="middle" fill={color} className="font-mono" style={{ fontSize: 7 }}>arbiter</text>
-      <text x="266" y="124" textAnchor="middle" fill="#4FD98E" className="font-mono" style={{ fontSize: 9 }}>▸ route</text>
+      <text x="206" y="132" textAnchor="middle" fill={color} className="font-mono" style={{ fontSize: 7 }}>quality</text>
+      <text x="266" y="124" textAnchor="middle" fill="#4FD98E" className="font-mono" style={{ fontSize: 9 }}>▸ ≥ 60</text>
     </svg>
   );
 }
@@ -299,10 +299,10 @@ function RiskViz({ color, play }: { color: string; play: boolean }) {
   return (
     <svg viewBox="0 0 320 240" className="relative w-full max-w-[380px]">
       <text x="24" y="42" fill="#9FB0C4" style={{ fontSize: 10 }}>order intent</text>
-      {/* thirteen slats */}
-      {Array.from({ length: 13 }).map((_, i) => {
-        const x = 30 + i * 20;
-        const blocked = i === 8;
+      {/* one slat per reject stage in services/signal_pipeline.py */}
+      {Array.from({ length: 20 }).map((_, i) => {
+        const x = 30 + i * 13;
+        const blocked = i === 12;
         return (
           <motion.rect
             key={i}
@@ -314,7 +314,7 @@ function RiskViz({ color, play }: { color: string; play: boolean }) {
           />
         );
       })}
-      <text x="30" y="188" fill={color} className="font-mono" style={{ fontSize: 8.5 }}>13 checks · all must pass</text>
+      <text x="30" y="188" fill={color} className="font-mono" style={{ fontSize: 8.5 }}>20 checks · any one rejects</text>
       <text x="30" y="204" fill="#E5605B" className="font-mono" style={{ fontSize: 8.5 }}>1 veto · order never created</text>
       <path d="M24 50 L292 50" stroke={color} strokeOpacity="0.25" strokeDasharray="3 3" />
     </svg>
@@ -322,15 +322,21 @@ function RiskViz({ color, play }: { color: string; play: boolean }) {
 }
 
 function ExecutionViz({ color, play }: { color: string; play: boolean }) {
-  const asks = [0.4, 0.7, 0.3];
-  const bids = [0.6, 0.35, 0.8];
+  // A resting limit entry between its stop and target. There is no depth
+  // ladder here: the engine fills on the paper broker against the live price
+  // and never reads an order book.
+  const levels = [
+    { y: 56, label: "target 69,590.0", fill: "#4FD98E" },
+    { y: 184, label: "stop 67,820.0", fill: "#F07E7A" },
+  ];
   return (
     <svg viewBox="0 0 320 240" className="relative w-full max-w-[380px]">
-      {asks.map((w, i) => (
-        <g key={`a${i}`}>
-          <rect x={170 - w * 130} y={40 + i * 22} width={w * 130} height="16" fill="#E5605B" opacity="0.22" rx="2" />
-          <text x="178" y={52 + i * 22} fill="#F07E7A" className="font-mono" style={{ fontSize: 8.5 }}>
-            {(68412.5 - i * 1.5).toFixed(1)}
+      <text x="30" y="30" fill="#9FB0C4" style={{ fontSize: 9.5 }}>live quote · paper fill</text>
+      {levels.map((l) => (
+        <g key={l.label}>
+          <path d={`M30 ${l.y} L290 ${l.y}`} stroke={l.fill} strokeOpacity="0.55" strokeDasharray="4 4" />
+          <text x="290" y={l.y - 6} textAnchor="end" fill={l.fill} className="font-mono" style={{ fontSize: 8.5 }}>
+            {l.label}
           </text>
         </g>
       ))}
@@ -338,16 +344,8 @@ function ExecutionViz({ color, play }: { color: string; play: boolean }) {
         x="30" y="110" width="252" height="20" rx="4" fill={`${color}22`} stroke={color} strokeOpacity="0.7"
         animate={play ? { opacity: [0.55, 1, 0.55] } : {}} transition={{ duration: 1.8, repeat: Infinity }}
       />
-      <text x="40" y="124" fill={color} className="font-mono" style={{ fontSize: 9 }}>filled 0.42 @ 68,408.2 · slip 1.3bp</text>
-      {bids.map((w, i) => (
-        <g key={`b${i}`}>
-          <rect x={170 - w * 130} y={142 + i * 22} width={w * 130} height="16" fill="#2FBF71" opacity="0.22" rx="2" />
-          <text x="178" y={154 + i * 22} fill="#4FD98E" className="font-mono" style={{ fontSize: 8.5 }}>
-            {(68406.5 - i * 1.5).toFixed(1)}
-          </text>
-        </g>
-      ))}
-      <text x="30" y="30" fill="#9FB0C4" style={{ fontSize: 9.5 }}>depth-aware placement</text>
+      <text x="40" y="124" fill={color} className="font-mono" style={{ fontSize: 9 }}>limit fill 0.42 @ 68,408.0 · maker</text>
+      <text x="30" y="214" fill="#9FB0C4" className="font-mono" style={{ fontSize: 8.5 }}>fee 0.02% · no spread or slippage at the limit</text>
     </svg>
   );
 }
@@ -386,12 +384,14 @@ function JournalViz({ color, play }: { color: string; play: boolean }) {
 }
 
 function AnalyticsViz({ color, play }: { color: string; play: boolean }) {
+  // The breakdowns the dashboard offers. Bar widths are decorative: this
+  // diagram used to print results for strategies that do not exist.
   const rows: [string, number, boolean][] = [
-    ["structure-v4", 82, true],
-    ["breakout-v2", 54, true],
-    ["meanrev-v1", 28, false],
-    ["London", 71, true],
-    ["Asia", 19, false],
+    ["by strategy", 82, true],
+    ["by symbol", 64, true],
+    ["by session", 46, true],
+    ["risk & drawdown", 58, true],
+    ["fees inside every fill", 36, true],
   ];
   return (
     <div className="relative w-full max-w-[320px] space-y-2.5 px-6">
@@ -399,15 +399,12 @@ function AnalyticsViz({ color, play }: { color: string; play: boolean }) {
         <div key={label}>
           <div className="mb-1 flex justify-between font-mono text-[9px]">
             <span className="text-white/35">{label}</span>
-            <span className={up ? "text-emerald-soft" : "text-loss-soft"}>
-              {up ? "+" : "−"}
-              {pct}
-            </span>
+            <span className="text-white/25">{up ? "·" : ""}</span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
             <motion.div
               className="h-full rounded-full"
-              style={{ background: up ? "#2FBF71" : "#E5605B" }}
+              style={{ background: color, opacity: 0.55 }}
               initial={{ width: 0 }}
               animate={{ width: `${pct}%` }}
               transition={{ duration: 0.8, delay: play ? i * 0.08 : 0, ease: [0.22, 1, 0.36, 1] }}
@@ -416,7 +413,7 @@ function AnalyticsViz({ color, play }: { color: string; play: boolean }) {
         </div>
       ))}
       <p className="pt-1 font-mono text-[9px]" style={{ color }}>
-        attribution, not a single curve
+        a breakdown, not a single curve
       </p>
     </div>
   );

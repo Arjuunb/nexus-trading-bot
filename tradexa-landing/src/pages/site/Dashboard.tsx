@@ -47,8 +47,8 @@ const PANELS: {
     body: "Equity, open risk, today's decisions and the live event feed on one screen. It answers the question you actually open the app to ask, which is not 'how am I doing' but 'is anything happening that I should know about'.",
     notes: [
       "Open risk shown as a fraction of the daily budget, not as a dollar figure that means nothing without context",
-      "The feed is the same event stream the API exposes — nothing is summarised away",
-      "A halted system says so at the top in red, not in a notification you might miss",
+      "The feed shows the engine's own events — nothing is summarised away",
+      "A halted or blocked system says so at the top, not in a notification you might miss",
     ],
   },
   {
@@ -56,11 +56,11 @@ const PANELS: {
     label: "Positions",
     icon: Wallet,
     headline: "Every position, with its invalidation visible",
-    body: "Entry, mark, R multiple and the protective orders currently resident at the venue. The last column is the one that matters: it is proof the stop exists on the exchange rather than as an intention inside our process.",
+    body: "Entry, mark, R multiple, stop and target for every open position. The stop is the one that matters: it is set the moment the position opens and the engine manages it on every candle.",
     notes: [
       "R multiple rather than percentage, because that is the unit position sizing is expressed in",
-      "Protective orders show 'resident' or 'pending' — never just a target price",
-      "Manual close from the row, written to the audit log with actor and source",
+      "Stop and target shown on every position, managed by the engine rather than an exchange",
+      "Close an instance's open positions from the dashboard; the action is written to its log",
     ],
   },
   {
@@ -68,11 +68,11 @@ const PANELS: {
     label: "Journal",
     icon: NotebookPen,
     headline: "What happened, and what it taught the system",
-    body: "Every closed trade with the conditions it was taken in, the reasoning at the time, the outcome and the lesson drawn. Rejections are here too — over a month, the record of what the system nearly did is more instructive than the record of what it did.",
+    body: "Every closed trade with the decision that opened it, the reasoning at the time and the outcome. Rejections are here too — over a month, the record of what the system nearly did is more instructive than the record of what it did.",
     notes: [
       "Filter to rejections only, which is the view most people never think to open",
-      "Each entry links to the stored feature vector, so a decision can be replayed exactly",
-      "Lessons feed analogue recall at the next similar setup rather than sitting in a text field",
+      "Skipped trades show the gate that stopped them and why",
+      "Every candle's decision report is kept, WAIT included",
     ],
   },
   {
@@ -80,11 +80,11 @@ const PANELS: {
     label: "Strategy Lab",
     icon: FlaskConical,
     headline: "Prove it before it costs anything",
-    body: "Backtests and parameter sweeps against years of history, through the same engine and risk service that runs live. Sweeps report the whole surface rather than the best cell, because a peak surrounded by cliffs is an overfit and should look like one.",
+    body: "Backtests and parameter sweeps against historical data, through the same Decision Brain gate and fill costs the paper engine uses. A result on the data a strategy was tuned on is not evidence, so out-of-sample results sit beside it.",
     notes: [
-      "Walk-forward windows with out-of-sample segregation enforced, not optional",
-      "Gross and net shown separately so cost drag is visible rather than netted away",
-      "Promote to paper from the result view; promote to live only after paper history exists",
+      "Walk-forward and out-of-sample results shown next to each other",
+      "Fees and slippage charged in every backtest, so costs are never left out",
+      "Paper trading on live data comes next; live trading stays locked",
     ],
   },
   {
@@ -145,7 +145,7 @@ function PanelMock({ id }: { id: PanelId }) {
         <div className="space-y-1 rounded-lg border border-white/[0.07] bg-black/30 p-3 font-mono text-[10px]">
           {[
             ["09:14:07", "fill", "SOL/USDT 12.4 @ 148.24", "text-emerald-soft"],
-            ["09:18:00", "veto", "ARB/USDT · news blackout", "text-loss-soft"],
+            ["09:18:00", "veto", "XRP/USDT · event blackout", "text-loss-soft"],
             ["09:22:41", "eval", "BTC/USDT scored 68 · hold", "text-white/50"],
           ].map(([t, tag, msg, c]) => (
             <div key={t} className="flex gap-2">
@@ -173,9 +173,9 @@ function PanelMock({ id }: { id: PanelId }) {
         </thead>
         <tbody>
           {[
-            ["BTC/USDT", "LONG", "68,050", "68,776", "+1.15", "resident"],
-            ["SOL/USDT", "LONG", "148.22", "149.86", "+0.32", "resident"],
-            ["ETH/USDT", "SHORT", "3,301.4", "3,284.2", "+0.27", "resident"],
+            ["BTC/USDT", "LONG", "68,050", "68,776", "+1.15", "managed"],
+            ["SOL/USDT", "LONG", "148.22", "149.86", "+0.32", "managed"],
+            ["ETH/USDT", "SHORT", "3,301.4", "3,284.2", "+0.27", "managed"],
           ].map((r) => (
             <tr key={r[0]} className="border-b border-white/[0.04] last:border-0">
               <td className="px-2 py-2 text-white/75">{r[0]}</td>
@@ -238,7 +238,7 @@ function PanelMock({ id }: { id: PanelId }) {
           </div>
         ))}
         <div className="rounded-lg border border-aqua/20 bg-aqua/[0.05] px-3 py-2 font-mono text-[10px] text-aqua-soft">
-          filter: rejections only · 391 entries this month
+          filter: rejections only · sample entries
         </div>
       </div>
     );
@@ -267,7 +267,7 @@ function PanelMock({ id }: { id: PanelId }) {
             ))}
           </div>
           <p className="mt-2 font-mono text-[9px] text-white/25">
-            a plateau, not a spike — this generalises
+            sample sweep · shape only
           </p>
         </div>
         <div className="grid grid-cols-2 gap-2 font-mono text-[10px]">
@@ -306,9 +306,9 @@ function PanelMock({ id }: { id: PanelId }) {
       <div className="mt-1 space-y-1 rounded-lg border border-loss/20 bg-loss/[0.05] p-3 font-mono text-[10px]">
         <p className="text-loss-soft">recent vetoes</p>
         {[
-          ["ARB/USDT", "news_blackout"],
-          ["ADA/USDT", "correlation_limit"],
-          ["DOGE/USDT", "below_threshold"],
+          ["XRP/USDT", "event_risk"],
+          ["ADA/USDT", "correlation"],
+          ["DOGE/USDT", "quality < 60"],
         ].map(([s, rule]) => (
           <div key={s} className="flex justify-between text-white/40">
             <span>{s}</span>
@@ -348,9 +348,7 @@ export default function DashboardPage() {
             <br className="hidden sm:block" /> a chart with buttons
           </h1>
           <p className="mt-6 text-[17px] leading-relaxed text-white/55">
-            Five panels, each answering a different question. Click through them below — this is
-            the actual layout, drawn from the same design tokens as the product rather than
-            captured as a screenshot that would be out of date by next release.
+            Five panels, each answering a different question. Click through them below — a simplified sketch of the dashboard with sample data, drawn from the same design tokens as the product.
           </p>
         </motion.div>
       </section>
@@ -468,8 +466,8 @@ export default function DashboardPage() {
 
         <div className="mt-14 flex flex-wrap gap-3 border-t border-white/[0.07] pt-8">
           {[
-            ["/live-trade", "See the terminal", "Chart, book and fills on one surface"],
-            ["/performance", "See the numbers", "Methodology, attribution and cost drag"],
+            ["/live-trade", "See the terminal", "Chart, positions and fills on one surface"],
+            ["/performance", "See the numbers", "Recorded validation and method"],
           ].map(([path, label, blurb]) => (
             <Link
               key={path}

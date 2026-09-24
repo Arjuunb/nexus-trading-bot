@@ -1,13 +1,13 @@
 import { useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
-import { Activity, Brain, CandlestickChart, Clock, Layers3, Wallet } from "lucide-react";
+import { Activity, Brain, CandlestickChart, Clock, Landmark, Wallet } from "lucide-react";
 import { TerminalBackdrop } from "@/components/site/backdrops";
 import { useTape } from "@/components/site/live/useTape";
 import { CandleChart } from "@/components/site/live/CandleChart";
 import {
   DecisionPanel,
   ExecutionTimeline,
-  OrderBook,
+  PaperAccount,
   Panel,
   Positions,
   type Position,
@@ -44,9 +44,9 @@ function Ticker() {
     ["BTC/USDT", "68,408.0", 0.42],
     ["ETH/USDT", "3,284.15", -0.18],
     ["SOL/USDT", "148.24", 1.36],
-    ["ARB/USDT", "0.8412", -0.94],
-    ["AVAX/USDT", "27.61", 0.22],
-    ["OP/USDT", "1.7420", -0.51],
+    ["XRP/USDT", "0.5412", -0.94],
+    ["BNB/USDT", "584.30", 0.22],
+    ["DOGE/USDT", "0.1174", -0.51],
     ["LINK/USDT", "16.88", 0.77],
   ];
   const row = [...items, ...items];
@@ -77,7 +77,7 @@ export default function LiveTradePage() {
   // scrolling past the terminal stops the simulation rather than leaving four
   // panels re-rendering at 900ms below the fold.
   const workspaceRef = useRef<HTMLDivElement>(null);
-  const { candles, price, changePct, bids, asks, epoch } = useTape(workspaceRef);
+  const { candles, price, changePct, epoch } = useTape(workspaceRef);
   const [symbol, setSymbol] = useState(SYMBOLS[0].s);
 
   // The open BTC position, placed inside the range the simulated tape covers
@@ -87,9 +87,9 @@ export default function LiveTradePage() {
   const target = 69_380;
 
   const positions: Position[] = [
-    { symbol: "BTC/USDT", side: "LONG", size: "0.420", entry, mark: price, stop, target, strategy: "structure-v4" },
-    { symbol: "SOL/USDT", side: "LONG", size: "12.40", entry: 148.22, mark: 149.86, stop: 143.1, target: 161.8, strategy: "breakout-v2" },
-    { symbol: "ETH/USDT", side: "SHORT", size: "1.850", entry: 3_301.4, mark: 3_284.15, stop: 3_366.0, target: 3_180.0, strategy: "meanrev-v1" },
+    { symbol: "BTC/USDT", side: "LONG", size: "0.420", entry, mark: price, stop, target, strategy: "brain 1.0.0" },
+    { symbol: "SOL/USDT", side: "LONG", size: "12.40", entry: 148.22, mark: 149.86, stop: 143.1, target: 161.8, strategy: "donchian 1.0.0" },
+    { symbol: "ETH/USDT", side: "SHORT", size: "1.850", entry: 3_301.4, mark: 3_284.15, stop: 3_366.0, target: 3_180.0, strategy: "supertrend 1.0.0" },
   ];
 
   const up = changePct >= 0;
@@ -123,8 +123,8 @@ export default function LiveTradePage() {
                 The terminal
               </h1>
               <p className="mt-3 max-w-lg leading-relaxed text-white/50">
-                Chart, book, positions, reasoning and fills on one surface — the same layout the
-                platform runs, driven here by a simulated tape so you can watch it work.
+                Chart, positions, reasoning and fills on one surface, driven here by a simulated tape so
+                you can watch the logic work.
               </p>
             </div>
 
@@ -195,13 +195,13 @@ export default function LiveTradePage() {
             </div>
           </Panel>
 
-          {/* book */}
+          {/* the paper account the positions sit in */}
           <Panel
-            title="order book"
-            icon={Layers3}
-            right={<span className="font-mono text-[9px] text-white/25">L2 · 9</span>}
+            title="paper account"
+            icon={Landmark}
+            right={<span className="font-mono text-[9px] text-white/25">USDT</span>}
           >
-            <OrderBook bids={bids} asks={asks} price={price} />
+            <PaperAccount positions={positions} />
           </Panel>
 
           {/* positions */}
@@ -216,7 +216,7 @@ export default function LiveTradePage() {
 
           {/* decision */}
           <Panel
-            title="ai decision"
+            title="decision"
             icon={Brain}
             right={<span className="font-mono text-[9px] text-white/25">nexus-engine</span>}
           >
@@ -237,10 +237,10 @@ export default function LiveTradePage() {
         {/* footer strip: what the terminal is actually doing */}
         <div className="mt-6 grid gap-2.5 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            ["Protective orders", "At the venue", "Stops and targets are placed on the exchange the instant a position opens — a dropped connection is not an unprotected position."],
-            ["Slippage", "Measured per fill", "Every fill is compared against the price the decision was made at, so cost is a number rather than an assumption."],
-            ["Partial fills", "Reconciled", "Unfilled remainder is re-evaluated against current conditions rather than chased."],
-            ["Manual override", "Always available", "Flatten, halt or close any position from the terminal; every override is written to the audit log."],
+            ["Protective orders", "Set on entry", "A stop and target are set the instant a position opens and are managed by the engine on every candle."],
+            ["Costs", "In every fill", "Every simulated fill pays a fee, and market and stop orders pay modelled spread and slippage, so cost is in the number rather than assumed away."],
+            ["Limit entries", "Never chased", "A limit entry that price never reaches expires after a set number of candles rather than being chased."],
+            ["Manual control", "Always available", "Pause or stop an instance, or close its open positions, from the dashboard; every action is written to that instance's log."],
           ].map(([title, tag, body], i) => (
             <motion.div
               key={title}

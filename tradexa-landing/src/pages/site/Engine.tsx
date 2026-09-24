@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 /**
- * /engine — the AI operating system.
+ * /engine — the decision engine, stage by stage.
  *
  * Palette: graphite under electric blue and cyan. Nothing gold appears above
  * the fold, which is the point — the landing page is warm and this is cold
@@ -24,63 +24,51 @@ const EASE = [0.22, 1, 0.36, 1] as const;
  * application rather than scrolled further down the same one.
  */
 
-/** Boot-log hero telemetry: numbers that tick, phrased as a system does. */
+/**
+ * Hero panel in the style of an engine status readout. Every row is a fact
+ * about how the engine runs (not a reading). It used to tick through invented
+ * throughput — "1840 frames/s", "412 decisions/h", "risk.checks 13/13" —
+ * generated in the browser.
+ */
 function Telemetry() {
   const reduced = useReducedMotion() ?? false;
-  const ref = useRef<HTMLDivElement>(null);
-  const active = useVisibleActive(ref);
-  const [tick, setTick] = useState(0);
-
-  useEffect(() => {
-    if (reduced || !active) return;
-    const id = window.setInterval(() => setTick((t) => t + 1), 1400);
-    return () => window.clearInterval(id);
-  }, [reduced, active]);
-
-  // Deterministic wobble around a fixed centre — representative telemetry, not
-  // a claim about throughput at this instant.
-  const wobble = (base: number, amp: number, phase: number) =>
-    base + Math.round(Math.sin((tick + phase) * 0.9) * amp);
-
   const rows = [
-    { k: "feed.frames", v: `${wobble(1840, 90, 0)}/s`, c: "text-electric-soft" },
-    { k: "vector.build", v: `${(2.8 + Math.sin(tick * 0.7) * 0.4).toFixed(1)} ms`, c: "text-aqua-soft" },
-    { k: "ensemble.p95", v: `${wobble(37, 4, 2)} ms`, c: "text-aqua-soft" },
-    { k: "risk.checks", v: "13 / 13", c: "text-emerald-soft" },
-    { k: "decisions.h", v: `${wobble(412, 18, 4)}`, c: "text-white/70" },
-    { k: "routed.h", v: `${wobble(9, 3, 1)}`, c: "text-white/70" },
+    { k: "data", v: "Binance USDⓈ-M", c: "text-electric-soft" },
+    { k: "decides.on", v: "closed candles", c: "text-aqua-soft" },
+    { k: "strategies", v: "7 prod · 4 research", c: "text-aqua-soft" },
+    { k: "quality", v: "score 0–100", c: "text-aqua-soft" },
+    { k: "risk", v: "every order", c: "text-emerald-soft" },
+    { k: "live.routing", v: "locked", c: "text-white/70" },
   ];
 
   return (
-    <div ref={ref} className="overflow-hidden rounded-2xl border border-graphite-500/70 bg-black/50 backdrop-blur-xl">
+    <div className="overflow-hidden rounded-2xl border border-graphite-500/70 bg-black/50 backdrop-blur-xl">
       <div className="flex items-center gap-2 border-b border-graphite-600 bg-graphite-800/60 px-4 py-2.5">
         <Terminal className="h-3.5 w-3.5 text-electric-soft" />
-        <span className="font-mono text-[11px] text-white/45">nexus-engine · telemetry</span>
-        <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] text-emerald-soft">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-          nominal
+        <span className="font-mono text-[11px] text-white/45">nexus-engine · how it runs</span>
+        <span className="ml-auto flex items-center gap-1.5 font-mono text-[10px] text-gold-soft">
+          <span className="h-1.5 w-1.5 rounded-full bg-gold" />
+          paper
         </span>
       </div>
       <div className="grid grid-cols-2 gap-x-6 gap-y-2 p-4 font-mono text-[11px]">
-        {rows.map((r) => (
-          <div key={r.k} className="flex items-baseline justify-between gap-2">
+        {rows.map((r, i) => (
+          <motion.div
+            key={r.k}
+            initial={{ opacity: 0, y: reduced ? 0 : 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: reduced ? 0 : 0.3 + i * 0.06 }}
+            className="flex items-baseline justify-between gap-2"
+          >
             <span className="text-white/25">{r.k}</span>
-            <motion.span
-              key={r.v}
-              initial={{ opacity: 0.35 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.4 }}
-              className={cn("tabular", r.c)}
-            >
-              {r.v}
-            </motion.span>
-          </div>
+            <span className={cn("tabular", r.c)}>{r.v}</span>
+          </motion.div>
         ))}
       </div>
       <div className="border-t border-graphite-600 px-4 py-2.5">
         <p className="font-mono text-[10px] leading-relaxed text-white/30">
-          <span className="text-electric-soft">▸</span> pipeline online · 8 stages ·{" "}
-          <span className="text-aqua-soft">deterministic replay enabled</span>
+          <span className="text-electric-soft">▸</span> paper mode · 8-step path ·{" "}
+          <span className="text-aqua-soft">every candle written down</span>
           {!reduced && <span className="ml-0.5 inline-block h-3 w-[7px] translate-y-[1px] bg-aqua/70 align-middle motion-safe:animate-caret-blink" />}
         </p>
       </div>
@@ -97,10 +85,10 @@ function FlowStrip() {
   // anything while the strip is off screen.
   const active = useVisibleActive(ref);
   const lanes = [
-    { label: "market data", color: "#2E7BFF", speed: 5.5, count: 5 },
-    { label: "feature vectors", color: "#22D3EE", speed: 7, count: 4 },
-    { label: "decisions", color: "#7CADFF", speed: 9.5, count: 3 },
-    { label: "fills", color: "#2FBF71", speed: 12, count: 2 },
+    { label: "closed candles", color: "#2E7BFF", speed: 5.5, count: 5 },
+    { label: "signals", color: "#22D3EE", speed: 7, count: 4 },
+    { label: "approved", color: "#7CADFF", speed: 9.5, count: 3 },
+    { label: "paper fills", color: "#2FBF71", speed: 12, count: 2 },
   ];
 
   return (
@@ -142,7 +130,7 @@ function FlowStrip() {
               ))}
           </div>
           <span className="z-10 shrink-0 font-mono text-[10px] tabular text-white/25">
-            {["1.8k/s", "1.8k/s", "412/h", "9/h"][li]}
+            {["every candle", "some candles", "fewer", "fewest"][li]}
           </span>
         </div>
       ))}
@@ -218,9 +206,9 @@ export default function EnginePage() {
               transition={{ duration: 0.65, delay: 0.14, ease: EASE }}
               className="mt-6 max-w-xl text-[17px] leading-relaxed text-white/55"
             >
-              Eight stages run on every candle close, in the same order, every time. Data comes
-              in raw and leaves as an order or a written reason there wasn’t one — and every
-              intermediate state is kept, so any decision can be replayed exactly as it was made.
+              Every closed candle takes the same path, in the same order: data, context,
+              strategy, quality score, sizing, risk checks, a paper fill and the record. It leaves
+              as a paper order or a written reason there wasn’t one — and the reason is kept.
             </motion.p>
 
             <motion.div
@@ -230,9 +218,9 @@ export default function EnginePage() {
               className="mt-8 flex flex-wrap gap-x-8 gap-y-3"
             >
               {[
-                ["8", "pipeline stages"],
-                ["< 80 ms", "close to order"],
-                ["100%", "decisions recorded"],
+                ["8", "steps, one path"],
+                ["7", "production strategies"],
+                ["Every", "candle written down"],
               ].map(([v, k]) => (
                 <div key={k}>
                   <p className="font-mono text-xl font-semibold tabular text-aqua-soft">{v}</p>
@@ -321,7 +309,7 @@ export default function EnginePage() {
                 <span className="text-right text-white/65">{stage.io.out}</span>
               </div>
               <div className="mt-4 flex justify-between border-t border-graphite-600 pt-3">
-                <span className="text-white/25">budget</span>
+                <span className="text-white/25">records</span>
                 <span className="tabular text-aqua-soft">{stage.budget}</span>
               </div>
             </motion.div>
@@ -337,13 +325,13 @@ export default function EnginePage() {
             Decision engine
           </span>
           <h2 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-            Three models. One arbiter. No averaging.
+            One quality score. Every factor written down.
           </h2>
           <p className="mt-4 leading-relaxed text-white/55">
-            Averaging disagreement produces a number that no model would have chosen. The arbiter
-            instead weighs each model by how well calibrated it has been in the regime the market
-            is currently in — so a momentum model that is unreliable in compression is quietly
-            demoted rather than allowed to vote.
+            The strategy decides where a trade could be; the Decision Brain decides whether it is
+            worth taking. It scores the setup out of 100 from eight weighted factors, keeps the
+            list of rules it passed and failed, and refuses some setups outright whatever they
+            score.
           </p>
         </div>
 
@@ -363,9 +351,10 @@ export default function EnginePage() {
               Always on, and always narrow
             </h2>
             <p className="mt-4 leading-relaxed text-white/55">
-              Roughly eighteen hundred frames a second come in. Four hundred decisions an hour
-              come out of the arbiter. Nine of them become orders. The funnel narrows by design —
-              the engine's job is mostly to decide against doing something.
+              Every closed candle on every running instance is read and judged. Most end as WAIT
+              with a written reason; a signal must then clear the quality score and every risk
+              check before it becomes a paper order. The funnel narrows by design — the engine's
+              job is mostly to decide against doing something.
             </p>
           </div>
           <FlowStrip />
@@ -379,12 +368,13 @@ export default function EnginePage() {
             Architecture
           </span>
           <h2 className="mt-3 text-3xl font-bold tracking-tight text-white sm:text-4xl">
-            Services, not a script
+            One path to an order
           </h2>
           <p className="mt-4 leading-relaxed text-white/55">
-            Each box is a separately deployed service communicating over an event bus with
-            replayable envelopes. The consequence that matters is the one on the right: there is
-            no edge from the engine to execution that does not pass through risk.
+            Nexus runs as one application with a worker per Trading Instance, all fed by a single
+            shared Binance hub. The consequence that matters is the one on the right: nothing
+            reaches the broker without passing the risk checks, and the broker is paper — live
+            order routing is locked.
           </p>
         </div>
 
@@ -392,10 +382,10 @@ export default function EnginePage() {
           <ArchitectureDiagram />
           <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-graphite-600 pt-4 font-mono text-[10px] text-white/30">
             {[
-              ["#243043", "edge service"],
-              ["#2E7BFF", "core service"],
+              ["#243043", "data in · fills out"],
+              ["#2E7BFF", "decision"],
               ["#2FBF71", "guard"],
-              ["#22D3EE", "durable store"],
+              ["#22D3EE", "storage"],
             ].map(([c, l]) => (
               <span key={l} className="inline-flex items-center gap-2">
                 <span className="h-2 w-2 rounded-sm" style={{ background: c }} />
