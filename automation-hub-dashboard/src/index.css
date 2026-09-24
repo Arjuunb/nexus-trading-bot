@@ -2190,3 +2190,52 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
   background: var(--bg-2); color: var(--text);
   font: 10px/1.2 ui-monospace, monospace; }
 .smc-agent .pa-export { margin: 0 0 var(--space-1); }
+
+/* ================================================================ UI polish
+   Display only: spacing, wrapping and motion. No markup, data or behaviour
+   depends on anything below. */
+
+/* Top bar: the page title ran straight into the first header chip
+   ("Dashboard● PAPER") and long titles wrapped to two lines, squeezing the
+   chips until "Controls ⌘K" was clipped. The title keeps one line and a gap. */
+.topbar-left { flex: 0 1 auto; min-width: 0; margin-right: 14px; }
+.page-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; letter-spacing: -0.01em; }
+.topbar-right { flex: none; }
+/* The chip row is centred; when it is wider than its slot it spilled out on
+   both sides, over the title. On desktop it keeps its natural width and the
+   title gives way with an ellipsis instead. (At <=900px the row is its own
+   horizontal scroller and must stay shrinkable.) */
+@media (min-width: 901px) { .hdr-controls { flex-shrink: 0; } }
+/* Below 1600px there is not room for a long title beside every chip; it was
+   cut to "Tra…". Every page repeats its own title as the first heading in the
+   content, so the bar drops it (the existing rule already did so at 1350px). */
+@media (max-width: 1600px) { .topbar-left .page-title { display: none; } }
+
+/* The automatic icon rail (721-1024px) hid link names but not group titles,
+   which showed cut mid-word ("TRADI", "RESEA"). Hide them the way the
+   manually collapsed sidebar does. */
+@media (min-width: 721px) and (max-width: 1024px) {
+  .sidebar .nav-group-title { visibility: hidden; height: 6px; padding: 0; margin: 0; }
+}
+
+/* A label followed by its value on one line ("Live" + "0 trades") had no
+   space between them and read as "Live0 trades". */
+.risk-item > .dim:first-child { margin-right: 8px; }
+
+/* Page and tab changes: the new view fades in instead of snapping. Opacity
+   only -- a transform here would briefly become the containing block for any
+   fixed-position dialog inside the page. */
+@keyframes view-in { from { opacity: 0; } to { opacity: 1; } }
+.content > * { animation: view-in 0.28s ease-out both; }
+
+/* Row hover in the lab tables, matching .data-table. */
+.pa-table tbody tr { transition: background-color 0.15s ease; }
+.pa-table tbody tr:hover { background: rgba(255, 255, 255, 0.025); }
+
+/* Sidebar: ease the hover and active states instead of switching instantly. */
+.nav-item { transition: background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .content > * { animation: none; }
+  .pa-table tbody tr, .nav-item { transition: none; }
+}
