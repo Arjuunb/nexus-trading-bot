@@ -144,6 +144,10 @@ app.include_router(webhook_router)
 # router in a later slice), so /api/v1 covers the router-based API surface.
 app.include_router(webhook_router, prefix="/api/" + API_VERSION)
 app.include_router(create_core_v2_router(core_v2_store))
+# The public API (/v1), keyed with personal API keys (routers/public_api.py).
+from routers import public_api as _public_api  # noqa: E402
+app.include_router(_public_api.router)
+app.add_exception_handler(_public_api.PublicApiError, _public_api.public_api_error_handler)
 
 
 @app.get("/api/" + API_VERSION)
@@ -214,7 +218,8 @@ _AUTH_EXEMPT = ("/login", "/signup", "/auth/", "/webhook", "/assets",
                 "/nexus-mark", "/apple-touch", "/icon-", "/maskable-", "/mstile-",
                 "/og-image", "/logo-mark", "/site.webmanifest", "/robots.txt",
                 "/sitemap.xml",
-                "/status/public")  # the public status feed: it must answer people who cannot sign in
+                "/status/public",  # the public status feed: it must answer people who cannot sign in
+                "/v1/")  # the public API authenticates every call itself, with API keys
 
 # The public marketing site's pages.
 #
@@ -354,10 +359,13 @@ async def _require_auth(request: Request, call_next):
 # Secret redaction for every JSON response (services/redaction.py). Added after
 # the middleware above, so it wraps them and sees every body the app produces --
 # a route returning its own JSONResponse is covered as well as one returning a
-# dict. The two paths below exist to hand a credential to its owner, so they
+# dict. The paths below exist to hand a credential to its owner, so they
 # keep name-based fields; live secret VALUES are still removed from them.
 from services.redaction import RedactionMiddleware  # noqa: E402
-app.add_middleware(RedactionMiddleware, credential_paths=("/auth/login", "/auth/2fa/setup"))
+app.add_middleware(RedactionMiddleware, credential_paths=(
+    "/auth/login", "/auth/2fa/setup",
+    # API key creation: the one response that shows a new key to its owner
+    "/security/api-keys", "/api/v1/security/api-keys"))
 
 
 def _audit_identify(scope: dict, client_headers: dict) -> tuple[str, str]:
@@ -375,6 +383,9 @@ def _audit_identify(scope: dict, client_headers: dict) -> tuple[str, str]:
     presented = client_headers.get("x-webhook-secret", "")
     if presented and hmac.compare_digest(presented, settings.admin_key):
         return "control-key", "control_key"
+    api_key = (scope.get("state") or {}).get("api_key")
+    if api_key:
+        return f"api-key:{api_key['name']} ({api_key['id']})", "api_key"
     return "anonymous", "none"
 
 

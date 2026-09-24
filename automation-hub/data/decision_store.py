@@ -152,6 +152,26 @@ class DecisionStore:
         with self._lock:
             return [self._row(r) for r in self._c.execute(sql, args)]
 
+    def page(self, *, limit: int = 50, before_id: Optional[int] = None,
+             decision: Optional[str] = None, symbol: Optional[str] = None,
+             since: Optional[str] = None) -> list[dict]:
+        """Newest first, for cursor pagination: ``before_id`` is the smallest
+        id already seen. ``since`` is an ISO timestamp lower bound."""
+        cond, args = [], []
+        if before_id:
+            cond.append("id < ?"); args.append(int(before_id))
+        if decision:
+            cond.append("decision = ?"); args.append(decision)
+        if symbol:
+            cond.append("symbol = ?"); args.append(symbol.upper())
+        if since:
+            cond.append("ts >= ?"); args.append(since)
+        sql = "SELECT * FROM decisions" + (" WHERE " + " AND ".join(cond) if cond else "")
+        sql += " ORDER BY id DESC LIMIT ?"
+        args.append(int(limit))
+        with self._lock:
+            return [self._row(r) for r in self._c.execute(sql, args)]
+
     def prune(self, keep: int = 20000) -> int:
         """Retention cap — keep the most recent ``keep`` decisions (by id, which
         is chronological), delete older. Bounds growth on a persistent disk."""

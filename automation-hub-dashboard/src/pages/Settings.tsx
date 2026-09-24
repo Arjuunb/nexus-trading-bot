@@ -17,6 +17,7 @@ import SecuritySettings from "../components/settings/SecuritySettings";
 import AuditLogPanel from "../components/settings/AuditLogPanel";
 import ExchangeKeysPanel from "../components/settings/ExchangeKeysPanel";
 import BackupsPanel from "../components/settings/BackupsPanel";
+import ApiKeysPanel from "../components/settings/ApiKeysPanel";
 import AdvancedSettings from "../components/settings/AdvancedSettings";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -45,7 +46,7 @@ export default function SettingsPage() {
     : id === "risk" ? <RiskSettings />
     : id === "notifications" ? <NotificationSettings />
     : id === "system" ? <SystemSettings />
-    : id === "security" ? <><SecuritySettings /><ExchangeKeysPanel /><BackupsPanel /><AuditLogPanel /></>
+    : id === "security" ? <><SecuritySettings /><ExchangeKeysPanel /><ApiKeysPanel /><BackupsPanel /><AuditLogPanel /></>
     : <AdvancedSettings><LegacyEngineSettings /></AdvancedSettings>;
   return <>
     <PageHeader title="Settings Centre" subtitle="User preferences, platform defaults, safety limits and truthful runtime status" />

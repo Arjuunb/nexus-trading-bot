@@ -270,6 +270,9 @@ const SECURITY_AUDIT = {
 
 const SHAPES: [string, unknown][] = [
   ["/security/status", SECURITY_STATUS],
+  ["/security/api-keys", { keys: [{ id: "a1b2c3d4", name: "research notebook", scopes: ["read"], version: "2026-09-24",
+    hint: "nxs_a1b2c3d4_…", created_at: "2026-09-24T12:00:00Z", last_used_at: null, revoked_at: null, active: true }],
+    scopes: ["read", "control"], versions: ["2026-09-24"] }],
   ["/security/audit/verify", { ok: true, entries: 3, first_bad_seq: null, reason: "", head_hash: SECURITY_STATUS.audit.head.hash }],
   ["/security/audit", SECURITY_AUDIT],
   ["/security/backups/", { ok: true, snapshot: "20260924T080000Z", encrypted: true, databases: { "ledger.db": { ok: true }, "audit.db": { ok: true } } }],

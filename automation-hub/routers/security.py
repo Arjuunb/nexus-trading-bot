@@ -168,6 +168,49 @@ def keys_revoke(cred_id: str, request: Request,
     return {"key": meta}
 
 
+# ---------------------------------------------------------------- API keys
+@router.get("/api-keys")
+def api_keys_list(request: Request, x_webhook_secret: Optional[str] = Header(default=None)):
+    """Personal API keys for the /v1 API: names, scopes, last use. Never the key."""
+    _wa._check_secret(x_webhook_secret)
+    from services.api_keys import API_VERSIONS, SCOPES, default_store
+    return {"keys": default_store().list(_tenant(request)), "scopes": list(SCOPES),
+            "versions": list(API_VERSIONS)}
+
+
+@router.post("/api-keys")
+def api_keys_create(request: Request, body: dict = Body(...),
+                    x_webhook_secret: Optional[str] = Header(default=None)):
+    """Create a key. The response's ``token`` is the only time the key is ever
+    shown; only its hash is kept. Body: {name, scopes: ["read"] | ["read","control"]}."""
+    _wa._check_secret(x_webhook_secret)
+    from services.api_keys import default_store
+    try:
+        created = default_store().create(_tenant(request), str(body.get("name", "")),
+                                         body.get("scopes") or ["read"],
+                                         created_by=_wa.request_user(request))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    audit_log.record_change(action="api_key.create", actor=_wa.request_user(request),
+                            after={k: v for k, v in created.items() if k != "token"},
+                            ip=_client_ip(request))
+    return created
+
+
+@router.delete("/api-keys/{key_id}")
+def api_keys_revoke(key_id: str, request: Request,
+                    x_webhook_secret: Optional[str] = Header(default=None)):
+    _wa._check_secret(x_webhook_secret)
+    from services.api_keys import default_store
+    try:
+        revoked = default_store().revoke(_tenant(request), key_id)
+    except KeyError:
+        raise HTTPException(404, "No such API key.") from None
+    audit_log.record_change(action="api_key.revoke", actor=_wa.request_user(request),
+                            after=revoked, ip=_client_ip(request))
+    return {"key": revoked}
+
+
 # ------------------------------------------------------------------ overview
 @router.get("/status")
 def security_status(request: Request, x_webhook_secret: Optional[str] = Header(default=None)):

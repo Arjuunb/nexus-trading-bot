@@ -52,3 +52,38 @@ jobs:
       - name: Run automation-hub test suite
         working-directory: automation-hub
         run: python -m pytest -q
+
+  sdks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python SDK
+        working-directory: sdks/python
+        run: |
+          python -m pip install --upgrade pip pytest
+          pip install -e .
+          python -m pytest -q tests
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: TypeScript SDK
+        working-directory: sdks/typescript
+        run: |
+          npm install --no-save typescript@5
+          npx tsc -p . && node --test test/*.test.mjs
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: Go SDK
+        working-directory: sdks/go
+        run: go vet ./... && go test ./...
+
+      - name: Rust SDK
+        working-directory: sdks/rust
+        run: cargo test --quiet

@@ -25,6 +25,10 @@ test("Security settings show key custody, redaction and a verifiable audit log",
 
   await expect(audit.getByText("Up to date · https://siem.example.com")).toBeVisible();
 
+  const apiKeys = page.locator("section", { has: page.getByRole("heading", { name: "API keys" }) });
+  await expect(apiKeys.getByText("nxs_a1b2c3d4_…")).toBeVisible();
+  await expect(apiKeys.getByRole("button", { name: "Revoke" })).toBeVisible();
+
   const backups = page.locator("section", { has: page.getByRole("heading", { name: "Backups" }) });
   await expect(backups.getByText("On · AES-256-GCM, sealed with the master key")).toBeVisible();
   await expect(backups.getByText(/1 from before encryption/)).toBeVisible();
@@ -44,5 +48,6 @@ test("Security settings survive an API that returns nothing useful", async ({ pa
   await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Exchange keys" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "API keys" })).toBeVisible();
   expect(errors).toEqual([]);
 });

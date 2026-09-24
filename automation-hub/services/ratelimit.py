@@ -43,6 +43,13 @@ class RateLimiter:
                 return 0
             return max(1, int(dq[0] + window_s - t) + 1)
 
+    def used(self, key: str, window_s: float, now: float | None = None) -> int:
+        """How many attempts ``key`` has made within the window."""
+        t = time.time() if now is None else now
+        with self._lock:
+            dq = self._hits.get(key)
+            return sum(1 for hit in dq if hit > t - window_s) if dq else 0
+
     def reset(self, key: str | None = None) -> None:
         with self._lock:
             if key is None:

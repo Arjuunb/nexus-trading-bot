@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tradelogx-nexus"
+version = "0.1.0"
+description = "Python client for the TradeLogX Nexus public API (/v1)"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+license = { text = "Proprietary" }
+
+[tool.setuptools]
+packages = ["tradelogx_nexus"]
