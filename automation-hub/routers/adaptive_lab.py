@@ -5,9 +5,14 @@ evidence are served by the same payload functions as the Instance Visual Lab
 (routers/instance_visual_lab.py), pointed at that manager, so this lab shows
 exactly what its bot's own strategy object and engine published.
 
-The one write is the configuration POST (symbol, mode, risk), behind the
-same control credential as every other lab configuration endpoint. Paper
-only: nothing here can reach an exchange order endpoint.
+Every read takes an optional ``source``: the lab's own bot (default) or the
+id of a Trading Instance running this strategy, which the lab mirrors view
+only from that instance's own manager, ledger and decision store.
+
+The one write is the configuration POST (symbol, mode, risk) of the LAB bot,
+behind the same control credential as every other lab configuration
+endpoint; it can never reach a Trading Instance. Paper only: nothing here can
+reach an exchange order endpoint.
 """
 from __future__ import annotations
 
@@ -37,12 +42,28 @@ def _lab():
     return _wa.adaptive_lab
 
 
-def _bot_id() -> str:
-    bot = _lab().current()
+_SOURCE = Query(None, max_length=64, description="'lab' (default) or a mirrored Trading Instance id")
+
+
+def _target(source: Optional[str]):
+    """(bot id, manager, decision store) the visual payloads read for this source."""
+    lab = _lab()
+    try:
+        kind, manager, _ledger, bot = lab._view(source)
+    except AdaptiveLabError as exc:
+        raise HTTPException(404, str(exc)) from exc
     if bot is None:
         raise HTTPException(503, {"code": "NO_BOT", "retryable": True,
                                   "message": "the lab has no bot yet; choose a mode to start one"})
-    return bot.id
+    # A mirrored instance's decisions live in the instances' own decision store.
+    return bot.id, manager, (lab.decisions if kind == "lab" else manager.decision_store)
+
+
+def _read(call):
+    try:
+        return call()
+    except AdaptiveLabError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 class AdaptiveLabConfigBody(BaseModel):
@@ -52,13 +73,13 @@ class AdaptiveLabConfigBody(BaseModel):
 
 
 @router.get("/status")
-def status():
-    return _lab().status()
+def status(source: Optional[str] = _SOURCE):
+    return _read(lambda: _lab().status(source))
 
 
 @router.get("/paper")
-def paper():
-    return _lab().paper()
+def paper(source: Optional[str] = _SOURCE):
+    return _read(lambda: _lab().paper(source))
 
 
 @router.post("/configuration")
@@ -74,40 +95,44 @@ def configure(body: AdaptiveLabConfigBody,
 
 
 @router.get("/live-chart")
-def live_chart(window: int = Query(400, ge=20, le=1500)):
+def live_chart(window: int = Query(400, ge=20, le=1500), source: Optional[str] = _SOURCE):
     """The bot's own Binance feed: closed candles, forming candle, bid/ask/mark."""
+    _target(source)  # an unknown source is a 404, not a missing feed
     try:
-        return _lab().live_chart(window)
+        return _lab().live_chart(window, source)
     except AdaptiveLabError as exc:
         raise HTTPException(503, {"code": "NO_LIVE_FEED", "retryable": True,
                                   "message": str(exc)}) from exc
 
 
 @router.get("/journal")
-def journal(limit: int = Query(200, ge=1, le=1000)):
+def journal(limit: int = Query(200, ge=1, le=1000), source: Optional[str] = _SOURCE):
     """One append-only row per closed candle the bot judged, newest first."""
-    return _lab().journal_entries(limit)
+    return _read(lambda: _lab().journal_entries(limit, source))
 
 
 @router.get("/state")
-def state():
-    return visual.state_payload(_bot_id(), manager=_lab().manager)
+def state(source: Optional[str] = _SOURCE):
+    bot_id, manager, _decisions = _target(source)
+    return visual.state_payload(bot_id, manager=manager)
 
 
 @router.get("/features")
-def features():
-    return visual.features_payload(_bot_id(), manager=_lab().manager)
+def features(source: Optional[str] = _SOURCE):
+    bot_id, manager, _decisions = _target(source)
+    return visual.features_payload(bot_id, manager=manager)
 
 
 @router.get("/candles")
 def candles(timeframe: Optional[str] = Query(None),
-            limit: int = Query(300, ge=20, le=1500)):
-    return visual.candles_payload(_bot_id(), timeframe, limit, manager=_lab().manager)
+            limit: int = Query(300, ge=20, le=1500), source: Optional[str] = _SOURCE):
+    bot_id, manager, _decisions = _target(source)
+    return visual.candles_payload(bot_id, timeframe, limit, manager=manager)
 
 
 @router.get("/timeline")
 def timeline(limit: int = Query(100, ge=1, le=500),
-             decision: Optional[str] = Query(None, pattern="^(accepted|rejected)$")):
-    lab = _lab()
-    return visual.timeline_payload(_bot_id(), limit, decision,
-                                   manager=lab.manager, decisions=lab.decisions)
+             decision: Optional[str] = Query(None, pattern="^(accepted|rejected)$"),
+             source: Optional[str] = _SOURCE):
+    bot_id, manager, decisions = _target(source)
+    return visual.timeline_payload(bot_id, limit, decision, manager=manager, decisions=decisions)

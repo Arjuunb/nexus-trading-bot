@@ -236,3 +236,174 @@ def test_a_bot_that_is_off_has_no_live_chart_to_invent(tmp_path):
     else:
         raise AssertionError("served a live chart for a bot with no feed")
     lab.shutdown()
+
+
+# ------------------------------------------------ Trading Instance mirror
+def _instances(tmp_path, hub):
+    """The Trading Instances side: its own ledger, decision and cycle stores."""
+    from data.cycle_store import CycleStore
+    from data.decision_store import DecisionStore
+    from services.trading_instances import TradingInstanceManager
+    cycles = CycleStore(str(tmp_path / "cycles.db"))
+    manager = TradingInstanceManager(
+        SqliteLedger(str(tmp_path / "instances.db")), strategy_factory=make_builtin_strategy,
+        live=True, live_poll_s=1.0, max_slots=3, market_hub=hub,
+        decision_store=DecisionStore(str(tmp_path / "decisions.db")),
+        symbol_rules_provider=lambda _symbol: RULES, paper_account_capital=10_000,
+        cycle_store=cycles)
+    return manager, cycles
+
+
+def _instance(manager, key=STRATEGY_KEY, symbol="XRPUSDT"):
+    inst = manager.create(symbol=symbol, strategy_key=key, strategy_label=key,
+                          strategy_version="1.0.0", timeframe="5m",
+                          risk_per_trade_pct=0.005, capital_allocation=1_000)
+    manager.start(inst.id)
+    return manager._instances[inst.id]
+
+
+def _wait_for_strategy(manager, inst):
+    import time
+    engine = manager._runtime[inst.id][0]
+    deadline = time.monotonic() + 10
+    while inst.symbol not in engine._live_strategies and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return engine
+
+
+def test_the_lab_mirrors_a_trading_instance_running_this_strategy_view_only(tmp_path):
+    lab = _lab(tmp_path)
+    lab.ensure_started()
+    instances, _cycles = _instances(tmp_path, lab.manager.market_hub)
+    lab.attach_instances(instances)
+    inst = _instance(instances)
+    other = _instance(instances, key="ema", symbol="BTCUSDT")
+    instances.ledger.open_position(symbol="XRPUSDT", side="long", size=10, entry=100.2, stop=99.5,
+                                   target=101.9, instance_id=inst.id,
+                                   simulation_session_id=inst.simulation_session_id)
+
+    # Only instances running this strategy are offered, beside the lab bot.
+    ids = [row["id"] for row in lab.sources()]
+    assert ids == ["lab", inst.id] and other.id not in ids
+    view = lab.status(inst.id)["view"]
+    assert view["kind"] == "instance" and view["bot_id"] == inst.id
+    assert view["controlled_from"] == "Trading Instances" and view["running"] is True
+    assert view["risk_pct"] == 0.5 and view["capital_allocation"] == 1_000
+
+    # Its orders and trades come from ITS ledger, not the lab's.
+    assert [p["entry"] for p in lab.paper(inst.id)["positions"]] == [100.2]
+    assert lab.paper()["positions"] == []                       # the lab bot is untouched
+    chart = lab.live_chart(300, inst.id)
+    feed = instances._runtime[inst.id][0].ws_feed.snapshot()
+    assert chart["candles"][-1]["timestamp"] == feed["closed_bars"][-1].timestamp.isoformat()
+    assert chart["trade_plan"]["entry"] == 100.2 and chart["source"] == inst.id
+
+    # A source that is not this strategy's instance is refused, never guessed.
+    for bad in (other.id, "no-such-id"):
+        try:
+            lab.paper(bad)
+        except AdaptiveLabError:
+            pass
+        else:
+            raise AssertionError(f"mirrored {bad}")
+
+    # Mirroring is view only: configuring the lab never touches the instance.
+    def settings(row):  # what an operator could change; not the worker's warm-up state
+        gate = instances._runtime[row.id][3].trading_allowed()
+        return (row.desired_running, gate, row.risk_per_trade_pct, row.symbol, row.config_revision)
+    before = settings(inst)
+    lab.configure(mode="off")
+    lab.configure(risk_pct=0.9)
+    assert settings(instances._instances[inst.id]) == before
+    assert instances.worker_alive(inst.id)
+    instances.shutdown()
+    lab.shutdown()
+
+
+def test_an_instances_candles_reach_its_own_store_and_the_lab_journal(tmp_path):
+    lab = _lab(tmp_path)
+    instances, cycles = _instances(tmp_path, lab.manager.market_hub)
+    lab.attach_instances(instances)
+    lab.attach_instances(instances)                            # never wrapped twice
+    inst = _instance(instances)
+    other = _instance(instances, key="ema", symbol="BTCUSDT")
+    engine = _wait_for_strategy(instances, inst)
+    assert engine.reports is instances.cycle_store
+    assert engine.reports.primary is cycles                    # the instances' own store first
+
+    for bot, ident in ((inst, "c-2150"), (other, "c-2150-btc")):
+        engine_of = instances._runtime[bot.id][0]
+        engine_of.reports.record({"instance_id": bot.id, "symbol": bot.symbol, "timeframe": "5m",
+                                  "ts": "2026-09-23T21:50:00+00:00", "decision": "WAIT",
+                                  "price": 0.52, "decision_identity": ident,
+                                  "reasons": ["No qualifying setup"]})
+
+    # Both instances' candles are in their own store, exactly as before...
+    assert sorted(row["instance_id"] for row in cycles.list(limit=10)) == sorted([inst.id, other.id])
+    # ...and only this strategy's instance is journaled, with its strategy's decision.
+    rows = lab.journal_entries(source=inst.id)["entries"]
+    strategy = engine._live_strategies[inst.symbol]
+    assert [r["candle_time"] for r in rows] == ["2026-09-23T21:50:00+00:00"]
+    assert rows[0]["strategy_state"] == strategy.decision_report()["state"]
+    assert lab.journal.entries(other.id) == []
+    assert lab.journal_entries()["entries"] == []             # not mixed into the lab bot
+    instances.shutdown()
+    lab.shutdown()
+
+
+def test_a_journal_failure_never_costs_the_instance_its_own_record(tmp_path):
+    from services.adaptive_lab import InstanceReportTee
+
+    recorded = []
+
+    class _Store:
+        def record(self, report):
+            recorded.append(report)
+            return 7
+
+        def count(self):
+            return len(recorded)
+
+    class _BrokenJournal:
+        def record(self, report):
+            raise RuntimeError("disk full")
+
+    class _Manager:
+        _instances = {"i1": type("I", (), {"strategy_key": STRATEGY_KEY})()}
+
+    tee = InstanceReportTee(_Store(), _BrokenJournal(), _Manager())
+    assert tee.record({"instance_id": "i1", "ts": "t"}) == 7   # no exception reaches the engine
+    assert len(recorded) == 1 and tee.count() == 1             # and the store kept its row
+
+
+def test_a_mirrored_instances_earlier_candles_come_from_its_own_reports_labelled_as_such(tmp_path):
+    lab = _lab(tmp_path)
+    instances, cycles = _instances(tmp_path, lab.manager.market_hub)
+    inst = _instance(instances)
+    _wait_for_strategy(instances, inst)
+    # Before the lab was attached: the instance's own store recorded a filled long.
+    cycles.record({"instance_id": inst.id, "symbol": inst.symbol, "timeframe": "5m",
+                   "ts": "2026-09-23T10:05:00+00:00", "decision": "BUY", "side": "long",
+                   "price": 0.53, "decision_identity": "early-1005",
+                   "reasons": ["LONG | 1H BULL_TREND 72% | quality 78/100 | RR 2.40"]})
+    lab.attach_instances(instances)
+    engine = instances._runtime[inst.id][0]
+    engine.reports.record({"instance_id": inst.id, "symbol": inst.symbol, "timeframe": "5m",
+                           "ts": "2026-09-23T21:55:00+00:00", "decision": "WAIT", "price": 0.54,
+                           "decision_identity": "late-2155", "reasons": ["No qualifying setup"]})
+
+    journal = lab.journal_entries(source=inst.id)
+    rows = journal["entries"]
+    assert [r["candle_time"] for r in rows] == ["2026-09-23T21:55:00+00:00",
+                                                "2026-09-23T10:05:00+00:00"]
+    late, early = rows
+    assert late["evidence"] == "strategy_journal" and late["strategy_state"] is not None
+    assert early["evidence"] == "engine_report" and early["engine_decision"] == "BUY"
+    assert early["reason"] == "LONG | 1H BULL_TREND 72% | quality 78/100 | RR 2.40"
+    # Nothing the store does not hold is filled in.
+    assert (early["strategy_state"], early["quality"], early["rr"]) == (None, None, None)
+    assert journal["state_counts"]["ENGINE_REPORT_ONLY"] == 1
+    # The candle the tee journaled is not repeated from the store.
+    assert sum(r["decision_identity"] == "late-2155" for r in rows) == 1
+    instances.shutdown()
+    lab.shutdown()

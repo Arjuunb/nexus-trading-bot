@@ -40,12 +40,22 @@ def test_the_chart_is_fed_by_the_bots_own_live_feed_and_journal():
     page = PAGE.read_text()
     # The bot's hub snapshot (closed candles + forming candle + quote), not a
     # second market-data source, and the append-only per-candle journal.
-    assert '"/research/adaptive-lab/live-chart' in page
-    assert '"/research/adaptive-lab/journal' in page
+    assert "`/research/adaptive-lab/live-chart?" in page
+    assert "`/research/adaptive-lab/journal?" in page
     for forbidden in ("fapi.binance", "wss://", "/research/smc/"):
         assert forbidden not in page, f"the lab reads market data around its bot: {forbidden}"
     # SMC objects are drawn only when a strategy publishes them; this one does not.
     assert "NO_SMC_LAYERS" in page and "pivots: [], events: []" in page
+
+
+def test_a_mirrored_trading_instance_is_read_with_its_source_and_never_written():
+    page = PAGE.read_text()
+    # Every read names its source, so a mirror never shows the lab bot's data.
+    for path in ("status", "paper", "state", "live-chart", "journal"):
+        assert f"`/research/adaptive-lab/{path}?" in page and "${q}`" in page, path
+    # The only write is the lab bot's own configuration (next test); the
+    # instance's controls are not rendered when it is the source.
+    assert "isInstance ? <section><h2>Trading Instance</h2>" in page
 
 
 def test_its_one_write_is_the_labs_configuration():

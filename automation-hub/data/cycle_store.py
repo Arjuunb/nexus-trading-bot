@@ -87,19 +87,22 @@ class CycleStore:
         return d
 
     def list(self, *, limit: int = 100, symbol: Optional[str] = None,
-             decision: Optional[str] = None) -> list[dict]:
+             decision: Optional[str] = None, instance_id: Optional[str] = None,
+             full: bool = False) -> list[dict]:
         sql = "SELECT * FROM cycle_reports"
         cond, args = [], []
         if symbol:
             cond.append("symbol = ?"); args.append(symbol.upper())
         if decision:
             cond.append("decision = ?"); args.append(decision.upper())
+        if instance_id:
+            cond.append("instance_id = ?"); args.append(instance_id)
         if cond:
             sql += " WHERE " + " AND ".join(cond)
         sql += " ORDER BY id DESC LIMIT ?"
         args.append(int(limit))
         with self._lock:
-            return [self._row(r, full=False) for r in self._c.execute(sql, args)]
+            return [self._row(r, full=full) for r in self._c.execute(sql, args)]
 
     def get(self, cid: int) -> Optional[dict]:
         with self._lock:

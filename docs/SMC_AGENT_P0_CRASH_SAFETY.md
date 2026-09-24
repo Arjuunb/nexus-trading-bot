@@ -13,7 +13,7 @@
   restart, deployment, configuration change, account reset, or history
   deletion was performed.
 
-### Integration with the running VPS revision
+### First integration: running revision cd14b8e
 
 The VPS preflight reported `cd14b8e8eb8e36af0109bd3f691b770b6b70fd0b`,
 which contains 13 commits absent from the original repair branch. Deploying
@@ -24,7 +24,7 @@ Integration branch: `codex/smc-crash-safety-integration`, created from that
 running revision. It merges repair commit
 `5e494b88f32a69c098eb2e04f97f63ce4d796a70` without conflicts.
 All 26 files changed by the 13 running-only commits were compared against
-`cd14b8e` and remain unchanged, including Adaptive Lab, lab mode saving,
+`cd14b8e` and were unchanged in that integration, including Adaptive Lab, lab mode saving,
 SMC labels, and report/probe scripts. The repair's production files also
 match `5e494b8` exactly. No additional production-code changes were needed.
 
@@ -39,6 +39,33 @@ Integration validation:
 - Protected SMC source and freeze fixtures/tests: unchanged.
 - No publication, deployment, production restart, mode change, or history
   deletion was performed during integration.
+
+### Updated integration: running revision 3ae62d8
+
+The next VPS preflight reported
+`3ae62d8ece400d6afa19fa40718447964da69504`, a direct child of `cd14b8e`
+adding the view-only Adaptive MTF Trading Instance mirror. The guard again
+stopped before switching the VPS checkout or building/restarting the app.
+
+With operator approval, this commit was merged into the existing
+`codex/smc-crash-safety-integration` branch without conflicts or history
+rewriting. All 27 files changed between the common base `95fe0c9` and
+`3ae62d8` were compared and are preserved exactly. The P0 repair production
+files still match `5e494b8`. No manual production-code changes were needed.
+
+Updated validation:
+
+- Focused safety/agent/broker/Adaptive Lab set, including the unchanged
+  journal-boundary reproduction: **313 passed**.
+- Source and behavior protection checks: **27 passed**.
+- Dashboard TypeScript check: passed; dependencies unchanged.
+- Full integrated Python suite: **3,677 passed, 15 skipped, 87 warnings**
+  in **285.66 seconds**, exit status 0.
+- Protected SMC source, strategy behavior and freeze fixtures unchanged.
+- Paper/live routing settings unchanged; tests run with
+  `HUB_ENABLE_EXTERNAL_LIVE=0`.
+- No production restart, deployment, mode change, or history deletion.
+  Publication status is tracked by Git, not proof of deployment.
 
 ## Root cause and execution trace
 
