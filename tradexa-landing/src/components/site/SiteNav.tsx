@@ -89,7 +89,7 @@ export function SiteNav() {
                 onFocus={() => prefetchRoute(r.path)}
                 className={({ isActive }) =>
                   cn(
-                    "relative rounded-lg px-3 py-2 text-sm transition-colors",
+                    "group relative rounded-lg px-3 py-2 text-sm transition-colors",
                     isActive ? "text-white" : "text-white/55 hover:text-white",
                   )
                 }
@@ -97,6 +97,11 @@ export function SiteNav() {
                 {({ isActive }) => (
                   <>
                     {r.label}
+                    {/* hover: a faint underline draws out from the centre;
+                        the active route keeps its own sliding accent bar */}
+                    {!isActive && (
+                      <span aria-hidden className="absolute inset-x-3 -bottom-px h-px origin-center scale-x-0 rounded-full bg-white/35 transition-transform duration-300 ease-out group-hover:scale-x-100" />
+                    )}
                     {isActive && (
                       <motion.span
                         layoutId="nav-active"

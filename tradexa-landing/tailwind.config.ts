@@ -102,6 +102,11 @@ export default {
         sans: ["Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
         mono: ["JetBrains Mono", "SFMono-Regular", "Menlo", "monospace"],
       },
+      spacing: {
+        // `h-13` (the large button) was used but never defined, so large
+        // buttons had no height at all and sized to whatever their content did.
+        13: "3.25rem",
+      },
       borderRadius: {
         xl: "1rem",
         "2xl": "1.25rem",
@@ -189,6 +194,21 @@ export default {
           "0%": { transform: "translateX(0)" },
           "100%": { transform: "translateX(-50%)" },
         },
+        // Light travelling across gold type. Background-position only: no
+        // layout, no repaint of anything but the glyphs themselves.
+        "gold-pan": {
+          "0%": { backgroundPosition: "0% 50%" },
+          "100%": { backgroundPosition: "200% 50%" },
+        },
+        // A conic highlight orbiting a card's border.
+        "orbit": {
+          "0%": { transform: "translate(-50%, -50%) rotate(0deg)" },
+          "100%": { transform: "translate(-50%, -50%) rotate(360deg)" },
+        },
+        "rise-in": {
+          "0%": { opacity: "0", transform: "translateY(8px) scale(0.98)" },
+          "100%": { opacity: "1", transform: "translateY(0) scale(1)" },
+        },
       },
       animation: {
         "fade-up": "fade-up 0.6s cubic-bezier(0.22,1,0.36,1) both",
@@ -204,6 +224,9 @@ export default {
         "caret-blink": "caret-blink 1.1s step-end infinite",
         "ping-ring": "ping-ring 2.2s cubic-bezier(0,0,0.2,1) infinite",
         "tape-scroll": "tape-scroll 38s linear infinite",
+        "gold-pan": "gold-pan 7s linear infinite",
+        orbit: "orbit 9s linear infinite",
+        "rise-in": "rise-in 0.5s cubic-bezier(0.22,1,0.36,1) both",
       },
     },
   },

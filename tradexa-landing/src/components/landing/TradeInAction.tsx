@@ -88,7 +88,7 @@ export function TradeInAction() {
           link="/live-trade"
           eyebrow="How it trades"
           title="Watch Nexus take a trade"
-          subtitle="One decision cycle, start to finish — a setup is spotted, scored, risk-sized, executed, and managed to target. Every step is the same logic the live engine runs."
+          subtitle="One decision cycle, start to finish — a setup is spotted, scored, risk-sized, executed, and managed to target. Every step mirrors the engine's logic, shown here with sample data."
         />
 
         <div className="mt-14 grid gap-6 lg:grid-cols-[1.15fr_1fr] lg:gap-10">
@@ -96,7 +96,7 @@ export function TradeInAction() {
           <Reveal>
             <div className="rounded-2xl border border-line-strong bg-ink-800/40 p-4 sm:p-6">
               <div className="mb-3 flex items-center justify-between text-xs text-white/45">
-                <span className="font-medium text-white/70">BTC/USDT · 1H · paper</span>
+                <span className="font-medium text-white/70">BTC/USDT · 1H · paper · sample data</span>
                 <span className={cn("rounded-full border px-2 py-0.5 font-mono transition-colors",
                   done ? "border-emerald/40 text-emerald" : "border-line-strong text-white/50")}>
                   {done ? "closed +2.4R" : entered ? "in trade" : "scanning"}

@@ -26,8 +26,8 @@ const STAGES: Stage[] = [
   { icon: Waypoints, name: "Structure & Trend", detail: "Reads market structure, trend shifts and confirmations.", metric: "analyze", tone: "dim" },
   { icon: BrainCircuit, name: "Decision Brain", detail: "Scores every setup 0–100. Only high-quality trades pass.", metric: "score ≥ 60", tone: "gold" },
   { icon: ShieldCheck, name: "Risk Gate", detail: "Position size, stop, take-profit and daily-loss guard.", metric: "enforced", tone: "emerald" },
-  { icon: Zap, name: "Execution", detail: "Routes the order in paper or connected mode, sub-100ms.", metric: "< 100ms", tone: "emerald" },
-  { icon: Database, name: "Journal & Memory", detail: "Every trade is stored, reviewed and learned from — forever.", metric: "persisted", tone: "gold" },
+  { icon: Zap, name: "Execution", detail: "Places the order on the paper broker. Live routing is locked.", metric: "paper", tone: "emerald" },
+  { icon: Database, name: "Journal & Memory", detail: "Every trade is stored, reviewed and learned from.", metric: "persisted", tone: "gold" },
 ];
 
 const DOT: Record<Stage["tone"], string> = {
@@ -50,8 +50,9 @@ export function EnginePipeline() {
         />
 
         <div className="mt-14 grid gap-6 lg:grid-cols-[1fr_1fr] lg:gap-10">
-          {/* pipeline */}
-          <Reveal>
+          {/* pipeline — min-w-0 lets each grid column shrink below its
+              content, which is what kept the page 566px wide on a phone */}
+          <Reveal className="min-w-0">
             <ol className="relative">
               {/* vertical rail */}
               <span className="absolute left-[1.35rem] top-4 bottom-4 w-px bg-gradient-to-b from-gold/40 via-line-strong to-emerald/40" />
@@ -90,7 +91,7 @@ export function EnginePipeline() {
           </Reveal>
 
           {/* live engine log */}
-          <Reveal delay={0.15} className="lg:sticky lg:top-24 lg:self-start">
+          <Reveal delay={0.15} className="min-w-0 lg:sticky lg:top-24 lg:self-start">
             <LiveTerminal />
             <p className="mt-3 px-1 font-mono text-[11px] leading-relaxed text-white/35">
               // representative engine output · paper mode · not a live account

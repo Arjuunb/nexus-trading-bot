@@ -39,6 +39,9 @@ export function LandingAmbient() {
       <div className="absolute -bottom-56 right-[-12rem] h-[30rem] w-[40rem] rounded-full bg-emerald-deep/[0.05] blur-[150px] motion-safe:animate-bloom-slow" />
       <div className="absolute bottom-1/4 left-[-14rem] h-[24rem] w-[30rem] rounded-full bg-gold-deep/[0.035] blur-[140px]" />
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_58%,rgba(0,0,0,0.6))]" />
+      {/* fine grain over the whole backdrop: the big soft blooms read as
+          light in a room instead of as gradient banding */}
+      <div className="grain absolute inset-0 opacity-[0.035] mix-blend-overlay" />
     </Ambient>
   );
 }

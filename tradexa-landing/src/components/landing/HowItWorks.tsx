@@ -10,9 +10,9 @@ interface Step {
 }
 
 const STEPS: Step[] = [
-  { n: "01", icon: Link2, title: "Connect Exchange", body: "Link Binance, Bybit or OKX with read + trade API keys — never withdrawals." },
+  { n: "01", icon: Link2, title: "Connect Market Data", body: "Nexus streams live Binance market data. More venues are on the roadmap." },
   { n: "02", icon: SlidersHorizontal, title: "Configure Strategy", body: "Pick a strategy, set your risk limits, choose symbols and timeframe." },
-  { n: "03", icon: Play, title: "Go Live", body: "Deploy in paper or connected mode. The engine watches the market for you." },
+  { n: "03", icon: Play, title: "Go Live", body: "Deploy in paper mode. The engine watches the market for you; live routing stays locked." },
   { n: "04", icon: LineChart, title: "Watch It Learn", body: "Every trade, decision and lesson is remembered — its understanding of your trading compounds." },
 ];
 

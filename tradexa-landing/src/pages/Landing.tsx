@@ -7,6 +7,7 @@ import { SiteNav } from "@/components/site/SiteNav";
 import { LandingAmbient } from "@/components/site/backdrops";
 import { Hero } from "@/components/landing/Hero";
 import { EngineStatusBar } from "@/components/landing/EngineStatusBar";
+import { ScrollProgress } from "@/components/motion/ScrollProgress";
 
 // Everything below the fold is split AND deferred. Splitting alone would not
 // help: a lazy component that renders immediately fetches its chunk
@@ -36,6 +37,7 @@ export default function Landing() {
           sat on the same drifting grid. The grid itself is no longer part of
           it — it is a texture the hero and two sections opt into below. */}
       <LandingAmbient />
+      <ScrollProgress />
       <SiteNav />
       <Hero />
       <div className="mt-16 sm:mt-24">

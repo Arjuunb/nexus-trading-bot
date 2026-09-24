@@ -2,6 +2,7 @@ import { ArrowRight, ShieldCheck, Eye, Ban } from "lucide-react";
 import { GridTexture } from "@/components/site/backdrops";
 import { Reveal } from "@/components/Reveal";
 import { Button } from "@/components/ui/Button";
+import { Magnetic } from "@/components/motion/Magnetic";
 import { BrainScanner } from "./BrainScanner";
 import { APP_URL, SIGNUP_URL } from "@/lib/utils";
 
@@ -19,7 +20,16 @@ export function FinalCta() {
       {/* closes the page on the same texture it opened with */}
       <GridTexture />
       <div className="container-x">
-        <div className="surface relative overflow-hidden px-6 py-14 sm:px-12">
+        {/* A slow light orbits the card's 1px border: the frame is a conic
+            gradient turning behind an opaque card inset by one pixel. */}
+        <div className="relative overflow-hidden rounded-2xl p-px shadow-[0_40px_120px_-40px_rgba(200,169,75,0.25)]">
+          <div aria-hidden className="absolute inset-0 rounded-2xl bg-line" />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 aspect-square w-[180%] -translate-x-1/2 -translate-y-1/2 motion-safe:animate-orbit"
+            style={{ background: "conic-gradient(from 0deg, transparent 0deg 250deg, rgba(231,206,134,0.65) 300deg, transparent 340deg)" }}
+          />
+        <div className="relative overflow-hidden rounded-[calc(1.25rem-1px)] bg-ink-800 px-6 py-14 sm:px-12">
           <div className="pointer-events-none absolute inset-0 bg-radial-fade" />
           <div className="relative grid items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
             <Reveal>
@@ -43,15 +53,17 @@ export function FinalCta() {
                 ))}
               </ul>
 
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-                <a href={APP_URL}>
-                  <Button size="lg" className="group">
-                    Launch Platform
-                    <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-                  </Button>
-                </a>
-                <a href={SIGNUP_URL}>
-                  <Button size="lg" variant="secondary">
+              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <Magnetic>
+                  <a href={APP_URL} className="w-full sm:w-auto">
+                    <Button size="lg" className="group w-full sm:w-auto">
+                      Launch Platform
+                      <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />
+                    </Button>
+                  </a>
+                </Magnetic>
+                <a href={SIGNUP_URL} className="w-full sm:w-auto">
+                  <Button size="lg" variant="secondary" className="w-full sm:w-auto">
                     Create free account
                   </Button>
                 </a>
@@ -65,6 +77,7 @@ export function FinalCta() {
               </p>
             </Reveal>
           </div>
+        </div>
         </div>
       </div>
     </section>

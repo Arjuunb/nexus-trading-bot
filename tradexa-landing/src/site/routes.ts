@@ -138,11 +138,11 @@ const SECONDARY: SitePage[] = [
   {
     path: "/performance",
     label: "Performance",
-    title: "Performance — the numbers, and how they were produced",
+    title: "Performance — what is verified, and what is not",
     description:
-      "Understand TradeLogX Nexus performance through equity curves, return distributions, execution costs and attribution by strategy, symbol and regime.",
+      "TradeLogX Nexus publishes no performance figure it cannot back. See the recorded strategy validation and the method a result must pass to appear here.",
     accent: "emerald",
-    blurb: "Results, methodology and cost drag",
+    blurb: "Recorded validation and method",
     themeColor: "#06090B",
     load: () => import("@/pages/site/Performance"),
   },

@@ -67,6 +67,36 @@ def remote_call_with_retry(operation, *, attempts: int = 3):
             time.sleep(0.1 * (2 ** attempt))
 
 
+def _is_duplicate_key(exc: Exception) -> bool:
+    return (str(getattr(exc, "code", "")) == "23505"
+            or "duplicate key" in str(exc).lower())
+
+
+def write_log_row(operation) -> bool:
+    """Write one log row. A log line is a record, never a reason to stop a worker.
+
+    A pooled Supabase connection the server has closed fails the next request
+    with a transport error (``ReadError: Broken pipe``); that is retried with
+    the SAME row, so its id is unchanged. If an earlier attempt did reach the
+    server and only the reply was lost, the retry meets the primary key: the
+    row is already there, which is success. Anything that still fails is
+    reported on stdout and swallowed -- before this, one lost log line stopped
+    two Trading Instances mid catch-up ("Unknown internal error").
+
+    Only log rows are written this way. Positions, trades and orders keep
+    their own writes and still fail closed.
+    """
+    try:
+        remote_call_with_retry(operation)
+        return True
+    except Exception as exc:  # noqa: BLE001 -- see docstring
+        if _is_duplicate_key(exc):
+            return True
+        print(f"[ledger] log line not written, continuing: {type(exc).__name__}: {exc}"[:500],
+              flush=True)
+        return False
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -954,12 +984,12 @@ class SupabaseLedger:
             return q.order("opened_at", desc=True).execute()
         return remote_call_with_retry(query).data
 
-    def log(self, *, level, stage, message, symbol="", instance_id=""):  # pragma: no cover
+    def log(self, *, level, stage, message, symbol="", instance_id=""):
         row = {"id": _id(), "ts": _now(), "symbol": symbol,
                "level": level, "stage": stage, "message": message}
         if instance_id:
             row["instance_id"] = instance_id
-        self._t("bot_logs").insert(row).execute()
+        write_log_row(lambda: self._t("bot_logs").insert(row).execute())
 
     def get_logs(self, limit=200, instance_id=""):  # pragma: no cover
         def query():

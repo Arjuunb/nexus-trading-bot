@@ -110,7 +110,7 @@ export function LiveTerminal({ className }: { className?: string }) {
             >
               <span className="shrink-0 text-white/25">{ts}</span>
               <span className={cn("w-11 shrink-0 uppercase", TAG_COLOR[line.tone])}>{line.tag}</span>
-              <span className="truncate text-white/70">{line.text}</span>
+              <span className="min-w-0 truncate text-white/70">{line.text}</span>
             </motion.div>
           ))}
         </AnimatePresence>

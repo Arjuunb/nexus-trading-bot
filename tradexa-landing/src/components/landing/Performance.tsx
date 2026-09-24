@@ -10,10 +10,14 @@ interface Metric {
   sub: string;
 }
 
+// Counts taken from the platform's own configuration (data.historical SYMBOLS,
+// services/mtf_policy TIMEFRAME_SECONDS). The band used to show "99.9%
+// uptime" and "<100ms order routing" -- neither was measured, and there is
+// no live order routing to time.
 const METRICS: Metric[] = [
-  { value: 99.9, decimals: 1, suffix: "%", label: "Platform Uptime", sub: "Resilient, always-on infrastructure" },
-  { value: 100, prefix: "<", suffix: "ms", label: "Execution", sub: "Order routing latency target" },
-  { value: 24, suffix: "/7", label: "Risk Protected", sub: "Guards enforced around the clock" },
+  { value: 8, label: "Markets supported", sub: "BTC, ETH, SOL, XRP and more on Binance USDⓈ-M" },
+  { value: 6, label: "Timeframes", sub: "1m to 1d, decided on closed candles only" },
+  { value: 24, suffix: "/7", label: "Risk Guards", sub: "Checked on every candle the engine runs" },
 ];
 
 function MetricStat({ m }: { m: Metric }) {
@@ -51,8 +55,8 @@ export function Performance() {
               ))}
             </div>
             <p className="relative mt-12 text-center text-xs text-white/35">
-              Figures reflect the platform&apos;s engineering targets and always-on design — not a
-              guarantee of trading returns.
+              Counts from the platform&apos;s current configuration — not a measure or guarantee of
+              trading returns.
             </p>
           </div>
         </Reveal>

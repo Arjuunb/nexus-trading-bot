@@ -14,6 +14,7 @@ import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { FeatureDemo, type DemoKind } from "@/components/landing/FeatureDemos";
 import { cn } from "@/lib/utils";
+import { VENUES } from "@/site/platform";
 
 interface Feature {
   icon: LucideIcon;
@@ -43,7 +44,7 @@ const FEATURES: Feature[] = [
   {
     icon: History,
     title: "Nexus Strategy Lab",
-    body: "Backtest and optimise your strategies against years of historical data before risking a single dollar.",
+    body: "Backtest and optimise your strategies against historical market data before risking a single dollar.",
     demo: "equity",
   },
   {
@@ -62,13 +63,8 @@ const FEATURES: Feature[] = [
   {
     icon: Building2,
     title: "Exchange Support",
-    body: "Connect the venues you already trade on.",
-    exchanges: [
-      { name: "Binance" },
-      { name: "Bybit" },
-      { name: "OKX" },
-      { name: "Hyperliquid", soon: true },
-    ],
+    body: "Live Binance market data today. More venues as each integration passes safety review.",
+    exchanges: VENUES.slice(0, 4).map((v) => ({ name: v.name, soon: !v.live })),
   },
 ];
 
@@ -119,7 +115,7 @@ export function Features() {
                       {f.exchanges.map((e) => (
                         <Badge key={e.name} tone={e.soon ? "neutral" : "gold"}>
                           {e.name}
-                          {e.soon && <span className="text-white/40">· Soon</span>}
+                          {e.soon && <span className="text-white/40">· Roadmap</span>}
                         </Badge>
                       ))}
                     </div>

@@ -67,6 +67,42 @@ Updated validation:
 - No production restart, deployment, mode change, or history deletion.
   Publication status is tracked by Git, not proof of deployment.
 
+### Latest integration: VPS baseline 44b0258
+
+The VPS subsequently reported `44b02580357edf29fda6e709c57843704a9017d6`.
+Its six additional commits include Supabase log-write resilience, dashboard
+styling and landing-page content/build corrections. They were merged into
+the integration branch without conflicts. All 56 files changed from the
+common base `95fe0c9` to `44b0258` are preserved exactly, and the P0
+repair's production files still match `5e494b8`.
+
+- Focused safety/agent/broker/Adaptive Lab/Supabase resilience set:
+  **318 passed**, including the unchanged original journal-boundary test.
+- SMC source/behavior protection checks: **27 passed**.
+- Dashboard typecheck and production build: passed.
+- Landing typecheck, client/SSR builds and pre-render of 20 routes: passed.
+- Full integrated Python suite: **3,682 passed, 15 skipped, 84 warnings**
+  in **284.10 seconds**.
+- Frontend builds used existing dependencies with matching lockfiles;
+  temporary dependency links were removed. No dependency changes.
+
+A read-only SSH check during validation observed another independently
+recreated app container, subsequently confirmed by `/version` as
+`fd5285d9e5d3d3d63eb785a6379e6f48a7b3c958` on
+`claude/focused-gates-q5nse7`. That revision is NOT included by this
+44b0258 integration. The existing external data volume remained mounted;
+the root filesystem had 31 GB free at inspection. No VPS restart, deployment,
+mode change or data mutation was performed by this task.
+
+**Do not deploy this candidate over a later non-ancestor revision.**
+Coordinate the concurrent deployment first; local tests are not production
+validation and do not waive the ancestry or backup checks.
+
+The concurrently deployed revision adds six further commits affecting 112
+files, including security/key custody, encrypted backups, a public API,
+SDKs and signed webhooks. These changes were fetched/read for diagnosis only;
+they were not merged or modified in this validation.
+
 ## Root cause and execution trace
 
 The old agent called the lab's approval path from inside a journal

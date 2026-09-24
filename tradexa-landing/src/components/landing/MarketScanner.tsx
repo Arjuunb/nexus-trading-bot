@@ -64,7 +64,7 @@ export function MarketScanner() {
           <Reveal>
             <div className="rounded-2xl border border-line-strong bg-ink-800/40 p-4 sm:p-6">
               <div className="mb-4 flex items-center justify-between text-xs text-white/45">
-                <span className="font-medium text-white/70">Watchlist scan · live</span>
+                <span className="font-medium text-white/70">Watchlist scan · demo</span>
                 <span className="font-mono">{scannedTake} of {scannedAll || 0} taken</span>
               </div>
               <ol className="flex flex-col gap-2">

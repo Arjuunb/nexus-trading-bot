@@ -196,27 +196,33 @@ export function DashboardPreview() {
       </motion.div>
 
       {/* floating chips — anchored to sit OUTSIDE the panel (above / below-right)
-          so they never overlap the dashboard content */}
-      <motion.div
-        className="absolute left-4 top-0 hidden -translate-y-[135%] lg:block"
-        animate={{ y: [0, -8, 0] }}
-        transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
-      >
-        <div className="glass-strong flex items-center gap-2 rounded-xl px-3 py-2 shadow-card">
-          <span className="h-2 w-2 rounded-full bg-emerald" />
+          so they never overlap the dashboard content. The anchor offset and
+          the float are on separate elements: framer-motion writes its own
+          inline transform for `y`, which replaced the Tailwind translate when
+          both sat on one element and dropped the chips onto the panel. */}
+      <div className="absolute left-4 top-0 hidden -translate-y-[135%] lg:block">
+        <motion.div
+          animate={{ y: [0, -8, 0] }}
+          transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
+          className="glass-strong flex items-center gap-2 rounded-xl px-3 py-2 shadow-card"
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald opacity-60 motion-safe:animate-ping" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald" />
+          </span>
           <span className="text-[11px] text-white/80">Market Status · Open</span>
-        </div>
-      </motion.div>
-      <motion.div
-        className="absolute -right-4 bottom-0 hidden translate-y-[60%] lg:block"
-        animate={{ y: [0, 10, 0] }}
-        transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-      >
-        <div className="glass-strong rounded-xl px-3 py-2 shadow-card">
+        </motion.div>
+      </div>
+      <div className="absolute -right-4 bottom-0 hidden translate-y-[60%] lg:block">
+        <motion.div
+          animate={{ y: [0, 10, 0] }}
+          transition={{ duration: 6, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+          className="glass-strong rounded-xl px-3 py-2 shadow-card"
+        >
           <p className="text-[10px] uppercase tracking-wider text-white/40">Execution</p>
-          <p className="tabular text-sm font-semibold text-gold-soft">&lt; 100ms</p>
-        </div>
-      </motion.div>
+          <p className="text-sm font-semibold text-gold-soft">Paper broker</p>
+        </motion.div>
+      </div>
     </div>
   );
 }
