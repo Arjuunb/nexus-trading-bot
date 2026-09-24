@@ -104,3 +104,32 @@ def test_live_chart_and_journal_routes(api):
     lab.configure(mode="off")
     off = client.get("/research/adaptive-lab/live-chart")
     assert off.status_code == 503 and off.json()["detail"]["code"] == "NO_LIVE_FEED"
+
+
+def test_every_read_can_show_a_mirrored_trading_instance_and_refuses_unknown_ones(api, tmp_path):
+    from tests.test_adaptive_lab import _instance, _instances
+    client, lab = api
+    lab.ensure_started()
+    instances, _cycles = _instances(tmp_path, lab.manager.market_hub)
+    lab.attach_instances(instances)
+    inst = _instance(instances)
+    try:
+        status = client.get("/research/adaptive-lab/status", params={"source": inst.id}).json()
+        assert [row["id"] for row in status["sources"]] == ["lab", inst.id]
+        assert status["view"]["kind"] == "instance" and status["view"]["bot_id"] == inst.id
+        assert status["bot_id"] != inst.id                     # the lab's own fields stay the lab's
+        for path in ("/paper", "/state", "/timeline", "/journal", "/live-chart"):
+            response = client.get(f"/research/adaptive-lab{path}", params={"source": inst.id})
+            assert response.status_code == 200, (path, response.text)
+        # The strategy publishes no chart features, mirrored or not; nothing is invented.
+        for source in ("lab", inst.id):
+            response = client.get("/research/adaptive-lab/features", params={"source": source})
+            assert response.status_code == 501
+            assert response.json()["detail"]["code"] == "FEATURES_NOT_EXPOSED"
+        assert client.get("/research/adaptive-lab/live-chart",
+                          params={"source": inst.id}).json()["bot_id"] == inst.id
+        for path in ("/status", "/paper", "/state", "/journal", "/live-chart", "/timeline"):
+            response = client.get(f"/research/adaptive-lab{path}", params={"source": "not-an-instance"})
+            assert response.status_code == 404, (path, response.status_code)
+    finally:
+        instances.shutdown()

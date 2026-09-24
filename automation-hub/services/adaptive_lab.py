@@ -33,6 +33,13 @@ Modes are what this execution path can honestly do:
 There is no manual-approval mode: the instance engine has no approval queue,
 and a mode that looked like one without being one would be worse than none.
 
+The lab can also MIRROR a Trading Instance that runs this strategy: the same
+chart, orders, trades and journal, read from that instance's own manager and
+ledger. A mirror is view only -- it never starts, stops or configures the
+instance -- and the instance's per-candle journal rows are written by a tee
+on its existing report hook (InstanceReportTee), after the instances' own
+store has recorded the candle, so nothing about how it trades changes.
+
 Paper only. Nothing here can reach an exchange order endpoint.
 """
 from __future__ import annotations
@@ -43,6 +50,7 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
+from services.mtf_policy import TIMEFRAME_SECONDS
 from services.trading_instances import TradingInstance, TradingInstanceManager
 
 STRATEGY_KEY = "adaptive_trend_pullback"
@@ -56,6 +64,7 @@ MAX_SYMBOL_BOTS = 50
 MODES = ("automatic", "signals_only", "off")
 MODE_LABELS = {"automatic": "Automatic paper", "signals_only": "Signals only", "off": "Off"}
 _EXPOSED_ORDER_KEYS = ("forward_paper_intents", "strategy_limit_intents", "quarantined_intents")
+LAB_SOURCE = "lab"
 
 
 class AdaptiveLabError(ValueError):
@@ -95,13 +104,16 @@ class AdaptiveJournal:
               BEGIN SELECT RAISE(ABORT, 'adaptive journal is append-only'); END;
         """)
         self._c.commit()
-        self._manager = None
+        self._managers: list = []
 
     def bind(self, manager) -> None:
-        self._manager = manager
+        """Read strategy reports from this manager's workers (lab or instances)."""
+        if all(bound is not manager for bound in self._managers):
+            self._managers.append(manager)
 
     def _strategy_report(self, instance_id: str, symbol: str) -> dict:
-        runtime = getattr(self._manager, "_runtime", {}).get(instance_id) if self._manager else None
+        runtime = next((m._runtime.get(instance_id) for m in self._managers
+                        if instance_id in getattr(m, "_runtime", {})), None)
         live = getattr(runtime[0], "_live_strategies", {}) if runtime else {}
         strategy = live.get(symbol) or live.get(str(symbol).upper())
         report = getattr(strategy, "decision_report", None)
@@ -145,6 +157,36 @@ class AdaptiveJournal:
         return out
 
 
+class InstanceReportTee:
+    """The Trading Instances' per-candle report hook, with the lab journal beside it.
+
+    Every report goes to the instances' own store first, exactly as before.
+    Only then, and only for an instance running this strategy, the same
+    report is journaled with the strategy's own decision for that candle. A
+    journal failure is contained here: it can neither reach the engine nor
+    undo the instances' own record. Anything else asked of the hook is the
+    original store's.
+    """
+
+    def __init__(self, primary, journal: "AdaptiveJournal", manager):
+        self.primary = primary
+        self.journal = journal
+        self.manager = manager
+
+    def record(self, report: dict):
+        result = self.primary.record(report) if self.primary is not None else None
+        try:
+            inst = self.manager._instances.get(str(report.get("instance_id") or ""))
+            if inst is not None and inst.strategy_key == STRATEGY_KEY:
+                self.journal.record(report)
+        except Exception as exc:  # noqa: BLE001 -- the journal never blocks the instance
+            print(f"[adaptive-lab] instance journal row skipped: {type(exc).__name__}: {exc}")
+        return result
+
+    def __getattr__(self, name):
+        return getattr(self.primary, name)
+
+
 class AdaptiveLab:
     def __init__(self, ledger, *, strategy_factory: Callable[[str, str], object],
                  strategy_version: str, live_poll_s: float = 5.0,
@@ -171,6 +213,7 @@ class AdaptiveLab:
             market_hub=market_hub, symbol_rules_provider=symbol_rules_provider,
             paper_account_capital=capacity, cycle_store=self.journal)
         self.journal.bind(self.manager)
+        self.instances: Optional[TradingInstanceManager] = None
         self._lock = threading.RLock()
         # One bot trades at a time; switching symbol stops the old one first.
         # A lab that has never had a bot starts on XRPUSDT. The selection is
@@ -179,6 +222,86 @@ class AdaptiveLab:
         self.manager.configure(
             max_active_slots=1, paper_account_capital=capacity,
             defaults={"default_symbol": DEFAULT_SYMBOL} if first_use else None)
+
+    # ------------------------------------------------- Trading Instance mirror
+    def attach_instances(self, manager: TradingInstanceManager) -> None:
+        """Mirror the Trading Instances that run this strategy (view only).
+
+        Their per-candle reports keep going to their own store; the tee adds
+        a lab journal row beside each one for this strategy's instances.
+        Workers started later pick the tee up from the manager; workers
+        already running are handed it too, so attach order cannot matter.
+        """
+        self.instances = manager
+        self.journal.bind(manager)
+        if isinstance(manager.cycle_store, InstanceReportTee):
+            return
+        primary = manager.cycle_store
+        tee = InstanceReportTee(primary, self.journal, manager)
+        manager.cycle_store = tee
+        for runtime in list(manager._runtime.values()):
+            engine = runtime[0] if runtime else None
+            if engine is not None and getattr(engine, "reports", None) is primary:
+                engine.reports = tee
+
+    def _mirrored(self) -> list[TradingInstance]:
+        if self.instances is None:
+            return []
+        return sorted((inst for inst in self.instances._instances.values()
+                       if inst.strategy_key == STRATEGY_KEY and inst.mode == "trading"),
+                      key=lambda inst: inst.created_at)
+
+    @staticmethod
+    def _armed(manager: TradingInstanceManager, inst: TradingInstance) -> bool:
+        runtime = manager._runtime.get(inst.id)
+        return bool(runtime and manager.worker_alive(inst.id) and runtime[3].trading_allowed())
+
+    def _view(self, source: Optional[str]):
+        """(kind, manager, ledger, instance) for the lab bot or a mirrored instance."""
+        if not source or source == LAB_SOURCE:
+            return "lab", self.manager, self.ledger, self.current()
+        inst = next((row for row in self._mirrored() if row.id == source), None)
+        if inst is None:
+            raise AdaptiveLabError(
+                f"no Trading Instance running {STRATEGY_LABEL} has id {source}")
+        return "instance", self.instances, self.instances.ledger, inst
+
+    def sources(self) -> list[dict]:
+        lab_bot = self.current()
+        rows = [{"id": LAB_SOURCE, "kind": "lab", "symbol": self.selected_symbol(),
+                 "timeframe": TIMEFRAME, "running": bool(lab_bot and self.manager.worker_alive(lab_bot.id)),
+                 "label": f"Lab bot · {self.selected_symbol()} {TIMEFRAME}"}]
+        for inst in self._mirrored():
+            running = self.instances.worker_alive(inst.id)
+            rows.append({"id": inst.id, "kind": "instance", "symbol": inst.symbol,
+                         "timeframe": inst.timeframe, "running": running,
+                         "label": (f"Trading Instance · {inst.symbol} {inst.timeframe} · "
+                                   f"{'running' if running else 'stopped'}")})
+        return rows
+
+    def view(self, source: Optional[str] = None) -> dict:
+        """What the page shows for the chosen source: its bot row and whether it can trade."""
+        kind, manager, _ledger, inst = self._view(source)
+        if inst is None:
+            return {"source": LAB_SOURCE, "kind": kind, "bot": None, "bot_id": None,
+                    "symbol": self.selected_symbol(), "timeframe": TIMEFRAME,
+                    "running": False, "armed": False, "state_label": "No bot yet",
+                    "risk_pct": DEFAULT_RISK_PCT, "capital_allocation": STARTING_EQUITY,
+                    "controlled_from": "this lab"}
+        running = manager.worker_alive(inst.id)
+        armed = self._armed(manager, inst)
+        if kind == "lab":
+            label = MODE_LABELS[self.mode_of(inst)]
+        else:
+            label = ("Running · entries armed" if armed else
+                     "Running · entries paused" if running else "Stopped")
+        return {"source": LAB_SOURCE if kind == "lab" else inst.id, "kind": kind,
+                "bot": manager.status(inst.id), "bot_id": inst.id,
+                "symbol": inst.symbol, "timeframe": inst.timeframe,
+                "running": running, "armed": armed, "state_label": label,
+                "risk_pct": round(float(inst.risk_per_trade_pct) * 100, 6),
+                "capital_allocation": inst.capital_allocation,
+                "controlled_from": "this lab" if kind == "lab" else "Trading Instances"}
 
     # ------------------------------------------------------------ the bots
     def _bots(self) -> list[TradingInstance]:
@@ -291,8 +414,9 @@ class AdaptiveLab:
             return self.status()
 
     # -------------------------------------------------------------- reads
-    def status(self) -> dict:
+    def status(self, source: Optional[str] = None) -> dict:
         inst = self.current()
+        view = self.view(source)
         base = {
             "lab": "ADAPTIVE_MTF_TREND_PULLBACK",
             "strategy": {"key": STRATEGY_KEY, "label": STRATEGY_LABEL,
@@ -303,64 +427,108 @@ class AdaptiveLab:
             "supported_symbols": list(self.supported_symbols) or [DEFAULT_SYMBOL],
             "bots": [{"symbol": b.symbol, "id": b.id, "mode": self.mode_of(b)}
                      for b in sorted(self._bots(), key=lambda b: b.symbol)],
+            "sources": self.sources(),
+            "view": view,
             "paper_only": True, "real_execution_allowed": False,
         }
         if inst is None:
             return {**base, "bot": None, "mode": "off",
                     "risk_pct": DEFAULT_RISK_PCT}
-        row = self.manager.status(inst.id)
+        row = view["bot"] if view["kind"] == "lab" else self.manager.status(inst.id)
         return {**base, "bot": row, "bot_id": inst.id, "mode": self.mode_of(inst),
                 "risk_pct": round(float(inst.risk_per_trade_pct) * 100, 6)}
 
-    def paper(self) -> dict:
-        inst = self.current()
+    def paper(self, source: Optional[str] = None) -> dict:
+        _kind, manager, ledger, inst = self._view(source)
         if inst is None:
             return {"positions": [], "orders": {}, "trades": [], "logs": [],
                     "paper_only": True, "real_execution_allowed": False}
         scope = {"instance_id": inst.id, "simulation_session_id": inst.simulation_session_id}
-        pending = self.manager.store.market_state(inst.id).get("pending_orders_json") or {}
+        pending = manager.store.market_state(inst.id).get("pending_orders_json") or {}
         return {
             "bot_id": inst.id, "symbol": inst.symbol,
-            "positions": self.ledger.get_positions("open", **scope),
+            "positions": ledger.get_positions("open", **scope),
             "orders": {key: pending.get(key) or {} for key in _EXPOSED_ORDER_KEYS},
-            "trades": self.ledger.get_paper_trades(**scope),
-            "logs": self.manager.store.engine_logs(inst.id, 100),
+            "trades": ledger.get_paper_trades(**scope),
+            "logs": manager.store.engine_logs(inst.id, 100),
             "paper_only": True, "real_execution_allowed": False,
         }
 
-    def journal_entries(self, limit: int = 200) -> dict:
-        inst = self.current()
-        rows = self.journal.entries(inst.id, limit) if inst else []
+    def _engine_report_rows(self, inst: TradingInstance, limit: int,
+                            journaled: set[str]) -> list[dict]:
+        """A mirrored instance's candles from before the lab journal saw it.
+
+        The instances' own per-candle store has been recording every candle
+        all along; the lab journal only from the moment the tee was attached.
+        Those earlier candles are shown as what they are -- the engine's
+        report, with its decision and reasons -- and never given a strategy
+        state, quality or R:R the store does not hold.
+        """
+        store = getattr(self.instances.cycle_store, "primary", self.instances.cycle_store)
+        if store is None or not hasattr(store, "list"):
+            return []
+        rows = []
+        for row in store.list(limit=limit, instance_id=inst.id, full=True):
+            identity = str(row.get("decision_identity") or row.get("ts") or "")
+            if identity in journaled:
+                continue
+            report = row.get("report") or {}
+            reasons = [str(r) for r in report.get("reasons") or []]
+            rows.append({
+                "id": f"report-{row['id']}", "instance_id": inst.id, "symbol": inst.symbol,
+                "timeframe": row.get("timeframe"), "candle_time": row.get("ts"),
+                "decision_identity": identity, "engine_decision": row.get("decision"),
+                "price": row.get("price"), "strategy_state": None, "strategy_decision": None,
+                "direction": report.get("side"), "reason": reasons[0] if reasons else None,
+                "quality": None, "entry": None, "stop": None, "target": None, "rr": None,
+                "stages": {}, "engine_reasons": reasons, "evidence": "engine_report"})
+        return rows
+
+    def journal_entries(self, limit: int = 200, source: Optional[str] = None) -> dict:
+        kind, _manager, _ledger, inst = self._view(source)
+        rows = [{**row, "evidence": "strategy_journal"}
+                for row in (self.journal.entries(inst.id, limit) if inst else [])]
+        if kind == "instance" and len(rows) < limit:
+            journaled = {str(row.get("decision_identity") or "") for row in rows}
+            rows = sorted(rows + self._engine_report_rows(inst, limit, journaled),
+                          key=lambda row: str(row.get("candle_time") or ""), reverse=True)[:limit]
         tally: dict[str, int] = {}
         for row in rows:
-            key = str(row.get("strategy_state") or "UNKNOWN")
+            key = (str(row.get("strategy_state") or "UNKNOWN")
+                   if row["evidence"] == "strategy_journal" else "ENGINE_REPORT_ONLY")
             tally[key] = tally.get(key, 0) + 1
-        return {"bot_id": inst.id if inst else None, "symbol": self.selected_symbol(),
+        return {"bot_id": inst.id if inst else None,
+                "symbol": inst.symbol if inst else self.selected_symbol(),
                 "entries": rows, "state_counts": tally,
                 "note": ("One row per closed candle the bot judged, written as it decided. "
-                         "Append-only."),
+                         "Append-only. Rows marked engine report predate the lab journal: "
+                         "the instance's own report for that candle, without strategy state."),
                 "paper_only": True, "real_execution_allowed": False}
 
-    def live_chart(self, window: int = 400) -> dict:
+    def live_chart(self, window: int = 400, source: Optional[str] = None) -> dict:
         """The bot's own Binance feed, in the shape the SMC lab's chart draws.
 
         Read from the bot's hub subscription -- the same closed candles its
         strategy decides on, plus the forming candle and the bid/ask/mark the
         hub holds. The forming candle is display only and is labelled so.
         """
-        inst = self.current()
+        kind, manager, ledger, inst = self._view(source)
         if inst is None:
             raise AdaptiveLabError("the lab has no bot yet; choose a mode to start one")
-        runtime = self.manager._runtime.get(inst.id)
+        runtime = manager._runtime.get(inst.id)
         feed = getattr(runtime[0], "ws_feed", None) if runtime else None
-        if feed is None or not self.manager.worker_alive(inst.id):
-            raise AdaptiveLabError(f"the {inst.symbol} bot is off, so it has no live feed to show")
+        who = f"the {inst.symbol} bot" if kind == "lab" else f"the {inst.symbol} Trading Instance"
+        if feed is None or not manager.worker_alive(inst.id):
+            raise AdaptiveLabError(f"{who} is off, so it has no live feed to show")
+        if not callable(getattr(feed, "snapshot", None)):
+            raise AdaptiveLabError(f"{who} is not on the Binance USD-M hub feed, so there is "
+                                   "no forming candle or quote to show")
         snapshot = feed.snapshot()
         status = snapshot.get("connection") or {}
         quote = snapshot.get("quote") or {}
         closed = list(snapshot.get("closed_bars") or [])[-max(20, int(window)):]
         forming = snapshot.get("forming")
-        step = timedelta(minutes=5)
+        step = timedelta(seconds=TIMEFRAME_SECONDS.get(inst.timeframe, 300))
 
         def candle(bar) -> dict:
             return {"timestamp": bar.timestamp.isoformat(), "open": float(bar.open),
@@ -371,8 +539,8 @@ class AdaptiveLab:
                       float(closed[-1].close) if closed else None)
         reliable = bool(status.get("reliable"))
         scope = {"instance_id": inst.id, "simulation_session_id": inst.simulation_session_id}
-        positions = self.ledger.get_positions("open", **scope)
-        trades = self.ledger.get_paper_trades(**scope)
+        positions = ledger.get_positions("open", **scope)
+        trades = ledger.get_paper_trades(**scope)
         fills = []
         for trade in trades:
             if trade.get("opened_at") and trade.get("entry") is not None:
@@ -388,7 +556,8 @@ class AdaptiveLab:
             plan = {"entry": float(p["entry"]), "stop": float(p["stop"]),
                     "target_1": float(p["target"]), "target_2": float(p["target"])}
         return {
-            "symbol": inst.symbol, "timeframe": TIMEFRAME, "bot_id": inst.id,
+            "symbol": inst.symbol, "timeframe": inst.timeframe, "bot_id": inst.id,
+            "source": LAB_SOURCE if kind == "lab" else inst.id,
             "candles": [candle(bar) for bar in closed],
             "forming_candle": candle(forming) if forming is not None else None,
             "live_display": {
@@ -410,7 +579,7 @@ class AdaptiveLab:
                 "last_closed_candle": closed[-1].timestamp.isoformat() if closed else None,
                 "closed_candles_loaded": len(closed),
                 "exchange": "Binance USDⓈ-M Futures",
-                "market_data_source": "the bot's own subscription to the shared Binance hub",
+                "market_data_source": (f"{who}'s own subscription to the shared Binance hub"),
             },
             "trade_plan": plan, "fills": fills,
             "paper_only": True, "real_execution_allowed": False,

@@ -994,6 +994,10 @@ adaptive_lab = AdaptiveLab(
     symbol_rules_provider=v2_market_data.usdm_symbol_rules,
     supported_symbols=tuple(_ADAPTIVE_SYMBOLS),
     journal=AdaptiveJournal(settings.adaptive_lab_journal_db))
+# The lab also mirrors, view only, any Trading Instance running this strategy.
+# Attached here, before app startup restores instances, so every instance
+# worker carries the report tee that journals its candles beside cycle_store.
+adaptive_lab.attach_instances(instance_manager)
 
 # The process, not the browser, owns instance uptime. This supervisor is the
 # component that makes that true after the first minute: startup restoration
