@@ -74,8 +74,8 @@ jobs:
       - name: TypeScript SDK
         working-directory: sdks/typescript
         run: |
-          npm install --no-save typescript@5
-          npx tsc -p . && node --test test/*.test.mjs
+          npm install
+          npm test
 
       - uses: actions/setup-go@v5
         with:

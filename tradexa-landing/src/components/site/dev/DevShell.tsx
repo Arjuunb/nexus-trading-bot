@@ -27,8 +27,8 @@ const DEV_PAGES = [
   { path: "/docs", label: "Documentation", hint: "Start here" },
   { path: "/api", label: "API reference", hint: "Endpoints" },
   { path: "/sdks", label: "SDKs", hint: "Client libraries" },
-  { path: "/open-source", label: "Open source", hint: "What we publish" },
-  { path: "/github", label: "GitHub", hint: "Repositories" },
+  { path: "/open-source", label: "Open source", hint: "All of it, MIT" },
+  { path: "/github", label: "GitHub", hint: "The repository" },
 ];
 
 export function DevShell({

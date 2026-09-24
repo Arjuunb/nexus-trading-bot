@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from tradelogx_nexus import Client, NexusError
+from tradelogx_nexus import Client, NexusError, verify_webhook
 
 DECISIONS = [{"id": f"dec_{i}", "symbol": "BTCUSDT", "verdict": "rejected"} for i in range(5, 0, -1)]
 
@@ -102,3 +102,10 @@ def test_a_key_is_required(monkeypatch):
     monkeypatch.delenv("NEXUS_API_KEY", raising=False)
     with pytest.raises(ValueError):
         Client()
+
+
+def test_webhook_signatures():
+    body, header = b'{"id":"evt_1"}', "t=1780000000,v1=a6cfe2114f40ec5193d0304c1e682c55fdabf04be55f4190b0c065017cb094af"
+    assert verify_webhook("whsec_test", body, header, now=1780000000)
+    assert not verify_webhook("whsec_test", b'{"id":"evt_2"}', header, now=1780000000)
+    assert not verify_webhook("whsec_test", body, header, now=1780000000 + 3600)

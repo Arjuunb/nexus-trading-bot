@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Fingerprint, KeyRound, Network, ScrollText, ServerCog, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Bug, Fingerprint, KeyRound, Network, ScrollText, ServerCog, ShieldCheck, type LucideIcon } from "lucide-react";
 import { SecurityBackdrop } from "@/components/site/backdrops";
 import {
   AuditLog,
@@ -10,6 +10,7 @@ import {
 } from "@/components/site/security/diagrams";
 import { useRouteMeta } from "@/site/seo";
 import { routeFor } from "@/site/routes";
+import { REPO_URL } from "@/site/platform";
 import { cn } from "@/lib/utils";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -54,22 +55,22 @@ const CHAPTERS: Chapter[] = [
     n: "03",
     id: "zero-trust",
     icon: Network,
-    title: "Zero trust, meaning no implicit trust",
-    lead: "Being inside the network is not a credential. Every hop authenticates independently.",
+    title: "No implicit trust",
+    lead: "Being on the same network is not a credential. Every request authenticates, whatever address it comes from.",
   },
   {
     n: "04",
     id: "audit",
     icon: ScrollText,
     title: "A record nobody can quietly edit",
-    lead: "An audit log that can be amended is a formality. This one chains.",
+    lead: "An audit log that can be amended is a formality. This one chains, and it can leave the server.",
   },
   {
     n: "05",
     id: "deployment",
     icon: ServerCog,
     title: "Where it runs",
-    lead: "Regional isolation, per-tenant separation, and no shared execution state between accounts.",
+    lead: "One host you control: nginx in front, one application behind it, and every database on a volume that is backed up and restore-checked daily.",
   },
 ];
 
@@ -141,10 +142,10 @@ export default function SecurityPage() {
               transition={{ duration: 0.7, delay: 0.14, ease: EASE }}
               className="mt-6 max-w-xl text-[17px] leading-relaxed text-white/55"
             >
-              That is a structural statement, not a policy one. A key with withdrawal permission
-              is refused at connection time, secrets are decrypted only inside a service with no
-              public route, and every administrative action lands in a log that cannot be edited
-              from inside the product.
+              That is a structural statement, not a policy one. A key that can withdraw or
+              transfer funds is refused before it is stored, secrets are decrypted only in memory
+              for the moment they are needed, and every state-changing request lands in a
+              hash-chained log that nothing in the product can edit.
             </motion.p>
 
             <motion.dl
@@ -155,9 +156,9 @@ export default function SecurityPage() {
             >
               {[
                 ["AES-256", "envelope"],
-                ["TLS 1.3", "in transit"],
+                ["TLS 1.2+", "in transit"],
                 ["0", "withdrawal scopes"],
-                ["Append", "only audit"],
+                ["SHA-256", "chained audit"],
               ].map(([v, k]) => (
                 <div key={k} className="min-w-0">
                   <dt className="font-mono text-base font-semibold text-emerald-soft">{v}</dt>
@@ -204,10 +205,10 @@ export default function SecurityPage() {
         <ChapterHead chapter={CHAPTERS[0]} />
         <div className="mt-8 grid gap-4 lg:grid-cols-2">
           {[
-            ["Entered once", "The secret is submitted directly to the key service over TLS and encrypted before the response returns. It is never held by the web app, never placed in a session, and never rendered again."],
-            ["Decrypted in one place", "Only the execution service can unwrap a data key, and only in memory for the duration of a request. It has no inbound public route and no interactive shell."],
-            ["Rotatable without downtime", "A replacement key can be attached and the old one revoked while positions are open; in-flight orders continue under the outgoing key until it drains."],
-            ["Never in a log", "Secrets are redacted at the serialiser rather than at each call site, so a new endpoint cannot leak one by omission."],
+            ["Entered once", "The secret goes from the form to the vault over TLS and is encrypted with AES-256-GCM before the response returns. It is never placed in a session and never shown again — the dashboard shows a four-character hint."],
+            ["Decrypted only in memory", "A per-tenant data key, itself wrapped by a master key that lives only in the server's environment, is unwrapped for the moment the secret is needed — today, to ask the exchange what the key may do, since live routing is locked."],
+            ["Replaced in one step", "Attaching a new key for a venue replaces the old one, and revoking takes a key out of use immediately while keeping its record for the audit trail. A kept key can be re-checked against the exchange at any time."],
+            ["Never in a log", "Secrets are redacted in the response filter and in the logger rather than at each call site, so a new endpoint cannot leak one by omission."],
           ].map(([t, b], i) => (
             <motion.div
               key={t}
@@ -231,9 +232,9 @@ export default function SecurityPage() {
           <PermissionMatrix />
           <div className="space-y-4">
             {[
-              ["IP allowlisting", "Where a venue supports it, the connection is bound to our egress addresses, so a leaked key is unusable from anywhere else."],
-              ["Separate keys per venue", "One key per venue per tenant. Revoking one never interrupts another."],
-              ["Read-only mode", "A connection can be attached in read-only scope to run analysis and paper trading against a real account without any order permission at all."],
+              ["IP restriction", "The same check reads whether the key is restricted to trusted IP addresses at the exchange, and flags it when it is not. Restrict it to your server's address and a leaked key is unusable anywhere else."],
+              ["One key per venue", "Each venue holds one key per tenant, so revoking one never interrupts another."],
+              ["Read-only keys", "A key without trading permission is accepted and marked read-only. Paper trading needs no key at all — it runs on public market data."],
             ].map(([t, b], i) => (
               <motion.div
                 key={t}
@@ -267,9 +268,9 @@ export default function SecurityPage() {
         </div>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
           {[
-            ["What is recorded", "Configuration changes, key attach and rotate, strategy promotion, halts, resumes, manual overrides and every order lifecycle event."],
-            ["What is stored with it", "Actor, source address, user agent, the previous value and the new one — enough to answer “who changed this” without a second system."],
-            ["Where it can go", "Exportable on a schedule to your own retention or SIEM, so the record survives independently of us."],
+            ["What is recorded", "Every state-changing request — settings, key attach and revoke, pauses and resumes, API keys, webhooks, manual closes — and a before-and-after record for settings and keys. Automatic halts and paper fills live in the trade ledger instead."],
+            ["What is stored with it", "Actor, how they authenticated, source address, user agent, the route and its result, and for changes the previous value and the new one."],
+            ["Where it can go", "Downloadable at any time, and shipped on a schedule to an HTTPS endpoint you choose, so the record survives the server it was written on."],
           ].map(([t, b], i) => (
             <motion.div
               key={t}
@@ -287,7 +288,7 @@ export default function SecurityPage() {
       </section>
 
       {/* ── 05 · Deployment ─────────────────────────────────────────────── */}
-      <section id="deployment" className="container-x mt-24 scroll-mt-24 pb-24 sm:mt-32">
+      <section id="deployment" className="container-x mt-24 scroll-mt-24 sm:mt-32">
         <ChapterHead chapter={CHAPTERS[4]} />
         <div className="mt-8">
           <DeploymentMap />
@@ -295,13 +296,13 @@ export default function SecurityPage() {
 
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           <div className="rounded-2xl border border-navy-500/60 bg-navy-800/50 p-6">
-            <h3 className="text-[15px] font-semibold text-white">Tenant isolation</h3>
+            <h3 className="text-[15px] font-semibold text-white">Separation</h3>
             <ul className="mt-3 space-y-2.5">
               {[
-                "Per-tenant data keys — decrypting one account's secrets tells you nothing about another's",
-                "Row-level authorisation enforced in the data layer, not in the request handler",
-                "Execution workers are pinned per tenant; no shared order state between accounts",
-                "Backups are encrypted with the same envelope scheme and restored per tenant",
+                "Per-tenant data keys — unwrapping one tenant's secrets tells you nothing about another's",
+                "The trading engine is reachable only with the operator role; other accounts are refused before any handler runs",
+                "API keys and webhooks are scoped to their tenant; API keys are stored only as hashes, exchange keys only encrypted",
+                "Backups are encrypted with the vault's master key; a restore goes to a separate directory, never over live data",
               ].map((l) => (
                 <li key={l} className="flex gap-2.5 text-sm text-white/55">
                   <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-emerald" />
@@ -315,10 +316,10 @@ export default function SecurityPage() {
             <h3 className="text-[15px] font-semibold text-white">Operational posture</h3>
             <ul className="mt-3 space-y-2.5">
               {[
-                "Immutable deploys — no in-place patching, every release is a new image",
-                "Secrets injected at runtime from a managed store; none exist in the repository or the image",
-                "Least-privilege workload identities with short-lived credentials, rotated automatically",
-                "Risk and execution fail closed: if a dependency is unreachable, trading stops rather than continues unchecked",
+                "Deploys rebuild the containers from the repository; nothing is patched by hand on the server",
+                "Secrets come from the server's environment file at start-up; none are in the repository or the image",
+                "The app refuses to start in production with a default session secret or without real sign-in configured",
+                "Trading fails closed: stale market data, a breached loss limit or a pause stops new entries rather than guessing",
               ].map((l) => (
                 <li key={l} className="flex gap-2.5 text-sm text-white/55">
                   <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-emerald" />
@@ -338,10 +339,42 @@ export default function SecurityPage() {
             "mt-6 rounded-2xl border border-navy-500/60 bg-navy-800/40 p-5 text-sm leading-relaxed text-white/45",
           )}
         >
-          Security is a claim you should be able to check. If something here is not specific
-          enough to verify, that is a defect in the page — tell us and we will make it concrete or
-          remove it.
+          Security is a claim you should be able to check, and all of the code behind this page is
+          public. If something here is not specific enough to verify, that is a defect in the page
+          — open an issue and it will be made concrete or removed.
         </motion.p>
+      </section>
+
+      {/* ── Disclosure ──────────────────────────────────────────────────── */}
+      <section id="disclosure" className="container-x mt-24 scroll-mt-24 pb-24 sm:mt-32">
+        <div className="flex gap-5">
+          <div className="hidden shrink-0 sm:block">
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-loss/30 bg-loss/[0.07] text-loss-soft">
+              <Bug className="h-5 w-5" />
+            </span>
+          </div>
+          <div>
+            <h2 className="text-balance text-2xl font-bold tracking-tight text-white sm:text-3xl">
+              Reporting a vulnerability
+            </h2>
+            <p className="mt-3 max-w-2xl leading-relaxed text-white/55">
+              Privately, through GitHub's{" "}
+              <a
+                href={`${REPO_URL}/security/advisories/new`}
+                target="_blank"
+                rel="noreferrer"
+                className="text-emerald-soft underline-offset-2 hover:underline"
+              >
+                Report a vulnerability
+              </a>{" "}
+              form on the repository. Only the maintainer and you can see the report; the fix and
+              the advisory are published together, with credit unless you ask otherwise. Never
+              open a public issue for a vulnerability while it is unpatched, and leave real keys
+              and account identifiers out of the report. SECURITY.md in the repository has the
+              scope.
+            </p>
+          </div>
+        </div>
       </section>
     </>
   );

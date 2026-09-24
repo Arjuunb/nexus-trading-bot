@@ -211,6 +211,66 @@ def api_keys_revoke(key_id: str, request: Request,
     return {"key": revoked}
 
 
+# ---------------------------------------------------------------- webhooks
+@router.get("/webhooks")
+def webhooks_list(request: Request, x_webhook_secret: Optional[str] = Header(default=None)):
+    """Outbound webhook subscriptions. Never the signing secret."""
+    _wa._check_secret(x_webhook_secret)
+    from services.outbound_webhooks import EVENT_TYPES
+    return {"webhooks": _wa.outbound_webhooks.list(_tenant(request)), "event_types": list(EVENT_TYPES)}
+
+
+@router.post("/webhooks")
+def webhooks_create(request: Request, body: dict = Body(...),
+                    x_webhook_secret: Optional[str] = Header(default=None)):
+    """Subscribe an HTTPS endpoint. The response's ``secret`` (for verifying
+    Nexus-Signature) is the only time it is shown. Body: {url, events?, description?}."""
+    _wa._check_secret(x_webhook_secret)
+    try:
+        created = _wa.outbound_webhooks.subscribe(_tenant(request), str(body.get("url", "")),
+                                                  body.get("events"), description=str(body.get("description", "")))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    audit_log.record_change(action="webhook.create", actor=_wa.request_user(request),
+                            after={k: v for k, v in created.items() if k != "secret"}, ip=_client_ip(request))
+    return created
+
+
+@router.delete("/webhooks/{sub_id}")
+def webhooks_disable(sub_id: str, request: Request, x_webhook_secret: Optional[str] = Header(default=None)):
+    _wa._check_secret(x_webhook_secret)
+    try:
+        disabled = _wa.outbound_webhooks.disable(_tenant(request), sub_id)
+    except KeyError:
+        raise HTTPException(404, "No such webhook.") from None
+    audit_log.record_change(action="webhook.disable", actor=_wa.request_user(request),
+                            after=disabled, ip=_client_ip(request))
+    return {"webhook": disabled}
+
+
+@router.get("/webhooks/{sub_id}/deliveries")
+def webhooks_deliveries(sub_id: str, request: Request, limit: int = 50,
+                        x_webhook_secret: Optional[str] = Header(default=None)):
+    """Every delivery attempt for one subscription, newest first."""
+    _wa._check_secret(x_webhook_secret)
+    try:
+        return {"deliveries": _wa.outbound_webhooks.deliveries(_tenant(request), sub_id, limit)}
+    except KeyError:
+        raise HTTPException(404, "No such webhook.") from None
+
+
+@router.post("/webhooks/{sub_id}/test")
+def webhooks_test(sub_id: str, request: Request, x_webhook_secret: Optional[str] = Header(default=None)):
+    """Queue a webhook.test event to this endpoint and attempt it now."""
+    _wa._check_secret(x_webhook_secret)
+    try:
+        _wa.outbound_webhooks.send_test(_tenant(request), sub_id)
+    except KeyError:
+        raise HTTPException(404, "No such webhook.") from None
+    _wa.outbound_webhooks.deliver_due()
+    return {"deliveries": _wa.outbound_webhooks.deliveries(_tenant(request), sub_id, 1)}
+
+
 # ------------------------------------------------------------------ overview
 @router.get("/status")
 def security_status(request: Request, x_webhook_secret: Optional[str] = Header(default=None)):

@@ -172,6 +172,17 @@ class DecisionStore:
         with self._lock:
             return [self._row(r) for r in self._c.execute(sql, args)]
 
+    def after(self, after_id: int, limit: int = 500) -> list[dict]:
+        """Decisions with a larger id, oldest first (for event streaming)."""
+        with self._lock:
+            return [self._row(r) for r in self._c.execute(
+                "SELECT * FROM decisions WHERE id > ? ORDER BY id ASC LIMIT ?", (int(after_id), int(limit)))]
+
+    def max_id(self) -> int:
+        with self._lock:
+            row = self._c.execute("SELECT MAX(id) m FROM decisions").fetchone()
+            return int(row["m"] or 0)
+
     def prune(self, keep: int = 20000) -> int:
         """Retention cap — keep the most recent ``keep`` decisions (by id, which
         is chronological), delete older. Bounds growth on a persistent disk."""

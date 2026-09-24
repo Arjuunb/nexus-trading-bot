@@ -28,7 +28,7 @@ const SECTIONS: LegalSection[] = [
       "Three categories, and nothing outside them:",
       [
         "Account data — the email address you sign up with, a password hash, and the two-factor secret if you enable it. We never store your password.",
-        "Connection data — exchange API keys, encrypted before storage and decrypted only inside the execution service; the venue, the scopes the key carries, and the addresses it is allowlisted to.",
+        "Connection data — exchange API keys, encrypted before storage and decrypted only in memory when needed; the venue, the permissions the exchange reports for the key, and whether it is restricted to trusted IP addresses.",
         "Operating data — the decisions the engine made for your account, the orders and fills that resulted, the journal entries and lessons attached to them, your configuration, and the audit log of changes you made.",
       ],
       "We also record ordinary technical logs — request timestamps, source addresses, user agents and error traces — because an incident that cannot be reconstructed cannot be fixed.",
@@ -47,9 +47,9 @@ const SECTIONS: LegalSection[] = [
     id: "keys",
     heading: "Exchange keys, specifically",
     body: [
-      "An exchange key is the most sensitive thing you give us, so it is worth being exact. It is submitted directly to the key service over TLS and encrypted before the response returns. It is never held by the web application, never placed in a session, and never rendered again after you enter it.",
-      "Only the execution service can decrypt one, in memory, for the duration of a request. That service has no inbound public route and no interactive shell. Secrets are redacted at the serialiser rather than at each call site, so a new endpoint cannot leak one by omission.",
-      "A key carrying withdrawal permission is refused at the moment you try to connect it. This is a structural limit rather than a policy: the worst case of a compromise is unwanted trading, not a drained account.",
+      "An exchange key is the most sensitive thing you give us, so it is worth being exact. It is sent from the form to the key vault over TLS and encrypted with AES-256-GCM before the response returns. It is never placed in a session and never shown again after you enter it.",
+      "It is decrypted only in memory, when it is needed — today, to ask the exchange what the key may do, because live order routing is locked. The master key that protects it lives only in the server's environment, never in a database or a backup. Secrets are redacted in the response filter and the logger rather than at each call site, so a new endpoint cannot leak one by omission.",
+      "Before a key is stored, the exchange is asked what it may do, and a key that can withdraw or transfer funds is refused. This is a structural limit rather than a policy: the worst case of a compromise is unwanted trading, not a drained account.",
     ],
   },
   {
@@ -70,7 +70,7 @@ const SECTIONS: LegalSection[] = [
         "Operating data — for the life of the account, because its value is cumulative. You can export or delete it at any time.",
         "Technical logs — 90 days, then discarded. Audit-log entries are retained for the life of the account because their purpose is to be consultable after the fact.",
       ],
-      "Backups are encrypted with the same envelope scheme and expire on their own schedule; deleted data disappears from backups as those rotate rather than instantly.",
+      "Backups are encrypted with the key vault's master key and kept for a week; deleted data disappears from backups as those rotate rather than instantly.",
     ],
   },
   {
@@ -99,7 +99,7 @@ const SECTIONS: LegalSection[] = [
     id: "security",
     heading: "How it is protected",
     body: [
-      "Envelope encryption with per-tenant data keys, TLS 1.3 in transit, zero-trust service identity between internal components, and an append-only, hash-chained audit log that no product code path can amend. The security page describes the architecture in detail, including what each boundary actually re-checks.",
+      "Envelope encryption with per-tenant data keys, TLS in transit (1.3 only on the API host), authentication on every request whatever address it comes from, and an append-only, hash-chained audit log that no product code path can amend. The security page describes the architecture in detail, including what each boundary actually re-checks.",
     ],
   },
   {
@@ -119,7 +119,7 @@ export default function PrivacyPage() {
     <LegalShell
       title="Privacy policy"
       summary="What we collect, why we need it, how long it stays and who else ever sees it. Exchange keys get their own section, because they are the most sensitive thing you hand over and deserve more than a sentence."
-      updated="2026-07-30"
+      updated="2026-09-24"
       sections={SECTIONS}
     />
   );

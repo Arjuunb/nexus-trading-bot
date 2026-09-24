@@ -5,6 +5,7 @@ import { ChevronDown, LifeBuoy, MessageSquare, Search, ShieldAlert, Timer } from
 import { SupportBackdrop } from "@/components/site/backdrops";
 import { useRouteMeta } from "@/site/seo";
 import { routeFor, prefetchRoute } from "@/site/routes";
+import { REPO_URL } from "@/site/platform";
 import { cn } from "@/lib/utils";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -19,50 +20,50 @@ interface Answer {
 const ANSWERS: Answer[] = [
   {
     topic: "Connections",
-    q: "My exchange key was rejected when I tried to connect it",
-    a: "Almost always because the key carries withdrawal permission. That is refused at connection time by design — it is the structural reason a compromise of this platform cannot drain your account. Create a new key with trading enabled and withdrawal disabled, and allowlist our egress addresses if the venue supports it.",
-    keywords: ["api key", "rejected", "withdrawal", "permission", "connect", "binance", "bybit"],
+    q: "My exchange key was refused when I saved it",
+    a: "Before a key is stored, the exchange is asked what the key may do. A key that can withdraw funds or transfer them to another account — or whose permissions the exchange will not confirm — is refused and nothing is saved. Create a new key with trading enabled and withdrawals and transfers disabled. A key that later gains one of those permissions is revoked the next time it is checked.",
+    keywords: ["api key", "rejected", "refused", "withdrawal", "transfer", "permission", "connect", "binance"],
   },
   {
-    topic: "Connections",
-    q: "The venue shows as degraded and my orders are queuing",
-    a: "The execution layer holds rather than retries into a venue that is rejecting or rate-limiting, because a retry storm makes an outage worse for everyone connected to it. Current venue health is on the status page. Positions already open keep their protective orders at the exchange throughout.",
-    keywords: ["degraded", "outage", "queue", "orders", "stuck", "venue", "exchange down"],
-  },
-  {
-    topic: "Risk",
-    q: "The system stopped trading and I did not stop it",
-    a: "Three things halt trading: a loss budget breach (daily, weekly or per-strategy), a scheduled blackout window, or a dependency being unreachable — the last of which fails closed deliberately. The risk console names which one and shows the number that triggered it. Open positions continue to be managed to their existing exits either way.",
-    keywords: ["halted", "stopped", "not trading", "budget", "blackout", "fail closed", "paused"],
+    topic: "Data",
+    q: "The dashboard says STALE_CANDLES and nothing is trading",
+    a: "New entries pause while the market data is older than its timeframe allows, rather than trading on a gap. It clears by itself when fresh closed candles arrive; after a reconnect, missed candles are replayed in order first. Whether the feed is up is on the status page. Exits and protective stops on open paper positions are not blocked by it.",
+    keywords: ["stale", "stale_candles", "data", "feed", "websocket", "not trading", "paused"],
   },
   {
     topic: "Risk",
-    q: "A trade I expected was vetoed",
-    a: "Every veto is logged with the specific rule that fired — never a generic failure. The most common are correlation load against positions you already hold, a news blackout window, and the conviction score falling below the threshold for the current volatility regime. The decision record shows the full breakdown.",
-    keywords: ["veto", "rejected trade", "no trade", "correlation", "threshold", "why"],
+    q: "The system stopped taking trades and I did not stop it",
+    a: "Several limits halt new entries on their own: the drawdown circuit breaker, the daily and weekly loss limits, the cooldown after consecutive losses, the trades-per-day cap, the trading-session and trading-day windows, economic-event blackouts, and stale market data. Each rejection carries a code such as DAILY_LOSS_LIMIT or EVENT_BLACKOUT. Exits are never blocked by any of them.",
+    keywords: ["halted", "stopped", "not trading", "drawdown", "daily loss", "weekly loss", "cooldown", "blackout", "paused"],
+  },
+  {
+    topic: "Risk",
+    q: "A trade I expected was rejected",
+    a: "Every decision is recorded, rejected ones included, with the rule that blocked it and the reason it gave — for example INSUFFICIENT_RR, CORRELATED_EXPOSURE or PORTFOLIO_EXPOSURE. Look the decision up in the dashboard, or through GET /v1/decisions with verdict=rejected. For several of these rules the platform also follows the blocked trade as a virtual one, so you can see what the rule cost or saved.",
+    keywords: ["rejected trade", "blocked", "no trade", "correlation", "exposure", "rr", "why", "veto"],
   },
   {
     topic: "Data",
     q: "My backtest results changed after an update",
-    a: "Backtests run through the live engine, so an engine improvement changes historical results too. That is intentional — a backtest pinned to an old engine would tell you about a program you are no longer running. Every result stores the engine version it was produced with, and any decision can be replayed against its original stored inputs.",
-    keywords: ["backtest", "changed", "different", "results", "version", "replay"],
+    a: "Backtests run the code that is deployed now, so a change to a strategy or to the cost model changes historical results too. Results are not pinned to a code version: to compare, note the commit that produced each run, and check the repository history for what changed between them.",
+    keywords: ["backtest", "changed", "different", "results", "version", "update"],
   },
   {
     topic: "Data",
-    q: "How do I export everything?",
-    a: "Settings → Backup exports your full operating history — decisions, orders, fills, journal entries and configuration — in a machine-readable format, without asking anyone. There is no retention hold and no export fee. Closing the account does the same thing on the way out.",
-    keywords: ["export", "download", "data", "backup", "leave", "gdpr", "csv"],
+    q: "How do I export my data?",
+    a: "From the profile menu: your account data as JSON and your trade history as CSV. For everything, Settings → Security → Backups takes a snapshot of every database once a day and on demand — encrypted when the vault master key is set — and can check that the latest one actually restores. The audit log downloads from the same page.",
+    keywords: ["export", "download", "data", "backup", "csv", "json", "leave"],
   },
   {
-    topic: "Billing",
-    q: "How do refunds and cancellation work?",
-    a: "Cancel at any time from billing settings; access continues to the end of the period already paid for. Exchange fees, funding and spread are charged by the venue and are not ours to refund. If you were charged for something you did not use because of an outage on our side, tell us and we will fix it without a negotiation.",
-    keywords: ["billing", "refund", "cancel", "subscription", "invoice", "charge"],
+    topic: "Account",
+    q: "What does it cost?",
+    a: "The software is MIT-licensed and free to run yourself; the whole platform is in the public repository. Exchange fees, funding and spread are charged by the venue — and live order routing is locked today, so every strategy trades on a paper account.",
+    keywords: ["billing", "price", "cost", "fee", "free", "subscription", "licence"],
   },
   {
     topic: "Account",
     q: "I have lost access to my two-factor device",
-    a: "Use a recovery code from when you enabled two-factor. If those are gone too, recovery requires proving control of the account's email plus a waiting period — we cannot shortcut it, and an account holding exchange credentials is exactly the wrong place to make an exception. Revoke your exchange keys at the venue in the meantime.",
+    a: "Sign in with one of the recovery codes you were shown when you turned two-factor on. If those are gone too, only whoever runs the server can restore access — there is no shortcut, because this account can hold exchange credentials. Revoke your exchange keys at the venue in the meantime.",
     keywords: ["2fa", "two factor", "locked out", "recovery", "totp", "login"],
   },
 ];
@@ -70,29 +71,32 @@ const ANSWERS: Answer[] = [
 const CHANNELS = [
   {
     icon: MessageSquare,
-    title: "Support request",
-    detail: "In-product, from any page. Carries your account context automatically, so nobody asks you to paste ids.",
-    meta: "Best for anything account-specific",
+    title: "GitHub issues",
+    detail: "Bugs, questions and proposals, in public, on the repository. The issue form asks for what is needed to reproduce the problem. Leave keys and account identifiers out.",
+    meta: "Public · answered by the maintainer",
+    href: `${REPO_URL}/issues/new/choose`,
   },
   {
     icon: ShieldAlert,
-    title: "Security disclosure",
-    detail: "A private channel with a named owner and a 24-hour acknowledgement target. Never open a public issue for a vulnerability.",
-    meta: "Acknowledged within 24h",
+    title: "Security report",
+    detail: "Privately, through GitHub's Report a vulnerability form. Only the maintainer and you can see it. Never open a public issue for a vulnerability.",
+    meta: "Private",
+    href: `${REPO_URL}/security/advisories/new`,
   },
   {
     icon: LifeBuoy,
-    title: "Community",
-    detail: "Strategy discussion, configuration questions and other people who have hit the same thing. Not staffed as a support queue.",
-    meta: "Peer answers, not guaranteed",
+    title: "Status page",
+    detail: "Whether the API, the workers, market data and the database are up right now, and every incident in the last 90 days — measured every minute, not written by hand.",
+    meta: "Live",
+    href: "/status",
   },
 ];
 
-const SEVERITY = [
-  ["S1", "Trading is impaired or capital is at risk", "1 hour", "border-loss/40 text-loss-soft"],
-  ["S2", "A feature is broken with no workaround", "4 hours", "border-gold/40 text-gold-soft"],
-  ["S3", "Degraded, or a workaround exists", "1 business day", "border-white/15 text-white/60"],
-  ["S4", "Question, or a feature request", "3 business days", "border-white/10 text-white/45"],
+const ROUTES = [
+  ["Positions need to stop now", "Pause trading from the dashboard, then check the status page", "border-loss/40 text-loss-soft"],
+  ["A vulnerability", "Private security report — never a public issue", "border-loss/40 text-loss-soft"],
+  ["Something is broken", "A GitHub issue, with the steps to reproduce it", "border-gold/40 text-gold-soft"],
+  ["A question or an idea", "A GitHub issue; ideas use the proposal form", "border-white/15 text-white/60"],
 ];
 
 export default function SupportPage() {
@@ -128,12 +132,12 @@ export default function SupportPage() {
             Support center
           </span>
           <h1 className="mt-5 text-balance text-4xl font-extrabold leading-[1.05] tracking-tight text-white sm:text-5xl">
-            Answers first, then a person
+            Answers first, then the issue tracker
           </h1>
           <p className="mt-6 text-[17px] leading-relaxed text-white/55">
-            The questions below are the ones that actually arrive, with the real answer rather
-            than a link to a settings page. If yours is not here, the channels underneath reach a
-            human — and the response targets are commitments, not aspirations.
+            The answers below describe what the code actually does, not what a settings page
+            says. If yours is not here, the channels underneath reach the maintainer — in public
+            for bugs and questions, privately for anything security-related.
           </p>
         </motion.div>
 
@@ -214,7 +218,7 @@ export default function SupportPage() {
                 Nothing matches “<span className="text-white">{query}</span>”.
               </p>
               <p className="mt-2 text-sm text-white/40">
-                That is worth knowing — open a support request and the answer will end up on this
+                That is worth knowing — open a GitHub issue and the answer can end up on this
                 page.
               </p>
               <button
@@ -230,23 +234,34 @@ export default function SupportPage() {
 
       {/* channels */}
       <section className="container-x mt-16">
-        <h2 className="text-2xl font-bold tracking-tight text-white">Reaching a person</h2>
+        <h2 className="text-2xl font-bold tracking-tight text-white">Reaching the maintainer</h2>
         <div className="mt-6 grid gap-3 sm:grid-cols-3">
-          {CHANNELS.map((c) => (
-            <div
-              key={c.title}
-              className="group rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/25 hover:bg-white/[0.04]"
-            >
-              <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-gold/25 bg-gold/[0.08] text-gold-soft transition-transform duration-300 group-hover:scale-110">
-                <c.icon className="h-4 w-4" />
-              </span>
-              <h3 className="mt-4 text-[15px] font-semibold text-white">{c.title}</h3>
-              <p className="mt-2 text-sm leading-relaxed text-white/50">{c.detail}</p>
-              <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-white/25">
-                {c.meta}
-              </p>
-            </div>
-          ))}
+          {CHANNELS.map((c) => {
+            const external = c.href.startsWith("http");
+            const body = (
+              <>
+                <span className="flex h-9 w-9 items-center justify-center rounded-lg border border-gold/25 bg-gold/[0.08] text-gold-soft transition-transform duration-300 group-hover:scale-110">
+                  <c.icon className="h-4 w-4" />
+                </span>
+                <h3 className="mt-4 text-[15px] font-semibold text-white">{c.title}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-white/50">{c.detail}</p>
+                <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.12em] text-white/25">
+                  {c.meta}
+                </p>
+              </>
+            );
+            const cls =
+              "group block rounded-2xl border border-white/[0.08] bg-white/[0.02] p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-gold/25 hover:bg-white/[0.04]";
+            return external ? (
+              <a key={c.title} href={c.href} target="_blank" rel="noreferrer" className={cls}>
+                {body}
+              </a>
+            ) : (
+              <Link key={c.title} to={c.href} onPointerEnter={() => prefetchRoute(c.href)} className={cls}>
+                {body}
+              </Link>
+            );
+          })}
         </div>
       </section>
 
@@ -255,17 +270,19 @@ export default function SupportPage() {
         <div className="rounded-2xl border border-white/[0.08] bg-black/30 p-5 backdrop-blur-sm sm:p-7">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
             <Timer className="h-4 w-4 text-gold-soft" />
-            Response targets
+            Where to take it
           </h2>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/45">
-            Time to a human response, not to resolution — because a fix time nobody can predict is
-            not a commitment, and one that is quietly missed is worse than none.
+            There is no staffed support desk and no response-time guarantee: the platform is
+            maintained in the open, and issues are answered by the maintainer as they arrive.
+            What is guaranteed is in the code — limits that halt trading on their own, and a
+            status page that is measured rather than written.
           </p>
 
           <ul className="mt-5 space-y-2">
-            {SEVERITY.map(([code, meaning, target, tone]) => (
+            {ROUTES.map(([what, where, tone]) => (
               <li
-                key={code}
+                key={what}
                 className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-white/[0.06] bg-white/[0.015] px-4 py-3"
               >
                 <span
@@ -274,10 +291,9 @@ export default function SupportPage() {
                     tone,
                   )}
                 >
-                  {code}
+                  {what}
                 </span>
-                <span className="min-w-0 flex-1 text-[14px] text-white/65">{meaning}</span>
-                <span className="shrink-0 font-mono text-[12px] text-white/45">{target}</span>
+                <span className="min-w-0 flex-1 text-right text-[14px] text-white/60">{where}</span>
               </li>
             ))}
           </ul>

@@ -401,14 +401,14 @@ export const FEATURES: FeatureEntry[] = [
     title: "Key custody",
     summary: "Exchange keys stored envelope-encrypted, with withdrawals structurally impossible.",
     detail:
-      "Keys are encrypted with per-tenant data keys under a managed master key, decrypted only inside the execution service, and never logged or returned by any API. Connections are rejected outright if the key carries withdrawal permission, so the worst case of a compromise is unwanted trading, not a drained account.",
+      "Keys are encrypted with AES-256-GCM under per-tenant data keys, which are wrapped by a master key kept only in the server's environment. They are decrypted only in memory when needed, and never logged or returned by any API. Before a key is stored, Binance is asked what it may do, and a key that can withdraw or transfer funds is refused, so the worst case of a compromise is unwanted trading, not a drained account.",
     bullets: [
       "Envelope encryption with per-tenant data keys",
-      "Withdrawal-enabled keys rejected at connection time",
-      "IP allowlisting on every venue that supports it",
-      "Rotation without downtime",
+      "Withdrawal- and transfer-enabled keys refused before storage",
+      "Missing IP restriction flagged on every key",
+      "Replace, re-check or revoke a key in one step",
     ],
-    keywords: ["security", "keys", "encryption", "custody", "kms", "permissions", "withdrawal"],
+    keywords: ["security", "keys", "encryption", "custody", "permissions", "withdrawal", "vault"],
   },
   {
     id: "audit-log",

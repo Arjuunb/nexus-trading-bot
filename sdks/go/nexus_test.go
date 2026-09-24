@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+	"time"
 )
 
 var decisions = []map[string]any{
@@ -121,5 +122,19 @@ func TestRetryAndBacktestRun(t *testing.T) {
 	b, err := c.Backtests.Run(context.Background(), BacktestRequest{Strategy: "decision_brain"}, 0)
 	if err != nil || b.Status != "complete" || b.Result.Net.NetR != 0.5 {
 		t.Fatalf("got %+v err %v", b, err)
+	}
+}
+
+func TestVerifyWebhook(t *testing.T) {
+	header := "t=1780000000,v1=a6cfe2114f40ec5193d0304c1e682c55fdabf04be55f4190b0c065017cb094af"
+	at := time.Unix(1780000000, 0)
+	if !VerifyWebhook("whsec_test", []byte(`{"id":"evt_1"}`), header, 5*time.Minute, at) {
+		t.Fatal("valid signature rejected")
+	}
+	if VerifyWebhook("whsec_test", []byte(`{"id":"evt_2"}`), header, 5*time.Minute, at) {
+		t.Fatal("tampered body accepted")
+	}
+	if VerifyWebhook("whsec_test", []byte(`{"id":"evt_1"}`), header, 5*time.Minute, at.Add(time.Hour)) {
+		t.Fatal("stale signature accepted")
 	}
 }

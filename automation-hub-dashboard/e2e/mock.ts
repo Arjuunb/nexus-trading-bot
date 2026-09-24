@@ -270,6 +270,8 @@ const SECURITY_AUDIT = {
 
 const SHAPES: [string, unknown][] = [
   ["/security/status", SECURITY_STATUS],
+  ["/security/webhooks", { webhooks: [{ id: "whk_1", url: "https://example.com/nexus-events", events: ["decision.accepted", "decision.rejected"],
+    description: "", created_at: "2026-09-24T12:00:00Z", active: true }], event_types: ["decision.accepted", "decision.rejected"] }],
   ["/security/api-keys", { keys: [{ id: "a1b2c3d4", name: "research notebook", scopes: ["read"], version: "2026-09-24",
     hint: "nxs_a1b2c3d4_…", created_at: "2026-09-24T12:00:00Z", last_used_at: null, revoked_at: null, active: true }],
     scopes: ["read", "control"], versions: ["2026-09-24"] }],

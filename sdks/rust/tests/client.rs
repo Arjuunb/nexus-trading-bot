@@ -97,3 +97,13 @@ fn retries_429_and_runs_backtests() {
     assert_eq!(job.status, "complete");
     assert_eq!(job.result.unwrap().net.unwrap().net_r, 0.5);
 }
+
+#[test]
+fn webhook_signatures_verify() {
+    use tradelogx_nexus::verify_webhook;
+    let header = "t=1780000000,v1=a6cfe2114f40ec5193d0304c1e682c55fdabf04be55f4190b0c065017cb094af";
+    assert!(verify_webhook("whsec_test", br#"{"id":"evt_1"}"#, header, 1780000000, 300));
+    assert!(!verify_webhook("whsec_test", br#"{"id":"evt_2"}"#, header, 1780000000, 300));
+    assert!(!verify_webhook("whsec_test", br#"{"id":"evt_1"}"#, header, 1780003600, 300));
+    assert!(!verify_webhook("whsec_test", br#"{"id":"evt_1"}"#, "garbage", 1780000000, 300));
+}

@@ -365,7 +365,9 @@ from services.redaction import RedactionMiddleware  # noqa: E402
 app.add_middleware(RedactionMiddleware, credential_paths=(
     "/auth/login", "/auth/2fa/setup",
     # API key creation: the one response that shows a new key to its owner
-    "/security/api-keys", "/api/v1/security/api-keys"))
+    "/security/api-keys", "/api/v1/security/api-keys",
+    # webhook creation: shows the signing secret once
+    "/security/webhooks", "/api/v1/security/webhooks"))
 
 
 def _audit_identify(scope: dict, client_headers: dict) -> tuple[str, str]:
@@ -574,6 +576,8 @@ def _start_auto_engine() -> None:
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.status_monitor.start():
         print(f"[startup] status monitor started "
               f"(interval={webhook_api.status_monitor.interval_s:.0f}s)", flush=True)
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.outbound_webhooks.start():
+        print("[startup] outbound webhooks started", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
         print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
               f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)
@@ -680,6 +684,7 @@ def _shutdown_all_runtimes() -> None:
     run("instance_supervisor", webhook_api.instance_supervisor.stop)
     run("status_monitor", webhook_api.status_monitor.stop)
     run("audit_exporter", webhook_api.audit_exporter.stop)
+    run("outbound_webhooks", webhook_api.outbound_webhooks.stop)
     run("adaptive_lab_supervisor", webhook_api.adaptive_lab_supervisor.stop)
     run("trading_instances", webhook_api.instance_manager.shutdown)
     run("adaptive_lab", webhook_api.adaptive_lab.shutdown)

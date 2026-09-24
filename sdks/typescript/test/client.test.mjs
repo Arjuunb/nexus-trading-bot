@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { Nexus, NexusError } from "../dist/index.js";
+import { Nexus, NexusError, verifyWebhook } from "../dist/index.js";
 
 const DECISIONS = [5, 4, 3, 2, 1].map((i) => ({ id: `dec_${i}`, symbol: "BTCUSDT", verdict: "rejected" }));
 
@@ -59,4 +59,11 @@ test("429 is retried; backtests.run waits for completion", async () => {
   const job = await nexus.backtests.run("decision_brain", { pollMs: 0 });
   assert.equal(job.status, "complete");
   server.close();
+});
+
+test("webhook signatures verify and reject tampering and stale timestamps", async () => {
+  const header = "t=1780000000,v1=a6cfe2114f40ec5193d0304c1e682c55fdabf04be55f4190b0c065017cb094af";
+  assert.equal(await verifyWebhook("whsec_test", '{"id":"evt_1"}', header, { now: 1780000000 }), true);
+  assert.equal(await verifyWebhook("whsec_test", '{"id":"evt_2"}', header, { now: 1780000000 }), false);
+  assert.equal(await verifyWebhook("whsec_test", '{"id":"evt_1"}', header, { now: 1780003600 }), false);
 });

@@ -9,7 +9,7 @@ description = "Python client for the TradeLogX Nexus public API (/v1)"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = []
-license = { text = "Proprietary" }
+license = { text = "MIT" }
 
 [tool.setuptools]
 packages = ["tradelogx_nexus"]

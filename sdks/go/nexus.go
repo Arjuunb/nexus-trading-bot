@@ -4,7 +4,9 @@
 //	it := client.Decisions.List(ctx, &nexus.DecisionQuery{Verdict: "rejected"})
 //	for it.Next() {
 //	    d := it.Value()
-//	    fmt.Println(d.Symbol, d.QualityScore, d.BlockedBy)
+//	    if d.BlockedBy != nil { // optional fields are pointers
+//	        fmt.Println(d.Symbol, "blocked by", *d.BlockedBy)
+//	    }
 //	}
 //	if err := it.Err(); err != nil { log.Fatal(err) }
 //

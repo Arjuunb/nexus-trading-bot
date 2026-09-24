@@ -7,37 +7,37 @@ import { routeFor, prefetchRoute } from "@/site/routes";
 const GUIDES = [
   {
     icon: Compass,
-    title: "Connect an exchange",
-    body: "Create a trade-only key, allowlist our egress addresses, and attach it. Keys carrying withdrawal permission are refused at connection time.",
+    title: "Attach an exchange key",
+    body: "In Settings → Security, paste a Binance key. Binance is asked what the key may do first: a key that can withdraw or transfer funds is refused before it is stored. Bind it to the server's IP on Binance. Live routing is locked, so the key is kept encrypted for later.",
     time: "5 min",
   },
   {
     icon: Layers,
     title: "Run your first backtest",
-    body: "Point a strategy at a symbol and a date range. The Lab runs the same engine and risk path as live, so the result is a rehearsal rather than a different program.",
+    body: "Queue one through the API or run it in the dashboard's Backtesting page. Results come back twice — gross, and net of modelled fees, spread and slippage — so a strategy whose edge is only its costs shows as exactly that.",
     time: "10 min",
   },
   {
     icon: ShieldCheck,
-    title: "Set a risk envelope",
-    body: "Daily and weekly loss budgets, exposure ceiling, correlation limits and per-strategy regime allowlists. Nothing trades outside them.",
+    title: "Set your risk limits",
+    body: "Daily and weekly loss limits, per-position and total exposure caps, correlated-position limits, session windows and a drawdown halt, in Settings. An order that fails any check is never created.",
     time: "8 min",
   },
   {
     icon: GitBranch,
-    title: "Promote paper to live",
-    body: "Paper mode consumes the live feed and produces identical journal output. Promotion is a flag, not a rewrite — and it is reversible.",
+    title: "Paper trading and the live lock",
+    body: "Every strategy runs in paper mode against the live Binance feed, with modelled costs and a full journal. Live order routing is locked; asking the API to promote a strategy to live answers live_routing_locked.",
     time: "3 min",
   },
 ];
 
 const CONCEPTS = [
-  ["Conviction score", "A weighted 0–100 across nine qualifications. The score is the output; the breakdown is always visible alongside it."],
-  ["Regime", "Volatility state and directional persistence, classified on three horizons. Strategies declare which regimes they may operate in."],
-  ["Feature vector", "The fixed-shape input the models score, stored verbatim so a decision is replayable months later with the exact inputs it saw."],
-  ["Risk envelope", "The thirteen checks an order intent must clear. A separate service with veto power; it fails closed."],
-  ["Analogue recall", "Previous trades in similar conditions, consulted at decision time. How the system stops repeating a mistake it has paid for."],
-  ["Order intent", "A sized decision that has not yet been through risk. Intents become orders only after the envelope clears."],
+  ["Quality score", "The Decision Brain's 0–100 score from eight weighted factors — higher-timeframe alignment, regime, reward : risk, momentum, stop safety, volatility, structure and volume. 60 is the default minimum; some setups are blocked whatever they score."],
+  ["Regime", "Trending, ranging, or high, low or extreme volatility. Regime fit is part of the score, and a choppy regime blocks trades that are not reversals."],
+  ["Decision", "Every evaluation — accepted or rejected — is stored with its scores, the rules it passed and failed, and the reason. The full market inputs are not stored yet, so a decision cannot be re-run."],
+  ["Risk checks", "Twenty checks on the one path from a signal to an order: loss limits, exposure, correlation, event blackouts, sessions, venue lot rules and more. If a check cannot run, nothing trades."],
+  ["Trade memory", "Every closed trade with its context, searchable by similarity. It is not consulted when a decision is made; repeated losing patterns reduce trade size instead."],
+  ["Order intent", "A paper order waiting for a Binance quote to fill it. A limit entry that is never reached expires rather than being chased."],
 ];
 
 export default function DocsPage() {
@@ -53,47 +53,45 @@ export default function DocsPage() {
           <br className="hidden sm:block" /> in the order you need it
         </>
       }
-      intro="Start with the quickstart, which gets a strategy backtesting in about ten minutes. The concepts section explains the vocabulary the rest of the platform uses, and the guides cover the things people actually get stuck on."
+      intro="Start with the quickstart, which gets a strategy backtesting through the API in about ten minutes. The concepts section explains the vocabulary the rest of the platform uses, and the guides cover the first things people set up."
     >
       <DevSection
         id="quickstart"
         title="Quickstart"
-        lead="Install the client, authenticate, and run a backtest. This does not touch an exchange and cannot place an order."
+        lead="Install the Python client, create a key, and run a backtest. This does not touch an exchange and cannot place an order."
       >
         <div className="space-y-3">
-          <Code lang="bash" label="1 · install" code={`pip install tradelogx-nexus`} />
+          <Code lang="bash" label="1 · install" code={`pip install "git+https://github.com/Arjuunb/nexus-trading-bot#subdirectory=sdks/python"`} />
           <Code
             lang="bash"
             label="2 · authenticate"
-            code={`export NEXUS_API_KEY="nxs_live_..."   # from Settings → API keys`}
+            code={`export NEXUS_API_KEY="nxs_..."   # Settings → Security → API keys (control scope to queue backtests)`}
           />
           <Code
             lang="python"
             label="3 · backtest"
-            code={`from nexus import Client
+            code={`from tradelogx_nexus import Client
 
 client = Client()               # reads NEXUS_API_KEY
 
-result = client.backtest(
-    strategy="structure-v4",
-    symbol="BTC/USDT",
+job = client.backtests.run(
+    "brain",                    # an id from client.strategies.list()
+    symbol="BTCUSDT",
     timeframe="15m",
-    start="2025-01-01",
-    end="2026-01-01",
-    risk_per_trade=0.005,       # 0.5% of equity
+    bars=1000,
 )
 
-print(result.expectancy)        # 0.31R
-print(result.max_drawdown)      # -0.082
-print(result.trades[0].rationale)`}
+gross, net = job["result"]["gross"], job["result"]["net"]
+print(gross["expectancy_r"], net["expectancy_r"])   # before and after costs
+print(job["result"]["costs"]["net_r_drag"])         # what the costs took, in R`}
           />
         </div>
 
         <div className="mt-5">
-          <Callout tone="warn" title="Before you go live">
-            A backtest that looks good is a hypothesis, not a result. Run the same strategy in
-            paper mode against the live feed for a full month before committing capital — it
-            costs nothing and produces an identical journal. The{" "}
+          <Callout tone="warn" title="Before you trust a backtest">
+            A backtest that looks good is a hypothesis, not a result. Run the strategy in paper
+            mode against the live feed for a full month and compare — it costs nothing, and live
+            routing stays locked until a strategy has earned it. The{" "}
             <Link to="/risk-disclosure" className="text-gold-soft underline-offset-2 hover:underline">
               risk disclosure
             </Link>{" "}

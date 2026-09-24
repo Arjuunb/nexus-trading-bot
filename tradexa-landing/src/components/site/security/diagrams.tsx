@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 const ENVELOPE_STEPS = [
   { label: "API secret", note: "entered once, in the browser", cls: "border-white/15 text-white/70" },
   { label: "Data key", note: "unique per tenant", cls: "border-aqua/40 text-aqua-soft" },
-  { label: "Master key", note: "managed KMS · never exported", cls: "border-emerald/45 text-emerald-soft" },
+  { label: "Master key", note: "server environment · never in a database or backup", cls: "border-emerald/45 text-emerald-soft" },
   { label: "Ciphertext at rest", note: "useless without both keys", cls: "border-emerald/45 text-emerald-soft" },
 ];
 
@@ -84,9 +84,9 @@ export function EnvelopeDiagram() {
       </div>
 
       <p className="mt-5 border-t border-navy-500/60 pt-3 text-xs leading-relaxed text-white/45">
-        The secret is decrypted only inside the execution service, in memory, for the duration of
-        a request. It is never written to a log, never returned by an API, and never visible in
-        the product again after it is entered.
+        The secret is decrypted only in memory, for the moment it is needed. It is never written
+        to a log, never returned by an API, and never visible in the product again after it is
+        entered — the dashboard shows a four-character hint.
       </p>
     </div>
   );
@@ -95,14 +95,12 @@ export function EnvelopeDiagram() {
 /* ── API key permission matrix ───────────────────────────────────────── */
 
 const PERMISSIONS: [string, boolean, string][] = [
-  ["Read balances", true, "required for sizing"],
-  ["Read positions", true, "required for exposure"],
-  ["Place orders", true, "required to trade"],
-  ["Cancel orders", true, "required for management"],
-  ["Withdraw funds", false, "connection refused if enabled"],
-  ["Internal transfer", false, "connection refused if enabled"],
-  ["Sub-account admin", false, "never requested"],
-  ["Margin borrow", false, "off unless you opt in"],
+  ["Read account", true, "accepted"],
+  ["Spot and margin trading", true, "accepted · unused while live routing is locked"],
+  ["Futures trading", true, "accepted · unused while live routing is locked"],
+  ["Withdraw funds", false, "refused before the key is stored"],
+  ["Internal transfer", false, "refused before the key is stored"],
+  ["Universal transfer", false, "refused before the key is stored"],
 ];
 
 export function PermissionMatrix() {
@@ -110,7 +108,7 @@ export function PermissionMatrix() {
     <div className="overflow-hidden rounded-2xl border border-navy-500/60 bg-navy-800/70 backdrop-blur-sm">
       <div className="border-b border-navy-500/60 px-5 py-3">
         <h3 className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/45">
-          Key scope, enforced at connection
+          Key scope, asked of the exchange
         </h3>
       </div>
       <ul className="divide-y divide-navy-600/60">
@@ -139,8 +137,9 @@ export function PermissionMatrix() {
         ))}
       </ul>
       <p className="border-t border-navy-500/60 px-5 py-3 text-xs leading-relaxed text-white/45">
-        A key with withdrawal permission is rejected at the moment you try to connect it, not
-        merely unused. The worst case of a compromise is unwanted trading — not a drained account.
+        The exchange is asked what the key may do before it is stored, and a key that can move
+        funds out is refused rather than merely unused — as is one whose permissions the exchange
+        will not confirm. Binance only, the one venue connected today.
       </p>
     </div>
   );
@@ -160,28 +159,28 @@ const ZONES: Zone[] = [
   {
     id: "public",
     label: "Public edge",
-    detail: "TLS 1.3 termination, WAF and rate limiting. Nothing here holds a secret or talks to a database.",
+    detail: "nginx terminates TLS (1.2 and 1.3; TLS 1.3 only on the API host) and forwards to the app. It holds no trading secret and never touches a database.",
     r: 118,
     color: "#1B3050",
   },
   {
     id: "session",
-    label: "Authenticated session",
-    detail: "Cookie sessions with rotation, device binding and optional TOTP. A session grants identity, never authority.",
+    label: "Authenticated request",
+    detail: "Every request needs a signed session cookie, a scoped API key or the control key — optional TOTP on sign-in, rate limits on sign-in and webhooks. The source address is never a credential.",
     r: 92,
     color: "#13456B",
   },
   {
     id: "service",
-    label: "Service mesh",
-    detail: "Every internal call is authenticated with a short-lived workload identity and authorised per endpoint. Being inside the network proves nothing.",
+    label: "Role and scope",
+    detail: "Authenticated is not authorised: API keys carry read or control scope, and accounts without the operator role cannot reach the trading engine at all.",
     r: 66,
     color: "#12695A",
   },
   {
     id: "exec",
-    label: "Execution enclave",
-    detail: "The only service that can decrypt a trading key. No inbound public route, no shell access, no log sink that could receive plaintext.",
+    label: "Key vault",
+    detail: "Exchange secrets are unwrapped only in memory, only when they are needed, and responses and logs pass a redaction filter before anything is written or returned.",
     r: 38,
     color: "#1E9457",
   },
@@ -193,7 +192,7 @@ export function ZeroTrustDiagram() {
 
   return (
     <div className="grid gap-6 rounded-2xl border border-navy-500/60 bg-navy-800/70 p-5 backdrop-blur-sm sm:p-7 lg:grid-cols-[minmax(0,320px)_1fr] lg:items-center">
-      <svg viewBox="0 0 280 280" className="mx-auto w-full max-w-[300px]" role="img" aria-label="Concentric zero-trust boundaries from the public edge to the execution enclave">
+      <svg viewBox="0 0 280 280" className="mx-auto w-full max-w-[300px]" role="img" aria-label="Concentric trust boundaries from the public edge to the key vault">
         {ZONES.map((z) => {
           const on = z.id === active;
           // Hover only. An `onFocus` here would never fire — a bare <g> is not
@@ -261,8 +260,8 @@ export function ZeroTrustDiagram() {
           <p className="mt-2 leading-relaxed text-white/55">{zone.detail}</p>
         </motion.div>
         <p className="mt-5 border-t border-navy-600 pt-3 font-mono text-[10px] leading-relaxed text-white/30">
-          Each boundary re-authenticates. A caller that has crossed three of them still presents
-          credentials to cross the fourth.
+          The platform runs as one application behind nginx, so these are checks inside it rather
+          than separate services — each one still refuses a caller the previous one let through.
         </p>
       </div>
     </div>
@@ -271,12 +270,13 @@ export function ZeroTrustDiagram() {
 
 /* ── Audit log ───────────────────────────────────────────────────────── */
 
+// Illustrative rows in the shape the real log stores (services/audit_log.py).
 const AUDIT_ROWS = [
-  { t: "14:02:11", actor: "you@desk", action: "risk.daily_cap", from: "3.0%", to: "2.5%", hash: "9c21f0" },
-  { t: "13:47:52", actor: "you@desk", action: "key.rotate", from: "binance-01", to: "binance-02", hash: "4e8bd0" },
-  { t: "11:20:04", actor: "system", action: "trading.halt", from: "running", to: "halted", hash: "a7f39c" },
-  { t: "09:58:33", actor: "ops@team", action: "strategy.promote", from: "paper", to: "live", hash: "13c988" },
-  { t: "09:14:07", actor: "system", action: "order.fill", from: "—", to: "12.4 SOL", hash: "6f7e13" },
+  { t: "14:02:11", actor: "you", action: "settings.update", from: "daily loss 3.0%", to: "2.5%", hash: "9c21f0" },
+  { t: "13:47:52", actor: "you", action: "key.attach", from: "…Qx7a", to: "…M2c9", hash: "4e8bd0" },
+  { t: "11:20:04", actor: "you", action: "POST /controls/pause-all", from: "—", to: "200", hash: "a7f39c" },
+  { t: "09:58:33", actor: "api-key:research", action: "POST /v1/strategies/…/promote", from: "—", to: "409", hash: "13c988" },
+  { t: "09:14:07", actor: "tradingview-webhook", action: "POST /webhook", from: "—", to: "200", hash: "6f7e13" },
 ];
 
 export function AuditLog() {
@@ -328,9 +328,10 @@ export function AuditLog() {
       </div>
 
       <p className="border-t border-navy-500/60 px-5 py-3 text-xs leading-relaxed text-white/45">
-        Each entry carries the hash of the one before it, so a deleted or edited row breaks the
-        chain and the break is detectable. Nothing in the product exposes a way to amend an entry —
-        including to us.
+        Illustrative rows. Each entry carries the hash of the one before it, so a deleted or edited
+        row breaks the chain and the check in Settings → Security finds the break. Database
+        triggers refuse updates and deletes, and nothing in the product exposes a way to amend an
+        entry.
       </p>
     </div>
   );
@@ -338,16 +339,16 @@ export function AuditLog() {
 
 /* ── Deployment ──────────────────────────────────────────────────────── */
 
-export const REGIONS = [
-  { code: "eu-central", city: "Frankfurt", role: "Primary · EU tenants", latency: "8 ms to Binance EU" },
-  { code: "ap-northeast", city: "Tokyo", role: "Primary · APAC tenants", latency: "6 ms to Bybit" },
-  { code: "us-east", city: "Virginia", role: "Primary · Americas", latency: "11 ms to OKX US" },
+const HOST = [
+  { code: "edge", title: "nginx", role: "TLS, HTTP to HTTPS, the API host", note: "Certificates renew in place" },
+  { code: "app", title: "One application", role: "Engine, dashboard, /v1 API, webhooks", note: "Single worker, restarts on failure" },
+  { code: "data", title: "SQLite on a volume", role: "Databases, vault, audit log, backups", note: "Daily backups · encrypted with the vault key when set" },
 ];
 
 export function DeploymentMap() {
   return (
     <div className="grid gap-3 sm:grid-cols-3">
-      {REGIONS.map((r, i) => (
+      {HOST.map((r, i) => (
         <motion.div
           key={r.code}
           initial={{ opacity: 0, y: 14 }}
@@ -360,10 +361,10 @@ export function DeploymentMap() {
           <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-emerald-soft">
             {r.code}
           </p>
-          <p className="mt-2 text-lg font-semibold text-white">{r.city}</p>
+          <p className="mt-2 text-lg font-semibold text-white">{r.title}</p>
           <p className="mt-1 text-[13px] text-white/50">{r.role}</p>
           <p className="mt-4 border-t border-navy-600 pt-3 font-mono text-[10px] text-white/30">
-            {r.latency}
+            {r.note}
           </p>
         </motion.div>
       ))}

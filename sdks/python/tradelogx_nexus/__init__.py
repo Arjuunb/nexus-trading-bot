@@ -12,6 +12,8 @@ writes are retried only when the server says it did not process them (429).
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import time
@@ -20,11 +22,26 @@ import urllib.parse
 import urllib.request
 from typing import Any, Iterator, Optional
 
-__all__ = ["Client", "NexusError", "API_VERSION", "__version__"]
+__all__ = ["Client", "NexusError", "API_VERSION", "verify_webhook", "__version__"]
 __version__ = "0.1.0"
 API_VERSION = "2026-09-24"
 DEFAULT_BASE = "https://trade-logx.com"
 _RETRYABLE = {429, 502, 503, 504}
+
+
+def verify_webhook(secret: str, body: bytes, signature_header: str, *, tolerance_s: int = 300,
+                   now: Optional[float] = None) -> bool:
+    """Check a webhook's ``Nexus-Signature`` header against the raw request
+    body. Call it before parsing; reject the request when it returns False."""
+    try:
+        parts = dict(p.split("=", 1) for p in signature_header.split(","))
+        t = int(parts["t"])
+    except (ValueError, KeyError):
+        return False
+    if abs((time.time() if now is None else now) - t) > tolerance_s:
+        return False
+    expected = hmac.new(secret.encode(), f"{t}.".encode() + body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, parts.get("v1", ""))
 
 
 class NexusError(Exception):

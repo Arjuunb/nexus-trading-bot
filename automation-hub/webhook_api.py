@@ -1047,6 +1047,16 @@ audit_exporter = AuditExporter(
     token=_os.environ.get("HUB_AUDIT_EXPORT_TOKEN", ""),
     interval_s=float(_os.environ.get("HUB_AUDIT_EXPORT_INTERVAL", "900")))
 
+# Signed outbound webhooks (services/outbound_webhooks.py): decision events
+# read from the decision store, so no trading code is involved in producing them.
+from services.outbound_webhooks import WebhookService  # noqa: E402
+from services.public_shapes import decision as _public_decision  # noqa: E402
+outbound_webhooks = WebhookService(
+    _os.environ.get("HUB_WEBHOOKS_DB", _os.path.join(_os.path.dirname(settings.audit_path), "webhooks.db")),
+    decision_source=lambda after, limit: decision_store.after(after, limit),
+    latest_decision_id=lambda: decision_store.max_id(),
+    render=_public_decision)
+
 # The lab's bot gets the same repair loop, over the lab's own manager.
 adaptive_lab_supervisor = InstanceSupervisor(
     adaptive_lab.manager,

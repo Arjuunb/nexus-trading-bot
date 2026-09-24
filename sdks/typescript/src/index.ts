@@ -48,6 +48,30 @@ export interface Backtest {
 export interface DecisionQuery { verdict?: "accepted" | "rejected"; symbol?: string; since?: string; limit?: number; pageSize?: number }
 export interface Options { apiKey?: string; baseUrl?: string; version?: string; maxRetries?: number; backoffMs?: number; fetch?: typeof fetch }
 
+/**
+ * Check a webhook's `Nexus-Signature` header against the raw request body
+ * (the exact bytes received, before parsing). Uses Web Crypto, so it works in
+ * Node 18+, Deno, Bun and browsers.
+ */
+export async function verifyWebhook(secret: string, rawBody: string | Uint8Array, signatureHeader: string,
+                                    opts: { toleranceS?: number; now?: number } = {}): Promise<boolean> {
+  const parts = Object.fromEntries(signatureHeader.split(",").map((p) => { const i = p.indexOf("="); return [p.slice(0, i), p.slice(i + 1)]; }));
+  const t = Number(parts.t);
+  if (!Number.isInteger(t) || !parts.v1) return false;
+  const now = opts.now ?? Date.now() / 1000;
+  if (Math.abs(now - t) > (opts.toleranceS ?? 300)) return false;
+  const enc = new TextEncoder();
+  const body = typeof rawBody === "string" ? enc.encode(rawBody) : rawBody;
+  const message = new Uint8Array([...enc.encode(`${t}.`), ...body]);
+  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const mac = new Uint8Array(await crypto.subtle.sign("HMAC", key, message));
+  const expected = [...mac].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (expected.length !== parts.v1.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ parts.v1.charCodeAt(i);
+  return diff === 0;
+}
+
 /** An error answer from the API: HTTP status, a stable code and a message. */
 export class NexusError extends Error {
   constructor(public status: number, public code: string, message: string, public body?: unknown) {

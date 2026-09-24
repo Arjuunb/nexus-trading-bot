@@ -1,0 +1,37 @@
+name: Bug report
+description: Something does not work the way the docs or the code say it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Leave out API keys, exchange credentials, account identifiers and full log dumps.
+        A public issue is public immediately and permanently.
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The exact call, configuration or steps. A decision id (dec_…) or backtest id (bt_…) helps.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit or client version
+      placeholder: e.g. a1b2c3d, or tradelogx-nexus 0.1.0 (Python 3.12)
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else

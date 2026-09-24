@@ -54,7 +54,7 @@ export default function BackupsPanel() {
     finally { setBusy(""); }
   };
 
-  return <SettingsSection title="Backups" description="A consistent snapshot of every database and settings file, taken nightly and kept for a week.">
+  return <SettingsSection title="Backups" description="A consistent snapshot of every database and settings file, taken once a day and kept for a week.">
     <div className="risk-list">
       <div className="risk-item"><span>Encryption</span><b className={b ? (b.encrypting ? "pos" : "neg") : ""}>
         {b ? (b.encrypting ? "On · AES-256-GCM, sealed with the master key" : "Off · HUB_MASTER_KEY is not set") : "—"}

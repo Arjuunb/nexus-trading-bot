@@ -29,6 +29,10 @@ test("Security settings show key custody, redaction and a verifiable audit log",
   await expect(apiKeys.getByText("nxs_a1b2c3d4_…")).toBeVisible();
   await expect(apiKeys.getByRole("button", { name: "Revoke" })).toBeVisible();
 
+  const hooks = page.locator("section", { has: page.getByRole("heading", { name: "Webhooks" }) });
+  await expect(hooks.getByText("https://example.com/nexus-events")).toBeVisible();
+  await expect(hooks.getByRole("button", { name: "Send test" })).toBeVisible();
+
   const backups = page.locator("section", { has: page.getByRole("heading", { name: "Backups" }) });
   await expect(backups.getByText("On · AES-256-GCM, sealed with the master key")).toBeVisible();
   await expect(backups.getByText(/1 from before encryption/)).toBeVisible();

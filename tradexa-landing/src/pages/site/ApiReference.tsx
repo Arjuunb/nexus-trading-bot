@@ -22,32 +22,35 @@ const GROUPS: { name: string; endpoints: Endpoint[] }[] = [
       {
         method: "GET",
         path: "/v1/strategies",
-        summary: "List strategies and their current version",
+        summary: "Every strategy, with its immutable version",
         detail:
-          "Returns every strategy on the account with its active version, mode (paper or live) and the regimes it is permitted to operate in. Performance is attributed per version, not per strategy, so the response carries the version id you will need for any metrics call.",
+          "Returns the strategies the platform can run, each with the version that produced its record, its lifecycle (production or research-only), the timeframes it supports and its execution mode. Every strategy is in paper mode: live order routing is locked.",
         sample: `{
   "data": [
     {
-      "id": "stg_8f21",
-      "name": "structure-v4",
-      "version": 11,
-      "mode": "live",
-      "regimes": ["trend", "expanding"],
-      "risk_per_trade": 0.005
+      "id": "brain",
+      "name": "Decision Brain",
+      "version": "1.0.0",
+      "lifecycle": "production",
+      "mode": "paper",
+      "timeframes": ["15m", "1h", "4h"],
+      "markets": ["binance_usdm:perpetual"]
     }
-  ]
+  ],
+  "live_routing": "locked"
 }`,
       },
       {
         method: "POST",
         path: "/v1/strategies/:id/promote",
-        summary: "Promote paper to live, or demote",
+        summary: "Ask for paper or live — live is refused",
         detail:
-          "Changes the execution mode. Promotion is rejected if the strategy has no paper history, if the risk envelope would be breached on the first order, or if the connected venue is degraded. Demotion is always accepted and never closes open positions.",
+          "Needs the control scope. Paper is the only mode available, so a request for paper succeeds without changing anything, and a request for live is refused while live order routing is locked.",
         sample: `{ "mode": "live" }
 
-→ 200 { "id": "stg_8f21", "mode": "live", "effective_at": "2026-07-30T09:14:02Z" }
-→ 409 { "error": { "code": "no_paper_history", ... } }`,
+→ 409 { "error": { "code": "live_routing_locked",
+                   "message": "Live order routing is locked on this platform; every strategy runs in paper mode." } }
+→ 200 { "id": "brain", "mode": "paper", "changed": false }   // for { "mode": "paper" }`,
       },
     ],
   },
@@ -59,34 +62,34 @@ const GROUPS: { name: string; endpoints: Endpoint[] }[] = [
         path: "/v1/decisions",
         summary: "Every evaluation, including the rejections",
         detail:
-          "The rejections are the point. Filter by verdict to retrieve only what was declined and why — over a month this is a more useful record than the trades, because it is the only place you can see what the system nearly did.",
-        sample: `GET /v1/decisions?verdict=veto&since=2026-07-01
+          "Newest first. Filter by verdict (accepted or rejected), symbol and since (an ISO date). The rejections are the point: they are the only place you can see what the system nearly did, and why it did not. Pages of up to 200; pass next_cursor back as cursor for the next page.",
+        sample: `GET /v1/decisions?verdict=rejected&since=2026-09-01&limit=50
 
 {
   "data": [
     {
-      "id": "dec_41c9",
-      "symbol": "ARB/USDT",
-      "conviction": 61,
-      "verdict": "veto",
-      "vetoed_by": "news_blackout",
-      "rationale": "11 minutes to scheduled release; blackout window enforced.",
-      "feature_vector_id": "fv_9a2e"
+      "id": "dec_41",
+      "ts": "2026-09-24T09:15:00+00:00",
+      "symbol": "XRPUSDT",
+      "strategy": "Decision Brain",
+      "verdict": "rejected",
+      "quality_score": 48,
+      "blocked_by": "quality",
+      "reason": "Quality score 48 is below the minimum of 60.",
+      "rules_failed": ["min_quality_score"],
+      "executed": false
     }
-  ]
+  ],
+  "next_cursor": "dec_41"
 }`,
       },
       {
         method: "GET",
         path: "/v1/decisions/:id/replay",
-        summary: "Re-run a decision against its stored inputs",
+        summary: "Not available yet",
         detail:
-          "Deterministic. The stored feature vector is fed back through the current model ensemble, which is how you find out whether a change to weights would have altered a decision made months ago. Never places an order.",
-        sample: `{
-  "original": { "conviction": 61, "verdict": "veto" },
-  "replayed": { "conviction": 68, "verdict": "veto" },
-  "diverged": false
-}`,
+          "Decisions are stored with their scores, rules and reason, but not the full market inputs they were made from, so they cannot be re-run. The endpoint answers 501 until those inputs are kept.",
+        sample: `→ 501 { "error": { "code": "not_available", "message": "Decisions are stored with their scores and rules, not the full market inputs they were made from, so they cannot be re-run yet." } }`,
       },
     ],
   },
@@ -96,15 +99,16 @@ const GROUPS: { name: string; endpoints: Endpoint[] }[] = [
       {
         method: "GET",
         path: "/v1/positions",
-        summary: "Open positions with live mark and R multiple",
+        summary: "Open paper positions with mark and R multiple",
         detail:
-          "Includes the protective orders resident at the venue, so you can verify from outside the product that a stop actually exists rather than trusting that one was requested.",
+          "Every open paper position, with the latest observed mark, unrealised P&L and R multiple. Stops and targets are managed by the engine on every candle — they are not orders held at an exchange, and the response says so.",
         sample: `{
   "data": [
     {
-      "symbol": "BTC/USDT", "side": "long", "size": "0.420",
-      "entry": 68050.0, "mark": 68776.5, "r_multiple": 1.15,
-      "protective": { "stop": 67420.0, "target": 69380.0, "resident": true }
+      "id": "7c1e…", "instance_id": "eb1a2ce8", "symbol": "XRPUSDT",
+      "side": "long", "size": 1250.0, "entry": 0.5412, "mark": 0.5498,
+      "r_multiple": 0.86, "unrealized_pnl": 10.75, "mode": "paper",
+      "protective": { "stop": 0.5312, "target": 0.5712, "managed_by": "engine" }
     }
   ]
 }`,
@@ -112,12 +116,13 @@ const GROUPS: { name: string; endpoints: Endpoint[] }[] = [
       {
         method: "POST",
         path: "/v1/positions/:id/close",
-        summary: "Close a position at market",
+        summary: "Close a paper position at the current mark",
         detail:
-          "A manual override. It is executed immediately and written to the audit log with the actor and source address, because an override that leaves no trace is indistinguishable from a bug.",
+          "Needs the control scope. Closes at a fresh observed price and never at a guessed one — if there is no recent mark the request is refused with no_mark. The close is written to the audit log under the key's name.",
         sample: `{ "reason": "manual flatten before travel" }
 
-→ 202 { "order_id": "ord_77b1", "status": "submitted" }`,
+→ 200 { "id": "7c1e…", "status": "closed", "close": { "exit": 0.5498, "pnl": 10.75 } }
+→ 409 { "error": { "code": "no_mark", ... } }`,
       },
     ],
   },
@@ -127,31 +132,27 @@ const GROUPS: { name: string; endpoints: Endpoint[] }[] = [
       {
         method: "POST",
         path: "/v1/backtests",
-        summary: "Queue a backtest or a parameter sweep",
+        summary: "Queue a backtest of one strategy",
         detail:
-          "Runs against the same engine and risk service as live. Sweeps return the whole surface rather than the best cell — a peak surrounded by cliffs is an overfit and the response is shaped so it looks like one.",
-        sample: `{
-  "strategy": "structure-v4",
-  "symbol": "BTC/USDT",
-  "timeframe": "15m",
-  "start": "2025-01-01",
-  "end": "2026-01-01",
-  "sweep": { "threshold": [68, 70, 72, 74, 76] }
-}
+          "Needs the control scope. Runs a built-in strategy over the Binance candles cached on the server (300 to 1,500 bars). If the server has no data for that symbol and timeframe, the backtest fails with that reason rather than reporting an empty result. Parameter sweeps are not available through the API yet.",
+        sample: `{ "strategy": "brain", "symbol": "BTCUSDT", "timeframe": "15m", "bars": 1000 }
 
-→ 202 { "id": "bt_2f77", "status": "queued" }`,
+→ 202 { "id": "bt_2f77a1c9e0b4", "status": "queued" }`,
       },
       {
         method: "GET",
         path: "/v1/backtests/:id",
-        summary: "Fetch results, including the cost breakdown",
+        summary: "Results, gross and net of costs",
         detail:
-          "Gross performance and cost drag are reported separately. A strategy whose edge disappears once fees, funding and modelled slippage are applied should be visibly that, not quietly netted.",
+          "Gross performance and performance after modelled fees, spread and slippage are reported side by side, with the difference in R. A strategy whose edge disappears once costs are applied shows as exactly that. Results are kept while the server runs; only the key that queued a backtest can read it.",
         sample: `{
+  "id": "bt_2f77a1c9e0b4",
   "status": "complete",
-  "gross": { "expectancy": 0.44, "hit_rate": 0.46 },
-  "costs": { "fees": -0.09, "funding": -0.02, "slippage": -0.02 },
-  "net": { "expectancy": 0.31, "max_drawdown": -0.082 }
+  "result": {
+    "gross": { "trades": 38, "win_rate": 42.1, "expectancy_r": 0.12, "net_r": 4.56 },
+    "net":   { "trades": 38, "win_rate": 39.5, "expectancy_r": -0.05, "net_r": -1.9 },
+    "costs": { "cost_pct_per_side": 0.0006, "net_r_drag": 6.46 }
+  }
 }`,
       },
     ],
@@ -159,13 +160,15 @@ const GROUPS: { name: string; endpoints: Endpoint[] }[] = [
 ];
 
 const ERRORS = [
-  ["400", "invalid_request", "Malformed body or a parameter outside its allowed range."],
+  ["400", "invalid_request", "Malformed body, an unknown Nexus-Version, or a parameter outside its allowed range."],
   ["401", "unauthenticated", "Missing, malformed or revoked API key."],
-  ["403", "insufficient_scope", "The key is valid but not permitted for this operation."],
-  ["409", "risk_veto", "The risk service refused the intent. `vetoed_by` names the rule."],
-  ["422", "venue_rejected", "The exchange rejected the order; the venue's reason is passed through verbatim."],
-  ["429", "rate_limited", "Retry after the seconds given in `Retry-After`."],
-  ["503", "fail_closed", "A dependency is unreachable and trading has stopped by design."],
+  ["403", "insufficient_scope", "The key is valid but read-only; this operation needs the control scope."],
+  ["404", "not_found", "No such strategy, decision, position or backtest (for this key)."],
+  ["409", "live_routing_locked", "A request to trade live. Live order routing is locked for every caller."],
+  ["409", "no_mark", "A close without a fresh price to close at. Nothing is closed at a guessed price."],
+  ["409", "ambiguous_close", "The position's instance holds several positions; close them from the dashboard."],
+  ["429", "rate_limited", "Retry after the seconds given in Retry-After."],
+  ["501", "not_available", "The endpoint exists but the capability does not yet (decision replay)."],
 ];
 
 export default function ApiReferencePage() {
@@ -176,30 +179,32 @@ export default function ApiReferencePage() {
   return (
     <DevShell
       eyebrow="API reference"
-      title="One HTTP API, and no hidden verbs"
-      intro="JSON over HTTPS, keyed authentication, cursor pagination and idempotent writes. Every endpoint the dashboard uses is an endpoint you can call — there is no private API the product reserves for itself."
+      title="One HTTP API, keyed and versioned"
+      intro="JSON over HTTPS at trade-logx.com/v1: personal API keys, cursor pagination, stable error codes and signed webhooks. It covers strategies, decisions, positions and backtests; the dashboard also uses internal endpoints that are not part of it."
     >
       <DevSection
         id="auth"
         title="Authentication"
-        lead="A bearer token in the header. Keys are scoped, revocable, and never returned after creation."
+        lead="A bearer token in the header. Create keys in the dashboard under Settings → Security → API keys; each is scoped (read, or read and control), revocable, and shown only once."
       >
         <Code
           lang="bash"
-          code={`curl https://api.trade-logx.com/v1/positions \\
+          code={`curl https://trade-logx.com/v1/positions \\
   -H "Authorization: Bearer $NEXUS_API_KEY" \\
-  -H "Nexus-Version: 2026-07-01"`}
+  -H "Nexus-Version: 2026-09-24"`}
         />
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <Callout title="Versioning">
             The <code className="font-mono text-white/70">Nexus-Version</code> header pins the
             response shape to a date. Omit it and you get the version your key was created
             against — never the newest, so a deploy on our side cannot change your parsing.
+            The current version is 2026-09-24.
           </Callout>
           <Callout title="Rate limits">
-            600 requests per minute per key, 20 per second burst. Limits are returned on every
-            response in <code className="font-mono text-white/70">X-RateLimit-Remaining</code>;
-            a 429 always carries <code className="font-mono text-white/70">Retry-After</code>.
+            600 requests per minute per key, 20 per second burst. The remaining allowance is
+            returned on every response in{" "}
+            <code className="font-mono text-white/70">X-RateLimit-Remaining</code>; a 429 always
+            carries <code className="font-mono text-white/70">Retry-After</code>.
           </Callout>
         </div>
       </DevSection>
@@ -254,33 +259,47 @@ export default function ApiReferencePage() {
       <DevSection
         id="webhooks"
         title="Webhooks"
-        lead="The same event envelope the internal bus uses, so a webhook payload and a replayed event are the same object."
+        lead="Every decision the engine records, pushed to your endpoint as it happens. Add endpoints in the dashboard under Settings → Security → Webhooks; the signing secret is shown once."
       >
         <Code
           lang="json"
           label="envelope"
           code={`{
-  "id": "evt_5c81",
-  "type": "decision.vetoed",
-  "occurred_at": "2026-07-30T09:18:00.412Z",
-  "sequence": 4192837,
-  "idempotency_key": "dec_41c9:veto",
-  "data": { "...": "the decision object" }
+  "id": "evt_dec_41",
+  "type": "decision.rejected",
+  "occurred_at": "2026-09-24T09:18:00Z",
+  "sequence": 41,
+  "idempotency_key": "dec_41:rejected",
+  "data": { "...": "the same object GET /v1/decisions/dec_41 returns" }
 }`}
         />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <Callout title="Events">
+            <code className="font-mono text-white/70">decision.accepted</code>,{" "}
+            <code className="font-mono text-white/70">decision.rejected</code>, and{" "}
+            <code className="font-mono text-white/70">webhook.test</code> when you press Send
+            test. A new endpoint starts from the next decision; history is not replayed to it.
+          </Callout>
+          <Callout title="Signatures">
+            <code className="font-mono text-white/70">Nexus-Signature: t=…,v1=…</code> is
+            HMAC-SHA256 of <code className="font-mono text-white/70">t.body</code> with your
+            secret. Verify the raw body before parsing and reject stale timestamps; every SDK
+            has a helper for it.
+          </Callout>
+        </div>
         <p className="mt-4 max-w-2xl text-sm leading-relaxed text-white/55">
           Delivery is at-least-once, so handlers must be idempotent — the{" "}
           <code className="font-mono text-white/70">idempotency_key</code> is stable across
-          retries. Signatures are HMAC-SHA256 over the raw body; verify before parsing. Failed
-          endpoints back off exponentially for 24 hours, and every attempt is visible in the
-          dashboard rather than only in your logs.
+          retries. Any answer other than 2xx is retried after 30 seconds, doubling up to an hour,
+          for 24 hours. Every attempt, with the status code your endpoint returned, is listed
+          under the endpoint in the dashboard.
         </p>
       </DevSection>
 
       <DevSection
         id="errors"
         title="Errors"
-        lead="A stable code, a human sentence, and — where a rule caused it — the name of the rule."
+        lead={`Every error has the same shape: {"error": {"code": "…", "message": "…"}}. Branch on the code; the message is for people.`}
       >
         <div className="overflow-x-auto rounded-xl border border-white/[0.08]">
           <table className="w-full min-w-[560px] border-collapse text-left">
@@ -309,10 +328,10 @@ export default function ApiReferencePage() {
         </div>
 
         <div className="mt-4">
-          <Callout tone="warn" title="503 is not an outage">
-            <code className="font-mono text-white/70">fail_closed</code> means the risk service
-            is unreachable and trading has stopped deliberately rather than continuing
-            unchecked. Treat it as the system working. Current state is always on the{" "}
+          <Callout tone="warn" title="409 live_routing_locked is by design">
+            Live order routing is locked on this platform, so promoting a strategy to live is
+            refused for every key and every strategy runs in paper mode. Whether the API itself
+            is up is on the{" "}
             <Link to="/status" className="text-gold-soft underline-offset-2 hover:underline">
               status page
             </Link>

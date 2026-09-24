@@ -10,3 +10,12 @@ automation-hub-dashboard/.env.*
 **/*.db
 .pytest_cache
 report.html
+
+# Secrets reach the container at run time through compose's env_file. They
+# must never be copied into an image layer by the `COPY . .` in the Dockerfile.
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example

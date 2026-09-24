@@ -345,3 +345,32 @@ impl Iterator for Decisions<'_> {
         self.buf.pop().map(Ok)
     }
 }
+
+/// Check a webhook's `Nexus-Signature` header against the raw request body.
+/// Call it before parsing and reject the request when it returns false.
+/// `now_unix` is the current time in seconds; `tolerance_s` how old the
+/// signature's timestamp may be (300 is a sensible default).
+pub fn verify_webhook(secret: &str, body: &[u8], header: &str, now_unix: i64, tolerance_s: i64) -> bool {
+    use hmac::{Hmac, Mac};
+    let mut t: Option<i64> = None;
+    let mut sig: Option<&str> = None;
+    for part in header.split(',') {
+        match part.split_once('=') {
+            Some(("t", v)) => t = v.parse().ok(),
+            Some(("v1", v)) => sig = Some(v),
+            Some(_) => {}
+            None => return false,
+        }
+    }
+    let (Some(t), Some(sig)) = (t, sig) else { return false };
+    if (now_unix - t).abs() > tolerance_s {
+        return false;
+    }
+    let Ok(mut mac) = Hmac::<sha2::Sha256>::new_from_slice(secret.as_bytes()) else { return false };
+    mac.update(format!("{t}.").as_bytes());
+    mac.update(body);
+    let Some(expected) = (0..sig.len()).step_by(2)
+        .map(|i| sig.get(i..i + 2).and_then(|h| u8::from_str_radix(h, 16).ok()))
+        .collect::<Option<Vec<u8>>>() else { return false };
+    mac.verify_slice(&expected).is_ok()
+}

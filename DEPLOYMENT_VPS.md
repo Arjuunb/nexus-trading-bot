@@ -194,6 +194,13 @@ Never commit `.env`, Supabase keys, SMTP passwords, OAuth private keys, or
 certificate material. A production startup fails closed if Supabase Auth is
 selected without its URL and anon key.
 
+`.env` reaches the container only through compose's `env_file`; `.dockerignore`
+keeps every `.env` file out of the image. Images built before that rule existed
+copied `.env` into a layer, so after the first deploy that includes it remove
+the old images (`docker image prune -a` once the new containers are healthy).
+If such an image was ever pushed to a registry or copied off the server,
+rotate the secrets it contained.
+
 ## Migrate existing VPS SQLite history to Supabase
 
 Do this only after the Supabase Auth SQL above is working and before restarting
