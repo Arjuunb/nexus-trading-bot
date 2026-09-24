@@ -1,35 +1,32 @@
 import { useMemo, useRef, useState } from "react";
 import { useApp } from "../app-context";
 import { apiPostJson, useLive } from "../lib/api";
-import {
-  Chart, TOGGLE_GROUP,
-  type Candle, type Gate, type Overlay, type Position, type TimelineEvent,
-} from "./InstanceVisualLab";
+import NativeSMCChartOverlay, {
+  type NativeCandle, type NativeSMCChartState, type NativeSMCOverlayFilters,
+  type SMCFillOverlay, type SMCTradePlanOverlay,
+} from "../components/chart/NativeSMCChartOverlay";
 
 /**
  * Adaptive MTF Trend Pullback Lab -- one private paper bot, laid out like the
  * SMC Strategy Lab.
  *
  * The bot is the unmodified strategy on the same engine, fills and safety
- * checks as a Trading Instance, but with its own paper account and database
- * (services/adaptive_lab.py). The chart is the Instance Visual Lab's own
- * component, fed by the same payload functions, so there is still exactly one
- * chart implementation and this page computes no trading feature.
+ * checks as a Trading Instance, with its own paper account and database
+ * (services/adaptive_lab.py). The chart is the SMC lab's own component, fed
+ * with the bot's own Binance hub feed: closed candles, the forming candle
+ * (display only) and bid/ask/mark. This page computes no trading feature.
  */
 
+interface Gate { id: string; label: string; detail: string; state: string; explanation: string }
 interface BotStatus {
-  id: string; symbol: string; state: string; ui_status?: string;
-  market_status?: string; market_status_reason?: string;
-  strategy_status_reason?: string; current_blocker?: string | null;
-  last_decision?: Record<string, any> | null;
+  id: string; symbol: string; state: string; market_status?: string;
+  strategy_status_reason?: string; last_decision?: Record<string, any> | null;
   metrics?: Record<string, any>; current_realized_equity?: number;
-  starting_equity?: number;
 }
 interface LabStatus {
   strategy: { key: string; label: string; version: string; timeframe: string };
   symbol: string; mode: string; risk_pct: number; max_risk_pct: number;
   modes: { id: string; label: string }[];
-  bots: { symbol: string; id: string; mode: string }[];
   supported_symbols?: string[];
   bot: BotStatus | null; bot_id?: string;
 }
@@ -37,19 +34,35 @@ interface Paper {
   positions: Record<string, any>[]; trades: Record<string, any>[];
   orders: Record<string, Record<string, any>>; logs: Record<string, any>[];
 }
-interface LabState {
-  gates: Gate[]; required_next: string | null; blocker: string | null;
-  blocker_explanation: string; decision_state: string; position: Position | null;
+interface LiveChart {
+  candles: NativeCandle[]; forming_candle: NativeCandle | null;
+  live_display: NonNullable<NativeSMCChartState["live_display"]> & { connection_state?: string; health_reason?: string };
+  data_provenance: { last_closed_candle: string | null; closed_candles_loaded: number };
+  trade_plan: SMCTradePlanOverlay | null; fills: SMCFillOverlay[];
+}
+interface JournalEntry {
+  id: number; candle_time: string; engine_decision: string | null; price: number | null;
+  strategy_state: string | null; strategy_decision: string | null; direction: string | null;
+  reason: string | null; quality: number | null; rr: number | null;
+  entry: number | null; stop: number | null; target: number | null; engine_reasons: string[];
 }
 
 const SYMBOLS = ["XRPUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "ADAUSDT", "BNBUSDT", "DOGEUSDT", "AVAXUSDT"];
-const TABS = ["positions", "orders", "trades", "decisions", "log"] as const;
+const TABS = ["positions", "orders", "trades", "journal", "log"] as const;
 type Tab = typeof TABS[number];
 const MARK: Record<string, string> = { PASS: "✓", FAIL: "✗", WAITING: "…", NOT_APPLICABLE: "–" };
-const ALL_LAYERS = new Set(Object.values(TOGGLE_GROUP));
+/** The SMC chart's own layers are SMC objects; this bot publishes none. */
+const NO_SMC_LAYERS: NativeSMCOverlayFilters = {
+  pivots: false, internal: false, swing: false, structure: false, liquidity: false,
+  fvg: false, orderBlocks: false, mitigated: false, labels: false,
+};
 const money = (value: unknown) => {
   const n = Number(value);
   return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 2 }) : "—";
+};
+const price = (value: unknown) => {
+  const n = Number(value);
+  return Number.isFinite(n) ? n.toLocaleString(undefined, { maximumFractionDigits: 6 }) : "—";
 };
 const stamp = (value?: string | null) =>
   value ? value.replace("T", " ").replace("+00:00", " UTC").slice(0, 19) : "—";
@@ -59,14 +72,17 @@ export default function AdaptiveLab() {
   const status = useLive<LabStatus>("/research/adaptive-lab/status", 5_000);
   const hasBot = Boolean(status.data?.bot);
   const paper = useLive<Paper>(hasBot ? "/research/adaptive-lab/paper" : null, 5_000);
-  const state = useLive<LabState>(hasBot ? "/research/adaptive-lab/state" : null, 5_000);
-  const candles = useLive<{ candles: Candle[]; source: string }>(
-    hasBot ? "/research/adaptive-lab/candles?limit=300" : null, 10_000);
-  const features = useLive<{ overlays: Overlay[] }>(hasBot ? "/research/adaptive-lab/features" : null, 10_000);
-  const timeline = useLive<{ events: TimelineEvent[] }>(hasBot ? "/research/adaptive-lab/timeline" : null, 10_000);
+  const state = useLive<{ gates: Gate[]; required_next: string | null }>(
+    hasBot ? "/research/adaptive-lab/state" : null, 5_000);
+  const live = useLive<LiveChart>(hasBot ? "/research/adaptive-lab/live-chart?window=400" : null, 2_500);
+  const journal = useLive<{ entries: JournalEntry[]; state_counts: Record<string, number> }>(
+    hasBot ? "/research/adaptive-lab/journal?limit=300" : null, 10_000);
   const [tab, setTab] = useState<Tab>("positions");
   const [busy, setBusy] = useState(false);
   const [riskDraft, setRiskDraft] = useState<string | null>(null);
+  const [visibleBars, setVisibleBars] = useState(96);
+  const [fitSignal, setFitSignal] = useState(0);
+  const [latestSignal, setLatestSignal] = useState(0);
   const saving = useRef(false);
 
   const lab = status.data;
@@ -76,6 +92,17 @@ export default function AdaptiveLab() {
   const orders = useMemo(() => Object.entries(paper.data?.orders ?? {})
     .flatMap(([kind, rows]) => Object.entries(rows ?? {}).map(([id, row]) => ({ id, kind, ...(row as object) }))),
   [paper.data?.orders]);
+  const feed = live.data?.live_display;
+  const reliable = Boolean(feed?.reliable) && !live.error;
+  const health = live.error ? "ERROR" : feed?.connection_state ?? "CONNECTING";
+  const chartState = useMemo<NativeSMCChartState | null>(() => live.data?.candles.length ? {
+    research_id: "adaptive-mtf-lab", execution_allowed: false, candles: live.data.candles,
+    pivots: [], events: [], fair_value_gaps: [], order_blocks: [], proposals: [],
+    snapshot: null, selected_snapshot: null, snapshot_ledger: [],
+    forming_candle: live.data.forming_candle, live_display: live.data.live_display,
+  } : null, [live.data]);
+  const lastClosed = live.data?.candles[live.data.candles.length - 1];
+  const forming = live.data?.forming_candle;
 
   /** One change, saved at once; the server's answer is what the page shows. */
   const save = async (change: { symbol?: string; mode?: string; risk_pct?: number }, what: string) => {
@@ -85,7 +112,7 @@ export default function AdaptiveLab() {
     try {
       const next = await apiPostJson<LabStatus>("/research/adaptive-lab/configuration", change);
       setRiskDraft(null);
-      await Promise.all([status.refetch(), paper.refetch(), state.refetch()]);
+      await Promise.all([status.refetch(), paper.refetch(), state.refetch(), live.refetch()]);
       toast(`Saved: ${what}. The bot is ${modeLabel(next.mode).toLowerCase()} on ${next.symbol}.`, "success");
     } catch (error) {
       setRiskDraft(null);
@@ -108,20 +135,21 @@ export default function AdaptiveLab() {
     if (!bot) return <div className="pa-empty">Choose a mode to start the bot.</div>;
     if (tab === "positions") return paper.data?.positions.length
       ? <table className="pa-table"><thead><tr><th>Side</th><th>Size</th><th>Entry</th><th>Stop</th><th>Target</th><th>Opened</th></tr></thead>
-          <tbody>{paper.data.positions.map((row) => <tr key={row.id}><td>{row.side}</td><td>{row.size}</td><td>{row.entry}</td><td>{row.stop ?? "—"}</td><td>{row.target ?? "—"}</td><td>{stamp(row.opened_at)}</td></tr>)}</tbody></table>
+          <tbody>{paper.data.positions.map((row) => <tr key={row.id}><td>{row.side}</td><td>{row.size}</td><td>{price(row.entry)}</td><td>{price(row.stop)}</td><td>{price(row.target)}</td><td>{stamp(row.opened_at)}</td></tr>)}</tbody></table>
       : <div className="pa-empty">No open paper positions.</div>;
     if (tab === "orders") return orders.length
       ? <table className="pa-table"><thead><tr><th>Kind</th><th>Side</th><th>Entry</th><th>Stop</th><th>Target</th><th>Id</th></tr></thead>
-          <tbody>{orders.map((row: any) => <tr key={row.id}><td>{row.kind.replace(/_/g, " ")}</td><td>{row.side ?? row.direction ?? "—"}</td><td>{row.entry ?? row.limit_price ?? "—"}</td><td>{row.stop ?? row.stop_loss ?? "—"}</td><td>{row.target ?? row.take_profit ?? "—"}</td><td>{row.id.slice(0, 10)}</td></tr>)}</tbody></table>
+          <tbody>{orders.map((row: any) => <tr key={row.id}><td>{row.kind.replace(/_/g, " ")}</td><td>{row.side ?? row.direction ?? "—"}</td><td>{price(row.entry ?? row.limit_price)}</td><td>{price(row.stop ?? row.stop_loss)}</td><td>{price(row.target ?? row.take_profit)}</td><td>{row.id.slice(0, 10)}</td></tr>)}</tbody></table>
       : <div className="pa-empty">No working paper orders.</div>;
     if (tab === "trades") return paper.data?.trades.length
-      ? <table className="pa-table"><thead><tr><th>Opened</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Result</th></tr></thead>
-          <tbody>{paper.data.trades.map((row) => <tr key={row.id}><td>{stamp(row.opened_at)}</td><td>{row.side}</td><td>{row.entry}</td><td>{row.exit ?? "—"}</td><td>{money(row.realized_pnl ?? row.pnl)}</td><td>{row.status ?? "—"}</td></tr>)}</tbody></table>
+      ? <table className="pa-table"><thead><tr><th>Opened</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th>Status</th></tr></thead>
+          <tbody>{paper.data.trades.map((row) => <tr key={row.id}><td>{stamp(row.opened_at)}</td><td>{row.side}</td><td>{price(row.entry)}</td><td>{price(row.exit)}</td><td>{money(row.realized_pnl ?? row.pnl)}</td><td>{row.status ?? "—"}</td></tr>)}</tbody></table>
       : <div className="pa-empty">No paper trades yet.</div>;
-    if (tab === "decisions") return timeline.data?.events.length
-      ? <table className="pa-table"><thead><tr><th>Candle</th><th>Side</th><th>Decision</th><th>Reason</th></tr></thead>
-          <tbody>{timeline.data.events.map((row) => <tr key={row.id}><td>{stamp(row.timestamp)}</td><td>{row.side}</td><td>{row.decision}</td><td>{row.blocker_explanation || row.reason}</td></tr>)}</tbody></table>
-      : <div className="pa-empty">No signals yet. Candles with no setup are summed up by &ldquo;Waiting for&rdquo; above the chart.</div>;
+    if (tab === "journal") return journal.data?.entries.length
+      ? <div className="pa-table-wrap"><div className="adaptive-journal-head"><b>Decision journal · every closed candle · append-only</b>{Object.entries(journal.data.state_counts).map(([key, count]) => <span key={key}>{key.replace(/_/g, " ")} {count}</span>)}</div>
+          <table className="pa-table" data-testid="adaptive-journal"><thead><tr><th>Candle</th><th>Close</th><th>Decision</th><th>Strategy state</th><th>Side</th><th>Why</th><th>Quality</th><th>R:R</th></tr></thead>
+          <tbody>{journal.data.entries.map((row) => <tr key={row.id} className={row.engine_decision === "BUY" || row.engine_decision === "SELL" ? "is-signal" : ""}><td>{stamp(row.candle_time)}</td><td>{price(row.price)}</td><td>{row.strategy_decision ?? row.engine_decision ?? "—"}</td><td>{(row.strategy_state ?? "—").replace(/_/g, " ")}</td><td>{row.direction ?? "—"}</td><td>{row.reason ?? row.engine_reasons[0] ?? "—"}</td><td>{row.quality ? row.quality.toFixed(0) : "—"}</td><td>{row.rr ? row.rr.toFixed(2) : "—"}</td></tr>)}</tbody></table></div>
+      : <div className="pa-empty">No closed candle judged yet. The journal fills one row per closed 5m candle.</div>;
     return paper.data?.logs.length
       ? <table className="pa-table"><tbody>{paper.data.logs.map((row, i) => <tr key={row.id ?? i}><td>{stamp(row.ts)}</td><td>{row.level}</td><td>{row.message}</td></tr>)}</tbody></table>
       : <div className="pa-empty">No log entries yet.</div>;
@@ -130,9 +158,14 @@ export default function AdaptiveLab() {
   return <div className="pa-lab adaptive-lab">
     <header className="pa-titlebar">
       <div><span className="pa-kicker">ISOLATED FORWARD-PAPER</span><h1>Adaptive MTF Lab</h1>
-        <p>{lab?.strategy.label ?? "Adaptive MTF Trend Pullback"} {lab?.strategy.version ?? ""} · its own paper account · no exchange routing</p></div>
+        <p>{lab?.strategy.label ?? "Adaptive MTF Trend Pullback"} {lab?.strategy.version ?? ""} · live Binance USD-M data · its own paper account · no exchange routing</p></div>
       <div className="pa-safety"><b>{lab ? modeLabel(lab.mode).toUpperCase() : "LOADING"}</b><span>LIVE ROUTING DISABLED</span></div>
     </header>
+    <div className={`pa-health-scope ${reliable ? "is-healthy" : "is-stale"}`}>
+      <b>ADAPTIVE MTF BOT</b><span>Candles / quote / mark: {health}</span>
+      <span>Decision readiness: {reliable ? "CLOSED-BAR ELIGIBLE" : "PAUSED · FAIL CLOSED"}</span>
+      <span>Paper execution: {reliable && lab?.mode === "automatic" ? "ELIGIBLE" : "BLOCKED"}</span>
+    </div>
 
     <div className="pa-workspace">
       <aside className="pa-sidebar" aria-label="Adaptive MTF Lab controls">
@@ -157,22 +190,37 @@ export default function AdaptiveLab() {
       </aside>
 
       <main className="pa-main">
+        <div className="pa-toolbar"><div className="pa-symbol"><i className={reliable ? "live" : "stale"} />{lab?.symbol ?? "—"}<span>ADAPTIVE BOT · PERPETUAL · 5m</span></div>
+          <label className="pa-view-bars">View<select aria-label="Visible adaptive chart candles" value={visibleBars} onChange={(event) => setVisibleBars(Number(event.target.value))}>{[48, 96, 160, 240].map((row) => <option key={row} value={row}>{row} bars</option>)}</select></label>
+          <button type="button" onClick={() => setFitSignal((value) => value + 1)}>Fit</button>
+          <button type="button" onClick={() => setLatestSignal((value) => value + 1)}>Latest</button>
+          <span className={`pa-feed-badge ${reliable ? "is-live" : "is-stale"}`}>{health}</span></div>
         <div className="pa-chart-shell" aria-label="Adaptive MTF chart workspace">
-          <div className="pa-chart-head"><div><b>{lab?.symbol ?? "—"} · 5m</b><span>1h regime · 15m pullback · 5m confirmation</span><span>{bot?.market_status ?? "—"}</span></div>
-            <div><span>{decision?.decision ?? state.data?.decision_state ?? "—"}</span><b>{decision?.state === "ORDER_PENDING" || state.data?.position ? "IN PLAY" : "WAIT"}</b></div></div>
+          <div className="pa-chart-head"><div><b>{lab?.symbol ?? "—"} · 5m</b><span>1h regime · 15m pullback · 5m confirmation</span><span>Binance USDⓈ-M Futures · bot {lab?.bot_id?.slice(0, 8) ?? "—"}</span></div>
+            <div><span>{decision?.decision ?? "—"}</span><b>{decision?.state === "ORDER_PENDING" || paper.data?.positions.length ? "IN PLAY" : "WAIT"}</b></div></div>
           <div className="pa-metric-scope" data-testid="adaptive-waiting"><b>Waiting for</b><span>{waiting}</span>
             {state.data?.gates?.length ? <span className="adaptive-gates">{state.data.gates.map((gate) => <em key={gate.id} title={gate.explanation || gate.detail} className={`gate-${gate.state.toLowerCase()}`}>{MARK[gate.state] ?? "·"} {gate.label}</em>)}</span> : null}</div>
+          {live.error ? <div className="pa-error"><b>Live feed unavailable</b><span>{live.error}</span><button type="button" onClick={() => void live.refetch()}>Retry</button></div> : null}
           {!bot ? <div className="pa-loading">No bot yet — choose a mode to start one.</div>
-            : <Chart candles={candles.data?.candles ?? []} forming={null}
-                     overlays={features.data?.overlays ?? []} events={timeline.data?.events ?? []}
-                     position={state.data?.position ?? null} enabled={ALL_LAYERS}
-                     showDecisionMarkers focus={null} view={120} fit={false}
-                     unavailable={candles.error} onPick={() => undefined} onPickOverlay={() => undefined} />}
-          <div className="pa-chart-foot"><span><i className={bot?.market_status === "LIVE" ? "live" : "stale"} />{candles.data?.source ?? "Waiting for closed candles"}</span><b>PAPER · NO LIVE EXECUTION PATH</b></div>
+            : !chartState ? <div className="pa-loading">Loading the bot&rsquo;s Binance candles, quote and mark…</div>
+            : <NativeSMCChartOverlay state={chartState} timeframe="5m" rightOffsetBars={8}
+                initialVisibleBars={visibleBars} filters={NO_SMC_LAYERS} onCandleSelect={() => undefined}
+                fitContentSignal={fitSignal} latestSignal={latestSignal}
+                modelLabel="adaptive MTF trend pullback" liveDataStale={!reliable}
+                tradePlan={live.data?.trade_plan ?? undefined} fillMarkers={live.data?.fills ?? []}
+                height="clamp(480px, 56vh, 660px)" />}
+          <div className={`pa-stream-truth ${reliable ? "is-healthy" : "is-stale"}`}><b>{health}</b><span>{feed?.health_reason ?? "Waiting for the bot's reconciled Binance candles, quote and mark"}</span><span>Entries {reliable ? "ELIGIBLE ON CLOSED BARS" : "PAUSED"}</span></div>
+          <div className="pa-market-readout">
+            <span>Last completed candle<b>{lastClosed ? `${stamp(lastClosed.timestamp)} · C ${price(lastClosed.close)}` : "—"}</b><small>{live.data?.data_provenance.closed_candles_loaded ?? 0} closed candles loaded</small></span>
+            <span>Forming candle · display only<b>{forming ? `${stamp(forming.timestamp)} · O ${price(forming.open)} H ${price(forming.high)} L ${price(forming.low)} C ${price(forming.close)}` : "Not available"}</b><small>Excluded from decisions: {forming ? "YES" : "N/A"}</small></span>
+            <span>Live bid / ask<b>{price(feed?.bid)} / {price(feed?.ask)}</b><small>Binance public websocket</small></span>
+            <span>Mark price<b>{price(feed?.mark)}</b><small>paper fills use the post-decision quote</small></span>
+          </div>
+          <div className="pa-chart-foot"><span><i className={reliable ? "live" : "stale"} />Binance · {health}</span><span>Updated {stamp(feed?.observed_at)}</span><span>Closed candles used: {live.data?.candles.length ?? 0}</span><span>Forming candle excluded from strategy: {forming ? "YES" : "N/A"}</span><b>PAPER · NO LIVE EXECUTION PATH</b></div>
         </div>
         <div className="pa-bottom">
-          <nav>{TABS.map((row) => <button type="button" key={row} className={tab === row ? "active" : ""} onClick={() => setTab(row)}>{row}<em>{row === "positions" ? paper.data?.positions.length ?? 0 : row === "orders" ? orders.length : row === "trades" ? paper.data?.trades.length ?? 0 : row === "decisions" ? timeline.data?.events.length ?? 0 : ""}</em></button>)}</nav>
-          <div className="pa-bottom-body">{bottom}</div>
+          <nav>{TABS.map((row) => <button type="button" key={row} className={tab === row ? "active" : ""} onClick={() => setTab(row)}>{row}<em>{row === "positions" ? paper.data?.positions.length ?? 0 : row === "orders" ? orders.length : row === "trades" ? paper.data?.trades.length ?? 0 : row === "journal" ? journal.data?.entries.length ?? 0 : ""}</em></button>)}</nav>
+          <div className={`pa-bottom-body ${tab === "journal" ? "is-governance" : ""}`}>{bottom}</div>
         </div>
       </main>
     </div>

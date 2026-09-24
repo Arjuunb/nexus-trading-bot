@@ -170,6 +170,8 @@ class Settings:
         "HUB_ADAPTIVE_LAB_DB", str(DATA_DIR / "adaptive_lab.db")))
     adaptive_lab_decisions_db: str = field(default_factory=lambda: os.environ.get(
         "HUB_ADAPTIVE_LAB_DECISIONS_DB", str(DATA_DIR / "adaptive_lab_decisions.db")))
+    adaptive_lab_journal_db: str = field(default_factory=lambda: os.environ.get(
+        "HUB_ADAPTIVE_LAB_JOURNAL_DB", str(DATA_DIR / "adaptive_lab_journal.db")))
     price_action_research_db: str = field(default_factory=lambda: os.environ.get(
         "HUB_PRICE_ACTION_RESEARCH_DB", str(DATA_DIR / "price_action_research.db")))
     shadow_research_db: str = field(default_factory=lambda: os.environ.get(

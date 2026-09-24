@@ -981,7 +981,8 @@ if _os.path.abspath(settings.adaptive_lab_db) == _os.path.abspath(str(settings.l
 from data.decision_store import DecisionStore as _AdaptiveDecisionStore  # noqa: E402
 from data.historical import SYMBOLS as _ADAPTIVE_SYMBOLS  # noqa: E402
 from data.ledger import SqliteLedger as _AdaptiveLedger  # noqa: E402
-from services.adaptive_lab import STRATEGY_KEY as _ADAPTIVE_KEY, AdaptiveLab  # noqa: E402
+from services.adaptive_lab import (  # noqa: E402
+    STRATEGY_KEY as _ADAPTIVE_KEY, AdaptiveJournal, AdaptiveLab)
 adaptive_lab = AdaptiveLab(
     _AdaptiveLedger(settings.adaptive_lab_db),
     strategy_factory=_make_instance_strategy,
@@ -991,7 +992,8 @@ adaptive_lab = AdaptiveLab(
     decision_store=_AdaptiveDecisionStore(settings.adaptive_lab_decisions_db),
     market_hub=forward_paper_market_hub,
     symbol_rules_provider=v2_market_data.usdm_symbol_rules,
-    supported_symbols=tuple(_ADAPTIVE_SYMBOLS))
+    supported_symbols=tuple(_ADAPTIVE_SYMBOLS),
+    journal=AdaptiveJournal(settings.adaptive_lab_journal_db))
 
 # The process, not the browser, owns instance uptime. This supervisor is the
 # component that makes that true after the first minute: startup restoration

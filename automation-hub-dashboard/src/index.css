@@ -1696,6 +1696,11 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .adaptive-gates { display: flex; flex-wrap: wrap; gap: 6px; }
 .adaptive-gates em { font-style: normal; font-size: 9px; padding: 2px 6px; border-radius: 4px; background: #11151b; color: var(--dim); }
 .adaptive-gates em.gate-pass { color: #58d18a; } .adaptive-gates em.gate-fail { color: #ef5b5b; } .adaptive-gates em.gate-waiting { color: #e3b341; }
+.adaptive-journal-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 10px; color: var(--dim); font-size: 10px; }
+.adaptive-journal-head b { color: #dbe4f1; }
+.pa-table tr.is-signal td { color: #58d18a; }
+.pa-feed-badge { margin-left: auto; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; border: 1px solid; }
+.pa-feed-badge.is-live { color: #58d18a; border-color: rgba(88,209,138,.4); } .pa-feed-badge.is-stale { color: #e3b341; border-color: rgba(227,179,65,.4); }
 .pa-segment { display: grid; grid-template-columns: 1fr 1fr; padding: 2px; border: 1px solid var(--card-border-soft); border-radius: 6px; background: #090b0e; }
 .pa-segment button, .pa-toolbar button, .pa-timeframes button, .pa-replay button { border: 0; border-radius: 4px; background: transparent; color: var(--dim); cursor: pointer; font: 750 10px/1 var(--font-sans); }
 .pa-segment button { padding: 7px 5px; }

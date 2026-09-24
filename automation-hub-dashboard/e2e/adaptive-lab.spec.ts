@@ -4,9 +4,37 @@ import { mockApi } from "./mock";
 const T0 = Date.UTC(2026, 8, 23, 12, 0, 0);
 const CANDLES = Array.from({ length: 120 }, (_, i) => {
   const base = 0.52 + Math.sin(i / 9) * 0.01 + i * 0.0002;
-  return { t: new Date(T0 + i * 300_000).toISOString(), o: base, h: base + 0.004,
-           l: base - 0.004, c: base + (i % 2 ? 0.002 : -0.002), v: 1000 + i };
+  return { timestamp: new Date(T0 + i * 300_000).toISOString(), open: base, high: base + 0.004,
+           low: base - 0.004, close: base + (i % 2 ? 0.002 : -0.002), volume: 1000 + i };
 });
+const FORMING = { timestamp: new Date(T0 + 120 * 300_000).toISOString(), open: 0.5451, high: 0.5467,
+                  low: 0.5442, close: 0.5463, volume: 311 };
+const LIVE_CHART = {
+  bot_id: "bot-1", symbol: "XRPUSDT", timeframe: "5m", candles: CANDLES, forming_candle: FORMING,
+  live_display: { is_forming: true, observed_at: new Date(T0 + 120 * 300_000 + 95_000).toISOString(),
+    refresh_interval_seconds: 2.5, candle_closes_at: new Date(T0 + 121 * 300_000).toISOString(),
+    last_price: 0.5463, bid: 0.5462, ask: 0.5464, mark: 0.54635, connection_state: "LIVE",
+    reliable: true, new_entries_paused: false, health_reason: "Closed candles, quote and mark reconciled",
+    quote_source: "BINANCE_USDM_PUBLIC_WEBSOCKET", execution_uses_closed_bars_only: true },
+  data_provenance: { last_closed_candle: CANDLES[119].timestamp, closed_candles_loaded: 120 },
+  trade_plan: { entry: 0.5321, stop: 0.5268, target_1: 0.5448, target_2: 0.5448 },
+  fills: [{ timestamp: CANDLES[110].timestamp, price: 0.5321, side: "BUY" }],
+  paper_only: true, real_execution_allowed: false,
+};
+const JOURNAL = {
+  bot_id: "bot-1", symbol: "XRPUSDT",
+  state_counts: { WAITING_FOR_PULLBACK: 108, ORDER_PENDING: 1, POSITION_OPEN: 9 },
+  entries: [
+    { id: 2, candle_time: CANDLES[119].timestamp, engine_decision: "WAIT", price: 0.5451,
+      strategy_state: "POSITION_OPEN", strategy_decision: "HOLD", direction: "long",
+      reason: "Managing open long toward 0.5448", quality: null, rr: null,
+      entry: null, stop: null, target: null, engine_reasons: [] },
+    { id: 1, candle_time: CANDLES[110].timestamp, engine_decision: "BUY", price: 0.5321,
+      strategy_state: "ORDER_PENDING", strategy_decision: "ENTER LONG", direction: "long",
+      reason: "LONG | 1H BULL_TREND 72% | quality 78/100 | RR 2.40", quality: 78, rr: 2.4,
+      entry: 0.5321, stop: 0.5268, target: 0.5448, engine_reasons: [] },
+  ],
+};
 
 function statusFor(session: { symbol: string; mode: string; risk_pct: number }) {
   return {
@@ -40,10 +68,10 @@ async function labServer(page: Page, { refuse = "" } = {}) {
     if (path === "/status") return route.fulfill({ json: statusFor(session) });
     if (path === "/paper") return route.fulfill({ json: {
       bot_id: "bot-1", symbol: session.symbol,
-      positions: [{ id: "p1", side: "long", size: 1900, entry: 0.5321, stop: 0.5268, target: 0.5448, opened_at: CANDLES[110].t }],
+      positions: [{ id: "p1", side: "long", size: 1900, entry: 0.5321, stop: 0.5268, target: 0.5448, opened_at: CANDLES[110].timestamp }],
       orders: { forward_paper_intents: {}, strategy_limit_intents: { o1: { side: "long", entry: 0.5301, stop: 0.5260, target: 0.5400 } }, quarantined_intents: {} },
-      trades: [{ id: "t1", side: "long", entry: 0.5102, exit: 0.5225, realized_pnl: 31.4, status: "closed", opened_at: CANDLES[20].t }],
-      logs: [{ id: 1, ts: CANDLES[119].t, level: "info", message: "candle_processed" }],
+      trades: [{ id: "t1", side: "long", entry: 0.5102, exit: 0.5225, realized_pnl: 31.4, status: "closed", opened_at: CANDLES[20].timestamp }],
+      logs: [{ id: 1, ts: CANDLES[119].timestamp, level: "info", message: "candle_processed" }],
       paper_only: true, real_execution_allowed: false } });
     if (path === "/state") return route.fulfill({ json: {
       decision_state: "POSITION_OPEN", required_next: "Trend resumption confirmed", blocker: null, blocker_explanation: "",
@@ -54,19 +82,14 @@ async function labServer(page: Page, { refuse = "" } = {}) {
         { id: "pullback", stage: "SETUP", label: "Pullback into trend support", detail: "", state: "PASS", blocker: "", explanation: "" },
         { id: "resume", stage: "CONFIRMATION", label: "Trend resumption confirmed", detail: "", state: "WAITING", blocker: "", explanation: "" },
       ] } });
-    if (path.startsWith("/candles")) return route.fulfill({ json: { candles: CANDLES, source: "venue binance_usdm · live closed candles" } });
-    if (path === "/features") return route.fulfill({ json: { overlays: [] } });
-    if (path.startsWith("/timeline")) return route.fulfill({ json: { events: [
-      { id: 7, timestamp: CANDLES[110].t, candle_identity: "c110", symbol: session.symbol, timeframe: "5m",
-        strategy: "adaptive_trend_pullback", side: "long", regime: "BULL_TREND", htf_bias: "BULLISH",
-        decision: "accepted", final_state: "FILLED", gate_stage: "FILL", blocker: null, blocker_explanation: "",
-        reason: "LONG | quality 78/100 | RR 2.40", passed_rules: [], failed_rules: [], components: {}, executed: true }] } });
+    if (path === "/live-chart") return route.fulfill({ json: { ...LIVE_CHART, symbol: session.symbol } });
+    if (path === "/journal") return route.fulfill({ json: JOURNAL });
     return route.fallback();
   });
   return { saves };
 }
 
-test("Adaptive MTF Lab shows its bot, orders and decisions, and saves each change at once", async ({ page }) => {
+test("Adaptive MTF Lab shows its bot, orders and journal, and saves each change at once", async ({ page }) => {
   const server = await labServer(page);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/#/adaptive-mtf-lab");
@@ -74,13 +97,27 @@ test("Adaptive MTF Lab shows its bot, orders and decisions, and saves each chang
   await expect(saved).toContainText("Adaptive MTF Trend Pullback");
   await expect(saved).toContainText("XRPUSDT 5m · Automatic paper · risk 0.5%");
   await expect(page.getByTestId("adaptive-waiting")).toContainText("Trend resumption confirmed");
+  // The chart is the SMC lab's live chart on the bot's own feed: closed
+  // candles, the forming candle (display only) and bid/ask/mark.
+  await expect(page.locator(".smc-chart-canvas canvas").first()).toBeVisible();
+  const readout = page.locator(".pa-market-readout");
+  await expect(readout).toContainText("Forming candle · display only");
+  await expect(readout).toContainText("C 0.5463");
+  await expect(readout).toContainText("0.5462 / 0.5464");
+  await expect(readout).toContainText("0.54635");
+  await expect(readout).toContainText("120 closed candles loaded");
+  await expect(page.locator(".pa-stream-truth")).toContainText("LIVE");
   await expect(page.locator(".pa-table")).toContainText("0.5321");           // the open position
   await page.locator(".pa-bottom nav").getByRole("button", { name: /orders/ }).click();
   await expect(page.locator(".pa-table")).toContainText("0.5301");           // the working order
   await page.locator(".pa-bottom nav").getByRole("button", { name: /trades/ }).click();
   await expect(page.locator(".pa-table")).toContainText("31.4");
-  await page.locator(".pa-bottom nav").getByRole("button", { name: /decisions/ }).click();
-  await expect(page.locator(".pa-table")).toContainText("accepted");
+  await page.locator(".pa-bottom nav").getByRole("button", { name: /journal/ }).click();
+  const journal = page.getByTestId("adaptive-journal");
+  await expect(journal.locator("tbody tr")).toHaveCount(2);
+  await expect(journal.locator("tr.is-signal")).toContainText("ENTER LONG");       // the BUY candle
+  await expect(journal).toContainText("quality 78/100");
+  await expect(page.locator(".adaptive-journal-head")).toContainText("WAITING FOR PULLBACK 108");
   await page.screenshot({ path: "test-results/adaptive-lab.png", fullPage: false });
 
   await page.getByLabel("Adaptive lab mode").selectOption("signals_only");

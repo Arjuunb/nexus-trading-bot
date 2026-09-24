@@ -92,3 +92,15 @@ def test_the_only_write_is_the_configuration_post():
     writes = [(route.path, sorted(route.methods)) for route in module.router.routes
               if set(route.methods) - {"GET", "HEAD"}]
     assert writes == [("/research/adaptive-lab/configuration", ["POST"])]
+
+
+def test_live_chart_and_journal_routes(api):
+    client, lab = api
+    bot = lab.ensure_started()
+    chart = client.get("/research/adaptive-lab/live-chart?window=120").json()
+    assert len(chart["candles"]) == 120 and chart["bot_id"] == bot.id
+    journal = client.get("/research/adaptive-lab/journal").json()
+    assert journal["bot_id"] == bot.id and isinstance(journal["entries"], list)
+    lab.configure(mode="off")
+    off = client.get("/research/adaptive-lab/live-chart")
+    assert off.status_code == 503 and off.json()["detail"]["code"] == "NO_LIVE_FEED"

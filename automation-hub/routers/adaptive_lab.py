@@ -73,6 +73,22 @@ def configure(body: AdaptiveLabConfigBody,
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.get("/live-chart")
+def live_chart(window: int = Query(400, ge=20, le=1500)):
+    """The bot's own Binance feed: closed candles, forming candle, bid/ask/mark."""
+    try:
+        return _lab().live_chart(window)
+    except AdaptiveLabError as exc:
+        raise HTTPException(503, {"code": "NO_LIVE_FEED", "retryable": True,
+                                  "message": str(exc)}) from exc
+
+
+@router.get("/journal")
+def journal(limit: int = Query(200, ge=1, le=1000)):
+    """One append-only row per closed candle the bot judged, newest first."""
+    return _lab().journal_entries(limit)
+
+
 @router.get("/state")
 def state():
     return visual.state_payload(_bot_id(), manager=_lab().manager)

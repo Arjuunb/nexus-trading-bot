@@ -37,7 +37,10 @@ Paper only. Nothing here can reach an exchange order endpoint.
 """
 from __future__ import annotations
 
+import json
+import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 from services.trading_instances import TradingInstance, TradingInstanceManager
@@ -59,13 +62,98 @@ class AdaptiveLabError(ValueError):
     """A lab request the lab refuses, with the reason an operator can act on."""
 
 
+class AdaptiveJournal:
+    """Append-only journal: one row per closed candle the bot judged.
+
+    Plugged in where the engine records its per-candle Decision Report
+    (``engine.reports``). The engine calls ``record`` once per closed candle,
+    after the strategy has decided, so the row keeps the engine's report AND
+    the strategy's own ``decision_report()`` for that same candle -- the 1h
+    regime, 15m pullback and 5m confirmation reasons the generic report does
+    not carry. It reads; it never changes what the engine or strategy does,
+    and a failure here is swallowed by the engine, never raised into it.
+    """
+
+    def __init__(self, path: str = ":memory:"):
+        self._lock = threading.Lock()
+        self._c = sqlite3.connect(path, check_same_thread=False)
+        self._c.row_factory = sqlite3.Row
+        self._c.executescript("""
+            CREATE TABLE IF NOT EXISTS adaptive_journal(
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                instance_id TEXT NOT NULL, symbol TEXT NOT NULL, timeframe TEXT,
+                candle_time TEXT NOT NULL, decision_identity TEXT NOT NULL,
+                engine_decision TEXT, price REAL,
+                strategy_state TEXT, strategy_decision TEXT, direction TEXT,
+                reason TEXT, quality REAL, entry REAL, stop REAL, target REAL, rr REAL,
+                stages_json TEXT, engine_reasons_json TEXT, recorded_at TEXT NOT NULL,
+                UNIQUE(instance_id, decision_identity));
+            CREATE INDEX IF NOT EXISTS ix_adaptive_journal ON adaptive_journal(instance_id, id);
+            CREATE TRIGGER IF NOT EXISTS adaptive_journal_no_update BEFORE UPDATE ON adaptive_journal
+              BEGIN SELECT RAISE(ABORT, 'adaptive journal is append-only'); END;
+            CREATE TRIGGER IF NOT EXISTS adaptive_journal_no_delete BEFORE DELETE ON adaptive_journal
+              BEGIN SELECT RAISE(ABORT, 'adaptive journal is append-only'); END;
+        """)
+        self._c.commit()
+        self._manager = None
+
+    def bind(self, manager) -> None:
+        self._manager = manager
+
+    def _strategy_report(self, instance_id: str, symbol: str) -> dict:
+        runtime = getattr(self._manager, "_runtime", {}).get(instance_id) if self._manager else None
+        live = getattr(runtime[0], "_live_strategies", {}) if runtime else {}
+        strategy = live.get(symbol) or live.get(str(symbol).upper())
+        report = getattr(strategy, "decision_report", None)
+        return report() if callable(report) else {}
+
+    def record(self, report: dict) -> None:
+        instance_id = str(report.get("instance_id") or "")
+        symbol = str(report.get("symbol") or "")
+        candle = str(report.get("ts") or "")
+        if not instance_id or not candle:
+            return
+        decided = self._strategy_report(instance_id, symbol)
+        stages = {key: decided.get(key) for key in ("regime", "trend", "pullback", "confirmation")
+                  if decided.get(key)}
+        with self._lock:
+            self._c.execute(
+                "INSERT OR IGNORE INTO adaptive_journal(instance_id,symbol,timeframe,candle_time,"
+                "decision_identity,engine_decision,price,strategy_state,strategy_decision,direction,"
+                "reason,quality,entry,stop,target,rr,stages_json,engine_reasons_json,recorded_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (instance_id, symbol, report.get("timeframe"), candle,
+                 str(report.get("decision_identity") or candle), report.get("decision"),
+                 report.get("price"), decided.get("state"), decided.get("decision"),
+                 decided.get("direction"), decided.get("reason"), decided.get("quality_score"),
+                 decided.get("entry"), decided.get("stop"), decided.get("target"), decided.get("rr"),
+                 json.dumps(stages, default=str), json.dumps(report.get("reasons") or [], default=str),
+                 datetime.now(timezone.utc).isoformat()))
+            self._c.commit()
+
+    def entries(self, instance_id: str, limit: int = 200) -> list[dict]:
+        with self._lock:
+            rows = self._c.execute(
+                "SELECT * FROM adaptive_journal WHERE instance_id=? ORDER BY id DESC LIMIT ?",
+                (instance_id, int(limit))).fetchall()
+        out = []
+        for row in rows:
+            item = dict(row)
+            item["stages"] = json.loads(item.pop("stages_json") or "{}")
+            item["engine_reasons"] = json.loads(item.pop("engine_reasons_json") or "[]")
+            out.append(item)
+        return out
+
+
 class AdaptiveLab:
     def __init__(self, ledger, *, strategy_factory: Callable[[str, str], object],
                  strategy_version: str, live_poll_s: float = 5.0,
                  decision_store=None, market_hub=None, symbol_rules_provider=None,
-                 supported_symbols: Optional[tuple[str, ...]] = None):
+                 supported_symbols: Optional[tuple[str, ...]] = None,
+                 journal: Optional[AdaptiveJournal] = None):
         self.ledger = ledger
         self.decisions = decision_store
+        self.journal = journal or AdaptiveJournal()
         self.strategy_version = strategy_version
         self.supported_symbols = tuple(s.upper() for s in (supported_symbols or ()))
         # The manager treats its instances as slices of ONE paper account and
@@ -81,7 +169,8 @@ class AdaptiveLab:
             ledger, strategy_factory=strategy_factory, live=True,
             live_poll_s=live_poll_s, max_slots=1, decision_store=decision_store,
             market_hub=market_hub, symbol_rules_provider=symbol_rules_provider,
-            paper_account_capital=capacity)
+            paper_account_capital=capacity, cycle_store=self.journal)
+        self.journal.bind(self.manager)
         self._lock = threading.RLock()
         # One bot trades at a time; switching symbol stops the old one first.
         # A lab that has never had a bot starts on XRPUSDT. The selection is
@@ -236,6 +325,94 @@ class AdaptiveLab:
             "orders": {key: pending.get(key) or {} for key in _EXPOSED_ORDER_KEYS},
             "trades": self.ledger.get_paper_trades(**scope),
             "logs": self.manager.store.engine_logs(inst.id, 100),
+            "paper_only": True, "real_execution_allowed": False,
+        }
+
+    def journal_entries(self, limit: int = 200) -> dict:
+        inst = self.current()
+        rows = self.journal.entries(inst.id, limit) if inst else []
+        tally: dict[str, int] = {}
+        for row in rows:
+            key = str(row.get("strategy_state") or "UNKNOWN")
+            tally[key] = tally.get(key, 0) + 1
+        return {"bot_id": inst.id if inst else None, "symbol": self.selected_symbol(),
+                "entries": rows, "state_counts": tally,
+                "note": ("One row per closed candle the bot judged, written as it decided. "
+                         "Append-only."),
+                "paper_only": True, "real_execution_allowed": False}
+
+    def live_chart(self, window: int = 400) -> dict:
+        """The bot's own Binance feed, in the shape the SMC lab's chart draws.
+
+        Read from the bot's hub subscription -- the same closed candles its
+        strategy decides on, plus the forming candle and the bid/ask/mark the
+        hub holds. The forming candle is display only and is labelled so.
+        """
+        inst = self.current()
+        if inst is None:
+            raise AdaptiveLabError("the lab has no bot yet; choose a mode to start one")
+        runtime = self.manager._runtime.get(inst.id)
+        feed = getattr(runtime[0], "ws_feed", None) if runtime else None
+        if feed is None or not self.manager.worker_alive(inst.id):
+            raise AdaptiveLabError(f"the {inst.symbol} bot is off, so it has no live feed to show")
+        snapshot = feed.snapshot()
+        status = snapshot.get("connection") or {}
+        quote = snapshot.get("quote") or {}
+        closed = list(snapshot.get("closed_bars") or [])[-max(20, int(window)):]
+        forming = snapshot.get("forming")
+        step = timedelta(minutes=5)
+
+        def candle(bar) -> dict:
+            return {"timestamp": bar.timestamp.isoformat(), "open": float(bar.open),
+                    "high": float(bar.high), "low": float(bar.low), "close": float(bar.close),
+                    "volume": float(getattr(bar, "volume", 0) or 0)}
+
+        last_price = (float(forming.close) if forming is not None else
+                      float(closed[-1].close) if closed else None)
+        reliable = bool(status.get("reliable"))
+        scope = {"instance_id": inst.id, "simulation_session_id": inst.simulation_session_id}
+        positions = self.ledger.get_positions("open", **scope)
+        trades = self.ledger.get_paper_trades(**scope)
+        fills = []
+        for trade in trades:
+            if trade.get("opened_at") and trade.get("entry") is not None:
+                fills.append({"timestamp": trade["opened_at"], "price": float(trade["entry"]),
+                              "side": "buy" if trade.get("side") == "long" else "sell"})
+            if trade.get("closed_at") and trade.get("exit") is not None:
+                fills.append({"timestamp": trade["closed_at"], "price": float(trade["exit"]),
+                              "side": "sell" if trade.get("side") == "long" else "buy",
+                              "realized_pnl": trade.get("realized_pnl") or trade.get("pnl")})
+        plan = None
+        if positions and positions[0].get("stop") is not None and positions[0].get("target") is not None:
+            p = positions[0]
+            plan = {"entry": float(p["entry"]), "stop": float(p["stop"]),
+                    "target_1": float(p["target"]), "target_2": float(p["target"])}
+        return {
+            "symbol": inst.symbol, "timeframe": TIMEFRAME, "bot_id": inst.id,
+            "candles": [candle(bar) for bar in closed],
+            "forming_candle": candle(forming) if forming is not None else None,
+            "live_display": {
+                "is_forming": forming is not None,
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "refresh_interval_seconds": 2.5,
+                "candle_closes_at": (forming.timestamp + step).isoformat() if forming is not None else None,
+                "last_price": last_price,
+                "bid": quote.get("bid"), "ask": quote.get("ask"), "mark": quote.get("mark"),
+                "funding_rate": quote.get("funding_rate"),
+                "next_funding_time": quote.get("next_funding_time"),
+                "connection_state": status.get("state"), "reliable": reliable,
+                "new_entries_paused": not reliable,
+                "health_reason": status.get("health_reason"),
+                "quote_source": "BINANCE_USDM_PUBLIC_WEBSOCKET",
+                "execution_uses_closed_bars_only": True,
+            },
+            "data_provenance": {
+                "last_closed_candle": closed[-1].timestamp.isoformat() if closed else None,
+                "closed_candles_loaded": len(closed),
+                "exchange": "Binance USDⓈ-M Futures",
+                "market_data_source": "the bot's own subscription to the shared Binance hub",
+            },
+            "trade_plan": plan, "fills": fills,
             "paper_only": True, "real_execution_allowed": False,
         }
 

@@ -154,3 +154,85 @@ def test_an_unknown_mode_is_refused(tmp_path):
     else:
         raise AssertionError("accepted a mode this execution path cannot honour")
     lab.shutdown()
+
+
+# ------------------------------------------------------------ journal
+def test_the_engine_writes_its_per_candle_reports_into_the_labs_journal(tmp_path):
+    lab = _lab(tmp_path)
+    bot = lab.ensure_started()
+    engine = lab.manager._runtime[bot.id][0]
+    assert engine.reports is lab.journal          # the per-candle report hook is the journal
+    # The engine publishes its strategy during warm-up, before it records any
+    # candle -- the order the journal relies on in production.
+    import time
+    deadline = time.monotonic() + 10
+    while bot.symbol not in engine._live_strategies and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert bot.symbol in engine._live_strategies
+
+    # What the engine hands over after each closed candle; the journal adds
+    # the strategy's own decision for that same candle.
+    lab.journal.record({"instance_id": bot.id, "symbol": bot.symbol, "timeframe": "5m",
+                        "ts": "2026-09-23T21:40:00+00:00", "decision": "WAIT", "price": 0.52,
+                        "decision_identity": "c-2140", "reasons": ["No qualifying setup"]})
+    strategy = engine._live_strategies[bot.symbol]
+    entry = lab.journal_entries()["entries"][0]
+    assert entry["candle_time"] == "2026-09-23T21:40:00+00:00"
+    assert entry["engine_decision"] == "WAIT"
+    assert entry["strategy_state"] == strategy.decision_report()["state"]
+    assert entry["reason"] == strategy.decision_report()["reason"]
+    assert entry["engine_reasons"] == ["No qualifying setup"]
+    lab.shutdown()
+
+
+def test_the_journal_is_append_only_and_one_row_per_candle(tmp_path):
+    import sqlite3
+
+    import pytest
+
+    lab = _lab(tmp_path)
+    bot = lab.ensure_started()
+    report = {"instance_id": bot.id, "symbol": bot.symbol, "ts": "2026-09-23T21:45:00+00:00",
+              "decision": "WAIT", "decision_identity": "c-2145"}
+    lab.journal.record(report)
+    lab.journal.record(report)                      # a replayed candle is not a second row
+    assert len(lab.journal_entries()["entries"]) == 1
+    with pytest.raises(sqlite3.DatabaseError):
+        lab.journal._c.execute("UPDATE adaptive_journal SET reason='rewritten'")
+    with pytest.raises(sqlite3.DatabaseError):
+        lab.journal._c.execute("DELETE FROM adaptive_journal")
+    lab.shutdown()
+
+
+# --------------------------------------------------------- live chart
+def test_the_live_chart_is_the_bots_own_feed_with_its_trade_drawn(tmp_path):
+    lab = _lab(tmp_path)
+    bot = lab.ensure_started()
+    lab.ledger.open_position(symbol="XRPUSDT", side="long", size=10, entry=100.2, stop=99.5,
+                             target=101.9, instance_id=bot.id,
+                             simulation_session_id=bot.simulation_session_id)
+
+    chart = lab.live_chart(300)
+    feed = lab.manager._runtime[bot.id][0].ws_feed.snapshot()
+    assert len(chart["candles"]) == 300
+    assert chart["candles"][-1]["timestamp"] == feed["closed_bars"][-1].timestamp.isoformat()
+    assert chart["data_provenance"]["last_closed_candle"] == chart["candles"][-1]["timestamp"]
+    live = chart["live_display"]
+    assert live["reliable"] is True and live["execution_uses_closed_bars_only"] is True
+    assert live["quote_source"] == "BINANCE_USDM_PUBLIC_WEBSOCKET"
+    assert chart["trade_plan"] == {"entry": 100.2, "stop": 99.5, "target_1": 101.9, "target_2": 101.9}
+    assert chart["real_execution_allowed"] is False
+    lab.shutdown()
+
+
+def test_a_bot_that_is_off_has_no_live_chart_to_invent(tmp_path):
+    lab = _lab(tmp_path)
+    lab.ensure_started()
+    lab.configure(mode="off")
+    try:
+        lab.live_chart()
+    except AdaptiveLabError as exc:
+        assert "off" in str(exc)
+    else:
+        raise AssertionError("served a live chart for a bot with no feed")
+    lab.shutdown()

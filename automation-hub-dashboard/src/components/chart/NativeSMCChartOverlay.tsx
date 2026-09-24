@@ -327,7 +327,9 @@ function chartOption(state: NativeSMCChartState, timeframe: string, rightOffsetB
   const priceSample = visibleCandles.length ? visibleCandles : candles.slice(-Math.min(initialVisibleBars, candles.length));
   const candleLow = priceSample.length ? Math.min(...priceSample.map((row) => row.low)) : 0;
   const candleHigh = priceSample.length ? Math.max(...priceSample.map((row) => row.high)) : 1;
-  const candleSpan = Math.max(candleHigh - candleLow, Math.abs(candleHigh) * 0.002, 1);
+  // The span floor is relative to price: a fixed 1-unit floor squashed
+  // sub-dollar symbols (XRP, ADA, DOGE) into a thin band of the axis.
+  const candleSpan = Math.max(candleHigh - candleLow, Math.abs(candleHigh) * 0.002, 1e-9);
   const nearbyProposals = state.proposals.filter((row) => row.entry >= candleLow - candleSpan * 0.5 && row.entry <= candleHigh + candleSpan * 0.5);
   const overlayLevels = [
     ...zones.flatMap((row) => [row.bottom, row.top]),
@@ -338,7 +340,7 @@ function chartOption(state: NativeSMCChartState, timeframe: string, rightOffsetB
   ].filter((value): value is number => typeof value === "number" && Number.isFinite(value));
   const rawLow = Math.min(candleLow, ...overlayLevels);
   const rawHigh = Math.max(candleHigh, ...overlayLevels);
-  const rawSpan = Math.max(rawHigh - rawLow, Math.abs(rawHigh) * 0.002, 1);
+  const rawSpan = Math.max(rawHigh - rawLow, Math.abs(rawHigh) * 0.002, 1e-9);
   const proposalLines: any[] = nearbyProposals.flatMap((row) => [
     { yAxis: row.entry, name: "ENTRY", lineStyle: { color: "#65b7ff", width: 1.5 } },
     { yAxis: row.stop, name: "STOP LOSS", lineStyle: { color: "#ef5b5b", type: "dashed" } },
@@ -401,7 +403,7 @@ function chartOption(state: NativeSMCChartState, timeframe: string, rightOffsetB
       { id: "smc-volume-x", type: "category", gridIndex: 1, data: labels, boundaryGap: true, axisLine: { lineStyle: { color: axis } }, axisLabel: { color: text, formatter: (value: string) => value.slice(5, 16), fontSize: 10 }, axisPointer: { label: { show: true, formatter: (item: any) => compactCursorTime(String(item.value)) } } },
     ],
     yAxis: [
-      { id: "smc-price-y", scale: true, position: "right", axisLine: { lineStyle: { color: axis } }, axisLabel: { color: text, fontSize: 10 }, splitLine: { lineStyle: { color: lightMode ? "#edf0f5" : "#1d222b" } }, axisPointer: { label: { show: true, formatter: (item: any) => formatPrice(Number(item.value)) } }, ...priceAxisRange },
+      { id: "smc-price-y", scale: true, position: "right", axisLine: { lineStyle: { color: axis } }, axisLabel: { color: text, fontSize: 10, showMinLabel: false, showMaxLabel: false }, splitLine: { lineStyle: { color: lightMode ? "#edf0f5" : "#1d222b" } }, axisPointer: { label: { show: true, formatter: (item: any) => formatPrice(Number(item.value)) } }, ...priceAxisRange },
       { id: "smc-volume-y", gridIndex: 1, position: "right", axisLabel: { color: text, fontSize: 10 }, splitLine: { show: false } },
     ],
     dataZoom: [
