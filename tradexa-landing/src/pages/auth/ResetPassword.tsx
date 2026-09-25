@@ -9,12 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Field } from "@/components/ui/Field";
 import { Logo } from "@/components/Logo";
-import { resetSchema, type ResetValues, passwordStrength } from "@/lib/validation";
+import { resetSchema, type ResetValues } from "@/lib/validation";
+import { PasswordStrength } from "@/components/auth/PasswordStrength";
 import { auth } from "@/lib/auth";
 import { useToast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
-
-const STRENGTH_COLORS = ["bg-white/15", "bg-loss", "bg-gold", "bg-emerald", "bg-emerald-soft"];
 
 export default function ResetPassword() {
   const { toast } = useToast();
@@ -28,7 +26,6 @@ export default function ResetPassword() {
   } = useForm<ResetValues>({ resolver: zodResolver(resetSchema), mode: "onBlur" });
 
   const pw = watch("password") ?? "";
-  const strength = passwordStrength(pw);
 
   const onSubmit = async (values: ResetValues) => {
     setSubmitting(true);
@@ -40,7 +37,7 @@ export default function ResetPassword() {
   };
 
   return (
-    <AuthShell split={false}>
+    <AuthShell>
       <Card className="p-8">
         <div className="mb-6 flex justify-center">
           <Logo />
@@ -61,22 +58,7 @@ export default function ResetPassword() {
               invalid={!!errors.password}
               {...register("password")}
             />
-            {pw && (
-              <div className="mt-2 flex items-center gap-2">
-                <div className="flex flex-1 gap-1">
-                  {[0, 1, 2, 3].map((i) => (
-                    <span
-                      key={i}
-                      className={cn(
-                        "h-1 flex-1 rounded-full transition-colors",
-                        i < strength.score ? STRENGTH_COLORS[strength.score] : "bg-white/10",
-                      )}
-                    />
-                  ))}
-                </div>
-                <span className="w-16 text-right text-[11px] text-white/45">{strength.label}</span>
-              </div>
-            )}
+            <PasswordStrength password={pw} />
           </Field>
 
           <Field label="Confirm password" htmlFor="confirmPassword" error={errors.confirmPassword?.message}>

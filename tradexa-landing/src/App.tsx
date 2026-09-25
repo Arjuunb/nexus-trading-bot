@@ -21,8 +21,8 @@ import Landing from "@/pages/Landing";
 const SiteLayout = lazy(() => import("@/components/site/SiteLayout"));
 const NotFound = lazy(() => import("@/pages/site/NotFound"));
 const SITE_ELEMENTS = PAGES.map((r) => ({ path: r.path, Component: lazy(r.load) }));
-const Login = lazy(() => import("@/pages/auth/Login"));
-const Register = lazy(() => import("@/pages/auth/Register"));
+// Sign in and Create account are one mounted layout (see AuthSplit).
+const AuthSplit = lazy(() => import("@/pages/auth/AuthSplit"));
 const ForgotPassword = lazy(() => import("@/pages/auth/ForgotPassword"));
 const ResetPassword = lazy(() => import("@/pages/auth/ResetPassword"));
 const VerifyEmail = lazy(() => import("@/pages/auth/VerifyEmail"));
@@ -145,8 +145,10 @@ export default function App() {
                 ))}
               </Route>
 
-              <Route path="/auth/login" element={<Login />} />
-              <Route path="/auth/register" element={<Register />} />
+              <Route element={<AuthSplit />}>
+                <Route path="/auth/login" element={null} />
+                <Route path="/auth/register" element={null} />
+              </Route>
               <Route path="/auth/forgot-password" element={<ForgotPassword />} />
               <Route path="/auth/reset-password" element={<ResetPassword />} />
               <Route path="/auth/verify-email" element={<VerifyEmail />} />

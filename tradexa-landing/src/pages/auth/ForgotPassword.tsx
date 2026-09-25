@@ -34,7 +34,7 @@ export default function ForgotPassword() {
   };
 
   return (
-    <AuthShell split={false}>
+    <AuthShell>
       <Card className="p-8">
         <div className="mb-6 flex justify-center">
           <Logo />

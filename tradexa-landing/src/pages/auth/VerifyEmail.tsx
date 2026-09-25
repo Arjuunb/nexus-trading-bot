@@ -37,7 +37,7 @@ export default function VerifyEmail() {
   };
 
   return (
-    <AuthShell split={false}>
+    <AuthShell>
       <Card className="p-8 text-center">
         <div className="mb-6 flex justify-center">
           <Logo />

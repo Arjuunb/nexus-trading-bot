@@ -2,22 +2,26 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { Mail, Lock } from "lucide-react";
-import { AuthShell } from "@/components/auth/AuthShell";
+import { AnimatePresence } from "framer-motion";
+import { Check, Lock, Mail } from "lucide-react";
 import { SocialButtons } from "@/components/auth/SocialButtons";
-import { Logo } from "@/components/Logo";
+import { FormAlert } from "@/components/auth/FormAlert";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Field } from "@/components/ui/Field";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { loginSchema, type LoginValues } from "@/lib/validation";
 import { auth } from "@/lib/auth";
-import { useToast } from "@/lib/toast";
 import { APP_URL } from "@/lib/utils";
 
+type Phase = "idle" | "submitting" | "success";
+
+const OFFLINE = "Couldn't reach the server. Check your connection and try again.";
+
+/** Sign-in form. Rendered inside AuthSplit, which owns the page frame. */
 export default function Login() {
-  const { toast } = useToast();
-  const [submitting, setSubmitting] = useState(false);
+  const [phase, setPhase] = useState<Phase>("idle");
+  const [error, setError] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
@@ -25,79 +29,94 @@ export default function Login() {
   } = useForm<LoginValues>({ resolver: zodResolver(loginSchema), mode: "onBlur" });
 
   const onSubmit = async (values: LoginValues) => {
-    setSubmitting(true);
-    const res = await auth.signIn(values.email, values.password, values.remember ?? false);
-    setSubmitting(false);
-    if (!res.ok) return toast(res.message, "error");
-    toast(res.message, "success");
+    setPhase("submitting");
+    setError(null);
+    let res;
+    try {
+      res = await auth.signIn(values.email, values.password, values.remember ?? false);
+    } catch {
+      res = { ok: false, message: OFFLINE };
+    }
+    if (!res.ok) {
+      setPhase("idle");
+      setError(res.message);
+      return;
+    }
+    setPhase("success");
     window.location.assign(APP_URL);
   };
 
-  return (
-    <AuthShell>
-      <div className="mb-8 hidden lg:block">
-        <Logo />
-      </div>
+  const busy = phase !== "idle";
 
+  return (
+    <>
       <h1 className="text-2xl font-bold tracking-tight text-white">Welcome back</h1>
       <p className="mt-1.5 text-sm text-white/50">Sign in to your TradeLogX Nexus workspace.</p>
-      {!auth.configured && <p className="mt-4 rounded-lg border border-loss/30 bg-loss/10 px-3 py-2 text-sm text-loss-soft">Authentication is not configured on this deployment. Contact the administrator.</p>}
+      {!auth.configured && (
+        <FormAlert tone="error" className="mt-4">
+          Authentication is not configured on this deployment. Contact the administrator.
+        </FormAlert>
+      )}
 
-      <form onSubmit={handleSubmit(onSubmit)} className="mt-7 space-y-4" noValidate>
-        <Field label="Email" htmlFor="email" error={errors.email?.message}>
-          <Input
-            id="email"
-            type="email"
-            autoComplete="email"
-            placeholder="you@company.com"
-            icon={<Mail className="h-4 w-4" />}
-            invalid={!!errors.email}
-            {...register("email")}
-          />
-        </Field>
+      <form onSubmit={handleSubmit(onSubmit)} className="mt-7" noValidate aria-busy={busy}>
+        <fieldset disabled={busy} className="space-y-4">
+          <Field label="Email" htmlFor="email" error={errors.email?.message}>
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              spellCheck={false}
+              placeholder="you@company.com"
+              icon={<Mail className="h-4 w-4" />}
+              invalid={!!errors.email}
+              {...register("email")}
+            />
+          </Field>
 
-        <Field
-          label="Password"
-          htmlFor="password"
-          error={errors.password?.message}
-          hint={
-            <Link to="/auth/forgot-password" className="text-xs text-gold/80 hover:text-gold">
-              Forgot password?
-            </Link>
-          }
-        >
-          <Input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            placeholder="••••••••"
-            icon={<Lock className="h-4 w-4" />}
-            invalid={!!errors.password}
-            {...register("password")}
-          />
-        </Field>
+          <Field
+            label="Password"
+            htmlFor="password"
+            error={errors.password?.message}
+            hint={
+              <Link to="/auth/forgot-password" className="rounded text-xs text-gold/80 transition-colors hover:text-gold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/60">
+                Forgot password?
+              </Link>
+            }
+          >
+            <Input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              placeholder="Your password"
+              icon={<Lock className="h-4 w-4" />}
+              invalid={!!errors.password}
+              {...register("password")}
+            />
+          </Field>
 
-        <Checkbox id="remember" label="Remember me for 30 days" {...register("remember")} />
+          <Checkbox id="remember" label="Keep me signed in for 30 days" {...register("remember")} />
 
-        <Button type="submit" fullWidth size="lg" loading={submitting} disabled={!auth.configured}>
-          Sign in
-        </Button>
+          <AnimatePresence initial={false}>
+            {error && <FormAlert key="error" tone="error">{error}</FormAlert>}
+            {phase === "success" && <FormAlert key="ok" tone="success">Signed in. Opening your dashboard…</FormAlert>}
+          </AnimatePresence>
+
+          <Button type="submit" fullWidth size="lg" loading={phase === "submitting"} disabled={!auth.configured}>
+            {phase === "success" ? <><Check className="h-4 w-4" aria-hidden="true" /> Signed in</>
+              : phase === "submitting" ? "Signing in…" : "Sign in"}
+          </Button>
+        </fieldset>
       </form>
-
-      <div className="my-6 flex items-center gap-3">
-        <span className="h-px flex-1 bg-line" />
-        <span className="text-xs text-white/35">or continue with</span>
-        <span className="h-px flex-1 bg-line" />
-      </div>
 
       <SocialButtons />
 
       <p className="mt-8 text-center text-sm text-white/50">
-        Don&apos;t have an account?{" "}
-        <Link to="/auth/register" className="font-medium text-gold hover:text-gold-soft">
-          Create account
+        New to TradeLogX Nexus?{" "}
+        <Link to="/auth/register" className="rounded font-medium text-gold transition-colors hover:text-gold-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/60">
+          Create an account
         </Link>
       </p>
-    </AuthShell>
+    </>
   );
 }

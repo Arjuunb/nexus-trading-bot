@@ -4,24 +4,20 @@ import { motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { AppSurface } from "@/components/site/backdrops";
-import { AuthShowcase } from "./AuthShowcase";
 import { DemoModeNotice } from "./DemoModeNotice";
 
 interface AuthShellProps {
   children: ReactNode;
-  /** Set false for centered single-card pages (forgot/reset/verify/2FA). */
-  split?: boolean;
 }
 
 /**
- * Auth page frame. `split` renders the premium two-column layout (showcase left,
- * card right) used by Login/Register; otherwise a centered card used by the
- * minimal flows.
+ * Centered single-card frame for the short flows (forgot/reset password,
+ * verify email, two-factor, session expired). Sign in and Create account use
+ * the split layout in pages/auth/AuthSplit.tsx instead.
  */
-export function AuthShell({ children, split = true }: AuthShellProps) {
-  if (!split) {
-    return (
-      <>
+export function AuthShell({ children }: AuthShellProps) {
+  return (
+    <>
       <AppSurface />
       <main className="relative flex min-h-screen flex-col items-center justify-center px-5 py-12">
         <TopBar />
@@ -35,28 +31,6 @@ export function AuthShell({ children, split = true }: AuthShellProps) {
         </motion.div>
         <DemoModeNotice className="mt-6" />
       </main>
-      </>
-    );
-  }
-
-  return (
-    <>
-    <AppSurface />
-    <main className="grid min-h-screen lg:grid-cols-2">
-      <AuthShowcase />
-      <div className="relative flex flex-col items-center justify-center px-5 py-12 sm:px-10">
-        <TopBar />
-        <motion.div
-          initial={{ opacity: 0, y: 20, scale: 0.98 }}
-          animate={{ opacity: 1, y: 0, scale: 1 }}
-          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full max-w-sm"
-        >
-          {children}
-          <DemoModeNotice className="mt-6" />
-        </motion.div>
-      </div>
-    </main>
     </>
   );
 }
