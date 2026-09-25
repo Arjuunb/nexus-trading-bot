@@ -2372,7 +2372,7 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .cal-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 10px; color: var(--dim); font-size: 11.5px; }
 .cal-legend i { font-style: normal; margin-right: 3px; }
 .cal-grid { display: flex; flex-direction: column; gap: 6px; }
-.cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.cal-week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)) minmax(104px, 0.95fr); gap: 6px; }
 .cal-weekday { padding: 0 9px; color: var(--dim); font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
 .cal-weekday abbr { text-decoration: none; }
 .cal-blank { min-height: 94px; }
@@ -2382,8 +2382,12 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .cal-day:hover { border-color: #34343a; background-color: #121215; }
 .cal-day:active { transform: scale(0.985); }
 .cal-day:focus-visible { outline: 2px solid rgba(234, 181, 79, 0.7); outline-offset: 2px; }
-.cal-day.st-profit { border-color: rgba(34, 197, 94, 0.24); background: linear-gradient(180deg, rgba(34, 197, 94, 0.08), var(--card-2) 70%); }
-.cal-day.st-loss { border-color: rgba(239, 68, 68, 0.24); background: linear-gradient(180deg, rgba(239, 68, 68, 0.08), var(--card-2) 70%); }
+/* --heat (0-1, set per cell) deepens the wash for larger days; the figure and
+   glyph carry the meaning, the shade only helps the eye find the big days. */
+.cal-day.st-profit { border-color: rgba(34, 197, 94, calc(0.18 + var(--heat, 0) * 0.3));
+  background: linear-gradient(180deg, rgba(34, 197, 94, calc(0.05 + var(--heat, 0) * 0.16)), var(--card-2) 78%); }
+.cal-day.st-loss { border-color: rgba(239, 68, 68, calc(0.18 + var(--heat, 0) * 0.3));
+  background: linear-gradient(180deg, rgba(239, 68, 68, calc(0.05 + var(--heat, 0) * 0.16)), var(--card-2) 78%); }
 .cal-day.st-breakeven { border-color: rgba(255, 255, 255, 0.14); }
 .cal-day.st-mixed { border-color: rgba(234, 181, 79, 0.3); }
 .cal-day.is-selected { border-color: var(--sky); box-shadow: inset 0 0 0 1px var(--sky), 0 8px 20px rgba(124, 185, 232, 0.12); }
@@ -2401,6 +2405,31 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .cal-day-count, .cal-day-more { color: var(--dim); font-size: 11px; }
 .cal-day-empty { margin-top: auto; color: #5d626d; font-size: 11px; }
 .cal-help { margin: 12px 0 0; font-size: 11.5px; line-height: 1.5; }
+
+/* weekly totals column */
+.cal-weekcell { display: flex; flex-direction: column; gap: 6px; min-height: 94px; padding: 8px 10px; border-radius: 12px;
+  border: 1px dashed var(--card-border); background: transparent; }
+.cal-weekcell-label { color: var(--dim); font-size: 11.5px; font-weight: 600; line-height: 20px; font-variant-numeric: tabular-nums; }
+.cal-weekcell.st-none { opacity: 0.7; }
+
+/* per-trade statistics under the month and day summaries */
+.cal-stats { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--card-border-soft);
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+
+/* chart */
+.cal-chart-card { display: flex; flex-direction: column; gap: 18px; padding: 14px 16px; }
+.cal-chart { margin: 0; }
+.cal-chart + .cal-chart { padding-top: 16px; border-top: 1px solid var(--card-border-soft); }
+.cal-chart-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 16px; margin-bottom: 8px; }
+.cal-chart-title { font-size: 13px; font-weight: 700; }
+.cal-chart-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--dim); font-size: 11.5px; }
+.cal-chart-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.cal-key { display: inline-block; flex-shrink: 0; }
+.cal-key-split { width: 10px; height: 12px; border-radius: 2px; background: linear-gradient(180deg, #1eae59 0 50%, #c42f2f 50% 100%); }
+.cal-key-line { width: 16px; height: 2px; border-radius: 2px; background: #3b82f6; }
+.cal-chart-skel { height: 220px; border-radius: 12px; background: linear-gradient(90deg, #141417 0, #1d1d22 50%, #141417 100%);
+  background-size: 400px 100%; animation: cal-shimmer 1.2s linear infinite; }
+.cal-drawer-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .cal-agenda { display: none; padding: 14px 16px; }
 .cal-agenda ul { list-style: none; margin: 8px 0 0; padding: 0; }
@@ -2478,6 +2507,12 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 @media (max-width: 1100px) {
   .cal-day-net { font-size: 11.5px; }
 }
+/* The weekly column needs room; below this width the agenda and the chart
+   carry the totals instead. */
+@media (max-width: 1180px) {
+  .cal-week { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+  .cal-weekcol { display: none; }
+}
 @media (max-width: 960px) {
   .cal-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cal-clear { grid-column: 1 / -1; justify-self: start; }
@@ -2514,7 +2549,7 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 }
 @media (prefers-reduced-motion: reduce) {
   .cal-slide-next, .cal-slide-prev, .cal-slide-none, .cal-fade, .cal-drawer, .cal-drawer-backdrop { animation: none; }
-  .cal-day-skel, .cal-sum-skeleton span, .cal-drawer-skeleton span { animation: none; }
+  .cal-day-skel, .cal-sum-skeleton span, .cal-drawer-skeleton span, .cal-chart-skel { animation: none; }
   .cal-day, .cal-chip { transition: none; }
   .cal-day:active, .cal-chip:active { transform: none; }
 }

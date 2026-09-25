@@ -141,3 +141,46 @@ test("reduced motion turns the calendar animations off", async ({ page }) => {
   await day(page, "2026-09-17").click();
   await expect(page.locator(".cal-drawer")).toHaveCSS("animation-name", "none");
 });
+
+test("weekly totals, trade statistics and the daily chart come from the API", async ({ page }) => {
+  await mockApi(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(SEPT);
+  const weeks = page.locator(".cal-weekcell");
+  await expect(weeks).toHaveCount(5);
+  await expect(weeks.nth(1)).toHaveAttribute("aria-label", /\+£21\.57, -98\.85 USDT, 4 closed trades/);
+  await expect(weeks.nth(3)).toHaveAttribute("aria-label", /no trades/);
+  const summary = page.getByRole("region", { name: "Month summary" });
+  const usdt = summary.locator(".cal-sum").filter({ hasText: "USDT" }).last();
+  await expect(usdt.locator(".cal-stats")).toContainText("Profit factor2.38");
+  await expect(usdt.locator(".cal-stats")).toContainText("Average win+111.58 USDT");
+  await expect(usdt.locator(".cal-stats")).toContainText("Largest loss-49.74 USDT");
+  await expect(usdt.locator(".cal-stats")).toContainText("1 up · 2 down");
+  // GBP had no loss: the profit factor is undefined, not infinite
+  await expect(summary.locator(".cal-sum").filter({ hasText: "GBP" }).first().locator(".cal-stats")).toContainText("No losses");
+  const charts = page.locator("figure.cal-chart");
+  await expect(charts).toHaveCount(2);
+  await expect(charts.filter({ hasText: "USDT" }).getByRole("img")).toHaveAttribute("aria-label", /month net \+193\.87 USDT/);
+  await expect(charts.first().locator("canvas")).toHaveCount(1);
+  // the largest day is shaded deepest; mixed-currency days are not shaded
+  const heat = (d: string) => day(page, d).evaluate((el) => Number(getComputedStyle(el).getPropertyValue("--heat")));
+  expect(await heat("2026-09-17")).toBeCloseTo(1, 3);
+  expect(await heat("2026-09-02")).toBeLessThan(0.3);
+  expect(await heat("2026-09-10")).toBe(0);
+});
+
+test("CSV export asks the backend for the month, then for a single day", async ({ page }) => {
+  await mockApi(page);
+  const asked: string[] = [];
+  page.on("request", (r) => { if (r.url().includes("/calendar/export.csv")) asked.push(r.url()); });
+  await page.goto(SEPT + "&source=pa_lab");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: /Export CSV/ }).first().click();
+  expect((await download).suggestedFilename()).toBe("realized-pnl_2026-09-01_2026-09-30.csv");
+  expect(asked[0]).toContain("start=2026-09-01&end=2026-09-30");
+  expect(asked[0]).toContain("source=pa_lab");
+  await day(page, "2026-09-17").click();
+  const dayDownload = page.waitForEvent("download");
+  await page.getByRole("dialog").getByRole("button", { name: /Export CSV/ }).click();
+  expect((await dayDownload).suggestedFilename()).toBe("realized-pnl_2026-09-17_2026-09-17.csv");
+});

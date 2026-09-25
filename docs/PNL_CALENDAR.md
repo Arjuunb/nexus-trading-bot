@@ -113,6 +113,22 @@ identified by the opening fill's id.
 * `realizations` also counts partial exits of positions still open; their P&L
   is in the day's total, but they are not closed trades yet.
 * `win_rate` = wins ÷ closed trades, `null` when there are none.
+* **Per-trade figures** (`avg_win`, `avg_loss`, `largest_win`, `largest_loss`,
+  `expectancy`) use each closed trade's **total** net P&L over all its exits,
+  so a trade scaled out across two days is one result, not two. Losses are
+  positive magnitudes. `expectancy` is the mean over all closed trades,
+  break-evens included.
+* **Profit factor** is the period's gross profit ÷ gross loss (the two figures
+  shown beside it). It is `null` when there was no loss: undefined, not
+  infinite. The page shows "No losses".
+* **Month only:** `winning_days` / `losing_days` / `breakeven_days` count
+  trading days by their net; the longest winning and losing streaks count
+  consecutive *trading* days (a day without trades neither extends nor breaks
+  a streak); `cumulative` is the running realized total after each trading
+  day, computed here so the chart never adds amounts itself.
+* **Weeks:** the month view also returns one row per Monday-first week of the
+  grid. A week's totals count only its days inside the month, so the weekly
+  column always adds up to the month.
 
 ## 6. Drawdown
 
@@ -156,6 +172,7 @@ authentication and are read-only.
 | `GET /calendar/month?year=&month=` | every day of the month (state, per-currency money, closed trades, realizations) and the month summary per currency, with best/worst day and max drawdown |
 | `GET /calendar/day?date_=YYYY-MM-DD` | the day summary, source / strategy / time-of-day / hourly breakdowns, and every realization with its gross, fees, funding, net, R/R and missing fields |
 | `GET /calendar/options` | the filter values that exist in the data, plus the resolved timezone and display currency |
+| `GET /calendar/export.csv?start=&end=` | every realization closed in that date range (inclusive, calendar timezone, at most 400 days) as CSV, one row per exit, oldest first, with exact amounts in each row's own currency. Text cells that begin with `=`, `+`, `-` or `@` are prefixed with `'` so a spreadsheet cannot run them as formulas |
 
 Common query parameters: `tz` (IANA zone), `currency` (display currency),
 `source`, `instance`, `strategy`, `symbol`, `timeframe`, and `fresh=true` to
@@ -171,10 +188,12 @@ total as complete.
 * `automation-hub/tests/test_pnl_calendar.py`: sign convention, fees and
   funding (no double subtraction), partial exits, currencies and precision,
   timezones and midnight, drawdown, duplicates, filters, legacy metadata, the
-  paged Supabase read and the degraded-ledger error, and the API.
+  paged Supabase read and the degraded-ledger error, per-trade statistics,
+  weeks, the running total and streaks, the CSV export, and the API.
 * `automation-hub-dashboard/e2e/calendar.spec.ts`: sidebar placement and
-  routing, month and day views, keyboard navigation, filters, error and
-  partial-source states, phone layout and reduced motion. Its mocked
+  routing, month and day views, weekly totals, statistics, the chart, CSV
+  export, keyboard navigation, filters, error and partial-source states, phone
+  layout and reduced motion. Its mocked
   responses (`e2e/fixtures/calendar.json`) are produced by the real service
   over real engine trades; `e2e/fixtures/generate_calendar_fixture.py`
   regenerates them.

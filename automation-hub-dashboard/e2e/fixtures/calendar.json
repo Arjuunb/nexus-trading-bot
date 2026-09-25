@@ -27,7 +27,13 @@
       "breakeven": 0,
       "win_rate": "50.00000000",
       "max_drawdown": "42.01440000",
-      "state": "profit"
+      "state": "profit",
+      "profit_factor": "1.91277276",
+      "avg_win": "80.36400000",
+      "avg_loss": "42.01440000",
+      "largest_win": "80.36400000",
+      "largest_loss": "42.01440000",
+      "expectancy": "19.17480000"
      }
     },
     "closed_trades": 2,
@@ -85,7 +91,13 @@
       "breakeven": 0,
       "win_rate": "0.00000000",
       "max_drawdown": "97.72960000",
-      "state": "loss"
+      "state": "loss",
+      "profit_factor": "0.00000000",
+      "avg_win": null,
+      "avg_loss": "48.86480000",
+      "largest_win": null,
+      "largest_loss": "49.74400000",
+      "expectancy": "-48.86480000"
      }
     },
     "closed_trades": 2,
@@ -115,7 +127,13 @@
       "breakeven": 0,
       "win_rate": "100.00000000",
       "max_drawdown": "0.00000000",
-      "state": "profit"
+      "state": "profit",
+      "profit_factor": null,
+      "avg_win": "21.57000000",
+      "avg_loss": null,
+      "largest_win": "21.57000000",
+      "largest_loss": null,
+      "expectancy": "21.57000000"
      },
      "USDT": {
       "net": "-1.12000000",
@@ -130,7 +148,13 @@
       "breakeven": 0,
       "win_rate": "0.00000000",
       "max_drawdown": "1.12000000",
-      "state": "loss"
+      "state": "loss",
+      "profit_factor": "0.00000000",
+      "avg_win": null,
+      "avg_loss": "1.12000000",
+      "largest_win": null,
+      "largest_loss": "1.12000000",
+      "expectancy": "-1.12000000"
      }
     },
     "closed_trades": 2,
@@ -195,7 +219,13 @@
       "breakeven": 0,
       "win_rate": "100.00000000",
       "max_drawdown": "0.00000000",
-      "state": "profit"
+      "state": "profit",
+      "profit_factor": null,
+      "avg_win": "127.18300000",
+      "avg_loss": null,
+      "largest_win": "199.30200000",
+      "largest_loss": null,
+      "expectancy": "127.18300000"
      }
     },
     "closed_trades": 2,
@@ -293,6 +323,140 @@
     "realizations": 0
    }
   ],
+  "weeks": [
+   {
+    "start": "2026-08-31",
+    "from": "2026-09-01",
+    "to": "2026-09-06",
+    "state": "profit",
+    "by_currency": {
+     "USDT": {
+      "net": "38.34960000",
+      "gross_profit": "80.36400000",
+      "gross_loss": "42.01440000",
+      "fees": "15.65040000",
+      "funding": "0.00000000",
+      "closed_trades": 2,
+      "realizations": 2,
+      "wins": 1,
+      "losses": 1,
+      "breakeven": 0,
+      "win_rate": "50.00000000",
+      "max_drawdown": "42.01440000",
+      "state": "profit",
+      "profit_factor": "1.91277276",
+      "avg_win": "80.36400000",
+      "avg_loss": "42.01440000",
+      "largest_win": "80.36400000",
+      "largest_loss": "42.01440000",
+      "expectancy": "19.17480000"
+     }
+    },
+    "closed_trades": 2,
+    "realizations": 2
+   },
+   {
+    "start": "2026-09-07",
+    "from": "2026-09-07",
+    "to": "2026-09-13",
+    "state": "mixed",
+    "by_currency": {
+     "GBP": {
+      "net": "21.57000000",
+      "gross_profit": "21.57000000",
+      "gross_loss": "0.00000000",
+      "fees": "3.43000000",
+      "funding": "0.00000000",
+      "closed_trades": 1,
+      "realizations": 1,
+      "wins": 1,
+      "losses": 0,
+      "breakeven": 0,
+      "win_rate": "100.00000000",
+      "max_drawdown": "0.00000000",
+      "state": "profit",
+      "profit_factor": null,
+      "avg_win": "21.57000000",
+      "avg_loss": null,
+      "largest_win": "21.57000000",
+      "largest_loss": null,
+      "expectancy": "21.57000000"
+     },
+     "USDT": {
+      "net": "-98.84960000",
+      "gross_profit": "0.00000000",
+      "gross_loss": "98.84960000",
+      "fees": "14.84960000",
+      "funding": "0.00000000",
+      "closed_trades": 3,
+      "realizations": 3,
+      "wins": 0,
+      "losses": 3,
+      "breakeven": 0,
+      "win_rate": "0.00000000",
+      "max_drawdown": "98.84960000",
+      "state": "loss",
+      "profit_factor": "0.00000000",
+      "avg_win": null,
+      "avg_loss": "32.94986667",
+      "largest_win": null,
+      "largest_loss": "49.74400000",
+      "expectancy": "-32.94986667"
+     }
+    },
+    "closed_trades": 4,
+    "realizations": 4
+   },
+   {
+    "start": "2026-09-14",
+    "from": "2026-09-14",
+    "to": "2026-09-20",
+    "state": "profit",
+    "by_currency": {
+     "USDT": {
+      "net": "254.36600000",
+      "gross_profit": "254.36600000",
+      "gross_loss": "0.00000000",
+      "fees": "24.38400000",
+      "funding": "1.25000000",
+      "closed_trades": 2,
+      "realizations": 3,
+      "wins": 2,
+      "losses": 0,
+      "breakeven": 0,
+      "win_rate": "100.00000000",
+      "max_drawdown": "0.00000000",
+      "state": "profit",
+      "profit_factor": null,
+      "avg_win": "127.18300000",
+      "avg_loss": null,
+      "largest_win": "199.30200000",
+      "largest_loss": null,
+      "expectancy": "127.18300000"
+     }
+    },
+    "closed_trades": 2,
+    "realizations": 3
+   },
+   {
+    "start": "2026-09-21",
+    "from": "2026-09-21",
+    "to": "2026-09-27",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "start": "2026-09-28",
+    "from": "2026-09-28",
+    "to": "2026-09-30",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   }
+  ],
   "summary": {
    "GBP": {
     "net": "21.57000000",
@@ -308,6 +472,12 @@
     "win_rate": "100.00000000",
     "max_drawdown": "0.00000000",
     "state": "profit",
+    "profit_factor": null,
+    "avg_win": "21.57000000",
+    "avg_loss": null,
+    "largest_win": "21.57000000",
+    "largest_loss": null,
+    "expectancy": "21.57000000",
     "best_day": {
      "date": "2026-09-10",
      "net": "21.57000000"
@@ -316,7 +486,19 @@
      "date": "2026-09-10",
      "net": "21.57000000"
     },
-    "trading_days": 1
+    "trading_days": 1,
+    "winning_days": 1,
+    "losing_days": 0,
+    "breakeven_days": 0,
+    "longest_winning_streak": 1,
+    "longest_losing_streak": 0,
+    "cumulative": [
+     {
+      "date": "2026-09-10",
+      "net": "21.57000000",
+      "cumulative": "21.57000000"
+     }
+    ]
    },
    "USDT": {
     "net": "193.86600000",
@@ -332,6 +514,12 @@
     "win_rate": "42.85714286",
     "max_drawdown": "140.86400000",
     "state": "profit",
+    "profit_factor": "2.37626363",
+    "avg_win": "111.57666667",
+    "avg_loss": "35.21600000",
+    "largest_win": "199.30200000",
+    "largest_loss": "49.74400000",
+    "expectancy": "27.69514286",
     "best_day": {
      "date": "2026-09-17",
      "net": "254.36600000"
@@ -340,7 +528,34 @@
      "date": "2026-09-08",
      "net": "-97.72960000"
     },
-    "trading_days": 4
+    "trading_days": 4,
+    "winning_days": 2,
+    "losing_days": 2,
+    "breakeven_days": 0,
+    "longest_winning_streak": 1,
+    "longest_losing_streak": 2,
+    "cumulative": [
+     {
+      "date": "2026-09-02",
+      "net": "38.34960000",
+      "cumulative": "38.34960000"
+     },
+     {
+      "date": "2026-09-08",
+      "net": "-97.72960000",
+      "cumulative": "-59.38000000"
+     },
+     {
+      "date": "2026-09-10",
+      "net": "-1.12000000",
+      "cumulative": "-60.50000000"
+     },
+     {
+      "date": "2026-09-17",
+      "net": "254.36600000",
+      "cumulative": "193.86600000"
+     }
+    ]
    }
   },
   "currencies": [
@@ -375,7 +590,7 @@
     }
    },
    "duplicates_dropped": 0,
-   "collected_at": "2026-09-25T00:58:02+00:00"
+   "collected_at": "2026-09-25T07:56:43+00:00"
   },
   "conversion": {
    "display_currency": "USDT",
@@ -416,7 +631,13 @@
        "breakeven": 0,
        "win_rate": "50.00000000",
        "max_drawdown": "42.01440000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": "1.91277276",
+       "avg_win": "80.36400000",
+       "avg_loss": "42.01440000",
+       "largest_win": "80.36400000",
+       "largest_loss": "42.01440000",
+       "expectancy": "19.17480000"
       }
      },
      "closed_trades": 2,
@@ -474,7 +695,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "49.74400000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "49.74400000",
+       "largest_win": null,
+       "largest_loss": "49.74400000",
+       "expectancy": "-49.74400000"
       }
      },
      "closed_trades": 1,
@@ -504,7 +731,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "21.57000000",
+       "avg_loss": null,
+       "largest_win": "21.57000000",
+       "largest_loss": null,
+       "expectancy": "21.57000000"
       }
      },
      "closed_trades": 1,
@@ -569,7 +802,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "55.06400000",
+       "avg_loss": null,
+       "largest_win": "55.06400000",
+       "largest_loss": null,
+       "expectancy": "55.06400000"
       }
      },
      "closed_trades": 1,
@@ -667,6 +906,140 @@
      "realizations": 0
     }
    ],
+   "weeks": [
+    {
+     "start": "2026-08-31",
+     "from": "2026-09-01",
+     "to": "2026-09-06",
+     "state": "profit",
+     "by_currency": {
+      "USDT": {
+       "net": "38.34960000",
+       "gross_profit": "80.36400000",
+       "gross_loss": "42.01440000",
+       "fees": "15.65040000",
+       "funding": "0.00000000",
+       "closed_trades": 2,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "50.00000000",
+       "max_drawdown": "42.01440000",
+       "state": "profit",
+       "profit_factor": "1.91277276",
+       "avg_win": "80.36400000",
+       "avg_loss": "42.01440000",
+       "largest_win": "80.36400000",
+       "largest_loss": "42.01440000",
+       "expectancy": "19.17480000"
+      }
+     },
+     "closed_trades": 2,
+     "realizations": 2
+    },
+    {
+     "start": "2026-09-07",
+     "from": "2026-09-07",
+     "to": "2026-09-13",
+     "state": "mixed",
+     "by_currency": {
+      "GBP": {
+       "net": "21.57000000",
+       "gross_profit": "21.57000000",
+       "gross_loss": "0.00000000",
+       "fees": "3.43000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "21.57000000",
+       "avg_loss": null,
+       "largest_win": "21.57000000",
+       "largest_loss": null,
+       "expectancy": "21.57000000"
+      },
+      "USDT": {
+       "net": "-49.74400000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "49.74400000",
+       "fees": "9.74400000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "49.74400000",
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "49.74400000",
+       "largest_win": null,
+       "largest_loss": "49.74400000",
+       "expectancy": "-49.74400000"
+      }
+     },
+     "closed_trades": 2,
+     "realizations": 2
+    },
+    {
+     "start": "2026-09-14",
+     "from": "2026-09-14",
+     "to": "2026-09-20",
+     "state": "profit",
+     "by_currency": {
+      "USDT": {
+       "net": "55.06400000",
+       "gross_profit": "55.06400000",
+       "gross_loss": "0.00000000",
+       "fees": "4.93600000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "55.06400000",
+       "avg_loss": null,
+       "largest_win": "55.06400000",
+       "largest_loss": null,
+       "expectancy": "55.06400000"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "start": "2026-09-21",
+     "from": "2026-09-21",
+     "to": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-28",
+     "from": "2026-09-28",
+     "to": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
    "summary": {
     "GBP": {
      "net": "21.57000000",
@@ -682,6 +1055,12 @@
      "win_rate": "100.00000000",
      "max_drawdown": "0.00000000",
      "state": "profit",
+     "profit_factor": null,
+     "avg_win": "21.57000000",
+     "avg_loss": null,
+     "largest_win": "21.57000000",
+     "largest_loss": null,
+     "expectancy": "21.57000000",
      "best_day": {
       "date": "2026-09-10",
       "net": "21.57000000"
@@ -690,7 +1069,19 @@
       "date": "2026-09-10",
       "net": "21.57000000"
      },
-     "trading_days": 1
+     "trading_days": 1,
+     "winning_days": 1,
+     "losing_days": 0,
+     "breakeven_days": 0,
+     "longest_winning_streak": 1,
+     "longest_losing_streak": 0,
+     "cumulative": [
+      {
+       "date": "2026-09-10",
+       "net": "21.57000000",
+       "cumulative": "21.57000000"
+      }
+     ]
     },
     "USDT": {
      "net": "43.66960000",
@@ -706,6 +1097,12 @@
      "win_rate": "50.00000000",
      "max_drawdown": "91.75840000",
      "state": "profit",
+     "profit_factor": "1.47591937",
+     "avg_win": "67.71400000",
+     "avg_loss": "45.87920000",
+     "largest_win": "80.36400000",
+     "largest_loss": "49.74400000",
+     "expectancy": "10.91740000",
      "best_day": {
       "date": "2026-09-17",
       "net": "55.06400000"
@@ -714,7 +1111,29 @@
       "date": "2026-09-08",
       "net": "-49.74400000"
      },
-     "trading_days": 3
+     "trading_days": 3,
+     "winning_days": 2,
+     "losing_days": 1,
+     "breakeven_days": 0,
+     "longest_winning_streak": 1,
+     "longest_losing_streak": 1,
+     "cumulative": [
+      {
+       "date": "2026-09-02",
+       "net": "38.34960000",
+       "cumulative": "38.34960000"
+      },
+      {
+       "date": "2026-09-08",
+       "net": "-49.74400000",
+       "cumulative": "-11.39440000"
+      },
+      {
+       "date": "2026-09-17",
+       "net": "55.06400000",
+       "cumulative": "43.66960000"
+      }
+     ]
     }
    },
    "currencies": [
@@ -751,7 +1170,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -896,7 +1315,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "199.30200000",
+       "avg_loss": null,
+       "largest_win": "199.30200000",
+       "largest_loss": null,
+       "expectancy": "199.30200000"
       }
      },
      "closed_trades": 1,
@@ -994,6 +1419,75 @@
      "realizations": 0
     }
    ],
+   "weeks": [
+    {
+     "start": "2026-08-31",
+     "from": "2026-09-01",
+     "to": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-07",
+     "from": "2026-09-07",
+     "to": "2026-09-13",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-14",
+     "from": "2026-09-14",
+     "to": "2026-09-20",
+     "state": "profit",
+     "by_currency": {
+      "USDT": {
+       "net": "199.30200000",
+       "gross_profit": "199.30200000",
+       "gross_loss": "0.00000000",
+       "fees": "19.44800000",
+       "funding": "1.25000000",
+       "closed_trades": 1,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "199.30200000",
+       "avg_loss": null,
+       "largest_win": "199.30200000",
+       "largest_loss": null,
+       "expectancy": "199.30200000"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 2
+    },
+    {
+     "start": "2026-09-21",
+     "from": "2026-09-21",
+     "to": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-28",
+     "from": "2026-09-28",
+     "to": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
    "summary": {
     "USDT": {
      "net": "199.30200000",
@@ -1009,6 +1503,12 @@
      "win_rate": "100.00000000",
      "max_drawdown": "0.00000000",
      "state": "profit",
+     "profit_factor": null,
+     "avg_win": "199.30200000",
+     "avg_loss": null,
+     "largest_win": "199.30200000",
+     "largest_loss": null,
+     "expectancy": "199.30200000",
      "best_day": {
       "date": "2026-09-17",
       "net": "199.30200000"
@@ -1017,7 +1517,19 @@
       "date": "2026-09-17",
       "net": "199.30200000"
      },
-     "trading_days": 1
+     "trading_days": 1,
+     "winning_days": 1,
+     "losing_days": 0,
+     "breakeven_days": 0,
+     "longest_winning_streak": 1,
+     "longest_losing_streak": 0,
+     "cumulative": [
+      {
+       "date": "2026-09-17",
+       "net": "199.30200000",
+       "cumulative": "199.30200000"
+      }
+     ]
     }
    },
    "currencies": [
@@ -1053,7 +1565,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -1133,7 +1645,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "47.98560000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "47.98560000",
+       "largest_win": null,
+       "largest_loss": "47.98560000",
+       "expectancy": "-47.98560000"
       }
      },
      "closed_trades": 1,
@@ -1294,6 +1812,75 @@
      "realizations": 0
     }
    ],
+   "weeks": [
+    {
+     "start": "2026-08-31",
+     "from": "2026-09-01",
+     "to": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-07",
+     "from": "2026-09-07",
+     "to": "2026-09-13",
+     "state": "loss",
+     "by_currency": {
+      "USDT": {
+       "net": "-47.98560000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "47.98560000",
+       "fees": "3.98560000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "47.98560000",
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "47.98560000",
+       "largest_win": null,
+       "largest_loss": "47.98560000",
+       "expectancy": "-47.98560000"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "start": "2026-09-14",
+     "from": "2026-09-14",
+     "to": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-21",
+     "from": "2026-09-21",
+     "to": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-28",
+     "from": "2026-09-28",
+     "to": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
    "summary": {
     "USDT": {
      "net": "-47.98560000",
@@ -1309,6 +1896,12 @@
      "win_rate": "0.00000000",
      "max_drawdown": "47.98560000",
      "state": "loss",
+     "profit_factor": "0.00000000",
+     "avg_win": null,
+     "avg_loss": "47.98560000",
+     "largest_win": null,
+     "largest_loss": "47.98560000",
+     "expectancy": "-47.98560000",
      "best_day": {
       "date": "2026-09-08",
       "net": "-47.98560000"
@@ -1317,7 +1910,19 @@
       "date": "2026-09-08",
       "net": "-47.98560000"
      },
-     "trading_days": 1
+     "trading_days": 1,
+     "winning_days": 0,
+     "losing_days": 1,
+     "breakeven_days": 0,
+     "longest_winning_streak": 0,
+     "longest_losing_streak": 1,
+     "cumulative": [
+      {
+       "date": "2026-09-08",
+       "net": "-47.98560000",
+       "cumulative": "-47.98560000"
+      }
+     ]
     }
    },
    "currencies": [
@@ -1353,7 +1958,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -1578,6 +2183,53 @@
      "realizations": 0
     }
    ],
+   "weeks": [
+    {
+     "start": "2026-08-31",
+     "from": "2026-09-01",
+     "to": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-07",
+     "from": "2026-09-07",
+     "to": "2026-09-13",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-14",
+     "from": "2026-09-14",
+     "to": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-21",
+     "from": "2026-09-21",
+     "to": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-28",
+     "from": "2026-09-28",
+     "to": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
    "summary": {},
    "currencies": [],
    "timezone": "Europe/London",
@@ -1610,7 +2262,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -1704,7 +2356,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "1.12000000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "1.12000000",
+       "largest_win": null,
+       "largest_loss": "1.12000000",
+       "expectancy": "-1.12000000"
       }
      },
      "closed_trades": 1,
@@ -1851,6 +2509,75 @@
      "realizations": 0
     }
    ],
+   "weeks": [
+    {
+     "start": "2026-08-31",
+     "from": "2026-09-01",
+     "to": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-07",
+     "from": "2026-09-07",
+     "to": "2026-09-13",
+     "state": "loss",
+     "by_currency": {
+      "USDT": {
+       "net": "-1.12000000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "1.12000000",
+       "fees": "1.12000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "1.12000000",
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "1.12000000",
+       "largest_win": null,
+       "largest_loss": "1.12000000",
+       "expectancy": "-1.12000000"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "start": "2026-09-14",
+     "from": "2026-09-14",
+     "to": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-21",
+     "from": "2026-09-21",
+     "to": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "start": "2026-09-28",
+     "from": "2026-09-28",
+     "to": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
    "summary": {
     "USDT": {
      "net": "-1.12000000",
@@ -1866,6 +2593,12 @@
      "win_rate": "0.00000000",
      "max_drawdown": "1.12000000",
      "state": "loss",
+     "profit_factor": "0.00000000",
+     "avg_win": null,
+     "avg_loss": "1.12000000",
+     "largest_win": null,
+     "largest_loss": "1.12000000",
+     "expectancy": "-1.12000000",
      "best_day": {
       "date": "2026-09-10",
       "net": "-1.12000000"
@@ -1874,7 +2607,19 @@
       "date": "2026-09-10",
       "net": "-1.12000000"
      },
-     "trading_days": 1
+     "trading_days": 1,
+     "winning_days": 0,
+     "losing_days": 1,
+     "breakeven_days": 0,
+     "longest_winning_streak": 0,
+     "longest_losing_streak": 1,
+     "cumulative": [
+      {
+       "date": "2026-09-10",
+       "net": "-1.12000000",
+       "cumulative": "-1.12000000"
+      }
+     ]
     }
    },
    "currencies": [
@@ -1910,7 +2655,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -1938,7 +2683,13 @@
      "breakeven": 0,
      "win_rate": "50.00000000",
      "max_drawdown": "42.01440000",
-     "state": "profit"
+     "state": "profit",
+     "profit_factor": "1.91277276",
+     "avg_win": "80.36400000",
+     "avg_loss": "42.01440000",
+     "largest_win": "80.36400000",
+     "largest_loss": "42.01440000",
+     "expectancy": "19.17480000"
     }
    },
    "currencies": [
@@ -1967,7 +2718,13 @@
        "breakeven": 0,
        "win_rate": "50.00000000",
        "max_drawdown": "42.01440000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": "1.91277276",
+       "avg_win": "80.36400000",
+       "avg_loss": "42.01440000",
+       "largest_win": "80.36400000",
+       "largest_loss": "42.01440000",
+       "expectancy": "19.17480000"
       }
      },
      "closed_trades": 2,
@@ -1994,7 +2751,13 @@
        "breakeven": 0,
        "win_rate": "50.00000000",
        "max_drawdown": "42.01440000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": "1.91277276",
+       "avg_win": "80.36400000",
+       "avg_loss": "42.01440000",
+       "largest_win": "80.36400000",
+       "largest_loss": "42.01440000",
+       "expectancy": "19.17480000"
       }
      },
      "closed_trades": 2,
@@ -2023,7 +2786,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "80.36400000",
+       "avg_loss": null,
+       "largest_win": "80.36400000",
+       "largest_loss": null,
+       "expectancy": "80.36400000"
       }
      }
     },
@@ -2047,7 +2816,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "42.01440000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "42.01440000",
+       "largest_win": null,
+       "largest_loss": "42.01440000",
+       "expectancy": "-42.01440000"
       }
      }
     },
@@ -2087,7 +2862,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "80.36400000",
+       "avg_loss": null,
+       "largest_win": "80.36400000",
+       "largest_loss": null,
+       "expectancy": "80.36400000"
       }
      }
     },
@@ -2109,15 +2890,21 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "42.01440000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "42.01440000",
+       "largest_win": null,
+       "largest_loss": "42.01440000",
+       "expectancy": "-42.01440000"
       }
      }
     }
    ],
    "trades": [
     {
-     "id": "ledger:b7f9150eb49b45b5956309dbecc1c491",
-     "trade_id": "ledger:b7f9150eb49b45b5956309dbecc1c491",
+     "id": "ledger:1b031e0294ba4970a4d3965787e2b3ab",
+     "trade_id": "ledger:1b031e0294ba4970a4d3965787e2b3ab",
      "source": "trading_instance",
      "account": "ledger",
      "currency": "USDT",
@@ -2151,8 +2938,8 @@
      "outcome": "win"
     },
     {
-     "id": "ledger:72e8f9d9fb8e44d2918c2556324df716",
-     "trade_id": "ledger:72e8f9d9fb8e44d2918c2556324df716",
+     "id": "ledger:39179aaa3e494182ba7e8ccce6b6e06e",
+     "trade_id": "ledger:39179aaa3e494182ba7e8ccce6b6e06e",
      "source": "trading_instance",
      "account": "ledger",
      "currency": "USDT",
@@ -2214,7 +3001,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -2240,7 +3027,13 @@
      "breakeven": 0,
      "win_rate": "0.00000000",
      "max_drawdown": "97.72960000",
-     "state": "loss"
+     "state": "loss",
+     "profit_factor": "0.00000000",
+     "avg_win": null,
+     "avg_loss": "48.86480000",
+     "largest_win": null,
+     "largest_loss": "49.74400000",
+     "expectancy": "-48.86480000"
     }
    },
    "currencies": [
@@ -2269,7 +3062,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "49.74400000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "49.74400000",
+       "largest_win": null,
+       "largest_loss": "49.74400000",
+       "expectancy": "-49.74400000"
       }
      },
      "closed_trades": 1,
@@ -2297,7 +3096,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "47.98560000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "47.98560000",
+       "largest_win": null,
+       "largest_loss": "47.98560000",
+       "expectancy": "-47.98560000"
       }
      },
      "closed_trades": 1,
@@ -2324,7 +3129,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "49.74400000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "49.74400000",
+       "largest_win": null,
+       "largest_loss": "49.74400000",
+       "expectancy": "-49.74400000"
       }
      },
      "closed_trades": 1,
@@ -2349,7 +3160,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "47.98560000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "47.98560000",
+       "largest_win": null,
+       "largest_loss": "47.98560000",
+       "expectancy": "-47.98560000"
       }
      },
      "closed_trades": 1,
@@ -2386,7 +3203,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "49.74400000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "49.74400000",
+       "largest_win": null,
+       "largest_loss": "49.74400000",
+       "expectancy": "-49.74400000"
       }
      }
     },
@@ -2410,7 +3233,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "47.98560000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "47.98560000",
+       "largest_win": null,
+       "largest_loss": "47.98560000",
+       "expectancy": "-47.98560000"
       }
      }
     },
@@ -2442,7 +3271,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "49.74400000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "49.74400000",
+       "largest_win": null,
+       "largest_loss": "49.74400000",
+       "expectancy": "-49.74400000"
       }
      }
     },
@@ -2464,15 +3299,21 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "47.98560000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "47.98560000",
+       "largest_win": null,
+       "largest_loss": "47.98560000",
+       "expectancy": "-47.98560000"
       }
      }
     }
    ],
    "trades": [
     {
-     "id": "ledger:3b225d64a1c448ec890fbfacd5c1f7d4",
-     "trade_id": "ledger:3b225d64a1c448ec890fbfacd5c1f7d4",
+     "id": "ledger:42eedef56ac742ed8e723d738f1ee33b",
+     "trade_id": "ledger:42eedef56ac742ed8e723d738f1ee33b",
      "source": "trading_instance",
      "account": "ledger",
      "currency": "USDT",
@@ -2506,8 +3347,8 @@
      "outcome": "loss"
     },
     {
-     "id": "smc_lab:fill:dd5c231322b644c394a0da3e17817abe",
-     "trade_id": "smc_lab:49a3ed3dac704ea7bac117b7e99155d4",
+     "id": "smc_lab:fill:94137e7805f44f728734e38f70f1cc25",
+     "trade_id": "smc_lab:4577dcc2f73d4e75ae81a0ea8ca69912",
      "source": "smc_lab",
      "account": "smc_lab:smc-91be77c2",
      "currency": "USDT",
@@ -2568,7 +3409,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -2594,7 +3435,13 @@
      "breakeven": 0,
      "win_rate": "100.00000000",
      "max_drawdown": "0.00000000",
-     "state": "profit"
+     "state": "profit",
+     "profit_factor": null,
+     "avg_win": "21.57000000",
+     "avg_loss": null,
+     "largest_win": "21.57000000",
+     "largest_loss": null,
+     "expectancy": "21.57000000"
     },
     "USDT": {
      "net": "-1.12000000",
@@ -2609,7 +3456,13 @@
      "breakeven": 0,
      "win_rate": "0.00000000",
      "max_drawdown": "1.12000000",
-     "state": "loss"
+     "state": "loss",
+     "profit_factor": "0.00000000",
+     "avg_win": null,
+     "avg_loss": "1.12000000",
+     "largest_win": null,
+     "largest_loss": "1.12000000",
+     "expectancy": "-1.12000000"
     }
    },
    "currencies": [
@@ -2639,7 +3492,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "21.57000000",
+       "avg_loss": null,
+       "largest_win": "21.57000000",
+       "largest_loss": null,
+       "expectancy": "21.57000000"
       }
      },
      "closed_trades": 1,
@@ -2667,7 +3526,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "1.12000000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "1.12000000",
+       "largest_win": null,
+       "largest_loss": "1.12000000",
+       "expectancy": "-1.12000000"
       }
      },
      "closed_trades": 1,
@@ -2694,7 +3559,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "21.57000000",
+       "avg_loss": null,
+       "largest_win": "21.57000000",
+       "largest_loss": null,
+       "expectancy": "21.57000000"
       }
      },
      "closed_trades": 1,
@@ -2719,7 +3590,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "1.12000000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "1.12000000",
+       "largest_win": null,
+       "largest_loss": "1.12000000",
+       "expectancy": "-1.12000000"
       }
      },
      "closed_trades": 1,
@@ -2756,7 +3633,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "21.57000000",
+       "avg_loss": null,
+       "largest_win": "21.57000000",
+       "largest_loss": null,
+       "expectancy": "21.57000000"
       }
      }
     },
@@ -2780,7 +3663,13 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "1.12000000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "1.12000000",
+       "largest_win": null,
+       "largest_loss": "1.12000000",
+       "expectancy": "-1.12000000"
       }
      }
     },
@@ -2812,7 +3701,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "21.57000000",
+       "avg_loss": null,
+       "largest_win": "21.57000000",
+       "largest_loss": null,
+       "expectancy": "21.57000000"
       }
      }
     },
@@ -2834,15 +3729,21 @@
        "breakeven": 0,
        "win_rate": "0.00000000",
        "max_drawdown": "1.12000000",
-       "state": "loss"
+       "state": "loss",
+       "profit_factor": "0.00000000",
+       "avg_win": null,
+       "avg_loss": "1.12000000",
+       "largest_win": null,
+       "largest_loss": "1.12000000",
+       "expectancy": "-1.12000000"
       }
      }
     }
    ],
    "trades": [
     {
-     "id": "ledger:15f4c944d8a742a0b1b7ea9641c54ef1",
-     "trade_id": "ledger:15f4c944d8a742a0b1b7ea9641c54ef1",
+     "id": "ledger:b225dce0dc924d95a3e36e82687d4908",
+     "trade_id": "ledger:b225dce0dc924d95a3e36e82687d4908",
      "source": "trading_instance",
      "account": "ledger",
      "currency": "GBP",
@@ -2876,8 +3777,8 @@
      "outcome": "win"
     },
     {
-     "id": "ledger:6982c9837172445595868bd94b00afe5",
-     "trade_id": "ledger:6982c9837172445595868bd94b00afe5",
+     "id": "ledger:3a563af2adff4699a064e573cc737b48",
+     "trade_id": "ledger:3a563af2adff4699a064e573cc737b48",
      "source": "paper_trading",
      "account": "ledger",
      "currency": "USDT",
@@ -2940,7 +3841,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -3023,7 +3924,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -3049,7 +3950,13 @@
      "breakeven": 0,
      "win_rate": "100.00000000",
      "max_drawdown": "0.00000000",
-     "state": "profit"
+     "state": "profit",
+     "profit_factor": null,
+     "avg_win": "127.18300000",
+     "avg_loss": null,
+     "largest_win": "199.30200000",
+     "largest_loss": null,
+     "expectancy": "127.18300000"
     }
    },
    "currencies": [
@@ -3078,7 +3985,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "199.30200000",
+       "avg_loss": null,
+       "largest_win": "199.30200000",
+       "largest_loss": null,
+       "expectancy": "199.30200000"
       }
      },
      "closed_trades": 1,
@@ -3106,7 +4019,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "55.06400000",
+       "avg_loss": null,
+       "largest_win": "55.06400000",
+       "largest_loss": null,
+       "expectancy": "55.06400000"
       }
      },
      "closed_trades": 1,
@@ -3133,7 +4052,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "199.30200000",
+       "avg_loss": null,
+       "largest_win": "199.30200000",
+       "largest_loss": null,
+       "expectancy": "199.30200000"
       }
      },
      "closed_trades": 1,
@@ -3158,7 +4083,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "55.06400000",
+       "avg_loss": null,
+       "largest_win": "55.06400000",
+       "largest_loss": null,
+       "expectancy": "55.06400000"
       }
      },
      "closed_trades": 1,
@@ -3187,7 +4118,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "199.30200000",
+       "avg_loss": null,
+       "largest_win": "199.30200000",
+       "largest_loss": null,
+       "expectancy": "199.30200000"
       }
      }
     },
@@ -3227,7 +4164,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "55.06400000",
+       "avg_loss": null,
+       "largest_win": "55.06400000",
+       "largest_loss": null,
+       "expectancy": "55.06400000"
       }
      }
     }
@@ -3251,7 +4194,13 @@
        "breakeven": 0,
        "win_rate": null,
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": null,
+       "avg_loss": null,
+       "largest_win": null,
+       "largest_loss": null,
+       "expectancy": null
       }
      }
     },
@@ -3273,7 +4222,13 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "55.06400000",
+       "avg_loss": null,
+       "largest_win": "55.06400000",
+       "largest_loss": null,
+       "expectancy": "55.06400000"
       }
      }
     },
@@ -3295,15 +4250,21 @@
        "breakeven": 0,
        "win_rate": "100.00000000",
        "max_drawdown": "0.00000000",
-       "state": "profit"
+       "state": "profit",
+       "profit_factor": null,
+       "avg_win": "199.30200000",
+       "avg_loss": null,
+       "largest_win": "199.30200000",
+       "largest_loss": null,
+       "expectancy": "199.30200000"
       }
      }
     }
    ],
    "trades": [
     {
-     "id": "pa_lab:fill:27975643aa8548fa8bbb946f6c104f24",
-     "trade_id": "pa_lab:8d86aeee6e2641dd8c23f8d511fb554a",
+     "id": "pa_lab:fill:505c41bb4c164f3ea3f37de62caf47ab",
+     "trade_id": "pa_lab:d460aca4f0d2409ca4cccfc950c869eb",
      "source": "pa_lab",
      "account": "pa_lab:pa-5d21e0a4",
      "currency": "USDT",
@@ -3336,8 +4297,8 @@
      "outcome": null
     },
     {
-     "id": "ledger:dd01cd8de0e54ffd826f957104b13ce8",
-     "trade_id": "ledger:dd01cd8de0e54ffd826f957104b13ce8",
+     "id": "ledger:218c8af70dc6449a88a46629dad44cff",
+     "trade_id": "ledger:218c8af70dc6449a88a46629dad44cff",
      "source": "trading_instance",
      "account": "ledger",
      "currency": "USDT",
@@ -3371,8 +4332,8 @@
      "outcome": "win"
     },
     {
-     "id": "pa_lab:fill:9bc52f6e4cfb4952859d414016b42fa4",
-     "trade_id": "pa_lab:8d86aeee6e2641dd8c23f8d511fb554a",
+     "id": "pa_lab:fill:fc5d77f0e7274ba9aa0e4fb1f03708c3",
+     "trade_id": "pa_lab:d460aca4f0d2409ca4cccfc950c869eb",
      "source": "pa_lab",
      "account": "pa_lab:pa-5d21e0a4",
      "currency": "USDT",
@@ -3433,7 +4394,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -3514,7 +4475,7 @@
      }
     },
     "duplicates_dropped": 0,
-    "collected_at": "2026-09-25T00:58:02+00:00"
+    "collected_at": "2026-09-25T07:56:43+00:00"
    },
    "conversion": {
     "display_currency": "USDT",
@@ -3602,7 +4563,7 @@
     }
    },
    "duplicates_dropped": 0,
-   "collected_at": "2026-09-25T00:58:02+00:00"
+   "collected_at": "2026-09-25T07:56:43+00:00"
   },
   "timezone": "Europe/London",
   "display_currency": "USDT"

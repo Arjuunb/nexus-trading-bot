@@ -607,8 +607,18 @@ function calendarMonth(url: URL) {
   const source = url.searchParams.get("source");
   if (year === 2026 && month === 9) return source ? CALENDAR.month_by_source[source] : CALENDAR.month;
   const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const iso = (t: Date) => t.toISOString().slice(0, 10);
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  const last = new Date(Date.UTC(year, month - 1, days));
+  const weeks = [];
+  for (let start = new Date(first.getTime() - ((first.getUTCDay() + 6) % 7) * 864e5); start <= last;
+    start = new Date(start.getTime() + 7 * 864e5)) {
+    const end = new Date(start.getTime() + 6 * 864e5);
+    weeks.push({ start: iso(start), from: iso(start < first ? first : start), to: iso(end > last ? last : end),
+      state: "none", by_currency: {}, closed_trades: 0, realizations: 0 });
+  }
   return {
-    year, month, summary: {}, currencies: [], timezone: CALENDAR.month.timezone, filters: {},
+    year, month, summary: {}, currencies: [], timezone: CALENDAR.month.timezone, filters: {}, weeks,
     days: Array.from({ length: days }, (_, i) => ({
       date: `${year}-${String(month).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
       state: "none", by_currency: {}, closed_trades: 0, realizations: 0 })),
@@ -651,6 +661,11 @@ export async function mockApi(page: Page) {
       if (url.pathname === "/calendar/options") return route.fulfill({ json: CALENDAR.options });
       if (url.pathname === "/calendar/month") return route.fulfill({ json: calendarMonth(url) });
       if (url.pathname === "/calendar/day") return route.fulfill({ json: calendarDay(url) });
+      if (url.pathname === "/calendar/export.csv") {
+        return route.fulfill({ status: 200, contentType: "text/csv; charset=utf-8",
+          headers: { "Content-Disposition": `attachment; filename="realized-pnl_${url.searchParams.get("start")}_${url.searchParams.get("end")}.csv"` },
+          body: "closed_at,net\n" });
+      }
       if (url.pathname === "/research/price-action/journal") {
         return route.fulfill({ json: { entries: [], real_execution_allowed: false,
           statistics: { setups: 0, completed: 0, wins: 0, losses: 0, net_r: 0, expectancy_r: 0 } } });

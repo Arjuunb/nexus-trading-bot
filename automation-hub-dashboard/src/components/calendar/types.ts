@@ -23,9 +23,25 @@ export interface Money {
   /** Positive magnitude. */
   max_drawdown: string;
   state: "profit" | "loss" | "breakeven";
+  /** Gross profit / gross loss of the period; null when there was no loss. */
+  profit_factor: string | null;
+  /** Per closed trade, using each trade's total net over all its exits. */
+  avg_win: string | null;
+  avg_loss: string | null;          // positive magnitude
+  largest_win: string | null;
+  largest_loss: string | null;      // positive magnitude
+  expectancy: string | null;
+  // month summaries only
   best_day?: { date: string; net: string } | null;
   worst_day?: { date: string; net: string } | null;
   trading_days?: number;
+  winning_days?: number;
+  losing_days?: number;
+  breakeven_days?: number;
+  longest_winning_streak?: number;
+  longest_losing_streak?: number;
+  /** Running realized total after each trading day, computed by the backend. */
+  cumulative?: { date: string; net: string; cumulative: string }[];
 }
 
 export type ByCurrency = Record<string, Money>;
@@ -60,10 +76,22 @@ export interface MonthDay {
   realizations: number;
 }
 
+/** One Monday-first row of the grid; totals count only its days in the month. */
+export interface MonthWeek {
+  start: string;
+  from: string;
+  to: string;
+  state: DayState;
+  by_currency: ByCurrency;
+  closed_trades: number;
+  realizations: number;
+}
+
 export interface MonthResponse {
   year: number;
   month: number;
   days: MonthDay[];
+  weeks: MonthWeek[];
   summary: ByCurrency;
   currencies: string[];
   timezone: string;

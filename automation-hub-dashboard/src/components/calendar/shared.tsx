@@ -2,6 +2,8 @@ import { Activity, Blocks, Brain, RefreshCw, SquareTerminal, type LucideIcon } f
 import { decimalSign, formatMoney } from "../../lib/money";
 import type { ByCurrency, DayState, Money } from "./types";
 
+const dash = <span className="dim">—</span>;
+
 // One icon per source, the same icons the sidebar uses for those pages, so a
 // trade's origin reads the same everywhere.
 export const SOURCE_ICON: Record<string, LucideIcon> = {
@@ -120,3 +122,35 @@ export function longDate(isoDate: string): string {
 export const shortId = (id: string | null | undefined) => (id ? (id.length > 10 ? `${id.slice(0, 8)}…` : id) : "");
 
 export const NOT_RECORDED = <span className="cal-missing">Not recorded</span>;
+
+/** Profit factor as a ratio; "No losses" when it is undefined but there was profit. */
+export function profitFactorText(m: Money): string {
+  if (m.profit_factor != null) return Number(m.profit_factor).toFixed(2);
+  return decimalSign(m.gross_profit) > 0 ? "No losses" : "—";
+}
+
+/**
+ * Per-trade figures of a period. The averages and extremes use each closed
+ * trade's total net over all its exits; profit factor is the period's gross
+ * profit over its gross loss (the two figures shown beside it).
+ */
+export function TradeStats({ m, currency, month }: { m: Money; currency: string; month?: boolean }) {
+  const money = (v: string | null, signed = true) => (v == null ? dash : formatMoney(v, currency, { signed }));
+  const loss = (v: string | null) => (v == null ? dash : `-${formatMoney(v, currency, { signed: false })}`);
+  return (
+    <dl className="cal-kv cal-stats">
+      <div><dt>Profit factor</dt><dd>{profitFactorText(m)}</dd></div>
+      <div><dt>Expectancy / trade</dt><dd>{money(m.expectancy)}</dd></div>
+      <div><dt>Average win</dt><dd>{money(m.avg_win)}</dd></div>
+      <div><dt>Average loss</dt><dd>{loss(m.avg_loss)}</dd></div>
+      <div><dt>Largest win</dt><dd>{money(m.largest_win)}</dd></div>
+      <div><dt>Largest loss</dt><dd>{loss(m.largest_loss)}</dd></div>
+      {month ? (
+        <>
+          <div><dt>Winning / losing days</dt><dd>{m.winning_days ?? 0} / {m.losing_days ?? 0}{m.breakeven_days ? <span className="dim"> · {m.breakeven_days} flat</span> : null}</dd></div>
+          <div><dt>Longest streak (days)</dt><dd>{m.longest_winning_streak ?? 0} up · {m.longest_losing_streak ?? 0} down</dd></div>
+        </>
+      ) : null}
+    </dl>
+  );
+}

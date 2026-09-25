@@ -1,10 +1,10 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { Download, X } from "lucide-react";
 import { formatDecimal, formatMoney } from "../../lib/money";
 import {
-  Amount, NOT_RECORDED, NetList, SourceChip, StateTag, clock, duration, fundingText, grossLossText, longDate, shortId,
-  stamp, winRate,
+  Amount, NOT_RECORDED, NetList, SourceChip, StateTag, TradeStats, clock, duration, fundingText, grossLossText, longDate,
+  shortId, stamp, winRate,
 } from "./shared";
 import type { Breakdown, ByCurrency, DayResponse, Trade } from "./types";
 
@@ -42,6 +42,7 @@ function SummaryBlock({ currency, summary }: { currency: string; summary: ByCurr
         <div><dt>Fees</dt><dd>{formatMoney(m.fees, currency, { signed: false })}</dd></div>
         <div><dt>Funding</dt><dd>{fundingText(m.funding, currency)}</dd></div>
       </dl>
+      <TradeStats m={m} currency={currency} />
       {m.realizations > m.closed_trades ? (
         <p className="cal-note">
           Includes {m.realizations - m.closed_trades} partial exit{m.realizations - m.closed_trades === 1 ? "" : "s"} of
@@ -121,13 +122,16 @@ function TradeCard({ t }: { t: Trade }) {
   );
 }
 
-export default function DayDrawer({ date, data, error, loading, onClose, returnFocus }: {
+export default function DayDrawer({ date, data, error, loading, onClose, returnFocus, onExport, exporting }: {
   date: string;
   data: DayResponse | null;
   error: string | null;
   loading: boolean;
   onClose: () => void;
   returnFocus: () => void;
+  /** Download this day's exits as CSV (same filters as the page). */
+  onExport: () => void;
+  exporting: boolean;
 }) {
   const panel = useRef<HTMLDivElement>(null);
   const closeBtn = useRef<HTMLButtonElement>(null);
@@ -171,9 +175,16 @@ export default function DayDrawer({ date, data, error, loading, onClose, returnF
               <span className="dim">Realized P&amp;L · times in {day?.timezone ?? "the calendar timezone"}</span>
             </div>
           </div>
-          <button ref={closeBtn} type="button" className="icon-btn" onClick={onClose} aria-label="Close day details">
-            <X size={18} aria-hidden />
-          </button>
+          <div className="cal-drawer-actions">
+            {day && day.trades.length ? (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={onExport} disabled={exporting}>
+                <Download size={14} aria-hidden /> {exporting ? "Exporting…" : "Export CSV"}
+              </button>
+            ) : null}
+            <button ref={closeBtn} type="button" className="icon-btn" onClick={onClose} aria-label="Close day details">
+              <X size={18} aria-hidden />
+            </button>
+          </div>
         </header>
 
         <div className="cal-drawer-body" aria-busy={loading && !day}>

@@ -385,3 +385,86 @@ def test_a_degraded_ledger_is_an_error_not_an_empty_history():
     _rows, diagnostics = calendar.collect()
     assert diagnostics["sources"]["ledger"]["ok"] is False
     assert "supabase down" in diagnostics["sources"]["ledger"]["error"]
+
+
+# ------------------------------------------------------- performance figures
+def test_trade_stats_use_each_trades_total_across_its_exits():
+    rows = [
+        # one trade: +30 partial on the 9th, +20 final on the 10th -> a +50 win
+        _r("p1", "30", "2026-09-09T10:00:00+00:00", trade_id="T1", final=False),
+        _r("p2", "20", "2026-09-10T10:00:00+00:00", trade_id="T1"),
+        _r("w2", "10", "2026-09-10T11:00:00+00:00"),
+        _r("l1", "-40", "2026-09-10T12:00:00+00:00"),
+        _r("l2", "-20", "2026-09-10T13:00:00+00:00"),
+    ]
+    day = day_view(rows, day=date(2026, 9, 10), tz=UTC)["summary"]["USDT"]
+    assert (day["wins"], day["losses"], day["closed_trades"]) == (2, 2, 4)
+    assert day["avg_win"] == "30.00000000"            # (50 + 10) / 2, the partial included
+    assert day["avg_loss"] == "30.00000000"           # magnitude of (-40 + -20) / 2
+    assert day["largest_win"] == "50.00000000" and day["largest_loss"] == "40.00000000"
+    assert day["expectancy"] == "0.00000000"          # (50 + 10 - 40 - 20) / 4
+    # profit factor is the period's own gross profit over gross loss: 30 / 60
+    assert day["profit_factor"] == "0.50000000"
+
+
+def test_profit_factor_is_undefined_without_losses():
+    s = day_view([_r("a", "5", "2026-09-10T10:00:00+00:00")], day=date(2026, 9, 10), tz=UTC)["summary"]["USDT"]
+    assert s["profit_factor"] is None and s["avg_loss"] is None and s["largest_loss"] is None
+
+
+def test_weeks_are_monday_first_and_count_only_days_in_the_month():
+    rows = [_r("aug", "100", "2026-08-31T10:00:00+00:00"),       # Monday of the first grid week, August
+            _r("s1", "10", "2026-09-01T10:00:00+00:00"),
+            _r("s6", "-4", "2026-09-06T10:00:00+00:00"),         # Sunday
+            _r("s7", "7", "2026-09-07T10:00:00+00:00")]
+    m = month_view(rows, year=2026, month=9, tz=UTC)
+    weeks = m["weeks"]
+    assert [w["start"] for w in weeks] == ["2026-08-31", "2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28"]
+    assert weeks[0]["from"] == "2026-09-01" and weeks[0]["to"] == "2026-09-06"
+    assert weeks[0]["by_currency"]["USDT"]["net"] == "6.00000000"       # August's 100 is not in it
+    assert weeks[1]["by_currency"]["USDT"]["net"] == "7.00000000"
+    assert weeks[-1]["to"] == "2026-09-30" and weeks[-1]["state"] == "none"
+
+
+def test_cumulative_curve_and_day_streaks():
+    nets = {"01": "5", "02": "3", "04": "-2", "05": "-1", "06": "-6", "08": "4"}
+    rows = [_r(f"d{d}", v, f"2026-09-{d}T10:00:00+00:00") for d, v in nets.items()]
+    s = month_view(rows, year=2026, month=9, tz=UTC)["summary"]["USDT"]
+    assert [p["cumulative"] for p in s["cumulative"]] == [
+        "5.00000000", "8.00000000", "6.00000000", "5.00000000", "-1.00000000", "3.00000000"]
+    assert s["cumulative"][-1]["cumulative"] == s["net"]
+    assert (s["winning_days"], s["losing_days"], s["breakeven_days"]) == (3, 3, 0)
+    assert (s["longest_winning_streak"], s["longest_losing_streak"]) == (2, 3)
+
+
+# ------------------------------------------------------------------ export
+def test_export_lists_each_exit_in_its_own_currency_and_defuses_formulas():
+    rows = [_r("a", "12.5", "2026-09-10T23:30:00+00:00", strategy="=HYPERLINK(\"x\")"),
+            _r("b", "-3", "2026-09-11T08:00:00+00:00", currency="GBP"),
+            _r("c", "9", "2026-09-20T08:00:00+00:00")]
+    out = cal.export_rows(rows, start=date(2026, 9, 11), end=date(2026, 9, 11), tz=LONDON)
+    col = {c: i for i, c in enumerate(cal.EXPORT_COLUMNS)}
+    # 23:30 UTC on the 10th is 00:30 on the 11th in London
+    assert [r[col["id"]] for r in out] == ["a", "b"]
+    assert out[0][col["strategy"]] == "'=HYPERLINK(\"x\")"
+    assert out[1][col["net"]] == "-3.00000000" and out[1][col["currency"]] == "GBP"
+    assert out[0][col["closed_at"]].startswith("2026-09-11T00:30:00+01:00")
+
+
+def test_the_export_api_returns_a_csv_attachment(monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    import app as hub_app
+    import webhook_api
+    rows = [_r("a", "84.2", "2026-09-15T10:00:00+00:00")]
+    monkeypatch.setattr(webhook_api, "pnl_calendar", PnlCalendar({"t": lambda: (rows, {})}))
+    c = TestClient(hub_app.app)
+    h = {"x-webhook-secret": "dev-control-key"}
+    r = c.get("/calendar/export.csv?start=2026-09-01&end=2026-09-30&tz=UTC", headers=h)
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/csv")
+    assert 'filename="realized-pnl_2026-09-01_2026-09-30.csv"' in r.headers["content-disposition"]
+    lines = r.text.strip().split("\n")
+    assert lines[0].split(",") == list(cal.EXPORT_COLUMNS) and len(lines) == 2 and "84.20000000" in lines[1]
+    assert c.get("/calendar/export.csv?start=2026-09-30&end=2026-09-01", headers=h).status_code == 400
+    assert c.get("/calendar/export.csv?start=2024-01-01&end=2026-09-01", headers=h).status_code == 400
+    assert c.get("/calendar/export.csv?start=2026-09-01&end=2026-09-30").status_code in (401, 403)

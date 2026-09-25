@@ -1,17 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
+import { CalendarDays, ChevronLeft, ChevronRight, Download, RefreshCw } from "lucide-react";
 import { PageHeader } from "../components/common/ui";
 import DayDrawer from "../components/calendar/DayDrawer";
 import {
-  Amount, COLLECTOR_LABEL, NetList, STATE_GLYPH, STATE_LABEL, SourceChip, StateTag, fundingText, grossLossText, longDate,
-  shortId, winRate,
+  Amount, COLLECTOR_LABEL, NetList, STATE_GLYPH, STATE_LABEL, SourceChip, StateTag, TradeStats, fundingText, grossLossText,
+  longDate, shortId, winRate,
 } from "../components/calendar/shared";
 import {
-  EMPTY_FILTERS, type CalendarFilters, type DayResponse, type MonthDay, type MonthResponse, type OptionsResponse,
+  EMPTY_FILTERS, type CalendarFilters, type DayResponse, type MonthDay, type MonthResponse, type MonthWeek,
+  type OptionsResponse,
 } from "../components/calendar/types";
-import { apiGet, useLive } from "../lib/api";
+import { apiDownload, apiGet, useLive } from "../lib/api";
 import { formatMoney } from "../lib/money";
 import { useApp } from "../app-context";
+
+// The chart pulls in the charting library; load it only when a month has trades.
+const PnlChart = lazy(() => import("../components/calendar/PnlChart"));
 
 // The app-wide realized P&L calendar. Every number on this page comes from
 // /calendar/* (automation-hub/services/pnl_calendar.py); this page formats
@@ -89,9 +93,10 @@ function filterQuery(filters: CalendarFilters): string {
 }
 
 // ---- pieces ----
-function DayCell({ y, m, d, day, today, selected, focused, loading, onOpen, onKey }: {
+function DayCell({ y, m, d, day, today, selected, focused, loading, heat, onOpen, onKey }: {
   y: number; m: number; d: number; day: MonthDay | undefined; today: string; selected: boolean; focused: boolean;
-  loading: boolean; onOpen: (date: string) => void; onKey: (e: KeyboardEvent<HTMLButtonElement>, date: string) => void;
+  loading: boolean; heat: number; onOpen: (date: string) => void;
+  onKey: (e: KeyboardEvent<HTMLButtonElement>, date: string) => void;
 }) {
   const date = isoDate(y, m, d);
   const state = day?.state ?? "none";
@@ -114,6 +119,7 @@ function DayCell({ y, m, d, day, today, selected, focused, loading, onOpen, onKe
         tabIndex={focused ? 0 : -1}
         className={`cal-day st-${state}${selected ? " is-selected" : ""}${date === today ? " is-today" : ""}${future ? " is-future" : ""}`}
         aria-label={label}
+        style={{ "--heat": heat.toFixed(3) } as CSSProperties}
         onClick={() => onOpen(date)}
         onKeyDown={(e) => onKey(e, date)}
       >
@@ -136,6 +142,34 @@ function DayCell({ y, m, d, day, today, selected, focused, loading, onOpen, onKe
           <span className="cal-day-empty" aria-hidden>{future ? "" : "No trades"}</span>
         )}
       </button>
+    </div>
+  );
+}
+
+/** The week's realized total (only its days in this month); not focusable. */
+function WeekCell({ week, loading }: { week?: MonthWeek; loading: boolean }) {
+  const currencies = week ? Object.keys(week.by_currency) : [];
+  const label = week
+    ? `Week ${longDate(week.from).replace(/ \d{4}$/, "")} to ${longDate(week.to).replace(/ \d{4}$/, "")}: ` +
+      (currencies.length
+        ? `${currencies.map((c) => formatMoney(week.by_currency[c].net, c)).join(", ")}, ${week.closed_trades} closed trade${week.closed_trades === 1 ? "" : "s"}`
+        : "no trades")
+    : "";
+  return (
+    <div role="gridcell" className={`cal-weekcell cal-weekcol st-${week?.state ?? "none"}`} aria-label={label || undefined}>
+      <span className="cal-weekcell-label" aria-hidden>
+        {week ? `${Number(week.from.slice(8))}–${Number(week.to.slice(8))}` : ""}
+      </span>
+      {loading || !week ? <span className="cal-day-skel" aria-hidden /> : currencies.length ? (
+        <span className="cal-day-body cal-fade" aria-hidden>
+          {currencies.slice(0, 2).map((c) => (
+            <span key={c} className={`cal-day-net cal-${week.by_currency[c].state}`}>{formatMoney(week.by_currency[c].net, c)}</span>
+          ))}
+          <span className="cal-day-count">{week.closed_trades} trade{week.closed_trades === 1 ? "" : "s"}</span>
+        </span>
+      ) : (
+        <span className="cal-day-empty" aria-hidden>No trades</span>
+      )}
     </div>
   );
 }
@@ -167,6 +201,7 @@ function SummaryRow({ currency, data, multi }: { currency: string; data: MonthRe
           <b>{formatMoney(s.max_drawdown, currency, { signed: false })}</b>
           <span className="cal-sum-sub">realized, peak to trough</span></div>
       </div>
+      <TradeStats m={s} currency={currency} month />
       <div className="cal-sum-foot">
         <span>Gross profit {formatMoney(s.gross_profit, currency)}</span>
         <span>Gross loss {grossLossText(s.gross_loss, currency)}</span>
@@ -178,7 +213,7 @@ function SummaryRow({ currency, data, multi }: { currency: string; data: MonthRe
 }
 
 export default function CalendarPage() {
-  const { go } = useApp();
+  const { go, toast } = useApp();
   const initial = useMemo(readUrl, []);
   const options = useLive<OptionsResponse>("/calendar/options", 300_000);
   const tz = options.data?.timezone ?? "UTC";
@@ -301,6 +336,37 @@ export default function CalendarPage() {
     finally { setRefreshing(false); }
   };
 
+  // CSV of every exit in a date range, under the current filters. The backend
+  // writes it; amounts stay exact and each keeps its own currency.
+  const [exporting, setExporting] = useState(false);
+  const exportRange = async (start: string, end: string) => {
+    setExporting(true);
+    try {
+      await apiDownload(`/calendar/export.csv?start=${start}&end=${end}${query}`, `realized-pnl_${start}_${end}.csv`);
+      toast("Export downloaded.", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Export failed.", "error");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Cell shading grows with the size of the day's result relative to the
+  // month's largest day in the same currency. Display only; the figure itself
+  // is always printed, and mixed-currency days are not shaded.
+  const maxAbs = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const d of data?.days ?? []) {
+      for (const [c, money] of Object.entries(d.by_currency)) out[c] = Math.max(out[c] ?? 0, Math.abs(Number(money.net)));
+    }
+    return out;
+  }, [data]);
+  const heatOf = (day?: MonthDay) => {
+    const cs = day ? Object.keys(day.by_currency) : [];
+    if (!day || cs.length !== 1 || !maxAbs[cs[0]]) return 0;
+    return Math.abs(Number(day.by_currency[cs[0]].net)) / maxAbs[cs[0]];
+  };
+
   // Filters that name something the recorded trades do not contain.
   const unknownFilters = useMemo(() => {
     const o = options.data;
@@ -366,6 +432,15 @@ export default function CalendarPage() {
           </button>
           <button type="button" className="btn btn-soft btn-sm" onClick={goToday} disabled={!ym}>
             <CalendarDays size={14} aria-hidden /> Today
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => void exportRange(`${monthKey}-01`, `${monthKey}-${pad(daysIn(y, m))}`)}
+            disabled={!ym || exporting}
+            title="Download every exit of this month, with the current filters, as CSV"
+          >
+            <Download size={14} aria-hidden /> {exporting ? "Exporting…" : "Export CSV"}
           </button>
           <span className="cal-tz dim">
             Times in <b>{tz}</b> · <button type="button" className="link-button" onClick={() => go("Settings")}>change</button>
@@ -507,6 +582,7 @@ export default function CalendarPage() {
         >
           <div role="row" className="cal-week cal-weekdays">
             {WEEKDAYS.map((w) => <div role="columnheader" key={w} className="cal-weekday"><abbr title={w}>{w}</abbr></div>)}
+            <div role="columnheader" className="cal-weekday cal-weekcol">Week</div>
           </div>
           {cells.map((week, wi) => (
             <div role="row" className="cal-week" key={wi}>
@@ -519,10 +595,12 @@ export default function CalendarPage() {
                   selected={openDate === isoDate(y, m, d)}
                   focused={tabDate === isoDate(y, m, d)}
                   loading={loadingGrid}
+                  heat={heatOf(byDate.get(isoDate(y, m, d)))}
                   onOpen={openDay}
                   onKey={onKey}
                 />
               ))}
+              <WeekCell week={data?.weeks?.[wi]} loading={loadingGrid} />
             </div>
           ))}
         </div>
@@ -531,6 +609,18 @@ export default function CalendarPage() {
           day it was filled. Use the arrow keys to move between days, Page Up / Page Down to change month, Enter to open.
         </p>
       </section>
+
+      {/* daily bars + month-to-date line, one chart per currency */}
+      {data && hasTrades ? (
+        <section className="card cal-chart-card" aria-label="Daily realized P&L chart">
+          <Suspense fallback={<div className="cal-chart-skel" aria-hidden />}>
+            {data.currencies.map((c) => (
+              <PnlChart key={`${monthKey}-${query}-${c}`} currency={c} days={data.days} summary={data.summary[c]}
+                monthLabel={`${MONTHS[m - 1]} ${y}`} />
+            ))}
+          </Suspense>
+        </section>
+      ) : null}
 
       {/* mobile agenda: the trading days as a list */}
       {data && tradingDays.length ? (
@@ -565,6 +655,8 @@ export default function CalendarPage() {
           loading={day.loading}
           onClose={closeDay}
           returnFocus={returnFocus}
+          onExport={() => void exportRange(openDate, openDate)}
+          exporting={exporting}
         />
       ) : null}
     </div>

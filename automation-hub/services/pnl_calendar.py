@@ -468,32 +468,47 @@ def _drawdown(rows: list[Realization]) -> Decimal:
     return worst
 
 
-def _trade_outcomes(window: list[Realization], all_rows: list[Realization]) -> dict[str, str]:
+def _trade_totals(all_rows: Iterable[Realization]) -> dict[str, Decimal]:
+    """Each trade's total net P&L across all its realizations, computed once per
+    view (a trade can span several days, so no single window holds all of it)."""
+    totals: dict[str, Decimal] = defaultdict(lambda: ZERO)
+    for r in all_rows:
+        totals[r.trade_id] += r.net
+    return totals
+
+
+def _trade_outcomes(window: list[Realization], totals: dict[str, Decimal]) -> dict[str, str]:
     """win / loss / breakeven per trade whose final realization is in window,
     judged on the trade's total net P&L across all its realizations."""
-    totals: dict[str, Decimal] = defaultdict(lambda: ZERO)
     finals = {r.trade_id for r in window if r.final}
-    for r in all_rows:
-        if r.trade_id in finals:
-            totals[r.trade_id] += r.net
-    return {tid: ("win" if total > 0 else "loss" if total < 0 else "breakeven") for tid, total in totals.items()}
+    return {tid: ("win" if totals[tid] > 0 else "loss" if totals[tid] < 0 else "breakeven") for tid in finals}
 
 
-def _money_summary(rows: list[Realization], all_rows: list[Realization]) -> dict[str, dict]:
+def _mean(values: list[Decimal]) -> Optional[Decimal]:
+    return sum(values, ZERO) / len(values) if values else None
+
+
+def _money_summary(rows: list[Realization], totals: dict[str, Decimal]) -> dict[str, dict]:
     by_currency: dict[str, list[Realization]] = defaultdict(list)
     for r in rows:
         by_currency[r.currency].append(r)
     out = {}
     for currency, items in sorted(by_currency.items()):
-        outcomes = _trade_outcomes(items, all_rows)
+        outcomes = _trade_outcomes(items, totals)
         closed = len(outcomes)
         wins = sum(1 for v in outcomes.values() if v == "win")
         losses = sum(1 for v in outcomes.values() if v == "loss")
         net = sum((r.net for r in items), ZERO)
+        gross_profit = sum((r.net for r in items if r.net > 0), ZERO)
+        gross_loss = -sum((r.net for r in items if r.net < 0), ZERO)
+        # Per-trade figures use each closed trade's total net over all its exits.
+        trade_nets = [totals[tid] for tid in outcomes]
+        won = [t for t in trade_nets if t > 0]
+        lost = [-t for t in trade_nets if t < 0]
         out[currency] = {
             "net": amount(net),
-            "gross_profit": amount(sum((r.net for r in items if r.net > 0), ZERO)),
-            "gross_loss": amount(-sum((r.net for r in items if r.net < 0), ZERO)),
+            "gross_profit": amount(gross_profit),
+            "gross_loss": amount(gross_loss),
             "fees": amount(sum((r.fees for r in items), ZERO)),
             "funding": amount(sum((r.funding for r in items), ZERO)),
             "closed_trades": closed, "realizations": len(items),
@@ -501,6 +516,13 @@ def _money_summary(rows: list[Realization], all_rows: list[Realization]) -> dict
             "win_rate": (amount(Decimal(wins) * 100 / Decimal(closed)) if closed else None),
             "max_drawdown": amount(_drawdown(items)),
             "state": "profit" if net > 0 else "loss" if net < 0 else "breakeven",
+            # None when undefined: no losses means no profit factor, not infinity.
+            "profit_factor": amount(gross_profit / gross_loss) if gross_loss > 0 else None,
+            "avg_win": amount(_mean(won)),
+            "avg_loss": amount(_mean(lost)),              # positive magnitude
+            "largest_win": amount(max(won)) if won else None,
+            "largest_loss": amount(max(lost)) if lost else None,   # positive magnitude
+            "expectancy": amount(_mean(trade_nets)),
         }
     return out
 
@@ -512,11 +534,23 @@ def _day_state(money: dict[str, dict]) -> str:
     return states.pop() if len(states) == 1 else "mixed"
 
 
+def _streaks(nets: list[Decimal]) -> tuple[int, int]:
+    """Longest run of consecutive winning and of losing trading days (days
+    without trades neither extend nor break a run)."""
+    best_win = best_loss = run_win = run_loss = 0
+    for n in nets:
+        run_win = run_win + 1 if n > 0 else 0
+        run_loss = run_loss + 1 if n < 0 else 0
+        best_win, best_loss = max(best_win, run_win), max(best_loss, run_loss)
+    return best_win, best_loss
+
+
 def month_view(rows: list[Realization], *, year: int, month: int, tz: ZoneInfo) -> dict:
     if not (1 <= month <= 12) or not (1970 <= year <= 2200):
         raise CalendarError("month must be 1-12 and year a four-digit year.")
     first = date(year, month, 1)
     last = (date(year + (month == 12), month % 12 + 1, 1) - timedelta(days=1))
+    totals = _trade_totals(rows)
     by_day: dict[date, list[Realization]] = defaultdict(list)
     in_month = []
     for r in rows:
@@ -527,11 +561,26 @@ def month_view(rows: list[Realization], *, year: int, month: int, tz: ZoneInfo) 
     days = []
     for n in range(last.day):
         d = first + timedelta(days=n)
-        money = _money_summary(by_day.get(d, []), rows)
+        money = _money_summary(by_day.get(d, []), totals)
         days.append({"date": d.isoformat(), "state": _day_state(money), "by_currency": money,
                      "closed_trades": sum(m["closed_trades"] for m in money.values()),
                      "realizations": sum(m["realizations"] for m in money.values())})
-    summary = _money_summary(in_month, rows)
+
+    # Monday-first weeks of the grid; a week's total counts only its days that
+    # fall inside this month.
+    weeks = []
+    start = first - timedelta(days=first.weekday())
+    while start <= last:
+        lo, hi = max(start, first), min(start + timedelta(days=6), last)
+        group = [r for n in range((hi - lo).days + 1) for r in by_day.get(lo + timedelta(days=n), [])]
+        money = _money_summary(group, totals)
+        weeks.append({"start": start.isoformat(), "from": lo.isoformat(), "to": hi.isoformat(),
+                      "state": _day_state(money), "by_currency": money,
+                      "closed_trades": sum(m["closed_trades"] for m in money.values()),
+                      "realizations": len(group)})
+        start += timedelta(days=7)
+
+    summary = _money_summary(in_month, totals)
     for currency, block in summary.items():
         nets = [(d["date"], Decimal(d["by_currency"][currency]["net"]))
                 for d in days if currency in d["by_currency"]]
@@ -540,15 +589,26 @@ def month_view(rows: list[Realization], *, year: int, month: int, tz: ZoneInfo) 
         block["best_day"] = {"date": best[0], "net": amount(best[1])} if best else None
         block["worst_day"] = {"date": worst[0], "net": amount(worst[1])} if worst else None
         block["trading_days"] = len(nets)
-    return {"year": year, "month": month, "days": days, "summary": summary,
+        block["winning_days"] = sum(1 for _, n in nets if n > 0)
+        block["losing_days"] = sum(1 for _, n in nets if n < 0)
+        block["breakeven_days"] = sum(1 for _, n in nets if n == 0)
+        block["longest_winning_streak"], block["longest_losing_streak"] = _streaks([n for _, n in nets])
+        running = ZERO
+        curve = []
+        for day_iso, n in nets:
+            running += n
+            curve.append({"date": day_iso, "net": amount(n), "cumulative": amount(running)})
+        block["cumulative"] = curve
+    return {"year": year, "month": month, "days": days, "weeks": weeks, "summary": summary,
             "currencies": sorted(summary)}
 
 
 def day_view(rows: list[Realization], *, day: date, tz: ZoneInfo) -> dict:
     items = sorted((r for r in rows if r.closed_at.astimezone(tz).date() == day),
                    key=lambda r: (r.closed_at, r.id))
-    summary = _money_summary(items, rows)
-    outcomes = _trade_outcomes(items, rows)
+    totals = _trade_totals(rows)
+    summary = _money_summary(items, totals)
+    outcomes = _trade_outcomes(items, totals)
 
     def breakdown(key: Callable[[Realization], tuple]) -> list[dict]:
         groups: dict[tuple, list[Realization]] = defaultdict(list)
@@ -556,7 +616,7 @@ def day_view(rows: list[Realization], *, day: date, tz: ZoneInfo) -> dict:
             groups[key(r)].append(r)
         result = []
         for k, group in groups.items():
-            money = _money_summary(group, rows)
+            money = _money_summary(group, totals)
             rrs = [r.rr for r in group if r.rr is not None]
             result.append({"key": list(k), "by_currency": money,
                            "closed_trades": sum(m["closed_trades"] for m in money.values()),
@@ -572,13 +632,13 @@ def day_view(rows: list[Realization], *, day: date, tz: ZoneInfo) -> dict:
         group = [r for r in items if time_bucket(r.closed_at.astimezone(tz).hour) == key]
         buckets.append({"key": key, "label": label, "start": f"{start:02d}:00",
                         "end": f"{(end - 1) % 24:02d}:59", "realizations": len(group),
-                        "by_currency": _money_summary(group, rows)})
+                        "by_currency": _money_summary(group, totals)})
     hourly = []
     for hour in range(24):
         group = [r for r in items if r.closed_at.astimezone(tz).hour == hour]
         if group:
             hourly.append({"hour": hour, "bucket": time_bucket(hour), "realizations": len(group),
-                           "by_currency": _money_summary(group, rows)})
+                           "by_currency": _money_summary(group, totals)})
     trades = []
     for r in items:
         row = r.public(tz)
@@ -587,6 +647,47 @@ def day_view(rows: list[Realization], *, day: date, tz: ZoneInfo) -> dict:
     return {"date": day.isoformat(), "summary": summary, "currencies": sorted(summary),
             "state": _day_state(summary), "sources": sources, "strategies": strategies,
             "time_of_day": buckets, "hourly": hourly, "trades": trades}
+
+
+# Spreadsheet columns of the export, in order. Amounts stay exact strings.
+EXPORT_COLUMNS = (
+    "closed_at", "opened_at", "source", "source_label", "account", "instance_id", "instance_name",
+    "strategy", "timeframe", "symbol", "side", "quantity", "entry_price", "exit_price", "currency",
+    "gross", "fees", "funding", "net", "pnl_basis", "rr", "rr_basis", "exit_reason", "partial",
+    "outcome", "trade_id", "id", "missing",
+)
+# Free-text columns that could start with a formula character; numbers never are.
+_TEXT_COLUMNS = {"source_label", "account", "instance_id", "instance_name", "strategy", "timeframe",
+                 "symbol", "exit_reason", "trade_id", "id"}
+
+
+def _cell(column: str, value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, list):
+        return ";".join(str(v) for v in value)
+    text = str(value)
+    # A spreadsheet runs a cell starting with = + - @ as a formula; quote it.
+    if column in _TEXT_COLUMNS and text[:1] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
+def export_rows(rows: list[Realization], *, start: date, end: date, tz: ZoneInfo) -> list[list[str]]:
+    """Every realization closed between start and end (calendar dates in tz,
+    inclusive), oldest first, as spreadsheet rows under EXPORT_COLUMNS."""
+    totals = _trade_totals(rows)
+    items = sorted((r for r in rows if start <= r.closed_at.astimezone(tz).date() <= end),
+                   key=lambda r: (r.closed_at, r.id))
+    outcomes = _trade_outcomes(items, totals)
+    out = []
+    for r in items:
+        row = r.public(tz)
+        row["outcome"] = outcomes.get(r.trade_id) if r.final else None
+        out.append([_cell(c, row.get(c)) for c in EXPORT_COLUMNS])
+    return out
 
 
 def filter_options(rows: list[Realization]) -> dict:
@@ -659,6 +760,13 @@ class PnlCalendar:
         rows, diagnostics = self._filtered(filters, fresh)
         return {**day_view(rows, day=day, tz=tz), "timezone": tz.key, "filters": filters.active(),
                 "diagnostics": diagnostics}
+
+    def export(self, *, start: date, end: date, tz: ZoneInfo, filters: Filters = Filters(),
+               fresh: bool = False) -> list[list[str]]:
+        if end < start or (end - start).days > 400:
+            raise CalendarError("Export a range of at most 400 days, start before end.")
+        rows, _ = self._filtered(filters, fresh)
+        return export_rows(rows, start=start, end=end, tz=tz)
 
     def options(self) -> dict:
         rows, diagnostics = self.collect()

@@ -8,10 +8,14 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
+import csv
+import io
+
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import Response
 
 import webhook_api as _wa
-from services.pnl_calendar import CalendarError, Filters, resolve_zone
+from services.pnl_calendar import EXPORT_COLUMNS, CalendarError, Filters, resolve_zone
 
 router = APIRouter()
 
@@ -88,6 +92,37 @@ def calendar_day(request: Request, date_: str, tz: Optional[str] = None, currenc
     except CalendarError as exc:
         raise HTTPException(400, str(exc)) from None
     return {**data, "conversion": _conversion(data["currencies"], display)}
+
+
+@router.get("/calendar/export.csv")
+def calendar_export(request: Request, start: str, end: str, tz: Optional[str] = None,
+                    source: Optional[str] = None, instance: Optional[str] = None,
+                    strategy: Optional[str] = None, symbol: Optional[str] = None,
+                    timeframe: Optional[str] = None, fresh: bool = False,
+                    x_webhook_secret: Optional[str] = Header(default=None)):
+    """Every realization closed from ``start`` to ``end`` (YYYY-MM-DD, inclusive,
+    in the calendar timezone) as CSV: one row per exit, exact amounts, each in
+    its own currency, nothing converted or summed."""
+    _wa._check_secret(x_webhook_secret)
+    try:
+        first, last = date.fromisoformat(start), date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(400, "start and end must be YYYY-MM-DD.") from None
+    try:
+        zone, _ = _resolve(request, tz, None)
+        rows = _wa.pnl_calendar.export(start=first, end=last, tz=zone,
+                                       filters=_filters(source, instance, strategy, symbol, timeframe),
+                                       fresh=fresh)
+    except CalendarError as exc:
+        raise HTTPException(400, str(exc)) from None
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(EXPORT_COLUMNS)
+    writer.writerows(rows)
+    name = f"realized-pnl_{first.isoformat()}_{last.isoformat()}.csv"
+    return Response(buffer.getvalue(), media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{name}"',
+                             "Cache-Control": "no-store", "X-Calendar-Timezone": zone.key})
 
 
 @router.get("/calendar/options")
