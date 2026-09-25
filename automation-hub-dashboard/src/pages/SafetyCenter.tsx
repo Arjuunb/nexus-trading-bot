@@ -173,7 +173,7 @@ function EconProtectionPanel() {
       {!e ? <div className="dim">—</div> : (
         <>
           <div className="risk-list">
-            <div className="risk-item"><span className="dim">Next high-impact event</span> <b>{e.next_event ? `${e.next_event.name} · in ${e.minutes_to_event! >= 60 ? `${(e.minutes_to_event! / 60).toFixed(1)}h` : `${e.minutes_to_event}m`}` : "none scheduled"}</b></div>
+            <div className="risk-item"><span className="dim">Next high-impact event</span> <b>{e.next_event ? `${e.next_event.name} · ${e.minutes_to_event! < 0 ? `released ${Math.round(-e.minutes_to_event!)}m ago` : e.minutes_to_event! >= 60 ? `in ${(e.minutes_to_event! / 60).toFixed(1)}h` : `in ${e.minutes_to_event}m`}` : "none scheduled"}</b></div>
             <div className="risk-item"><span className="dim">Risk multiplier</span> <b>{Math.round(e.risk_multiplier * 100)}%</b></div>
             <div className="risk-item"><span className="dim">Stop multiplier</span> <b>{e.stop_multiplier}×</b></div>
             <div className="risk-item"><span className="dim">New entries</span> <Badge text={e.halt_new_entries ? "halted" : "allowed"} tone={e.halt_new_entries ? "red" : "green"} /></div>

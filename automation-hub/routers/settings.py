@@ -81,7 +81,11 @@ def econ_protection():
     """Economic-event protection — halt / reduce-size / widen-stops around the
     next high-impact macro event (#7)."""
     from services.econ_guard import evaluate, EVENT_TYPES
-    out = evaluate(_wa.econ_calendar.events())
+    # The same window the engine enforces, so this never reads "normal" while
+    # the pipeline is still refusing entries after a release.
+    after_min = int(getattr(_wa.pipeline, "econ_after_min", 0) or 0)
+    out = evaluate(_wa.econ_calendar.events(), after_min=after_min)
+    out["blackout_after_min"] = after_min
     out["connected"] = _wa.econ_calendar.connected
     out["tracked_event_types"] = EVENT_TYPES
     out["feed"] = _wa.econ_feed.status()

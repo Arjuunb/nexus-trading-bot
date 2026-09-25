@@ -386,7 +386,7 @@ export const FEATURES: FeatureEntry[] = [
     title: "Scheduler",
     summary: "Trading windows, event blackouts and session rules enforced automatically.",
     detail:
-      "Not every hour is worth trading. Session hours and allowed weekdays decide when new entries may open, and the event guard blocks new entries around high-impact macro releases: always on the paper engine, and on any Trading Instance whose owner switches its news blackout on. Its calendar is read automatically from a public weekly economic calendar (US releases by default), so time-based discipline does not depend on someone being awake or typing dates in.",
+      "Not every hour is worth trading. Session hours and allowed weekdays decide when new entries may open, and the event guard blocks new entries from 30 minutes before a high-impact macro release until 15 minutes after it: always on the paper engine, and on any Trading Instance or research lab whose owner switches its news blackout on. Its calendar is read automatically from a public weekly economic calendar (US releases by default), so time-based discipline does not depend on someone being awake or typing dates in.",
     bullets: [
       "Session hours and allowed trading days",
       "Event blackouts from an automatic economic calendar",

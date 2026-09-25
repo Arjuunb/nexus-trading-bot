@@ -76,8 +76,13 @@ econ_calendar = EconCalendar(_os.path.join(_os.path.dirname(settings.providers_p
 from services.econ_feed import EconFeed  # noqa: E402
 econ_feed = EconFeed(econ_calendar)
 # Event-risk gate: the pipeline halts new entries in the blackout window
-# around high-impact events and halves size in the caution window.
+# around high-impact events and halves size in the caution window. The window
+# runs from 30 min before a release to 15 min after it, the same as Trading
+# Instances and labs that opt in: the first reaction to a release is usually
+# the most violent part, and it happens after the timestamp.
+from services.instance_event_guard import AFTER_MIN as _ECON_AFTER_MIN  # noqa: E402
 pipeline.econ_events = econ_calendar.events
+pipeline.econ_after_min = _ECON_AFTER_MIN
 # Allocator tilt: size up symbols with a proven recent live record (bounded).
 from services.allocator import risk_weights as _alloc_weights  # noqa: E402
 pipeline.allocator = lambda sym: _alloc_weights(paper.history(), [sym]).get(sym.upper(), 1.0)

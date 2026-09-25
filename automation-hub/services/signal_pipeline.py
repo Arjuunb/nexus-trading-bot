@@ -288,9 +288,10 @@ class SignalPipeline:
         # Event-risk gate: callable returning upcoming econ events. Blackout
         # halts new entries; caution halves size (exits are never blocked).
         self.econ_events = None
-        # Minutes after a release that still count as blackout. The global
-        # engine keeps 0 (its long-standing behaviour); Trading Instances that
-        # opt in to the news guard also sit out the first reaction.
+        # Minutes after a release that still count as blackout. 0 here; the
+        # server sets 15 for the main engine, and Trading Instances and labs
+        # that opt in to the news guard use the same 15, so every gate sits
+        # out the first reaction to a release.
         self.econ_after_min = 0
         # Allocator tilt: callable(symbol) -> size multiplier from the live
         # per-symbol record (evidence-only, capped — see services/allocator.py).

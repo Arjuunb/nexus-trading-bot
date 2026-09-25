@@ -598,7 +598,7 @@ export interface InstancePublicRecord {
   published: boolean; since: string | null; updated_at: string | null; eligible: boolean;
   preview: PublicTrackRecordEntry | null; note: string;
 }
-export interface EconProtection { mode: string; risk_multiplier: number; stop_multiplier: number; halt_new_entries: boolean; minutes_to_event: number | null; next_event: { name: string; time: string } | null; actions: string[]; note: string; connected: boolean; tracked_event_types: { name: string; desc: string }[]; feed?: EconFeedStatus; manual_events?: number; }
+export interface EconProtection { blackout_after_min?: number; mode: string; risk_multiplier: number; stop_multiplier: number; halt_new_entries: boolean; minutes_to_event: number | null; next_event: { name: string; time: string } | null; actions: string[]; note: string; connected: boolean; tracked_event_types: { name: string; desc: string }[]; feed?: EconFeedStatus; manual_events?: number; }
 export interface JournalEntry { id: string; symbol: string; strategy: string; side: string; result: string; rr: number | null; notes: string; emotions: string; mistakes: string[]; lessons: string[]; tags: string[]; created_at: string; snapshot: { symbol: string; timeframe: string; entry_idx: number | null; exit_idx: number | null }; }
 export interface BrokerStatus { name: string; kind: string; connected: boolean; mode: string; live_enabled: boolean; note: string; }
 export interface BrokerList { active: string; live_locked: boolean; brokers: BrokerStatus[]; note: string; }

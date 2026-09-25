@@ -60,7 +60,7 @@ def _entry(pipeline, n=1):
 # ─────────────────────────── the window ───────────────────────────
 def test_the_blackout_can_extend_past_the_release():
     released = [{"name": "CPI", "impact": "high", "time": _at(-5)}]
-    # The global engine's long-standing behaviour is unchanged: a release in
+    # evaluate()'s default is unchanged: without an after-window a release in
     # the past no longer counts.
     assert evaluate(released)["mode"] == "normal"
     ev = evaluate(released, after_min=15)
