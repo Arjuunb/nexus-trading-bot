@@ -420,3 +420,19 @@ test("Risk Profile presets — Conservative/Balanced/Aggressive with active mark
   // headline risk-per-trade numbers render
   await expect(page.getByText("0.5%", { exact: false }).first()).toBeVisible();
 });
+
+test("research labs — each lab's News blackout switch sends its own PATCH", async ({ page }) => {
+  await mockApi(page);
+  for (const [label, lab] of [["Price Action Lab", "price_action"], ["SMC Strategy Lab", "smc"], ["Adaptive MTF Lab", "adaptive"]]) {
+    await page.goto(`/#/${slug(label)}`);
+    await page.reload();
+    const section = page.getByTestId(`lab-news-guard-${lab}`);
+    await expect(section).toContainText("News blackout");
+    await expect(section).toContainText("Off");
+    await expect(section).toContainText("Non-Farm Employment Change");
+    await expect(section).toContainText("manual orders are not affected");
+    const patch = page.waitForRequest((r) => r.url().endsWith(`/research/event-guard/${lab}`) && r.method() === "PATCH");
+    await section.getByRole("button", { name: "Turn on", exact: true }).click();
+    expect((await patch).postDataJSON()).toEqual({ enabled: true });
+  }
+});

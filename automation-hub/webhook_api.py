@@ -264,6 +264,11 @@ from services.instance_event_guard import InstanceEventGuard  # noqa: E402
 instance_manager.event_guard = InstanceEventGuard(
     _os.path.join(_os.path.dirname(settings.providers_path), "instance_event_guard.json"),
     econ_calendar)
+# The same opt-in blackout for the three research labs, one switch per lab
+# (services/lab_event_guard.py), kept in its own file.
+lab_event_guard = InstanceEventGuard(
+    _os.path.join(_os.path.dirname(settings.providers_path), "lab_event_guard.json"),
+    econ_calendar)
 # Opt-in public paper record per instance: off until the owner publishes one.
 from services.public_track_record import PublicTrackRecord  # noqa: E402
 instance_manager.track_record = PublicTrackRecord(
@@ -1012,6 +1017,9 @@ adaptive_lab = AdaptiveLab(
     symbol_rules_provider=v2_market_data.usdm_symbol_rules,
     supported_symbols=tuple(_ADAPTIVE_SYMBOLS),
     journal=AdaptiveJournal(settings.adaptive_lab_journal_db))
+# The lab's bot takes the instance news gate, answering to the lab's switch.
+from services.lab_event_guard import LabKeyedEventGuard  # noqa: E402
+adaptive_lab.manager.event_guard = LabKeyedEventGuard(lab_event_guard, "adaptive")
 # The lab also mirrors, view only, any Trading Instance running this strategy.
 # Attached here, before app startup restores instances, so every instance
 # worker carries the report tee that journals its candles beside cycle_store.
@@ -1087,11 +1095,15 @@ adaptive_lab_supervisor = InstanceSupervisor(
     interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
-price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
-                                              starting_balance=10_000.0)
+from services.lab_event_guard import (  # noqa: E402
+    EventGuardedPriceActionPaperAccount, EventGuardedSMCPaperAccount)
+price_action_paper = EventGuardedPriceActionPaperAccount(settings.price_action_paper_db,
+                                                          starting_balance=10_000.0)
+price_action_paper.event_guard = lab_event_guard
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
-smc_paper = AgentGatedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+smc_paper = EventGuardedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+smc_paper.event_guard = lab_event_guard
 
 
 # App-wide realized P&L calendar (services/pnl_calendar.py, docs/PNL_CALENDAR.md):
@@ -1414,6 +1426,7 @@ import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 import routers.security  # noqa: E402
 import routers.status  # noqa: E402
+import routers.lab_event_guard  # noqa: E402
 import routers.calendar  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
@@ -1439,6 +1452,7 @@ router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 router.include_router(routers.security.router)
 router.include_router(routers.status.router)
+router.include_router(routers.lab_event_guard.router)
 router.include_router(routers.calendar.router)
 
 

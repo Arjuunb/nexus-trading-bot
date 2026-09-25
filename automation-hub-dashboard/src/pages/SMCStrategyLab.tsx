@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import LabNewsGuard from "../components/research/LabNewsGuard";
 import NativeSMCChartOverlay, {
   type ChartPriceViewport,
   type ChartTimeViewport,
@@ -508,6 +509,7 @@ export default function SMCStrategyLabPage() {
           <label>Risk per trade %<input aria-label="SMC risk per trade" value={riskPct} disabled={busy || marketBusy || !sessionLoaded} onChange={(event) => setRiskPct(event.target.value)} onBlur={saveRisk} onKeyDown={(event) => { if (event.key === "Enter") saveRisk(); }} inputMode="decimal" /></label>
           <small>Changes save instantly.</small>
         </section>
+        <LabNewsGuard lab="smc" />
         <section><h2>SMC session market</h2><label>Symbol<select aria-label="SMC session symbol" disabled={marketBusy || busy || !sessionLoaded} value={symbol} onChange={(event) => switchMarket(event.target.value)}>{SYMBOLS.map((row) => <option key={row}>{row}</option>)}</select></label><div className="pa-segment"><button type="button" className={chartFeed === "binance_usdm" ? "active" : ""} onClick={() => { if (savedSession) { setSymbol(savedSession.symbol); setTimeframe(savedSession.timeframe); } setChartFeed("binance_usdm"); }}>Live paper</button><button type="button" className={chartFeed === "checkpoint" ? "active" : ""} onClick={() => { setChartFeed("checkpoint"); setSymbol("BTCUSDT"); setTimeframe("5m"); }}>Frozen review</button></div><small className="pa-context-note"><button type="button" className="link-button" onClick={() => { window.location.hash = "/smc-visual-lab"; }}>SMC Visual Lab</button></small></section>
         <section><h2>Account</h2><div className="pa-account"><span>Balance<b>{money(paper.data?.account.balance)} USDT</b></span><span>Equity<b>{money(paper.data?.account.equity)} USDT</b></span><span>Open P&amp;L<b className={(paper.data?.account.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(paper.data?.account.unrealized_pnl)}</b></span><span>Free margin<b>{money(paper.data?.account.available_margin)}</b></span></div><label>Leverage<select value={leverage} onChange={(event) => void applyLeverage(event.target.value)}>{[1, 2, 3, 5, 10].map((value) => <option key={value} value={value}>{value}×</option>)}</select></label></section>
         <section><details className="pa-details"><summary>Chart display</summary><label className="pa-layer-mode">Preset<select aria-label="SMC chart layer preset" value={chartPreset} onChange={(event) => applyPreset(event.target.value as ChartPreset)}>{(Object.keys(PRESETS) as ChartPreset[]).map((preset) => <option key={preset} value={preset}>{pretty(preset)}</option>)}</select></label>{([[

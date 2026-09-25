@@ -695,6 +695,17 @@ export async function mockApi(page: Page) {
         memory: { enabled: false, min_sample: 20, veto_at_or_below_expectancy_r: 0.0, by_hour: false },
         note: "Each of these changes how much and how often the agent trades. They are hypotheses to backtest and forward-test, not improvements.",
         paper_only: true, real_execution_allowed: false } });
+      // shape of the hub's GET /research/event-guard/{lab} (routers/lab_event_guard.py)
+      const labGuard = url.pathname.match(/^\/research\/event-guard\/(price_action|smc|adaptive)$/);
+      if (labGuard) {
+        const lab = labGuard[1];
+        const enabled = route.request().method() === "PATCH" ? Boolean((route.request().postDataJSON() as { enabled?: boolean }).enabled) : false;
+        return route.fulfill({ json: {
+          lab, label: { price_action: "Price Action Lab", smc: "SMC Lab", adaptive: "Adaptive Lab" }[lab],
+          enabled, updated_at: null, calendar_connected: true, mode: "normal", halt_new_entries: false,
+          risk_multiplier: 1.0, next_event: { name: "Non-Farm Employment Change", time: "2026-10-02T12:30:00+00:00", impact: "high" },
+          minutes_to_event: 9000, window: { blackout_before_min: 30, blackout_after_min: 15, caution_before_min: 120 } } });
+      }
       if (url.pathname === "/calendar/options") return route.fulfill({ json: CALENDAR.options });
       if (url.pathname === "/calendar/month") return route.fulfill({ json: calendarMonth(url) });
       if (url.pathname === "/calendar/day") return route.fulfill({ json: calendarDay(url) });

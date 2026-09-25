@@ -99,6 +99,19 @@ class InstanceEventGuard:
             return self.calendar.events() if self.enabled(instance_id) else []
         return events
 
+    def entry_block(self, instance_id: str) -> str | None:
+        """Why a new entry is refused right now under this switch, or None.
+        For callers without a SignalPipeline (the research labs)."""
+        if not self.enabled(instance_id):
+            return None
+        ev = evaluate(self.calendar.events(), blackout_min=BLACKOUT_MIN,
+                      caution_min=CAUTION_MIN, after_min=self.after_min)
+        if not ev["halt_new_entries"]:
+            return None
+        mins = ev["minutes_to_event"]
+        when = f"released {-mins:.0f}m ago" if mins < 0 else f"in {mins:.0f}m"
+        return f"News blackout: {ev['next_event']['name']} {when} — no new strategy entries"
+
     def state(self, instance_id: str) -> dict:
         row = self._read().get(instance_id) or {}
         on = bool(row.get("enabled"))

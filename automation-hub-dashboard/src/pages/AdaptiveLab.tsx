@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import LabNewsGuard from "../components/research/LabNewsGuard";
 import { useApp } from "../app-context";
 import { apiPostJson, useLive } from "../lib/api";
 import NativeSMCChartOverlay, {
@@ -243,6 +244,7 @@ export default function AdaptiveLab() {
             <label>Symbol<select aria-label="Adaptive lab symbol" disabled={busy || !lab} value={lab?.symbol ?? ""} onChange={(event) => void save({ symbol: event.target.value }, `symbol ${event.target.value}`)}>{(lab?.supported_symbols?.length ? lab.supported_symbols : SYMBOLS).map((row) => <option key={row}>{row}</option>)}</select></label>
             <small>Each symbol keeps its own bot and paper account.</small>
           </section>
+          <LabNewsGuard lab="adaptive" />
         </>}
         <section><h2>Account</h2>
           <div className="pa-account">
