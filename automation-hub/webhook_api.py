@@ -1074,6 +1074,32 @@ price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
 smc_paper = AgentGatedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+
+
+# App-wide realized P&L calendar (services/pnl_calendar.py, docs/PNL_CALENDAR.md):
+# a read-only view over every ledger that holds real paper/live closes. Each
+# collector reads one source through its own interface; nothing is written.
+from services import pnl_calendar as _pnl  # noqa: E402
+
+
+def _instance_meta(manager) -> dict:
+    return {inst.id: {"name": f"{inst.strategy_label} · {inst.symbol}", "strategy_key": inst.strategy_key,
+                      "strategy_label": inst.strategy_label, "mode": inst.mode}
+            for inst in manager.list()}
+
+
+pnl_calendar = _pnl.PnlCalendar({
+    "ledger": lambda: _pnl.collect_ledger(
+        _pnl.read_paper_trades(ledger), scope="ledger", default_source="paper_trading",
+        instances=_instance_meta(instance_manager), journal=decision_journal_store.get),
+    "adaptive_lab": lambda: _pnl.collect_ledger(
+        _pnl.read_paper_trades(adaptive_lab.ledger), scope="adaptive", default_source="adaptive_lab",
+        instances=_instance_meta(adaptive_lab.manager)),
+    "pa_lab": lambda: _pnl.collect_v2_lab(
+        _pnl.v2_lab_history(price_action_paper, source="pa_lab", currency="USDT"), source="pa_lab"),
+    "smc_lab": lambda: _pnl.collect_v2_lab(
+        _pnl.v2_lab_history(smc_paper, source="smc_lab", currency="USDT"), source="smc_lab"),
+})
 smc_agent_journal = SMCAgentJournal(settings.smc_agent_journal_db)
 # equity here is only a fallback: on every live tick the runtime supplies the
 # paper account's actual equity and the session's saved risk percentage.
@@ -1370,6 +1396,7 @@ import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 import routers.security  # noqa: E402
 import routers.status  # noqa: E402
+import routers.calendar  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
@@ -1394,6 +1421,7 @@ router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 router.include_router(routers.security.router)
 router.include_router(routers.status.router)
+router.include_router(routers.calendar.router)
 
 
 # ───────────────────────────── server-side grid (paper, 24/7) ─────────────────

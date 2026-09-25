@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 /** Deterministic mock backend for the E2E audit. Intercepts every request to
  *  the API host (:8000) and returns plausible JSON so pages render without a
@@ -596,6 +597,36 @@ function bodyFor(pathname: string): unknown {
   return {};
 }
 
+// /calendar/* responses produced by the real calendar service over real
+// engine trades (see e2e/fixtures/generate_calendar_fixture.py). Other months
+// answer as months with no closed trades, exactly as the API would.
+export const CALENDAR = JSON.parse(readFileSync(new URL("./fixtures/calendar.json", import.meta.url), "utf8"));
+
+function calendarMonth(url: URL) {
+  const year = Number(url.searchParams.get("year")); const month = Number(url.searchParams.get("month"));
+  const source = url.searchParams.get("source");
+  if (year === 2026 && month === 9) return source ? CALENDAR.month_by_source[source] : CALENDAR.month;
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    year, month, summary: {}, currencies: [], timezone: CALENDAR.month.timezone, filters: {},
+    days: Array.from({ length: days }, (_, i) => ({
+      date: `${year}-${String(month).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
+      state: "none", by_currency: {}, closed_trades: 0, realizations: 0 })),
+    diagnostics: CALENDAR.month.diagnostics,
+    conversion: { display_currency: "USDT", needed: false, available: false, unconverted: [], note: "" },
+  };
+}
+
+function calendarDay(url: URL) {
+  const date = url.searchParams.get("date_") ?? "";
+  return CALENDAR.days[date] ?? {
+    date, summary: {}, currencies: [], state: "none", sources: [], strategies: [], hourly: [], trades: [],
+    time_of_day: CALENDAR.days["2026-09-20"].time_of_day, timezone: CALENDAR.month.timezone, filters: {},
+    diagnostics: CALENDAR.month.diagnostics,
+    conversion: { display_currency: "USDT", needed: false, available: false, unconverted: [], note: "" },
+  };
+}
+
 export async function mockApi(page: Page) {
   let paPaper: any = structuredClone(PA_PAPER);
   await page.route(
@@ -617,6 +648,9 @@ export async function mockApi(page: Page) {
           next_action: "Review frozen evidence before starting an experiment.",
         } });
       }
+      if (url.pathname === "/calendar/options") return route.fulfill({ json: CALENDAR.options });
+      if (url.pathname === "/calendar/month") return route.fulfill({ json: calendarMonth(url) });
+      if (url.pathname === "/calendar/day") return route.fulfill({ json: calendarDay(url) });
       if (url.pathname === "/research/price-action/journal") {
         return route.fulfill({ json: { entries: [], real_execution_allowed: false,
           statistics: { setups: 0, completed: 0, wins: 0, losses: 0, net_r: 0, expectancy_r: 0 } } });

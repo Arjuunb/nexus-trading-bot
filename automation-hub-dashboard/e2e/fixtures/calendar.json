@@ -1,0 +1,3610 @@
+{
+ "month": {
+  "year": 2026,
+  "month": 9,
+  "days": [
+   {
+    "date": "2026-09-01",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-02",
+    "state": "profit",
+    "by_currency": {
+     "USDT": {
+      "net": "38.34960000",
+      "gross_profit": "80.36400000",
+      "gross_loss": "42.01440000",
+      "fees": "15.65040000",
+      "funding": "0.00000000",
+      "closed_trades": 2,
+      "realizations": 2,
+      "wins": 1,
+      "losses": 1,
+      "breakeven": 0,
+      "win_rate": "50.00000000",
+      "max_drawdown": "42.01440000",
+      "state": "profit"
+     }
+    },
+    "closed_trades": 2,
+    "realizations": 2
+   },
+   {
+    "date": "2026-09-03",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-04",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-05",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-06",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-07",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-08",
+    "state": "loss",
+    "by_currency": {
+     "USDT": {
+      "net": "-97.72960000",
+      "gross_profit": "0.00000000",
+      "gross_loss": "97.72960000",
+      "fees": "13.72960000",
+      "funding": "0.00000000",
+      "closed_trades": 2,
+      "realizations": 2,
+      "wins": 0,
+      "losses": 2,
+      "breakeven": 0,
+      "win_rate": "0.00000000",
+      "max_drawdown": "97.72960000",
+      "state": "loss"
+     }
+    },
+    "closed_trades": 2,
+    "realizations": 2
+   },
+   {
+    "date": "2026-09-09",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-10",
+    "state": "mixed",
+    "by_currency": {
+     "GBP": {
+      "net": "21.57000000",
+      "gross_profit": "21.57000000",
+      "gross_loss": "0.00000000",
+      "fees": "3.43000000",
+      "funding": "0.00000000",
+      "closed_trades": 1,
+      "realizations": 1,
+      "wins": 1,
+      "losses": 0,
+      "breakeven": 0,
+      "win_rate": "100.00000000",
+      "max_drawdown": "0.00000000",
+      "state": "profit"
+     },
+     "USDT": {
+      "net": "-1.12000000",
+      "gross_profit": "0.00000000",
+      "gross_loss": "1.12000000",
+      "fees": "1.12000000",
+      "funding": "0.00000000",
+      "closed_trades": 1,
+      "realizations": 1,
+      "wins": 0,
+      "losses": 1,
+      "breakeven": 0,
+      "win_rate": "0.00000000",
+      "max_drawdown": "1.12000000",
+      "state": "loss"
+     }
+    },
+    "closed_trades": 2,
+    "realizations": 2
+   },
+   {
+    "date": "2026-09-11",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-12",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-13",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-14",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-15",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-16",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-17",
+    "state": "profit",
+    "by_currency": {
+     "USDT": {
+      "net": "254.36600000",
+      "gross_profit": "254.36600000",
+      "gross_loss": "0.00000000",
+      "fees": "24.38400000",
+      "funding": "1.25000000",
+      "closed_trades": 2,
+      "realizations": 3,
+      "wins": 2,
+      "losses": 0,
+      "breakeven": 0,
+      "win_rate": "100.00000000",
+      "max_drawdown": "0.00000000",
+      "state": "profit"
+     }
+    },
+    "closed_trades": 2,
+    "realizations": 3
+   },
+   {
+    "date": "2026-09-18",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-19",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-20",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-21",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-22",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-23",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-24",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-25",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-26",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-27",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-28",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-29",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   },
+   {
+    "date": "2026-09-30",
+    "state": "none",
+    "by_currency": {},
+    "closed_trades": 0,
+    "realizations": 0
+   }
+  ],
+  "summary": {
+   "GBP": {
+    "net": "21.57000000",
+    "gross_profit": "21.57000000",
+    "gross_loss": "0.00000000",
+    "fees": "3.43000000",
+    "funding": "0.00000000",
+    "closed_trades": 1,
+    "realizations": 1,
+    "wins": 1,
+    "losses": 0,
+    "breakeven": 0,
+    "win_rate": "100.00000000",
+    "max_drawdown": "0.00000000",
+    "state": "profit",
+    "best_day": {
+     "date": "2026-09-10",
+     "net": "21.57000000"
+    },
+    "worst_day": {
+     "date": "2026-09-10",
+     "net": "21.57000000"
+    },
+    "trading_days": 1
+   },
+   "USDT": {
+    "net": "193.86600000",
+    "gross_profit": "334.73000000",
+    "gross_loss": "140.86400000",
+    "fees": "54.88400000",
+    "funding": "1.25000000",
+    "closed_trades": 7,
+    "realizations": 8,
+    "wins": 3,
+    "losses": 4,
+    "breakeven": 0,
+    "win_rate": "42.85714286",
+    "max_drawdown": "140.86400000",
+    "state": "profit",
+    "best_day": {
+     "date": "2026-09-17",
+     "net": "254.36600000"
+    },
+    "worst_day": {
+     "date": "2026-09-08",
+     "net": "-97.72960000"
+    },
+    "trading_days": 4
+   }
+  },
+  "currencies": [
+   "GBP",
+   "USDT"
+  ],
+  "timezone": "Europe/London",
+  "filters": {},
+  "diagnostics": {
+   "sources": {
+    "ledger": {
+     "ok": true,
+     "realizations": 6,
+     "open_positions": 1,
+     "skipped": {}
+    },
+    "pa_lab": {
+     "ok": true,
+     "realizations": 2,
+     "open_positions": 0
+    },
+    "smc_lab": {
+     "ok": true,
+     "realizations": 1,
+     "open_positions": 0
+    },
+    "adaptive_lab": {
+     "ok": true,
+     "realizations": 0,
+     "open_positions": 0,
+     "skipped": {}
+    }
+   },
+   "duplicates_dropped": 0,
+   "collected_at": "2026-09-25T00:58:02+00:00"
+  },
+  "conversion": {
+   "display_currency": "USDT",
+   "needed": true,
+   "available": false,
+   "unconverted": [
+    "GBP"
+   ],
+   "note": "No exchange-rate source is configured, so amounts in GBP are shown in their settlement currency and never added to USDT."
+  }
+ },
+ "month_by_source": {
+  "trading_instance": {
+   "year": 2026,
+   "month": 9,
+   "days": [
+    {
+     "date": "2026-09-01",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-02",
+     "state": "profit",
+     "by_currency": {
+      "USDT": {
+       "net": "38.34960000",
+       "gross_profit": "80.36400000",
+       "gross_loss": "42.01440000",
+       "fees": "15.65040000",
+       "funding": "0.00000000",
+       "closed_trades": 2,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "50.00000000",
+       "max_drawdown": "42.01440000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 2,
+     "realizations": 2
+    },
+    {
+     "date": "2026-09-03",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-04",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-05",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-07",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-08",
+     "state": "loss",
+     "by_currency": {
+      "USDT": {
+       "net": "-49.74400000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "49.74400000",
+       "fees": "9.74400000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "49.74400000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "date": "2026-09-09",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-10",
+     "state": "profit",
+     "by_currency": {
+      "GBP": {
+       "net": "21.57000000",
+       "gross_profit": "21.57000000",
+       "gross_loss": "0.00000000",
+       "fees": "3.43000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "date": "2026-09-11",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-12",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-13",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-14",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-15",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-16",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-17",
+     "state": "profit",
+     "by_currency": {
+      "USDT": {
+       "net": "55.06400000",
+       "gross_profit": "55.06400000",
+       "gross_loss": "0.00000000",
+       "fees": "4.93600000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "date": "2026-09-18",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-19",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-21",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-22",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-23",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-24",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-25",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-26",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-28",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-29",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
+   "summary": {
+    "GBP": {
+     "net": "21.57000000",
+     "gross_profit": "21.57000000",
+     "gross_loss": "0.00000000",
+     "fees": "3.43000000",
+     "funding": "0.00000000",
+     "closed_trades": 1,
+     "realizations": 1,
+     "wins": 1,
+     "losses": 0,
+     "breakeven": 0,
+     "win_rate": "100.00000000",
+     "max_drawdown": "0.00000000",
+     "state": "profit",
+     "best_day": {
+      "date": "2026-09-10",
+      "net": "21.57000000"
+     },
+     "worst_day": {
+      "date": "2026-09-10",
+      "net": "21.57000000"
+     },
+     "trading_days": 1
+    },
+    "USDT": {
+     "net": "43.66960000",
+     "gross_profit": "135.42800000",
+     "gross_loss": "91.75840000",
+     "fees": "30.33040000",
+     "funding": "0.00000000",
+     "closed_trades": 4,
+     "realizations": 4,
+     "wins": 2,
+     "losses": 2,
+     "breakeven": 0,
+     "win_rate": "50.00000000",
+     "max_drawdown": "91.75840000",
+     "state": "profit",
+     "best_day": {
+      "date": "2026-09-17",
+      "net": "55.06400000"
+     },
+     "worst_day": {
+      "date": "2026-09-08",
+      "net": "-49.74400000"
+     },
+     "trading_days": 3
+    }
+   },
+   "currencies": [
+    "GBP",
+    "USDT"
+   ],
+   "timezone": "Europe/London",
+   "filters": {
+    "source": "trading_instance"
+   },
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": true,
+    "available": false,
+    "unconverted": [
+     "GBP"
+    ],
+    "note": "No exchange-rate source is configured, so amounts in GBP are shown in their settlement currency and never added to USDT."
+   }
+  },
+  "pa_lab": {
+   "year": 2026,
+   "month": 9,
+   "days": [
+    {
+     "date": "2026-09-01",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-02",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-03",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-04",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-05",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-07",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-08",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-09",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-10",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-11",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-12",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-13",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-14",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-15",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-16",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-17",
+     "state": "profit",
+     "by_currency": {
+      "USDT": {
+       "net": "199.30200000",
+       "gross_profit": "199.30200000",
+       "gross_loss": "0.00000000",
+       "fees": "19.44800000",
+       "funding": "1.25000000",
+       "closed_trades": 1,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 2
+    },
+    {
+     "date": "2026-09-18",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-19",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-21",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-22",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-23",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-24",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-25",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-26",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-28",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-29",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
+   "summary": {
+    "USDT": {
+     "net": "199.30200000",
+     "gross_profit": "199.30200000",
+     "gross_loss": "0.00000000",
+     "fees": "19.44800000",
+     "funding": "1.25000000",
+     "closed_trades": 1,
+     "realizations": 2,
+     "wins": 1,
+     "losses": 0,
+     "breakeven": 0,
+     "win_rate": "100.00000000",
+     "max_drawdown": "0.00000000",
+     "state": "profit",
+     "best_day": {
+      "date": "2026-09-17",
+      "net": "199.30200000"
+     },
+     "worst_day": {
+      "date": "2026-09-17",
+      "net": "199.30200000"
+     },
+     "trading_days": 1
+    }
+   },
+   "currencies": [
+    "USDT"
+   ],
+   "timezone": "Europe/London",
+   "filters": {
+    "source": "pa_lab"
+   },
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  },
+  "smc_lab": {
+   "year": 2026,
+   "month": 9,
+   "days": [
+    {
+     "date": "2026-09-01",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-02",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-03",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-04",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-05",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-07",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-08",
+     "state": "loss",
+     "by_currency": {
+      "USDT": {
+       "net": "-47.98560000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "47.98560000",
+       "fees": "3.98560000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "47.98560000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "date": "2026-09-09",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-10",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-11",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-12",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-13",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-14",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-15",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-16",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-17",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-18",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-19",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-21",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-22",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-23",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-24",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-25",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-26",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-28",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-29",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
+   "summary": {
+    "USDT": {
+     "net": "-47.98560000",
+     "gross_profit": "0.00000000",
+     "gross_loss": "47.98560000",
+     "fees": "3.98560000",
+     "funding": "0.00000000",
+     "closed_trades": 1,
+     "realizations": 1,
+     "wins": 0,
+     "losses": 1,
+     "breakeven": 0,
+     "win_rate": "0.00000000",
+     "max_drawdown": "47.98560000",
+     "state": "loss",
+     "best_day": {
+      "date": "2026-09-08",
+      "net": "-47.98560000"
+     },
+     "worst_day": {
+      "date": "2026-09-08",
+      "net": "-47.98560000"
+     },
+     "trading_days": 1
+    }
+   },
+   "currencies": [
+    "USDT"
+   ],
+   "timezone": "Europe/London",
+   "filters": {
+    "source": "smc_lab"
+   },
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  },
+  "adaptive_lab": {
+   "year": 2026,
+   "month": 9,
+   "days": [
+    {
+     "date": "2026-09-01",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-02",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-03",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-04",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-05",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-07",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-08",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-09",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-10",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-11",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-12",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-13",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-14",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-15",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-16",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-17",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-18",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-19",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-21",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-22",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-23",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-24",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-25",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-26",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-28",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-29",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
+   "summary": {},
+   "currencies": [],
+   "timezone": "Europe/London",
+   "filters": {
+    "source": "adaptive_lab"
+   },
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  },
+  "paper_trading": {
+   "year": 2026,
+   "month": 9,
+   "days": [
+    {
+     "date": "2026-09-01",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-02",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-03",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-04",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-05",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-06",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-07",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-08",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-09",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-10",
+     "state": "loss",
+     "by_currency": {
+      "USDT": {
+       "net": "-1.12000000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "1.12000000",
+       "fees": "1.12000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "1.12000000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1
+    },
+    {
+     "date": "2026-09-11",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-12",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-13",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-14",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-15",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-16",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-17",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-18",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-19",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-20",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-21",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-22",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-23",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-24",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-25",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-26",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-27",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-28",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-29",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    },
+    {
+     "date": "2026-09-30",
+     "state": "none",
+     "by_currency": {},
+     "closed_trades": 0,
+     "realizations": 0
+    }
+   ],
+   "summary": {
+    "USDT": {
+     "net": "-1.12000000",
+     "gross_profit": "0.00000000",
+     "gross_loss": "1.12000000",
+     "fees": "1.12000000",
+     "funding": "0.00000000",
+     "closed_trades": 1,
+     "realizations": 1,
+     "wins": 0,
+     "losses": 1,
+     "breakeven": 0,
+     "win_rate": "0.00000000",
+     "max_drawdown": "1.12000000",
+     "state": "loss",
+     "best_day": {
+      "date": "2026-09-10",
+      "net": "-1.12000000"
+     },
+     "worst_day": {
+      "date": "2026-09-10",
+      "net": "-1.12000000"
+     },
+     "trading_days": 1
+    }
+   },
+   "currencies": [
+    "USDT"
+   ],
+   "timezone": "Europe/London",
+   "filters": {
+    "source": "paper_trading"
+   },
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  }
+ },
+ "days": {
+  "2026-09-02": {
+   "date": "2026-09-02",
+   "summary": {
+    "USDT": {
+     "net": "38.34960000",
+     "gross_profit": "80.36400000",
+     "gross_loss": "42.01440000",
+     "fees": "15.65040000",
+     "funding": "0.00000000",
+     "closed_trades": 2,
+     "realizations": 2,
+     "wins": 1,
+     "losses": 1,
+     "breakeven": 0,
+     "win_rate": "50.00000000",
+     "max_drawdown": "42.01440000",
+     "state": "profit"
+    }
+   },
+   "currencies": [
+    "USDT"
+   ],
+   "state": "profit",
+   "sources": [
+    {
+     "key": [
+      "trading_instance",
+      "Trading Instance",
+      "a3f9c2d1e8b74c0f",
+      "Native SMC \u00b7 BTCUSDT"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "38.34960000",
+       "gross_profit": "80.36400000",
+       "gross_loss": "42.01440000",
+       "fees": "15.65040000",
+       "funding": "0.00000000",
+       "closed_trades": 2,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "50.00000000",
+       "max_drawdown": "42.01440000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 2,
+     "realizations": 2,
+     "avg_rr": "0.45000000"
+    }
+   ],
+   "strategies": [
+    {
+     "key": [
+      "Native SMC"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "38.34960000",
+       "gross_profit": "80.36400000",
+       "gross_loss": "42.01440000",
+       "fees": "15.65040000",
+       "funding": "0.00000000",
+       "closed_trades": 2,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "50.00000000",
+       "max_drawdown": "42.01440000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 2,
+     "realizations": 2,
+     "avg_rr": "0.45000000"
+    }
+   ],
+   "time_of_day": [
+    {
+     "key": "morning",
+     "label": "Morning",
+     "start": "07:00",
+     "end": "11:59",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "80.36400000",
+       "gross_profit": "80.36400000",
+       "gross_loss": "0.00000000",
+       "fees": "9.63600000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    },
+    {
+     "key": "afternoon",
+     "label": "Afternoon",
+     "start": "12:00",
+     "end": "16:59",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-42.01440000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "42.01440000",
+       "fees": "6.01440000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "42.01440000",
+       "state": "loss"
+      }
+     }
+    },
+    {
+     "key": "evening",
+     "label": "Evening",
+     "start": "17:00",
+     "end": "21:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "night",
+     "label": "Night",
+     "start": "22:00",
+     "end": "06:59",
+     "realizations": 0,
+     "by_currency": {}
+    }
+   ],
+   "hourly": [
+    {
+     "hour": 10,
+     "bucket": "morning",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "80.36400000",
+       "gross_profit": "80.36400000",
+       "gross_loss": "0.00000000",
+       "fees": "9.63600000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    },
+    {
+     "hour": 15,
+     "bucket": "afternoon",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-42.01440000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "42.01440000",
+       "fees": "6.01440000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "42.01440000",
+       "state": "loss"
+      }
+     }
+    }
+   ],
+   "trades": [
+    {
+     "id": "ledger:b7f9150eb49b45b5956309dbecc1c491",
+     "trade_id": "ledger:b7f9150eb49b45b5956309dbecc1c491",
+     "source": "trading_instance",
+     "account": "ledger",
+     "currency": "USDT",
+     "closed_at": "2026-09-02T10:40:00+01:00",
+     "gross": "90.00000000",
+     "fees": "9.63600000",
+     "funding": "0.00000000",
+     "net": "80.36400000",
+     "pnl_basis": "ledger_net",
+     "symbol": "BTCUSDT",
+     "side": "long",
+     "instance_id": "a3f9c2d1e8b74c0f",
+     "instance_name": "Native SMC \u00b7 BTCUSDT",
+     "strategy": "Native SMC",
+     "timeframe": null,
+     "opened_at": "2026-09-02T09:05:00+01:00",
+     "entry_price": "60000.00000000",
+     "exit_price": "60450.00000000",
+     "quantity": "0.20000000",
+     "rr": "1.50000000",
+     "rr_basis": "gross price R",
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "timeframe",
+      "exit_reason"
+     ],
+     "source_label": "Trading Instance",
+     "duration_s": 5700,
+     "partial": false,
+     "outcome": "win"
+    },
+    {
+     "id": "ledger:72e8f9d9fb8e44d2918c2556324df716",
+     "trade_id": "ledger:72e8f9d9fb8e44d2918c2556324df716",
+     "source": "trading_instance",
+     "account": "ledger",
+     "currency": "USDT",
+     "closed_at": "2026-09-02T15:10:00+01:00",
+     "gross": "-36.00000000",
+     "fees": "6.01440000",
+     "funding": "0.00000000",
+     "net": "-42.01440000",
+     "pnl_basis": "ledger_net",
+     "symbol": "ETHUSDT",
+     "side": "short",
+     "instance_id": "a3f9c2d1e8b74c0f",
+     "instance_name": "Native SMC \u00b7 BTCUSDT",
+     "strategy": "Native SMC",
+     "timeframe": null,
+     "opened_at": "2026-09-02T14:00:00+01:00",
+     "entry_price": "2500.00000000",
+     "exit_price": "2512.00000000",
+     "quantity": "3.00000000",
+     "rr": "-0.60000000",
+     "rr_basis": "gross price R",
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "timeframe",
+      "exit_reason"
+     ],
+     "source_label": "Trading Instance",
+     "duration_s": 4200,
+     "partial": false,
+     "outcome": "loss"
+    }
+   ],
+   "timezone": "Europe/London",
+   "filters": {},
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  },
+  "2026-09-08": {
+   "date": "2026-09-08",
+   "summary": {
+    "USDT": {
+     "net": "-97.72960000",
+     "gross_profit": "0.00000000",
+     "gross_loss": "97.72960000",
+     "fees": "13.72960000",
+     "funding": "0.00000000",
+     "closed_trades": 2,
+     "realizations": 2,
+     "wins": 0,
+     "losses": 2,
+     "breakeven": 0,
+     "win_rate": "0.00000000",
+     "max_drawdown": "97.72960000",
+     "state": "loss"
+    }
+   },
+   "currencies": [
+    "USDT"
+   ],
+   "state": "loss",
+   "sources": [
+    {
+     "key": [
+      "trading_instance",
+      "Trading Instance",
+      "a3f9c2d1e8b74c0f",
+      "Native SMC \u00b7 BTCUSDT"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "-49.74400000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "49.74400000",
+       "fees": "9.74400000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "49.74400000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "-0.66700000"
+    },
+    {
+     "key": [
+      "smc_lab",
+      "SMC Lab",
+      "",
+      ""
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "-47.98560000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "47.98560000",
+       "fees": "3.98560000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "47.98560000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": null
+    }
+   ],
+   "strategies": [
+    {
+     "key": [
+      "Native SMC"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "-49.74400000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "49.74400000",
+       "fees": "9.74400000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "49.74400000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "-0.66700000"
+    },
+    {
+     "key": [
+      "smc_ladder"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "-47.98560000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "47.98560000",
+       "fees": "3.98560000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "47.98560000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": null
+    }
+   ],
+   "time_of_day": [
+    {
+     "key": "morning",
+     "label": "Morning",
+     "start": "07:00",
+     "end": "11:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "afternoon",
+     "label": "Afternoon",
+     "start": "12:00",
+     "end": "16:59",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-49.74400000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "49.74400000",
+       "fees": "9.74400000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "49.74400000",
+       "state": "loss"
+      }
+     }
+    },
+    {
+     "key": "evening",
+     "label": "Evening",
+     "start": "17:00",
+     "end": "21:59",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-47.98560000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "47.98560000",
+       "fees": "3.98560000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "47.98560000",
+       "state": "loss"
+      }
+     }
+    },
+    {
+     "key": "night",
+     "label": "Night",
+     "start": "22:00",
+     "end": "06:59",
+     "realizations": 0,
+     "by_currency": {}
+    }
+   ],
+   "hourly": [
+    {
+     "hour": 12,
+     "bucket": "afternoon",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-49.74400000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "49.74400000",
+       "fees": "9.74400000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "49.74400000",
+       "state": "loss"
+      }
+     }
+    },
+    {
+     "hour": 17,
+     "bucket": "evening",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-47.98560000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "47.98560000",
+       "fees": "3.98560000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "47.98560000",
+       "state": "loss"
+      }
+     }
+    }
+   ],
+   "trades": [
+    {
+     "id": "ledger:3b225d64a1c448ec890fbfacd5c1f7d4",
+     "trade_id": "ledger:3b225d64a1c448ec890fbfacd5c1f7d4",
+     "source": "trading_instance",
+     "account": "ledger",
+     "currency": "USDT",
+     "closed_at": "2026-09-08T12:30:00+01:00",
+     "gross": "-40.00000000",
+     "fees": "9.74400000",
+     "funding": "0.00000000",
+     "net": "-49.74400000",
+     "pnl_basis": "ledger_net",
+     "symbol": "BTCUSDT",
+     "side": "long",
+     "instance_id": "a3f9c2d1e8b74c0f",
+     "instance_name": "Native SMC \u00b7 BTCUSDT",
+     "strategy": "Native SMC",
+     "timeframe": null,
+     "opened_at": "2026-09-08T11:00:00+01:00",
+     "entry_price": "61000.00000000",
+     "exit_price": "60800.00000000",
+     "quantity": "0.20000000",
+     "rr": "-0.66700000",
+     "rr_basis": "gross price R",
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "timeframe",
+      "exit_reason"
+     ],
+     "source_label": "Trading Instance",
+     "duration_s": 5400,
+     "partial": false,
+     "outcome": "loss"
+    },
+    {
+     "id": "smc_lab:fill:dd5c231322b644c394a0da3e17817abe",
+     "trade_id": "smc_lab:49a3ed3dac704ea7bac117b7e99155d4",
+     "source": "smc_lab",
+     "account": "smc_lab:smc-91be77c2",
+     "currency": "USDT",
+     "closed_at": "2026-09-08T17:45:00+01:00",
+     "gross": "-44.00000000",
+     "fees": "3.98560000",
+     "funding": "0.00000000",
+     "net": "-47.98560000",
+     "pnl_basis": "fills_gross_minus_costs",
+     "symbol": "ETHUSDT",
+     "side": "short",
+     "instance_id": null,
+     "instance_name": null,
+     "strategy": "smc_ladder",
+     "timeframe": "5m",
+     "opened_at": "2026-09-08T15:00:00+01:00",
+     "entry_price": "2480.00000000",
+     "exit_price": "2502.00000000",
+     "quantity": "2.00000000",
+     "rr": null,
+     "rr_basis": null,
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "exit_reason"
+     ],
+     "source_label": "SMC Lab",
+     "duration_s": 9900,
+     "partial": false,
+     "outcome": "loss"
+    }
+   ],
+   "timezone": "Europe/London",
+   "filters": {},
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  },
+  "2026-09-10": {
+   "date": "2026-09-10",
+   "summary": {
+    "GBP": {
+     "net": "21.57000000",
+     "gross_profit": "21.57000000",
+     "gross_loss": "0.00000000",
+     "fees": "3.43000000",
+     "funding": "0.00000000",
+     "closed_trades": 1,
+     "realizations": 1,
+     "wins": 1,
+     "losses": 0,
+     "breakeven": 0,
+     "win_rate": "100.00000000",
+     "max_drawdown": "0.00000000",
+     "state": "profit"
+    },
+    "USDT": {
+     "net": "-1.12000000",
+     "gross_profit": "0.00000000",
+     "gross_loss": "1.12000000",
+     "fees": "1.12000000",
+     "funding": "0.00000000",
+     "closed_trades": 1,
+     "realizations": 1,
+     "wins": 0,
+     "losses": 1,
+     "breakeven": 0,
+     "win_rate": "0.00000000",
+     "max_drawdown": "1.12000000",
+     "state": "loss"
+    }
+   },
+   "currencies": [
+    "GBP",
+    "USDT"
+   ],
+   "state": "mixed",
+   "sources": [
+    {
+     "key": [
+      "trading_instance",
+      "Trading Instance",
+      "a3f9c2d1e8b74c0f",
+      "Native SMC \u00b7 BTCUSDT"
+     ],
+     "by_currency": {
+      "GBP": {
+       "net": "21.57000000",
+       "gross_profit": "21.57000000",
+       "gross_loss": "0.00000000",
+       "fees": "3.43000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "1.00000000"
+    },
+    {
+     "key": [
+      "paper_trading",
+      "Paper Trading",
+      "",
+      ""
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "-1.12000000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "1.12000000",
+       "fees": "1.12000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "1.12000000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "0.00000000"
+    }
+   ],
+   "strategies": [
+    {
+     "key": [
+      "price_action_v1:0.1"
+     ],
+     "by_currency": {
+      "GBP": {
+       "net": "21.57000000",
+       "gross_profit": "21.57000000",
+       "gross_loss": "0.00000000",
+       "fees": "3.43000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "1.00000000"
+    },
+    {
+     "key": [
+      ""
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "-1.12000000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "1.12000000",
+       "fees": "1.12000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "1.12000000",
+       "state": "loss"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "0.00000000"
+    }
+   ],
+   "time_of_day": [
+    {
+     "key": "morning",
+     "label": "Morning",
+     "start": "07:00",
+     "end": "11:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "afternoon",
+     "label": "Afternoon",
+     "start": "12:00",
+     "end": "16:59",
+     "realizations": 1,
+     "by_currency": {
+      "GBP": {
+       "net": "21.57000000",
+       "gross_profit": "21.57000000",
+       "gross_loss": "0.00000000",
+       "fees": "3.43000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    },
+    {
+     "key": "evening",
+     "label": "Evening",
+     "start": "17:00",
+     "end": "21:59",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-1.12000000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "1.12000000",
+       "fees": "1.12000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "1.12000000",
+       "state": "loss"
+      }
+     }
+    },
+    {
+     "key": "night",
+     "label": "Night",
+     "start": "22:00",
+     "end": "06:59",
+     "realizations": 0,
+     "by_currency": {}
+    }
+   ],
+   "hourly": [
+    {
+     "hour": 16,
+     "bucket": "afternoon",
+     "realizations": 1,
+     "by_currency": {
+      "GBP": {
+       "net": "21.57000000",
+       "gross_profit": "21.57000000",
+       "gross_loss": "0.00000000",
+       "fees": "3.43000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    },
+    {
+     "hour": 20,
+     "bucket": "evening",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "-1.12000000",
+       "gross_profit": "0.00000000",
+       "gross_loss": "1.12000000",
+       "fees": "1.12000000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 1,
+       "breakeven": 0,
+       "win_rate": "0.00000000",
+       "max_drawdown": "1.12000000",
+       "state": "loss"
+      }
+     }
+    }
+   ],
+   "trades": [
+    {
+     "id": "ledger:15f4c944d8a742a0b1b7ea9641c54ef1",
+     "trade_id": "ledger:15f4c944d8a742a0b1b7ea9641c54ef1",
+     "source": "trading_instance",
+     "account": "ledger",
+     "currency": "GBP",
+     "closed_at": "2026-09-10T16:45:00+01:00",
+     "gross": "25.00000000",
+     "fees": "3.43000000",
+     "funding": "0.00000000",
+     "net": "21.57000000",
+     "pnl_basis": "ledger_net",
+     "symbol": "EURGBP",
+     "side": "short",
+     "instance_id": "a3f9c2d1e8b74c0f",
+     "instance_name": "Native SMC \u00b7 BTCUSDT",
+     "strategy": "price_action_v1:0.1",
+     "timeframe": null,
+     "opened_at": "2026-09-10T08:10:00+01:00",
+     "entry_price": "0.86000000",
+     "exit_price": "0.85500000",
+     "quantity": "5000.00000000",
+     "rr": "1.00000000",
+     "rr_basis": "gross price R",
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "timeframe",
+      "exit_reason"
+     ],
+     "source_label": "Trading Instance",
+     "duration_s": 30900,
+     "partial": false,
+     "outcome": "win"
+    },
+    {
+     "id": "ledger:6982c9837172445595868bd94b00afe5",
+     "trade_id": "ledger:6982c9837172445595868bd94b00afe5",
+     "source": "paper_trading",
+     "account": "ledger",
+     "currency": "USDT",
+     "closed_at": "2026-09-10T20:00:00+01:00",
+     "gross": "0.00000000",
+     "fees": "1.12000000",
+     "funding": "0.00000000",
+     "net": "-1.12000000",
+     "pnl_basis": "ledger_net",
+     "symbol": "SOLUSDT",
+     "side": "long",
+     "instance_id": null,
+     "instance_name": null,
+     "strategy": null,
+     "timeframe": null,
+     "opened_at": "2026-09-10T19:00:00+01:00",
+     "entry_price": "140.00000000",
+     "exit_price": "140.00000000",
+     "quantity": "10.00000000",
+     "rr": "0.00000000",
+     "rr_basis": "gross price R",
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "strategy",
+      "timeframe",
+      "exit_reason"
+     ],
+     "source_label": "Paper Trading",
+     "duration_s": 3600,
+     "partial": false,
+     "outcome": "loss"
+    }
+   ],
+   "timezone": "Europe/London",
+   "filters": {},
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": true,
+    "available": false,
+    "unconverted": [
+     "GBP"
+    ],
+    "note": "No exchange-rate source is configured, so amounts in GBP are shown in their settlement currency and never added to USDT."
+   }
+  },
+  "2026-09-16": {
+   "date": "2026-09-16",
+   "summary": {},
+   "currencies": [],
+   "state": "none",
+   "sources": [],
+   "strategies": [],
+   "time_of_day": [
+    {
+     "key": "morning",
+     "label": "Morning",
+     "start": "07:00",
+     "end": "11:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "afternoon",
+     "label": "Afternoon",
+     "start": "12:00",
+     "end": "16:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "evening",
+     "label": "Evening",
+     "start": "17:00",
+     "end": "21:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "night",
+     "label": "Night",
+     "start": "22:00",
+     "end": "06:59",
+     "realizations": 0,
+     "by_currency": {}
+    }
+   ],
+   "hourly": [],
+   "trades": [],
+   "timezone": "Europe/London",
+   "filters": {},
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  },
+  "2026-09-17": {
+   "date": "2026-09-17",
+   "summary": {
+    "USDT": {
+     "net": "254.36600000",
+     "gross_profit": "254.36600000",
+     "gross_loss": "0.00000000",
+     "fees": "24.38400000",
+     "funding": "1.25000000",
+     "closed_trades": 2,
+     "realizations": 3,
+     "wins": 2,
+     "losses": 0,
+     "breakeven": 0,
+     "win_rate": "100.00000000",
+     "max_drawdown": "0.00000000",
+     "state": "profit"
+    }
+   },
+   "currencies": [
+    "USDT"
+   ],
+   "state": "profit",
+   "sources": [
+    {
+     "key": [
+      "pa_lab",
+      "Price Action Lab",
+      "",
+      ""
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "199.30200000",
+       "gross_profit": "199.30200000",
+       "gross_loss": "0.00000000",
+       "fees": "19.44800000",
+       "funding": "1.25000000",
+       "closed_trades": 1,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 2,
+     "avg_rr": null
+    },
+    {
+     "key": [
+      "trading_instance",
+      "Trading Instance",
+      "a3f9c2d1e8b74c0f",
+      "Native SMC \u00b7 BTCUSDT"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "55.06400000",
+       "gross_profit": "55.06400000",
+       "gross_loss": "0.00000000",
+       "fees": "4.93600000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "1.50000000"
+    }
+   ],
+   "strategies": [
+    {
+     "key": [
+      "pa_rulebook_v0_1"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "199.30200000",
+       "gross_profit": "199.30200000",
+       "gross_loss": "0.00000000",
+       "fees": "19.44800000",
+       "funding": "1.25000000",
+       "closed_trades": 1,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 2,
+     "avg_rr": null
+    },
+    {
+     "key": [
+      "Native SMC"
+     ],
+     "by_currency": {
+      "USDT": {
+       "net": "55.06400000",
+       "gross_profit": "55.06400000",
+       "gross_loss": "0.00000000",
+       "fees": "4.93600000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     },
+     "closed_trades": 1,
+     "realizations": 1,
+     "avg_rr": "1.50000000"
+    }
+   ],
+   "time_of_day": [
+    {
+     "key": "morning",
+     "label": "Morning",
+     "start": "07:00",
+     "end": "11:59",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "129.63900000",
+       "gross_profit": "129.63900000",
+       "gross_loss": "0.00000000",
+       "fees": "9.73600000",
+       "funding": "0.62500000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    },
+    {
+     "key": "afternoon",
+     "label": "Afternoon",
+     "start": "12:00",
+     "end": "16:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "evening",
+     "label": "Evening",
+     "start": "17:00",
+     "end": "21:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "night",
+     "label": "Night",
+     "start": "22:00",
+     "end": "06:59",
+     "realizations": 2,
+     "by_currency": {
+      "USDT": {
+       "net": "124.72700000",
+       "gross_profit": "124.72700000",
+       "gross_loss": "0.00000000",
+       "fees": "14.64800000",
+       "funding": "0.62500000",
+       "closed_trades": 1,
+       "realizations": 2,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    }
+   ],
+   "hourly": [
+    {
+     "hour": 0,
+     "bucket": "night",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "69.66300000",
+       "gross_profit": "69.66300000",
+       "gross_loss": "0.00000000",
+       "fees": "9.71200000",
+       "funding": "0.62500000",
+       "closed_trades": 0,
+       "realizations": 1,
+       "wins": 0,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": null,
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    },
+    {
+     "hour": 1,
+     "bucket": "night",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "55.06400000",
+       "gross_profit": "55.06400000",
+       "gross_loss": "0.00000000",
+       "fees": "4.93600000",
+       "funding": "0.00000000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    },
+    {
+     "hour": 9,
+     "bucket": "morning",
+     "realizations": 1,
+     "by_currency": {
+      "USDT": {
+       "net": "129.63900000",
+       "gross_profit": "129.63900000",
+       "gross_loss": "0.00000000",
+       "fees": "9.73600000",
+       "funding": "0.62500000",
+       "closed_trades": 1,
+       "realizations": 1,
+       "wins": 1,
+       "losses": 0,
+       "breakeven": 0,
+       "win_rate": "100.00000000",
+       "max_drawdown": "0.00000000",
+       "state": "profit"
+      }
+     }
+    }
+   ],
+   "trades": [
+    {
+     "id": "pa_lab:fill:27975643aa8548fa8bbb946f6c104f24",
+     "trade_id": "pa_lab:8d86aeee6e2641dd8c23f8d511fb554a",
+     "source": "pa_lab",
+     "account": "pa_lab:pa-5d21e0a4",
+     "currency": "USDT",
+     "closed_at": "2026-09-17T00:10:00+01:00",
+     "gross": "80.00000000",
+     "fees": "9.71200000",
+     "funding": "0.62500000",
+     "net": "69.66300000",
+     "pnl_basis": "fills_gross_minus_costs",
+     "symbol": "BTCUSDT",
+     "side": "long",
+     "instance_id": null,
+     "instance_name": null,
+     "strategy": "pa_rulebook_v0_1",
+     "timeframe": "15m",
+     "opened_at": "2026-09-16T23:05:00+01:00",
+     "entry_price": "60500.00000000",
+     "exit_price": "60900.00000000",
+     "quantity": "0.20000000",
+     "rr": null,
+     "rr_basis": null,
+     "exit_reason": null,
+     "final": false,
+     "missing": [
+      "exit_reason"
+     ],
+     "source_label": "Price Action Lab",
+     "duration_s": 3900,
+     "partial": true,
+     "outcome": null
+    },
+    {
+     "id": "ledger:dd01cd8de0e54ffd826f957104b13ce8",
+     "trade_id": "ledger:dd01cd8de0e54ffd826f957104b13ce8",
+     "source": "trading_instance",
+     "account": "ledger",
+     "currency": "USDT",
+     "closed_at": "2026-09-17T01:20:00+01:00",
+     "gross": "60.00000000",
+     "fees": "4.93600000",
+     "funding": "0.00000000",
+     "net": "55.06400000",
+     "pnl_basis": "ledger_net",
+     "symbol": "BTCUSDT",
+     "side": "short",
+     "instance_id": "a3f9c2d1e8b74c0f",
+     "instance_name": "Native SMC \u00b7 BTCUSDT",
+     "strategy": "Native SMC",
+     "timeframe": null,
+     "opened_at": "2026-09-16T22:30:00+01:00",
+     "entry_price": "62000.00000000",
+     "exit_price": "61400.00000000",
+     "quantity": "0.10000000",
+     "rr": "1.50000000",
+     "rr_basis": "gross price R",
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "timeframe",
+      "exit_reason"
+     ],
+     "source_label": "Trading Instance",
+     "duration_s": 10200,
+     "partial": false,
+     "outcome": "win"
+    },
+    {
+     "id": "pa_lab:fill:9bc52f6e4cfb4952859d414016b42fa4",
+     "trade_id": "pa_lab:8d86aeee6e2641dd8c23f8d511fb554a",
+     "source": "pa_lab",
+     "account": "pa_lab:pa-5d21e0a4",
+     "currency": "USDT",
+     "closed_at": "2026-09-17T09:30:00+01:00",
+     "gross": "140.00000000",
+     "fees": "9.73600000",
+     "funding": "0.62500000",
+     "net": "129.63900000",
+     "pnl_basis": "fills_gross_minus_costs",
+     "symbol": "BTCUSDT",
+     "side": "long",
+     "instance_id": null,
+     "instance_name": null,
+     "strategy": "pa_rulebook_v0_1",
+     "timeframe": "15m",
+     "opened_at": "2026-09-16T23:05:00+01:00",
+     "entry_price": "60500.00000000",
+     "exit_price": "61200.00000000",
+     "quantity": "0.20000000",
+     "rr": null,
+     "rr_basis": null,
+     "exit_reason": null,
+     "final": true,
+     "missing": [
+      "exit_reason"
+     ],
+     "source_label": "Price Action Lab",
+     "duration_s": 37500,
+     "partial": false,
+     "outcome": "win"
+    }
+   ],
+   "timezone": "Europe/London",
+   "filters": {},
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  },
+  "2026-09-20": {
+   "date": "2026-09-20",
+   "summary": {},
+   "currencies": [],
+   "state": "none",
+   "sources": [],
+   "strategies": [],
+   "time_of_day": [
+    {
+     "key": "morning",
+     "label": "Morning",
+     "start": "07:00",
+     "end": "11:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "afternoon",
+     "label": "Afternoon",
+     "start": "12:00",
+     "end": "16:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "evening",
+     "label": "Evening",
+     "start": "17:00",
+     "end": "21:59",
+     "realizations": 0,
+     "by_currency": {}
+    },
+    {
+     "key": "night",
+     "label": "Night",
+     "start": "22:00",
+     "end": "06:59",
+     "realizations": 0,
+     "by_currency": {}
+    }
+   ],
+   "hourly": [],
+   "trades": [],
+   "timezone": "Europe/London",
+   "filters": {},
+   "diagnostics": {
+    "sources": {
+     "ledger": {
+      "ok": true,
+      "realizations": 6,
+      "open_positions": 1,
+      "skipped": {}
+     },
+     "pa_lab": {
+      "ok": true,
+      "realizations": 2,
+      "open_positions": 0
+     },
+     "smc_lab": {
+      "ok": true,
+      "realizations": 1,
+      "open_positions": 0
+     },
+     "adaptive_lab": {
+      "ok": true,
+      "realizations": 0,
+      "open_positions": 0,
+      "skipped": {}
+     }
+    },
+    "duplicates_dropped": 0,
+    "collected_at": "2026-09-25T00:58:02+00:00"
+   },
+   "conversion": {
+    "display_currency": "USDT",
+    "needed": false,
+    "available": false,
+    "unconverted": [],
+    "note": ""
+   }
+  }
+ },
+ "options": {
+  "sources": [
+   {
+    "key": "trading_instance",
+    "label": "Trading Instance",
+    "trades": 5
+   },
+   {
+    "key": "pa_lab",
+    "label": "Price Action Lab",
+    "trades": 2
+   },
+   {
+    "key": "smc_lab",
+    "label": "SMC Lab",
+    "trades": 1
+   },
+   {
+    "key": "adaptive_lab",
+    "label": "Adaptive MTF Lab",
+    "trades": 0
+   },
+   {
+    "key": "paper_trading",
+    "label": "Paper Trading",
+    "trades": 1
+   }
+  ],
+  "instances": [
+   {
+    "id": "a3f9c2d1e8b74c0f",
+    "name": "Native SMC \u00b7 BTCUSDT",
+    "source": "trading_instance"
+   }
+  ],
+  "strategies": [
+   "Native SMC",
+   "pa_rulebook_v0_1",
+   "price_action_v1:0.1",
+   "smc_ladder"
+  ],
+  "symbols": [
+   "BTCUSDT",
+   "ETHUSDT",
+   "EURGBP",
+   "SOLUSDT"
+  ],
+  "timeframes": [
+   "15m",
+   "5m"
+  ],
+  "diagnostics": {
+   "sources": {
+    "ledger": {
+     "ok": true,
+     "realizations": 6,
+     "open_positions": 1,
+     "skipped": {}
+    },
+    "pa_lab": {
+     "ok": true,
+     "realizations": 2,
+     "open_positions": 0
+    },
+    "smc_lab": {
+     "ok": true,
+     "realizations": 1,
+     "open_positions": 0
+    },
+    "adaptive_lab": {
+     "ok": true,
+     "realizations": 0,
+     "open_positions": 0,
+     "skipped": {}
+    }
+   },
+   "duplicates_dropped": 0,
+   "collected_at": "2026-09-25T00:58:02+00:00"
+  },
+  "timezone": "Europe/London",
+  "display_currency": "USDT"
+ }
+}

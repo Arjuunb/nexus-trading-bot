@@ -2,8 +2,12 @@ import { test, expect } from "@playwright/test";
 import { mockApi } from "./mock";
 
 const NAV = [
-  "Dashboard", "Trading Instances", "Strategy Studio", "Paper Trading", "Live Trading", "Price Action Lab",
-  "SMC Visual Lab", "SMC Strategy Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation", "Portfolio", "Analytics", "Journal",
+  "Dashboard",
+  "Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading",
+  "Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting",
+  "Optimization Lab", "Forward Validation",
+  "Portfolio", "Analytics",
+  "Calendar", "Journal",
   "Market Data", "Risk & Health",
 ];
 

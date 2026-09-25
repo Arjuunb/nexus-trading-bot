@@ -38,6 +38,7 @@ const SMCAgentPage = lazy(() => import("./pages/SMCAgent"));
 const AdaptiveLabPage = lazy(() => import("./pages/AdaptiveLab"));
 const PriceActionVisualPage = lazy(() => import("./pages/PriceActionVisual"));
 const InstanceVisualLabPage = lazy(() => import("./pages/InstanceVisualLab"));
+const CalendarPage = lazy(() => import("./pages/Calendar"));
 import { AppContext, parseHash, slug } from "./app-context";
 
 const MOBILE = "(max-width: 720px)";
@@ -141,6 +142,7 @@ export default function App() {
       case "AI Assistant": return <AIAssistantPage />;
       case "Risk & Health": return <RiskHealthPage tab={route.tab} />;
       case "Evolution": return <EvolutionPage />;
+      case "Calendar": return <CalendarPage />;
       case "Journal": return <JournalPage focusId={route.focusId} tab={route.tab} />;
       case "Settings": return <SettingsPage />;
       case "Alerts": return <AlertsPage />;

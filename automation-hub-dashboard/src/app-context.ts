@@ -34,7 +34,9 @@ export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
   { title: "Trading", items: ["Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading"] },
   { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },
-  { title: "Records", items: ["Journal"] },
+  // Calendar: every source's realized P&L by day. Its own entry, deliberately
+  // not inside Performance (Portfolio/Analytics), which stays as it is.
+  { title: "Records", items: ["Calendar", "Journal"] },
   { title: "System", items: ["Market Data", "Risk & Health"] },
 ];
 
