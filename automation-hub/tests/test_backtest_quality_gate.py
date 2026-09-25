@@ -64,7 +64,8 @@ def test_the_simulator_applies_the_instance_rule_when_asked(monkeypatch):
     name = "3-Candle Rejection · EMA 9/33"
     strategy_presets._run_on(name, "BTCUSDT", "1h", {}, None, rows)
     strategy_presets._run_on(name, "BTCUSDT", "1h", {"quality_gate": "off"}, None, rows)
-    assert seen == [("TradeBrain", 60), ("SafetyOnlyBrain", 0)]
+    strategy_presets._run_on(name, "BTCUSDT", "1h", {"quality_gate": "raw"}, None, rows)
+    assert seen == [("TradeBrain", 60), ("SafetyOnlyBrain", 0), ("NoneType", 0)]
 
 
 def test_the_lab_passes_the_gate_through_and_has_no_score_to_tune_when_off(monkeypatch):
@@ -90,6 +91,9 @@ def test_the_lab_passes_the_gate_through_and_has_no_score_to_tune_when_off(monke
     backtest_lab.out_of_sample("x", "BTCUSDT", "1h", quality_gate="off")
     backtest_lab.monte_carlo("x", "BTCUSDT", "1h", quality_gate="off")
     assert all(t.get("quality_gate") == "off" for t in tunings)
+    tunings.clear()
+    raw = backtest_lab.walk_forward("x", "BTCUSDT", "1h", quality_gate="raw")
+    assert raw["quality_gate"] == "raw" and all(t.get("quality_gate") == "raw" for t in tunings)
     with pytest.raises(ValueError):
         backtest_lab.walk_forward("x", "BTCUSDT", "1h", quality_gate="maybe")
 
@@ -103,7 +107,7 @@ def _script():
     return module
 
 
-def test_the_script_runs_both_gates_and_writes_the_report(monkeypatch, tmp_path, capsys):
+def test_the_script_runs_all_three_modes_and_writes_the_report(monkeypatch, tmp_path, capsys):
     rows = generate_bars(n=1500, timeframe="1h", seed=4)
     monkeypatch.setattr(backtest_lab, "_fetch", lambda *_a, **_k: (rows, "generated (test)"))
     out = tmp_path / "report.json"
@@ -111,15 +115,73 @@ def test_the_script_runs_both_gates_and_writes_the_report(monkeypatch, tmp_path,
                            "--runs", "100", "--no-sync", "--json", str(out)]) == 0
     printed = capsys.readouterr().out
     assert "data: generated (test)" in printed            # never claims real data it did not use
-    assert "gate on" in printed and "gate off" in printed
+    assert "gate on" in printed and "gate off" in printed and "raw" in printed
+    assert "No instance runs that way" in printed
     assert "profitable" not in printed.lower()
     report = json.loads(out.read_text())
     [market] = report["markets"]
-    assert report["gates"] == ["on", "off"] and market["candles"] == 1500
-    for gate in ("on", "off"):
-        assert set(market[gate]) == {"whole_period", "out_of_sample", "walk_forward", "monte_carlo"}
+    assert report["gates"] == ["on", "off", "raw"] and market["candles"] == 1500
+    for gate in ("on", "off", "raw"):
+        assert set(market[gate]) == {"whole_period", "streak_lock", "out_of_sample",
+                                     "walk_forward", "monte_carlo"}
         assert "paths" not in market[gate]["monte_carlo"]
-    assert market["off"]["walk_forward"]["quality_gate"] == "off"
+        assert market[gate]["walk_forward"]["quality_gate"] == gate
+    assert market["raw"]["streak_lock"] is None         # no Brain, so no lock
+
+
+def test_a_run_frozen_by_the_losing_streak_block_is_called_out():
+    script = _script()
+    results = {"blocked": [
+        {"time": "2026-07-01T10:00:00+00:00", "reason": "score 40 < 60"},
+        {"time": "2026-07-02T09:15:00+00:00", "reason": "losing-streak cooldown (5 in a row)"},
+        {"time": "2026-08-11T12:00:00+00:00", "reason": "losing-streak cooldown (5 in a row)"},
+    ]}
+    lock = script.streak_lock(results)
+    assert lock == {"from": "2026-07-02", "signals_refused": 2}
+    assert script.streak_lock({"blocked": [{"reason": "score 40 < 60"}]}) is None
+    report = {"gates": ["on"], "markets": [{
+        "symbol": "BTCUSDT", "timeframe": "15m",
+        "on": {"whole_period": {"trades": 10}, "streak_lock": lock,
+               "out_of_sample": {}, "walk_forward": {}, "monte_carlo": {}}}]}
+    lines = "\n".join(script.summary_rows(report))
+    assert "locked the Decision Brain on 2026-07-02" in lines and "2 signals after that were refused" in lines
+
+
+def test_the_simulator_really_locks_after_five_losses():
+    """Why the report says so: the streak only resets on a win, and every
+    signal after the fifth loss is refused, so no win can ever come."""
+    from datetime import datetime, timedelta, timezone
+
+    from bot.types import Bar, Signal, SignalType
+    from strategies.custom import simulate_strategy
+
+    t0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    bars, price = [], 100.0
+    for i in range(400):                       # a steady decline: every long is stopped out
+        nxt = price * 0.997
+        bars.append(Bar(t0 + timedelta(hours=i), price, price * 1.001, nxt * 0.999, nxt, 1.0))
+        price = nxt
+
+    class LongEveryFiveBars:
+        def __init__(self):
+            self.bars = []
+
+        def on_bar(self, bar):
+            self.bars.append(bar)
+            if len(self.bars) < 70 or len(self.bars) % 5:
+                return None
+            # 1% stop, 2R target: nothing the size/account safety blocks object to.
+            return Signal(timestamp=bar.timestamp, symbol="BTCUSDT", type=SignalType.LONG,
+                          entry=bar.close, stop_loss=bar.close * 0.99,
+                          take_profit=bar.close * 1.02, reason="test")
+
+    results = simulate_strategy(LongEveryFiveBars(), bars, brain=SafetyOnlyBrain(), min_score=0,
+                                manage=False)
+    trades = results["trades"]
+    refused = [b for b in results["blocked"] if b["reason"].startswith("losing-streak cooldown")]
+    assert len(trades) == 5 and all(t["r"] < 0 for t in trades)
+    assert len(refused) > 40                   # every later signal, to the end of the data
+    assert min(b["time"] for b in refused) >= max(t["exit_time"] for t in trades)
 
 
 def test_the_script_refuses_an_unknown_strategy(capsys):

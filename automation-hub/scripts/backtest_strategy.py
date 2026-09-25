@@ -2,8 +2,12 @@
 """Backtest one strategy on real Binance candles, with the robustness checks.
 
 By default: the owner's 3-Candle Rejection · EMA 9/33 on BTCUSDT and
-ETHUSDT, 15m and 1h, with the Decision Brain quality gate both on (what an
-instance does by default) and off (what the per-instance switch does).
+ETHUSDT, 15m and 1h, in three modes:
+
+* ``on``  -- the Decision Brain quality gate, what an instance does by default;
+* ``off`` -- the per-instance gate-off switch (size/account blocks only);
+* ``raw`` -- research only: the strategy's own signals with no Decision Brain
+  at all. No instance runs this; it measures the strategy by itself.
 
 For each market it
 
@@ -14,6 +18,11 @@ For each market it
    walk-forward (4 folds) and Monte Carlo (1,000 reshuffles of the trades),
    exactly as the Backtesting Lab does (services/backtest_lab.py);
 3. prints one table and a plain verdict, and writes everything to JSON.
+
+It also says when a run stopped trading for good. TradeBrain's
+"losing-streak cooldown" (5 losses in a row) has no end: it lifts only on a
+win, and a blocked strategy cannot win. When it fires, every later signal in
+that run is refused, so the rest of the history is not a test of the strategy.
 
 Costs are the simulator's: 0.04% fee and 0.02% slippage on each side.
 Nothing here trades, places an order or changes an instance.
@@ -77,6 +86,7 @@ def run_market(strategy: str, symbol: str, timeframe: str, bars: int, gates: lis
         whole = lab._metrics_on(strategy, symbol, timeframe, tuning, rows)
         out[gate] = {
             "whole_period": whole[0] if whole else None,
+            "streak_lock": streak_lock(whole[1]) if whole else None,
             "out_of_sample": lab.out_of_sample(strategy, symbol, timeframe, bars=bars, quality_gate=gate),
             "walk_forward": lab.walk_forward(strategy, symbol, timeframe, bars=bars, quality_gate=gate),
             "monte_carlo": lab.monte_carlo(strategy, symbol, timeframe, bars=bars, runs=runs, quality_gate=gate),
@@ -84,6 +94,15 @@ def run_market(strategy: str, symbol: str, timeframe: str, bars: int, gates: lis
         # The fan-chart paths are for the Lab's chart, not a terminal report.
         out[gate]["monte_carlo"].pop("paths", None)
     return out
+
+
+def streak_lock(results: dict) -> dict | None:
+    """When the losing-streak block froze this run, and how much it refused."""
+    locked = [b for b in (results.get("blocked") or [])
+              if str(b.get("reason", "")).startswith("losing-streak cooldown")]
+    if not locked:
+        return None
+    return {"from": str(locked[0].get("time", ""))[:10], "signals_refused": len(locked)}
 
 
 def _fmt(value, spec: str = ".2f") -> str:
@@ -123,6 +142,13 @@ def summary_rows(report: dict) -> list[str]:
                 f"{_fmt(whole.get('profit_factor')):>6}{_fmt(whole.get('net_r'), '+.1f'):>8}"
                 f"{_fmt(whole.get('max_drawdown_pct'), '.1f'):>8}  {oos_text:<22}{wf_text:<22}{mc_text:<20}")
             name = ""
+    for market in report["markets"]:
+        for gate in report["gates"]:
+            lock = (market.get(gate) or {}).get("streak_lock")
+            if lock:
+                lines.append(f"  ! {market['symbol']} {market['timeframe']} gate {gate}: 5 losses in a row "
+                             f"locked the Decision Brain on {lock['from']}; the {lock['signals_refused']} "
+                             "signals after that were refused, so the rest of this run tested nothing.")
     return lines
 
 
@@ -137,7 +163,7 @@ def verdict(report: dict) -> list[str]:
                  and ((m[gate]["out_of_sample"] or {}).get("test") or {}).get("trades", 0) >= 10
                  and (m[gate]["walk_forward"] or {}).get("verdict") == "robust"
                  and (m[gate]["walk_forward"] or {}).get("total_folds", 0) >= 2]
-        label = "gate on " if gate == "on" else "gate off"
+        label = {"on": "gate on ", "off": "gate off", "raw": "raw     "}[gate]
         if trades < MIN_TRADES:
             lines.append(f"{label}: {trades} trades in total — too few to say anything.")
         elif holds:
@@ -155,8 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--symbols", default="BTCUSDT,ETHUSDT")
     parser.add_argument("--timeframes", default="15m,1h")
     parser.add_argument("--bars", type=int, default=10000, help="candles per market (max 10000)")
-    parser.add_argument("--gate", choices=("on", "off", "both"), default="both",
-                        help="Decision Brain quality gate: on (instance default), off (the switch), or both")
+    parser.add_argument("--gate", choices=("on", "off", "raw", "both", "all"), default="all",
+                        help="on (instance default), off (the switch), raw (no Decision Brain; research "
+                             "only), both (on and off) or all")
     parser.add_argument("--runs", type=int, default=1000, help="Monte Carlo reshuffles")
     parser.add_argument("--no-sync", action="store_true", help="use only candles already cached")
     parser.add_argument("--json", default="", help="where to write the full report (default: beside the market cache)")
@@ -166,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.strategy not in PRESETS:
         print(f"Unknown strategy {args.strategy!r}. Presets: {', '.join(PRESETS)}", file=sys.stderr)
         return 2
-    gates = ["on", "off"] if args.gate == "both" else [args.gate]
+    gates = {"both": ["on", "off"], "all": ["on", "off", "raw"]}.get(args.gate, [args.gate])
     symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()]
     timeframes = [t.strip() for t in args.timeframes.split(",") if t.strip()]
     bars = max(600, min(int(args.bars), 10000))
@@ -187,6 +214,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"\n{args.strategy} · data: {', '.join(sources)} · {report['costs']}\n")
     print("\n".join(summary_rows(report)))
     print("\n" + "\n".join(verdict(report)))
+    if "raw" in gates:
+        print("raw = the strategy with no Decision Brain. No instance runs that way; it shows the "
+              "strategy's own rules.")
     print("\nR = the trade's initial risk. A backtest is not a forward result; any candidate still "
           "has to prove itself on paper with live data.")
 

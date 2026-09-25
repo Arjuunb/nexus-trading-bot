@@ -36,10 +36,14 @@ def _metrics_on(strategy, symbol, timeframe, tuning, rows, custom_spec=None):
 
 
 def _gate(quality_gate: str) -> dict:
-    """Tuning that selects the gate-off rule, or nothing for the default gate."""
-    if str(quality_gate).lower() not in ("on", "off"):
-        raise ValueError("quality_gate must be 'on' or 'off'")
-    return {"quality_gate": "off"} if str(quality_gate).lower() == "off" else {}
+    """Tuning for a quality-gate mode: nothing for the default gate, the
+    gate-off rule an instance can switch to, or ``raw`` -- research only, the
+    strategy's own signals with no Decision Brain at all, which no instance
+    runs."""
+    mode = str(quality_gate).lower()
+    if mode not in ("on", "off", "raw"):
+        raise ValueError("quality_gate must be 'on', 'off' or 'raw'")
+    return {} if mode == "on" else {"quality_gate": mode}
 
 
 def _trade_rs(results) -> list:
@@ -54,8 +58,9 @@ def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int
     on the next (unseen) block, and aggregate the out-of-sample result.
 
     ``quality_gate="off"`` runs the gate-off rule a Trading Instance can be
-    switched to (services/quality_gate.py). There is no score to optimise
-    then, so each fold is a plain train/test pair."""
+    switched to (services/quality_gate.py); ``"raw"`` runs the strategy with
+    no Decision Brain. There is no score to optimise then, so each fold is a
+    plain train/test pair."""
     gate = _gate(quality_gate)
     rows, src = _fetch(symbol, timeframe, bars)
     if not rows:
@@ -94,7 +99,7 @@ def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int
     else:
         verdict, note = "mixed", "Some folds hold up, others don't — treat the edge as marginal."
     return {"available": True, "data_source": src, "symbol": symbol, "timeframe": timeframe,
-            "quality_gate": "off" if gate else "on",
+            "quality_gate": gate.get("quality_gate", "on"),
             "folds": out, "total_folds": total, "positive_folds": pos,
             "oos_net_r": oos, "verdict": verdict, "note": note}
 
