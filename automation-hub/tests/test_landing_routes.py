@@ -89,3 +89,18 @@ def test_landing_pages_registered_when_the_build_is_bundled(monkeypatch, tmp_pat
     served = {getattr(r, "path", "") for r in app_module.app.routes}
     for page in app_module._LANDING_PAGES:
         assert f"/{page}" in served, f"/{page} is not served"
+
+
+def test_supabase_email_links_land_on_the_spa_pages_that_can_finish_them():
+    """Supabase sends the reset and verification emails, and its links carry the
+    session in the URL fragment, which only the SPA reads. Served by the
+    server-rendered pages (which use the local users table), a reset link showed
+    "Link missing" and the password could never be changed."""
+    supabase = app_module._landing_auth_pages("supabase")
+    legacy = app_module._landing_auth_pages("legacy")
+    for page in ("forgot-password", "reset-password", "verify-email"):
+        assert page in supabase
+        assert page not in legacy          # legacy accounts live in this app's table
+    for page in ("login", "register", "session-expired"):
+        assert page in supabase and page in legacy
+    assert "two-factor" not in supabase and "two-factor" not in legacy

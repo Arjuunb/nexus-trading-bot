@@ -575,16 +575,32 @@ def _serve_landing(request: Optional[Request] = None) -> HTMLResponse:
     return HTMLResponse(html, headers=headers)
 
 
+def _landing_auth_pages(auth_mode: str) -> tuple[str, ...]:
+    """The /auth/* pages the landing SPA serves (GET only; every POST stays here).
+
+    Which store owns accounts decides who can finish the email flows. In legacy
+    mode that is this app's users table, so forgot/reset password and
+    verify-email are the server-rendered pages below, and the landing's
+    versions would reset or confirm nobody. With Supabase Auth it is the
+    reverse: Supabase sends the reset and verification emails, and its links
+    arrive at /auth/reset-password and /auth/verify-email carrying the session
+    in the URL fragment, which only the SPA can read. The server pages there
+    work against the local table, which holds no Supabase account, so a reset
+    link showed "Link missing" and could never be completed."""
+    pages = ("login", "register", "session-expired")
+    if auth_mode == "supabase":
+        pages += ("forgot-password", "reset-password", "verify-email")
+    return pages
+
+
 # Single-origin routing (only when the landing build is bundled): the public
 # landing SPA owns "/", "/auth/*" and "/settings/*"; the dashboard lives at "/app"
 # and stays session-gated. BrowserRouter paths need a real HTML response per route.
 if _LANDING_READY:
-    # Only the SPA shells that merely forward to the backend. The functional
-    # flows — forgot/reset password, verify-email, two-factor — are served by
-    # this app, because they need the users table and the session cookie. The
-    # landing's versions of those pages were Supabase stubs against a second,
-    # empty identity store; routing to them would authenticate nobody.
-    _LANDING_AUTH = ("login", "register", "session-expired")
+    # Registered before the server-rendered auth pages further down, so these
+    # win for GET. Two-factor always stays here: it completes this app's own
+    # pending-2FA cookie.
+    _LANDING_AUTH = _landing_auth_pages(settings.auth_mode)
 
     def _landing_page(request: Request) -> HTMLResponse:
         return _serve_landing(request)

@@ -7,9 +7,11 @@ export interface AuthResult {
   ok: boolean;
   demo: false;
   message: string;
+  /** Machine-readable reason, so a form can offer the right next step. */
+  code?: "email_not_verified";
 }
 
-const FAIL = (message: string): AuthResult => ({ ok: false, demo: false, message });
+const FAIL = (message: string, code?: AuthResult["code"]): AuthResult => ({ ok: false, demo: false, message, code });
 const OK = (message: string): AuthResult => ({ ok: true, demo: false, message });
 const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/auth/reset-password` : undefined;
 const verificationRedirect = typeof window !== "undefined" ? `${window.location.origin}/auth/verify-email` : undefined;
@@ -61,10 +63,15 @@ export const auth = {
     if (!supabase) return configuredError();
     window.localStorage.setItem(REMEMBER_KEY, String(remember));
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) return FAIL(error.message);
+    const unverified = "Verify your email before opening the dashboard. We can send another verification email.";
+    if (error) {
+      // Supabase refuses an unconfirmed address outright when confirmation is required.
+      const notConfirmed = (error as { code?: string }).code === "email_not_confirmed" || /email not confirmed/i.test(error.message);
+      return notConfirmed ? FAIL(unverified, "email_not_verified") : FAIL(error.message);
+    }
     if (!data.user?.email_confirmed_at) {
       await supabase.auth.signOut({ scope: "local" });
-      return FAIL("Verify your email before opening the dashboard. We can send another verification email.");
+      return FAIL(unverified, "email_not_verified");
     }
     return bridge(data.session?.access_token ?? "", remember);
   },

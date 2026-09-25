@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowLeft } from "lucide-react";
@@ -32,6 +32,8 @@ const panel = {
  */
 export default function AuthSplit() {
   const { pathname } = useLocation();
+  // Typed on one form, still there on the other: switching tabs keeps the email.
+  const [email, setEmail] = useState("");
   const index = Math.max(0, TABS.findIndex((t) => t.to === pathname));
   const previous = useRef(index);
   const direction = index === previous.current ? 0 : index > previous.current ? 1 : -1;
@@ -109,7 +111,9 @@ export default function AuthSplit() {
                 exit="exit"
                 transition={{ duration: 0.2, ease: EASE }}
               >
-                {index === 1 ? <Register /> : <Login />}
+                {index === 1
+                  ? <Register email={email} onEmailChange={setEmail} />
+                  : <Login email={email} onEmailChange={setEmail} />}
               </motion.div>
             </AnimatePresence>
 
