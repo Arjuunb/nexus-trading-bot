@@ -268,6 +268,10 @@ instance_manager.event_guard = InstanceEventGuard(
 from services.public_track_record import PublicTrackRecord  # noqa: E402
 instance_manager.track_record = PublicTrackRecord(
     _os.path.join(_os.path.dirname(settings.providers_path), "public_track_record.json"))
+# Opt-in per instance: the Decision Brain score stops blocking its entries.
+from services.instance_switches import InstanceSwitches  # noqa: E402
+instance_manager.quality_gate = InstanceSwitches(
+    _os.path.join(_os.path.dirname(settings.providers_path), "instance_quality_gate.json"))
 
 def _instance_execution_status():
     rows = [instance_manager.status(item.id) for item in instance_manager._instances.values()

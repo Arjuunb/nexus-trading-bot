@@ -1221,6 +1221,10 @@ class TradingInstanceManager:
         # Opt-in public paper record (services/public_track_record.py), also
         # attached by the server. Nothing is published unless switched on.
         self.track_record = None
+        # Opt-in per instance: the Decision Brain quality score stops blocking
+        # this instance's entries (an InstanceSwitches, attached by the
+        # server). None, or no entry for the instance, keeps the gate on.
+        self.quality_gate = None
         # Instance workers own their positions, but production risk policy is
         # supplied by the server and applied to every isolated pipeline. These
         # values were previously omitted, silently disabling several configured
@@ -1670,6 +1674,8 @@ class TradingInstanceManager:
                 self.event_guard.forget(instance_id)
             if self.track_record is not None:
                 self.track_record.forget(instance_id)
+            if self.quality_gate is not None:
+                self.quality_gate.forget(instance_id)
             # A terminal-error worker has stopped its engine thread, but its
             # independently owned WebSocket feed may still be alive. Cleanup is
             # best-effort after durable deletion; stale network resources must
@@ -2117,6 +2123,9 @@ class TradingInstanceManager:
             engine.strategy_version = inst.strategy_version
             engine.decisions = self.decision_store
             engine.reports = self.cycle_store
+            if self.quality_gate is not None:
+                # Read per signal, so the switch applies without a rebuild.
+                engine.quality_gate_bypass = lambda: self.quality_gate.enabled(instance_id)
             self._runtime[instance_id] = (engine, paper, pipeline, controls)
             # A start with the entry gate closed IS a paused instance. Writing
             # "starting" over it destroyed the only durable record that the
@@ -3554,7 +3563,17 @@ class TradingInstanceManager:
                 },
                 "metrics": metrics,
                 "event_guard": self._event_guard_state(inst.id),
+                "quality_gate": self.quality_gate_state(inst.id),
                 "reboot": reboot}
+
+    def quality_gate_state(self, instance_id: str) -> dict | None:
+        if self.quality_gate is None:
+            return None
+        row = self.quality_gate.row(instance_id)
+        runtime = self._runtime.get(instance_id)
+        min_score = runtime[0].min_quality_score if runtime else int(os.environ.get("HUB_MIN_SCORE", "60"))
+        return {"enforced": not row.get("enabled"), "min_score": min_score,
+                "updated_at": row.get("updated_at"), "by": row.get("by") or None}
 
     def _event_guard_state(self, instance_id: str) -> dict | None:
         if self.event_guard is None:

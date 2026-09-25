@@ -631,6 +631,47 @@ def update_instance_public_record(instance_id: str, body: PublicRecordUpdate, re
     return record.state(manager, instance_id)
 
 
+class QualityGateUpdate(BaseModel):
+    enforced: bool
+
+
+@router.get("/instances/{instance_id}/quality-gate")
+def instance_quality_gate(instance_id: str, request: Request = None):  # noqa: B008
+    """Whether the Decision Brain quality score can block this instance's entries."""
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    state = manager.quality_gate_state(instance_id)
+    if state is None:
+        raise HTTPException(503, "The quality gate switch is not available on this server")
+    return state
+
+
+@router.patch("/instances/{instance_id}/quality-gate")
+def update_instance_quality_gate(instance_id: str, body: QualityGateUpdate, request: Request = None,  # noqa: B008
+                                 x_webhook_secret: Optional[str] = Header(default=None)):
+    """Turn the Decision Brain quality gate off or back on for one instance.
+
+    Off means a low score no longer blocks an entry; the score is still
+    computed and journaled, and every risk limit still applies. Takes effect
+    from the next signal without rebuilding the worker."""
+    _wa._check_secret(x_webhook_secret)
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    if manager.quality_gate is None:
+        raise HTTPException(503, "The quality gate switch is not available on this server")
+    manager.quality_gate.set(instance_id, not body.enforced, by=_initiated_by(request))
+    try:
+        manager.store.append_engine_log(
+            instance_id, level="info",
+            message=("Decision Brain quality gate on: entries scoring below the minimum are blocked."
+                     if body.enforced else
+                     "Decision Brain quality gate off for this instance: setups are still scored and "
+                     "journaled, but a low score no longer blocks an entry. Risk limits still apply."))
+    except Exception:  # noqa: BLE001 -- the switch is saved; the log line is a courtesy
+        pass
+    return manager.quality_gate_state(instance_id)
+
+
 @router.post("/instances/{instance_id}/simulation-account/restart")
 def restart_simulation_account(instance_id: str, body: SimulationAccountRestart,
                                request: Request,

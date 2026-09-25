@@ -583,6 +583,7 @@ export interface InstanceEventGuard {
   window: { blackout_before_min: number; blackout_after_min: number; caution_before_min: number };
   error?: string;
 }
+export interface InstanceQualityGate { enforced: boolean; min_score: number; updated_at: string | null; by: string | null; }
 export interface PublicTrackRecordEntry {
   id: string; strategy: string; strategy_version: string; symbol: string; timeframe: string;
   execution: "paper"; market_data: string; fill_model: string; entry_mode: string;

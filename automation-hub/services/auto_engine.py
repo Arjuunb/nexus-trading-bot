@@ -32,6 +32,7 @@ from execution.paper_engine import PaperExecutionEngine
 from services.market_data_freshness import (
     assess_timeframe, grace_for_interval, is_live_source,
 )
+from services.quality_gate import SAFETY_BLOCKS as QUALITY_GATE_SAFETY_BLOCKS, safety_blocks  # noqa: F401
 from services.signal_pipeline import SignalPipeline, gate_blocker
 
 
@@ -66,6 +67,7 @@ def _default_fetcher(symbol: str, timeframe: str, limit: int):
     """Return (bars, source). Real candles when HUB_USE_LIVE_DATA=1, else local."""
     from data.market_data import get_bars
     return get_bars(symbol, n=limit, timeframe=timeframe)
+
 
 
 class AutoStrategyEngine:
@@ -203,6 +205,11 @@ class AutoStrategyEngine:
         # apply the IDENTICAL gate or live results run worse than the promise.
         # 0 disables; the gate stands down below 60 bars of history (warmup).
         self.min_quality_score = int(_os.environ.get("HUB_MIN_SCORE", "60"))
+        # A Trading Instance owner may switch the gate off for one instance
+        # (services/trading_instances.py). The setup is still scored and the
+        # verdict journaled; only a rejection stops blocking the entry. None,
+        # or any error reading the switch, leaves the gate on.
+        self.quality_gate_bypass: Optional[Callable[[], bool]] = None
         from strategies.brain import TradeBrain
         self._quality_brain = TradeBrain()
         # Context-aware modifiers (cross-asset gate / funding / sentiment) —
@@ -1757,6 +1764,16 @@ class AutoStrategyEngine:
                 confidence=getattr(signal, "confidence", None), verdict=v,
                 min_score=self.min_quality_score,
                 regime_hint=getattr(signal, "regime", ""))
+            if decision["decision"] == "rejected" and self._quality_gate_bypassed():
+                # services/quality_gate.py: the blocks that guard position
+                # size and the account still apply with the gate off.
+                if safety_blocks(v):
+                    decision["reason"] += ("; the quality gate is off for this instance, but this "
+                                           "block protects position size and always applies")
+                else:
+                    decision["decision"] = "accepted"
+                    decision["reason"] = ("Quality gate off for this instance by its owner; the "
+                                          f"Decision Brain would have rejected it: {decision['reason']}")
             # InstanceLedger carries the persisted ownership boundary.  Keep
             # decision history in that same boundary so the UI never credits a
             # BTC decision from another strategy/instance to this worker.
@@ -2023,6 +2040,14 @@ class AutoStrategyEngine:
             )
         except Exception:  # noqa: BLE001 — evidence must never change execution
             pass
+
+    def _quality_gate_bypassed(self) -> bool:
+        if self.quality_gate_bypass is None:
+            return False
+        try:
+            return bool(self.quality_gate_bypass())
+        except Exception:  # noqa: BLE001 -- an unreadable switch keeps the gate on
+            return False
 
     def _health_factor(self, sym: str) -> float:
         """Return a bounded, evidence-based new-entry risk multiplier.
