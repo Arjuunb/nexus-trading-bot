@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib
 from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from typing import Optional
 
@@ -568,6 +569,66 @@ def update_instance_event_guard(instance_id: str, body: EventGuardUpdate, reques
     except Exception:  # noqa: BLE001 -- the switch is saved; the log line is a courtesy
         pass
     return state
+
+
+class PublicRecordUpdate(BaseModel):
+    published: bool
+
+
+def _track_record():
+    record = getattr(_manager(), "track_record", None)
+    if record is None:
+        raise HTTPException(503, "Public track records are not available on this server")
+    return record
+
+
+@router.get("/public/track-record")
+def public_track_record():
+    """Paper records the owner chose to publish (services/public_track_record.py).
+
+    Unauthenticated, for the public site: percentages of the paper account
+    only, never balances or amounts. Cached for 60 seconds."""
+    manager = _wa.instance_manager
+    record = getattr(manager, "track_record", None)
+    view = {"generated_at": None, "instances": [], "note": "", "min_sample": 0}
+    if record is not None and manager.store.available:
+        try:
+            view = record.build(manager)
+        except Exception:  # noqa: BLE001 -- a public page gets an empty record, never a trace
+            pass
+    return JSONResponse(view, headers={"Cache-Control": "public, max-age=60"})
+
+
+@router.get("/instances/{instance_id}/public-record")
+def instance_public_record(instance_id: str, request: Request = None):  # noqa: B008
+    """Whether this instance's paper record is public, and exactly what the
+    public sees."""
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    return _track_record().state(manager, instance_id)
+
+
+@router.patch("/instances/{instance_id}/public-record")
+def update_instance_public_record(instance_id: str, body: PublicRecordUpdate, request: Request = None,  # noqa: B008
+                                  x_webhook_secret: Optional[str] = Header(default=None)):
+    """Publish or unpublish one instance's paper record. Research replays
+    cannot be published."""
+    _wa._check_secret(x_webhook_secret)
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    record = _track_record()
+    if body.published and not record._eligible(manager, instance_id):
+        raise HTTPException(409, "Only forward paper Trading Instances can be published")
+    record.set(instance_id, body.published, by=_initiated_by(request))
+    try:
+        manager.store.append_engine_log(
+            instance_id, level="info",
+            message=("Paper record published: win rate, return % and drawdown % of this instance "
+                     "are now shown on the public site (no amounts)." if body.published
+                     else "Paper record unpublished; it no longer appears on the public site."))
+    except Exception:  # noqa: BLE001 -- the switch is saved; the log line is a courtesy
+        pass
+    return record.state(manager, instance_id)
 
 
 @router.post("/instances/{instance_id}/simulation-account/restart")

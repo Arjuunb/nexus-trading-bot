@@ -1218,6 +1218,9 @@ class TradingInstanceManager:
         # attaches it after construction; None leaves every pipeline without
         # an economic calendar, as before.
         self.event_guard = None
+        # Opt-in public paper record (services/public_track_record.py), also
+        # attached by the server. Nothing is published unless switched on.
+        self.track_record = None
         # Instance workers own their positions, but production risk policy is
         # supplied by the server and applied to every isolated pipeline. These
         # values were previously omitted, silently disabling several configured
@@ -1665,6 +1668,8 @@ class TradingInstanceManager:
             self.store.delete(instance_id)
             if self.event_guard is not None:
                 self.event_guard.forget(instance_id)
+            if self.track_record is not None:
+                self.track_record.forget(instance_id)
             # A terminal-error worker has stopped its engine thread, but its
             # independently owned WebSocket feed may still be alive. Cleanup is
             # best-effort after durable deletion; stale network resources must

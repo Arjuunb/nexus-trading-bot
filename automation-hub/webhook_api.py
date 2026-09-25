@@ -264,6 +264,10 @@ from services.instance_event_guard import InstanceEventGuard  # noqa: E402
 instance_manager.event_guard = InstanceEventGuard(
     _os.path.join(_os.path.dirname(settings.providers_path), "instance_event_guard.json"),
     econ_calendar)
+# Opt-in public paper record per instance: off until the owner publishes one.
+from services.public_track_record import PublicTrackRecord  # noqa: E402
+instance_manager.track_record = PublicTrackRecord(
+    _os.path.join(_os.path.dirname(settings.providers_path), "public_track_record.json"))
 
 def _instance_execution_status():
     rows = [instance_manager.status(item.id) for item in instance_manager._instances.values()

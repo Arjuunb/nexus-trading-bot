@@ -583,6 +583,19 @@ export interface InstanceEventGuard {
   window: { blackout_before_min: number; blackout_after_min: number; caution_before_min: number };
   error?: string;
 }
+export interface PublicTrackRecordEntry {
+  id: string; strategy: string; strategy_version: string; symbol: string; timeframe: string;
+  execution: "paper"; market_data: string; fill_model: string; entry_mode: string;
+  risk_per_trade_pct: number; state: string; session_number: number; session_started_at: string | null;
+  published_since: string | null; closed_trades: number; wins: number; losses: number;
+  win_rate_pct: number; profit_factor: number | null; return_pct: number; max_drawdown_pct: number;
+  longest_losing_streak: number; open_positions: number | null; last_trade_at: string | null;
+  sample_note: string | null; equity_index: { t: string | null; index: number }[];
+}
+export interface InstancePublicRecord {
+  published: boolean; since: string | null; updated_at: string | null; eligible: boolean;
+  preview: PublicTrackRecordEntry | null; note: string;
+}
 export interface EconProtection { mode: string; risk_multiplier: number; stop_multiplier: number; halt_new_entries: boolean; minutes_to_event: number | null; next_event: { name: string; time: string } | null; actions: string[]; note: string; connected: boolean; tracked_event_types: { name: string; desc: string }[]; feed?: EconFeedStatus; manual_events?: number; }
 export interface JournalEntry { id: string; symbol: string; strategy: string; side: string; result: string; rr: number | null; notes: string; emotions: string; mistakes: string[]; lessons: string[]; tags: string[]; created_at: string; snapshot: { symbol: string; timeframe: string; entry_idx: number | null; exit_idx: number | null }; }
 export interface BrokerStatus { name: string; kind: string; connected: boolean; mode: string; live_enabled: boolean; note: string; }

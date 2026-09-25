@@ -228,6 +228,7 @@ _AUTH_EXEMPT = ("/login", "/signup", "/auth/", "/webhook", "/assets",
                 "/og-image", "/logo-mark", "/site.webmanifest", "/robots.txt",
                 "/sitemap.xml", "/.well-known/security.txt",
                 "/status/public",  # the public status feed: it must answer people who cannot sign in
+                "/public/track-record",  # paper records the owner chose to publish; percent only
                 "/v1/")  # the public API authenticates every call itself, with API keys
 
 # The public marketing site's pages.

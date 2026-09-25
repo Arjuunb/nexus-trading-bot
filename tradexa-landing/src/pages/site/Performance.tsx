@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { AlertTriangle, CandlestickChart, FlaskConical, Scale, ShieldCheck, type LucideIcon } from "lucide-react";
 import { PerformanceBackdrop } from "@/components/site/backdrops";
+import PaperRecord from "@/components/site/PaperRecord";
 import { useRouteMeta } from "@/site/seo";
 import { routeFor, prefetchRoute } from "@/site/routes";
 import { cn } from "@/lib/utils";
@@ -20,8 +21,9 @@ const EASE = [0.22, 1, 0.36, 1] as const;
  * (STRATEGY_VALIDATION_REPORT.md, 2026-08-13): no strategy has a verified
  * positive edge. Every figure below is copied from that report, and the method
  * cards describe only what the code does (services/fill_model.py,
- * services/validation.py, services/forward_validation.py). When forward paper
- * trading supports a result, it is published here with its sample and costs.
+ * services/validation.py, services/forward_validation.py). Forward paper
+ * records appear under "Forward paper record" only when the owner publishes a
+ * Trading Instance, straight from its ledger (GET /public/track-record).
  */
 
 interface Verdict {
@@ -160,6 +162,11 @@ export default function PerformancePage() {
           authorises live trading or supports a profitability claim — and a strategy marked
           “insufficient evidence” has not shown an edge, it has only not been ruled out.
         </p>
+      </Section>
+
+      {/* ── Forward paper ──────────────────────────────────────────────── */}
+      <Section eyebrow="Forward paper · live Binance data" title="Forward paper record">
+        <PaperRecord />
       </Section>
 
       {/* ── Method ─────────────────────────────────────────────────────── */}
