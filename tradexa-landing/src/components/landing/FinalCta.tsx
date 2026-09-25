@@ -1,9 +1,9 @@
 import { ArrowRight, ShieldCheck, Eye, Ban } from "lucide-react";
 import { GridTexture } from "@/components/site/backdrops";
 import { Reveal } from "@/components/Reveal";
+import { ScrollScale } from "@/components/motion/Scroll";
 import { Button } from "@/components/ui/Button";
 import { Magnetic } from "@/components/motion/Magnetic";
-import { BrainScanner } from "./BrainScanner";
 import { APP_URL, SIGNUP_URL } from "@/lib/utils";
 
 const ASSURANCES = [
@@ -12,8 +12,8 @@ const ASSURANCES = [
   { icon: Ban, text: "Trade-only API keys · withdrawals impossible" },
 ];
 
-/** Closing section: the Decision Engine scanner (the page's third signature
- *  animation) beside the final call to action. */
+/** Closing section: the final call to action, on its own. The decision demos
+ *  earlier on the page already show the engine at work. */
 export function FinalCta() {
   return (
     <section id="cta" className="section relative">
@@ -22,29 +22,30 @@ export function FinalCta() {
       <div className="container-x">
         {/* A slow light orbits the card's 1px border: the frame is a conic
             gradient turning behind an opaque card inset by one pixel. */}
-        <div className="relative overflow-hidden rounded-2xl p-px shadow-[0_40px_120px_-40px_rgba(200,169,75,0.25)]">
+        <ScrollScale from={0.92}>
+        <div className="relative overflow-hidden rounded-2xl p-px shadow-[0_40px_120px_-40px_rgba(234,181,79,0.25)]">
           <div aria-hidden className="absolute inset-0 rounded-2xl bg-line" />
           <div
             aria-hidden
             className="pointer-events-none absolute left-1/2 top-1/2 aspect-square w-[180%] -translate-x-1/2 -translate-y-1/2 motion-safe:animate-orbit"
-            style={{ background: "conic-gradient(from 0deg, transparent 0deg 250deg, rgba(231,206,134,0.65) 300deg, transparent 340deg)" }}
+            style={{ background: "conic-gradient(from 0deg, transparent 0deg 250deg, rgba(242,199,102,0.65) 300deg, transparent 340deg)" }}
           />
         <div className="relative overflow-hidden rounded-[calc(1.25rem-1px)] bg-ink-800 px-6 py-14 sm:px-12">
           <div className="pointer-events-none absolute inset-0 bg-radial-fade" />
-          <div className="relative grid items-center gap-12 lg:grid-cols-[1fr_1.05fr]">
+          <div className="relative mx-auto max-w-2xl text-center">
             <Reveal>
               <span className="eyebrow">Watch it think</span>
               <h2 className="mt-4 text-balance text-3xl font-bold tracking-tight text-white sm:text-4xl">
-                A brain that says <span className="text-emerald-soft">yes</span> —{" "}
-                and knows when to say <span className="text-loss-soft">no</span>.
+                A brain that says <span className="text-gold">yes</span> —{" "}
+                and knows when to say <span className="text-gold">no</span>.
               </h2>
-              <p className="mt-4 max-w-md text-white/55">
+              <p className="mx-auto mt-4 max-w-lg text-white/55">
                 The Decision Engine scores every setup before a cent moves. Weak setups are
                 skipped, strong ones execute — and either way it’s remembered, so the next
                 decision starts smarter.
               </p>
 
-              <ul className="mt-6 space-y-2.5">
+              <ul className="mx-auto mt-7 inline-flex flex-col items-start gap-2.5 text-left">
                 {ASSURANCES.map((a) => (
                   <li key={a.text} className="flex items-center gap-2.5 text-sm text-white/65">
                     <a.icon className="h-4 w-4 shrink-0 text-gold" />
@@ -53,7 +54,7 @@ export function FinalCta() {
                 ))}
               </ul>
 
-              <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="mt-9 flex flex-col justify-center gap-3 sm:flex-row sm:items-center">
                 <Magnetic>
                   <a href={APP_URL} className="w-full sm:w-auto">
                     <Button size="lg" className="group w-full sm:w-auto">
@@ -69,16 +70,10 @@ export function FinalCta() {
                 </a>
               </div>
             </Reveal>
-
-            <Reveal delay={0.15}>
-              <BrainScanner />
-              <p className="mt-3 px-1 font-mono text-[11px] leading-relaxed text-white/35">
-                // looping demo of the evaluation pipeline · not live market data
-              </p>
-            </Reveal>
           </div>
         </div>
         </div>
+        </ScrollScale>
       </div>
     </section>
   );

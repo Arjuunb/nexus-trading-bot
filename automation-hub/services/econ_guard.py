@@ -11,12 +11,14 @@ configured we report it honestly rather than inventing dates.
 from __future__ import annotations
 
 import json
-import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 HIGH_IMPACT = ("CPI", "FOMC", "NFP", "Interest rate decision", "Rate decision",
-               "PCE", "Unemployment")
+               "PCE", "Unemployment",
+               # the same releases under the names calendars publish them as
+               "Non-Farm", "Nonfarm", "Federal Funds Rate", "Fed Funds Rate")
 EVENT_TYPES = [
     {"name": "CPI", "impact": "high", "desc": "US inflation print"},
     {"name": "FOMC", "impact": "high", "desc": "Fed rate decision / statement"},
@@ -38,6 +40,18 @@ def _is_high(name: str) -> bool:
     return any(h.upper() in n for h in HIGH_IMPACT)
 
 
+def is_high_impact(event: dict) -> bool:
+    """A named high-impact release, or one a calendar feed itself rated high.
+
+    Hand-entered events count by name (so a typo'd "impact: high" on a minor
+    release does not halt trading); feed events carry the provider's own
+    rating, which covers releases the name list does not (GDP, retail sales,
+    ISM)."""
+    if _is_high(event.get("name", "")):
+        return True
+    return bool(event.get("source")) and str(event.get("impact", "")).lower() == "high"
+
+
 def evaluate(events: list, now=None, *, blackout_min: int = 30, caution_min: int = 120) -> dict:
     """Protection decision for the nearest upcoming high-impact event.
 
@@ -47,7 +61,7 @@ def evaluate(events: list, now=None, *, blackout_min: int = 30, caution_min: int
     upcoming = []
     for e in events or []:
         t = _parse(e.get("time"))
-        if t and t >= now and _is_high(e.get("name", "")):
+        if t and t >= now and is_high_impact(e):
             upcoming.append((t, e))
     upcoming.sort(key=lambda x: x[0])
 
@@ -78,28 +92,79 @@ def evaluate(events: list, now=None, *, blackout_min: int = 30, caution_min: int
     }
 
 
+PROVIDER_FRESH_S = 24 * 3600   # a feed that has not succeeded in a day no longer counts as connected
+
+
 class EconCalendar:
-    """User-set / provider-fed upcoming events (gitignored JSON)."""
+    """Upcoming events: hand-entered ones plus those a calendar feed supplied
+    (services/econ_feed.py). Stored as JSON beside the provider settings."""
 
     def __init__(self, path: str | None = None):
         self.path = Path(path) if path else None
+        # The feed thread and the API both rewrite the file; each write is a
+        # read-modify-write of the other's half, so they take turns.
+        self._lock = threading.Lock()
 
-    def events(self) -> list:
+    def _read(self) -> dict:
         try:
             if self.path and self.path.exists():
-                return json.loads(self.path.read_text()).get("events", [])
+                data = json.loads(self.path.read_text())
+                return data if isinstance(data, dict) else {}
         except Exception:  # noqa: BLE001
             pass
-        return []
+        return {}
+
+    def _write(self, data: dict) -> None:
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+            tmp.write_text(json.dumps(data, indent=2))
+            tmp.replace(self.path)   # a reader never sees half a file
+
+    def manual_events(self) -> list:
+        return list(self._read().get("events", []))
+
+    def provider_events(self) -> list:
+        return list((self._read().get("provider") or {}).get("events", []))
+
+    def events(self) -> list:
+        """Every known event, hand-entered first; a release both sources know
+        (same name and time) appears once."""
+        seen, out = set(), []
+        for e in self.manual_events() + self.provider_events():
+            key = (e.get("name"), e.get("time"))
+            if key not in seen:
+                seen.add(key)
+                out.append(e)
+        return out
 
     def set_events(self, events: list) -> list:
         clean = [{"name": e.get("name", ""), "impact": e.get("impact", "high"),
                   "time": e.get("time")} for e in (events or []) if e.get("name") and e.get("time")]
-        if self.path:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            self.path.write_text(json.dumps({"events": clean}, indent=2))
+        with self._lock:
+            data = self._read()
+            data["events"] = clean
+            self._write(data)
         return clean
+
+    def set_provider_events(self, events: list, *, fetched_at: datetime, source: str) -> None:
+        with self._lock:
+            data = self._read()
+            data["provider"] = {"source": source, "fetched_at": fetched_at.isoformat(timespec="seconds"),
+                                "events": list(events)}
+            self._write(data)
+
+    def provider_status(self) -> dict:
+        provider = self._read().get("provider") or {}
+        return {"source": provider.get("source"), "fetched_at": provider.get("fetched_at"),
+                "count": len(provider.get("events", []))}
 
     @property
     def connected(self) -> bool:
-        return bool(self.events()) or bool(os.environ.get("ECON_CALENDAR_KEY"))
+        """True when there is something real to act on: hand-entered events,
+        or a feed that succeeded within the last day. A provider key on its
+        own no longer counts; nothing fetched with it."""
+        if self.manual_events():
+            return True
+        fetched = _parse(self.provider_status().get("fetched_at"))
+        return bool(fetched and (datetime.now(timezone.utc) - fetched).total_seconds() <= PROVIDER_FRESH_S)

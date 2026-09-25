@@ -218,10 +218,10 @@ export function ArchitectureDiagram() {
   ];
 
   const TONES = {
-    edge: { stroke: "#243043", fill: "#0E1219", text: "#9FB0C4" },
-    core: { stroke: "#2E7BFF", fill: "#0E1E3C", text: "#7CADFF" },
-    guard: { stroke: "#2FBF71", fill: "#0F2A1D", text: "#4FD98E" },
-    store: { stroke: "#22D3EE", fill: "#0B2A33", text: "#7DE9F8" },
+    edge: { stroke: "#26262B", fill: "#121214", text: "#B0B8C4" },
+    core: { stroke: "#EAB54F", fill: "#1F1A10", text: "#F2C766" },
+    guard: { stroke: "#22C55E", fill: "#0F2A1D", text: "#4ADE80" },
+    store: { stroke: "#B0B8C4", fill: "#17181B", text: "#D4D9E0" },
   } as const;
 
   const edges: { from: string; to: string; d: string; label?: string }[] = [
@@ -240,7 +240,7 @@ export function ArchitectureDiagram() {
            aria-label="Architecture: the shared Binance hub feeds one worker per Trading Instance; the worker runs the strategy and the Decision Brain, keeps trades and decisions in the ledger, and every order passes the risk checks before the paper broker fills it.">
         <defs>
           <marker id="nx-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
-            <path d="M0 0 L8 4 L0 8 z" fill="#3E5675" />
+            <path d="M0 0 L8 4 L0 8 z" fill="#4A4A52" />
           </marker>
         </defs>
 
@@ -251,7 +251,7 @@ export function ArchitectureDiagram() {
               <path
                 d={e.d}
                 fill="none"
-                stroke={lit ? "#2E7BFF" : "#22314A"}
+                stroke={lit ? "#EAB54F" : "#2A2A2F"}
                 strokeWidth={lit ? 1.6 : 1.2}
                 markerEnd="url(#nx-arrow)"
                 className="transition-[stroke] duration-300"
@@ -260,7 +260,7 @@ export function ArchitectureDiagram() {
                 <path
                   d={e.d}
                   fill="none"
-                  stroke="#22D3EE"
+                  stroke="#B0B8C4"
                   strokeWidth="1.4"
                   strokeDasharray="3 21"
                   opacity={lit ? 0.9 : 0.45}
@@ -314,7 +314,7 @@ export function ArchitectureDiagram() {
           );
         })}
 
-        <text x="488" y="184" textAnchor="middle" fill="#4FD98E" className="font-mono" style={{ fontSize: 8 }}>
+        <text x="488" y="184" textAnchor="middle" fill="#4ADE80" className="font-mono" style={{ fontSize: 8 }}>
           no bypass path exists
         </text>
       </svg>

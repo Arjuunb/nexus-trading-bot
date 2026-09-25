@@ -4,6 +4,7 @@ import { Radio, ScanSearch, BrainCircuit, ShieldCheck, Zap, Target } from "lucid
 import { Reveal, SectionHeading } from "@/components/Reveal";
 import { cn } from "@/lib/utils";
 import { useVisibleActive } from "@/lib/useVisibleActive";
+import { Parallax } from "@/components/motion/Scroll";
 
 /**
  * "Watch Nexus take a trade" — the third landing animation. A looping,
@@ -31,9 +32,9 @@ const STEPS = [
   { at: 0.04, icon: Radio, tag: "feed", tone: "dim", text: "Streaming BTC/USDT · 1H candles" },
   { at: 0.22, icon: ScanSearch, tag: "scan", tone: "dim", text: "Setup — bullish BOS + demand-zone retest" },
   { at: 0.34, icon: BrainCircuit, tag: "brain", tone: "gold", text: "Decision Brain — score 87 / 100 ✓" },
-  { at: 0.42, icon: ShieldCheck, tag: "risk", tone: "emerald", text: "Risk gate — size 0.12 · stop 1.2% · target 2R" },
-  { at: 0.50, icon: Zap, tag: "exec", tone: "emerald", text: "BUY 0.12 BTC @ $60,240" },
-  { at: 0.96, icon: Target, tag: "exit", tone: "emerald", text: "Take-profit hit · +2.4R · +$412" },
+  { at: 0.42, icon: ShieldCheck, tag: "risk", tone: "gold", text: "Risk gate — size 0.12 · stop 1.2% · target 2R" },
+  { at: 0.50, icon: Zap, tag: "exec", tone: "gold", text: "BUY 0.12 BTC @ 60,240 · paper" },
+  { at: 0.96, icon: Target, tag: "exit", tone: "emerald", text: "Take-profit hit at the 2R target · closed" },
 ] as const;
 
 const TONE: Record<string, string> = {
@@ -41,7 +42,7 @@ const TONE: Record<string, string> = {
   gold: "border-gold/30 bg-gold/[0.08] text-gold",
   emerald: "border-emerald/30 bg-emerald/[0.08] text-emerald",
 };
-const GOLD = "#C8A94B", EMERALD = "#2FBF71", RED = "#E5605B", LINE = "rgba(255,255,255,0.14)";
+const GOLD = "#EAB54F", EMERALD = "#22C55E", RED = "#EF4444", LINE = "rgba(255,255,255,0.14)";
 
 function dotAt(p: number): [number, number] {
   const f = p * (PTS.length - 1);
@@ -94,11 +95,12 @@ export function TradeInAction() {
         <div className="mt-14 grid gap-6 lg:grid-cols-[1.15fr_1fr] lg:gap-10">
           {/* animated chart */}
           <Reveal>
+            <Parallax distance={18}>
             <div className="rounded-2xl border border-line-strong bg-ink-800/40 p-4 sm:p-6">
               <div className="mb-3 flex items-center justify-between text-xs text-white/45">
                 <span className="font-medium text-white/70">BTC/USDT · 1H · paper · sample data</span>
                 <span className={cn("rounded-full border px-2 py-0.5 font-mono transition-colors",
-                  done ? "border-emerald/40 text-emerald" : "border-line-strong text-white/50")}>
+                  done ? "border-gold/40 text-gold" : "border-line-strong text-white/50")}>
                   {done ? "closed +2.4R" : entered ? "in trade" : "scanning"}
                 </span>
               </div>
@@ -127,6 +129,7 @@ export function TradeInAction() {
                 <circle cx={dx} cy={dy} r={7} fill={done ? EMERALD : "#fff"} opacity={0.18} />
               </svg>
             </div>
+            </Parallax>
           </Reveal>
 
           {/* synchronized steps */}

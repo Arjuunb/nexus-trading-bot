@@ -84,10 +84,23 @@ def econ_protection():
     out = evaluate(_wa.econ_calendar.events())
     out["connected"] = _wa.econ_calendar.connected
     out["tracked_event_types"] = EVENT_TYPES
+    out["feed"] = _wa.econ_feed.status()
+    out["manual_events"] = len(_wa.econ_calendar.manual_events())
     if not _wa.econ_calendar.connected:
-        out["note"] = ("No economic calendar connected — add upcoming events (or an "
-                       "ECON_CALENDAR_KEY) to enable event protection. Not faking dates.")
+        feed = out["feed"]
+        why = ("the calendar feed is turned off (HUB_ECON_FEED=off)" if not feed["enabled"]
+               else f"the calendar feed has not fetched yet ({feed['last_error']})" if feed["last_error"]
+               else "the calendar feed has not fetched yet")
+        out["note"] = (f"No economic calendar connected: {why}, and no events were added by hand. "
+                       "Event protection stays off rather than guessing dates.")
     return out
+
+
+@router.post("/econ/feed/sync")
+def econ_feed_sync(x_webhook_secret: _wa.Optional[str] = _wa.Header(default=None)):
+    """Fetch the economic calendar now instead of waiting for the next refresh."""
+    _wa._check_secret(x_webhook_secret)
+    return _wa.econ_feed.sync()
 
 @router.post("/econ/events")
 def econ_set_events(body: _wa.EconEvents, x_webhook_secret: _wa.Optional[str] = _wa.Header(default=None)):

@@ -1,11 +1,10 @@
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion } from "framer-motion";
 import { ArrowUpRight, Check, ChevronDown, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { FOOTER_GROUPS, ACCENT_CLASSES, routeFor, prefetchRoute } from "@/site/routes";
-import { PLATFORM_STATS, TICKER, TRUST_BADGES, VENUES } from "@/site/platform";
-import { useVisibleActive } from "@/lib/useVisibleActive";
+import { PLATFORM_STATS, TRUST_BADGES, VENUES } from "@/site/platform";
 import { APP_URL, LOGIN_URL, cn } from "@/lib/utils";
 
 /**
@@ -26,62 +25,6 @@ import { APP_URL, LOGIN_URL, cn } from "@/lib/utils";
  */
 
 const EASE = [0.22, 1, 0.36, 1] as const;
-
-/* ── Market tape ──────────────────────────────────────────────────────── */
-
-/**
- * The tape.
- *
- * Duplicated once and translated by exactly -50%, which is what makes the loop
- * seamless: at the end of the cycle the second copy sits precisely where the
- * first started. Paused when off screen or in a background tab — an infinite
- * marquee at the bottom of every page is the definition of work nobody is
- * watching.
- */
-function MarketTape() {
-  const ref = useRef<HTMLDivElement>(null);
-  const active = useVisibleActive(ref, { margin: "100px" });
-  const reduced = useReducedMotion() ?? false;
-  const row = [...TICKER, ...TICKER];
-
-  return (
-    <div ref={ref} className="relative overflow-hidden border-y border-white/[0.06] bg-black">
-      {/* edges fade so symbols enter and leave rather than popping */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 z-10 w-16 bg-gradient-to-r from-black to-transparent sm:w-28"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 z-10 w-16 bg-gradient-to-l from-black to-transparent sm:w-28"
-      />
-
-      <div
-        className={cn("flex w-max", active && !reduced && "motion-safe:animate-tape-scroll")}
-        aria-hidden
-      >
-        {row.map((t, i) => (
-          <span
-            key={i}
-            className="flex shrink-0 items-baseline gap-2.5 border-r border-white/[0.05] px-5 py-2.5 font-mono text-[11px]"
-          >
-            <span className="text-white/35">{t.symbol}</span>
-            <span className="tabular text-white/70">{t.price}</span>
-            <span className={cn("tabular", t.change >= 0 ? "text-emerald-soft" : "text-loss-soft")}>
-              {t.change >= 0 ? "▲" : "▼"} {Math.abs(t.change).toFixed(2)}%
-            </span>
-          </span>
-        ))}
-      </div>
-
-      {/* The tape's prices are written by hand, not streamed. That was said
-          only to screen readers; sighted visitors saw prices that looked live. */}
-      <span className="absolute left-0 top-1/2 z-20 -translate-y-1/2 rounded-r-md border border-l-0 border-white/[0.08] bg-black px-2.5 py-1 font-mono text-[9px] uppercase tracking-[0.14em] text-white/40">
-        Illustrative · not live prices
-      </span>
-    </div>
-  );
-}
 
 /* ── Statistics band ──────────────────────────────────────────────────── */
 
@@ -213,7 +156,7 @@ export function SiteFooter() {
       */}
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_bottom,rgba(201,162,75,0.045),rgba(0,0,0,0)_22rem)]"
+        className="pointer-events-none absolute inset-0 -z-10 bg-[linear-gradient(to_bottom,rgba(234,181,79,0.045),rgba(0,0,0,0)_22rem)]"
       />
       <div
         aria-hidden
@@ -230,7 +173,6 @@ export function SiteFooter() {
         className="h-px w-full bg-gradient-to-r from-transparent via-gold/15 to-transparent blur-[2px]"
       />
 
-      <MarketTape />
       <StatsBand />
 
       {/* main navigation */}
@@ -271,7 +213,7 @@ export function SiteFooter() {
                     className={cn(
                       "inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors duration-200",
                       v.live
-                        ? "border-white/10 text-white/60 hover:border-emerald/40 hover:text-emerald-soft"
+                        ? "border-white/10 text-white/60 hover:border-gold/40 hover:text-gold-soft"
                         : "border-white/[0.06] text-white/25",
                     )}
                   >
@@ -303,23 +245,23 @@ export function SiteFooter() {
         <div className="container-x py-6">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-white/35">
-              <ShieldCheck className="h-3.5 w-3.5 text-emerald-soft" />
+              <ShieldCheck className="h-3.5 w-3.5 text-gold" />
               Built in
             </span>
             {TRUST_BADGES.map((b) => (
               <span
                 key={b.label}
                 title={b.detail}
-                className="group inline-flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-[11px] text-white/50 transition-colors duration-200 hover:border-emerald/30 hover:text-white/80"
+                className="group inline-flex items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.02] px-2.5 py-1 text-[11px] text-white/50 transition-colors duration-200 hover:border-gold/30 hover:text-white/80"
               >
-                <Check className="h-3 w-3 text-emerald-soft/70" />
+                <Check className="h-3 w-3 text-gold/70" />
                 {b.label}
               </span>
             ))}
             <Link
               to="/security"
               onPointerEnter={() => prefetchRoute("/security")}
-              className="text-[11px] text-white/35 underline-offset-4 transition-colors hover:text-emerald-soft hover:underline"
+              className="text-[11px] text-white/35 underline-offset-4 transition-colors hover:text-gold-soft hover:underline"
             >
               How each of these works →
             </Link>

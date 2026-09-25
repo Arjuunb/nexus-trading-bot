@@ -242,7 +242,7 @@ export default function StatusPage() {
                   >
                     <span
                       className={cn(
-                        "absolute -left-8 top-1.5 h-[15px] w-[15px] rounded-full border-2 border-[#050708]",
+                        "absolute -left-8 top-1.5 h-[15px] w-[15px] rounded-full border-2 border-[#060607]",
                         inc.ongoing ? (inc.state === "outage" ? "bg-loss" : "bg-gold") : "bg-emerald",
                       )}
                     />

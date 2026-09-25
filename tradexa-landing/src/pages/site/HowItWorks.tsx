@@ -247,7 +247,7 @@ export default function HowItWorksPage() {
             className="pointer-events-none absolute inset-0 opacity-70"
             style={{
               background:
-                "linear-gradient(100deg, rgba(62,123,214,0.10), rgba(34,211,238,0.07) 40%, rgba(201,162,75,0.10) 100%)",
+                "linear-gradient(100deg, rgba(62,123,214,0.10), rgba(34,211,238,0.07) 40%, rgba(234,181,79,0.10) 100%)",
             }}
           />
           <div className="relative">

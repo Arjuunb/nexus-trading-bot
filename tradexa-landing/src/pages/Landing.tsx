@@ -16,7 +16,6 @@ import { EngineStatusBar } from "@/components/landing/EngineStatusBar";
 const Features = lazy(() => import("@/components/landing/Features").then((m) => ({ default: m.Features })));
 const BotThinking = lazy(() => import("@/components/landing/BotThinking").then((m) => ({ default: m.BotThinking })));
 const EnginePipeline = lazy(() => import("@/components/landing/EnginePipeline").then((m) => ({ default: m.EnginePipeline })));
-const ExecutionFlow = lazy(() => import("@/components/landing/ExecutionFlow").then((m) => ({ default: m.ExecutionFlow })));
 const TradeInAction = lazy(() => import("@/components/landing/TradeInAction").then((m) => ({ default: m.TradeInAction })));
 const MarketScanner = lazy(() => import("@/components/landing/MarketScanner").then((m) => ({ default: m.MarketScanner })));
 const HowItWorks = lazy(() => import("@/components/landing/HowItWorks").then((m) => ({ default: m.HowItWorks })));
@@ -48,7 +47,6 @@ export default function Landing() {
       <DeferredSection minHeight={900}><Features /></DeferredSection>
       <DeferredSection minHeight={760}><BotThinking /></DeferredSection>
       <DeferredSection minHeight={720}><EnginePipeline /></DeferredSection>
-      <DeferredSection minHeight={760}><ExecutionFlow /></DeferredSection>
       <DeferredSection minHeight={820}><TradeInAction /></DeferredSection>
       <DeferredSection minHeight={780}><MarketScanner /></DeferredSection>
       <DeferredSection minHeight={640}><HowItWorks /></DeferredSection>

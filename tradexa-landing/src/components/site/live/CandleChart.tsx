@@ -2,8 +2,8 @@ import { useMemo, useState } from "react";
 import type { Candle } from "./useTape";
 import { cn } from "@/lib/utils";
 
-const UP = "#2FBF71";
-const DOWN = "#E5605B";
+const UP = "#22C55E";
+const DOWN = "#EF4444";
 
 /**
  * A candlestick chart drawn as SVG.
@@ -101,7 +101,7 @@ export function CandleChart({
 
         {/* position overlays — only while they are on the current axis */}
         {inView(entry, min, max) && (
-          <Rule y={y(entry!)} w={plotW} color="#7CADFF" label={`entry ${entry!.toFixed(0)}`} />
+          <Rule y={y(entry!)} w={plotW} color="#F2C766" label={`entry ${entry!.toFixed(0)}`} />
         )}
         {inView(stop, min, max) && (
           <Rule y={y(stop!)} w={plotW} color={DOWN} label={`stop ${stop!.toFixed(0)}`} dashed />
@@ -168,7 +168,7 @@ export function CandleChart({
           <text
             x={plotW + 6}
             y={y(last.c) + 4}
-            fill="#06080A"
+            fill="#070708"
             className="font-mono tabular"
             style={{ fontSize: 9.5, fontWeight: 700 }}
           >

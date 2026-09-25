@@ -161,28 +161,28 @@ const ZONES: Zone[] = [
     label: "Public edge",
     detail: "nginx terminates TLS (1.2 and 1.3; TLS 1.3 only on the API host) and forwards to the app. It holds no trading secret and never touches a database.",
     r: 118,
-    color: "#1B3050",
+    color: "#26262B",
   },
   {
     id: "session",
     label: "Authenticated request",
     detail: "Every request needs a signed session cookie, a scoped API key or the control key — optional TOTP on sign-in, rate limits on sign-in and webhooks. The source address is never a credential.",
     r: 92,
-    color: "#13456B",
+    color: "#3A3A40",
   },
   {
     id: "service",
     label: "Role and scope",
     detail: "Authenticated is not authorised: API keys carry read or control scope, and accounts without the operator role cannot reach the trading engine at all.",
     r: 66,
-    color: "#12695A",
+    color: "#2A2A2F",
   },
   {
     id: "exec",
     label: "Key vault",
     detail: "Exchange secrets are unwrapped only in memory, only when they are needed, and responses and logs pass a redaction filter before anything is written or returned.",
     r: 38,
-    color: "#1E9457",
+    color: "#16A34A",
   },
 ];
 
@@ -227,7 +227,7 @@ export function ZeroTrustDiagram() {
             {z.label}
           </text>
         ))}
-        <text x="140" y="144" textAnchor="middle" fill="#4FD98E" className="pointer-events-none" style={{ fontSize: 9, fontWeight: 600 }}>
+        <text x="140" y="144" textAnchor="middle" fill="#4ADE80" className="pointer-events-none" style={{ fontSize: 9, fontWeight: 600 }}>
           keys
         </text>
       </svg>

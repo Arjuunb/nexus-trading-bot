@@ -80,29 +80,5 @@ export const TRUST_BADGES: TrustBadge[] = [
   { label: "No implicit trust", detail: "Every request authenticates, whatever address it comes from" },
 ];
 
-/**
- * The footer ticker's symbols.
- *
- * Representative instruments, not a live feed — the footer is not the place to
- * open a market-data connection, and a tape that is wrong is worse than a tape
- * that is clearly illustrative. The strip is labelled as such.
- */
-export interface TickerRow {
-  symbol: string;
-  price: string;
-  change: number;
-}
-
-export const TICKER: TickerRow[] = [
-  { symbol: "BTC/USDT", price: "68,408.0", change: 0.42 },
-  { symbol: "ETH/USDT", price: "3,284.15", change: -0.18 },
-  { symbol: "SOL/USDT", price: "148.24", change: 1.36 },
-  { symbol: "XRP/USDT", price: "0.5412", change: -0.94 },
-  { symbol: "BNB/USDT", price: "584.30", change: 0.22 },
-  { symbol: "ADA/USDT", price: "0.3920", change: -0.51 },
-  { symbol: "LINK/USDT", price: "16.88", change: 0.77 },
-  { symbol: "DOGE/USDT", price: "0.1284", change: 0.09 },
-];
-
 /** The project's public repository. Used by the developer pages. */
 export const REPO_URL = "https://github.com/Arjuunb/nexus-trading-bot";

@@ -63,7 +63,7 @@ export interface SeoRoute {
 const HOME: SeoRoute = {
   path: "/",
   label: "Home",
-  title: "AI Trading Intelligence Platform",
+  title: "Trading Intelligence Platform",
   description:
     "TradeLogX Nexus combines market analysis, strategy testing, paper trading, risk controls, execution workflows and transparent decision records.",
   themeColor: "#0a0a0c",

@@ -7,7 +7,7 @@ import type { SitePage } from "./routes";
  * index.html carries one static title and description, which was correct when
  * the site was one document. With six real routes, every one of them would
  * otherwise be indexed — and shared into Slack, iMessage or a tweet — as
- * "TradeLogX Nexus | AI Trading Intelligence Platform" with landing-page copy.
+ * "TradeLogX Nexus | Trading Intelligence Platform" with landing-page copy.
  * This rewrites the title, description, canonical URL and the Open Graph /
  * Twitter pair on navigation, and puts them back when the page unmounts so a
  * route never leaks its metadata into the next one.

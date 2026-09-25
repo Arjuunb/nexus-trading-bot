@@ -4,6 +4,7 @@ import { Activity } from "lucide-react";
 import { Reveal, SectionHeading } from "@/components/Reveal";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
+import { VENUES } from "@/site/platform";
 
 /**
  * "Connectivity" — honest by design. Nexus runs on LIVE Binance market data
@@ -13,15 +14,9 @@ import { cn } from "@/lib/utils";
  * platform's real, paper-first status.
  */
 
-interface Venue { name: string; live: boolean; note: string }
-const VENUES: Venue[] = [
-  { name: "Binance", live: true, note: "Live market data" },
-  { name: "Bybit", live: false, note: "Roadmap" },
-  { name: "OKX", live: false, note: "Roadmap" },
-  { name: "Kraken", live: false, note: "Roadmap" },
-  { name: "Coinbase", live: false, note: "Roadmap" },
-  { name: "Interactive Brokers", live: false, note: "Roadmap" },
-];
+// The one venue list the footer and the status strip also read, so no two
+// sections can name different exchanges.
+const LIST = VENUES.map((v) => ({ ...v, note: v.live ? "Live market data" : "Roadmap" }));
 
 export function Connectivity() {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -40,22 +35,24 @@ export function Connectivity() {
 
         <Reveal className="mt-14">
           <div ref={ref} className="glass mx-auto max-w-5xl rounded-3xl border border-line p-6 sm:p-8">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {VENUES.map((v) => (
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+              {LIST.map((v, i) => (
                 <motion.div
                   key={v.name}
-                  initial={false}
-                  animate={{ opacity: 1 }}
+                  initial={{ opacity: 0, y: 14 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: "-60px" }}
+                  transition={{ duration: 0.45, delay: i * 0.07, ease: [0.22, 1, 0.36, 1] }}
                   className={cn(
                     "relative overflow-hidden rounded-2xl border p-4",
-                    v.live ? "border-emerald/30 bg-emerald/[0.05]" : "border-line bg-white/[0.02]",
+                    v.live ? "border-gold/30 bg-gold/[0.04]" : "border-line bg-white/[0.02]",
                   )}
                 >
                   {/* streaming data pulse — ONLY on the live venue */}
                   {v.live && animate && (
                     <motion.span
                       aria-hidden
-                      className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-transparent via-emerald/15 to-transparent"
+                      className="pointer-events-none absolute inset-y-0 left-0 w-16 bg-gradient-to-r from-transparent via-gold/[0.08] to-transparent"
                       initial={{ x: "-20%" }}
                       animate={{ x: "260%" }}
                       transition={{ duration: 2.4, repeat: Infinity, ease: "linear" }}
@@ -79,7 +76,7 @@ export function Connectivity() {
                   </div>
                   <div className="relative mt-2">
                     {v.live ? (
-                      <Badge tone="emerald" className="gap-1"><Activity className="h-3 w-3" /> {v.note}</Badge>
+                      <Badge tone="neutral" className="gap-1"><Activity className="h-3 w-3" /> {v.note}</Badge>
                     ) : (
                       <Badge tone="neutral">{v.note}</Badge>
                     )}

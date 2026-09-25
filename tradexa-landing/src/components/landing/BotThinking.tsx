@@ -1,29 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import { motion, useInView, useReducedMotion } from "framer-motion";
 import { CheckCircle2, Cpu } from "lucide-react";
-import { Reveal, SectionHeading } from "@/components/Reveal";
+import { SectionHeading } from "@/components/Reveal";
+import { ScrollScale } from "@/components/motion/Scroll";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 
 /**
  * "Watch the Decision Brain think" — a cinematic, looping demonstration of the
- * bot's reasoning: it streams each analysis step, fills an AI decision
+ * bot's reasoning: it streams each analysis step, fills a decision
  * checklist row-by-row, ramps a confidence ring, and stamps a verdict. Pauses
  * when off-screen and honours reduced-motion. Hand-authored REPRESENTATIVE
  * demo — clearly labelled, never presented as a live market feed.
  */
 
-const GOLD = "#C8A94B", EMERALD = "#2FBF71";
+const GOLD = "#EAB54F", EMERALD = "#22C55E";
 
-interface Row { key: string; label: string; value: string; tone: "emerald" | "gold" }
+interface Row { key: string; label: string; value: string; tone: "pass" | "gold" }
 // Each reasoning line optionally reveals one checklist row when it completes.
 const STEPS: { t: string; row?: Row }[] = [
   { t: "Scanning BTCUSDT · 5m…" },
-  { t: "Reading higher-timeframe trend…", row: { key: "htf", label: "Higher-timeframe trend", value: "Bullish", tone: "emerald" } },
-  { t: "Checking EMA 8 / 33 alignment…", row: { key: "ema", label: "EMA alignment", value: "Confirmed", tone: "emerald" } },
-  { t: "Analysing market structure…", row: { key: "bos", label: "Market structure", value: "BOS ✓", tone: "emerald" } },
-  { t: "Detecting liquidity sweep…", row: { key: "sweep", label: "Liquidity sweep", value: "Detected", tone: "emerald" } },
-  { t: "Measuring volume…", row: { key: "vol", label: "Volume", value: "Above average", tone: "emerald" } },
+  { t: "Reading higher-timeframe trend…", row: { key: "htf", label: "Higher-timeframe trend", value: "Bullish", tone: "pass" } },
+  { t: "Checking EMA 8 / 33 alignment…", row: { key: "ema", label: "EMA alignment", value: "Confirmed", tone: "pass" } },
+  { t: "Analysing market structure…", row: { key: "bos", label: "Market structure", value: "BOS ✓", tone: "pass" } },
+  { t: "Detecting liquidity sweep…", row: { key: "sweep", label: "Liquidity sweep", value: "Detected", tone: "pass" } },
+  { t: "Measuring volume…", row: { key: "vol", label: "Volume", value: "Above average", tone: "pass" } },
   { t: "Evaluating risk…", row: { key: "risk", label: "Risk / trade", value: "0.8%", tone: "gold" } },
   { t: "Calculating position size…", row: { key: "size", label: "Position size", value: "0.42 BTC", tone: "gold" } },
   { t: "Confidence 92% — setup confirmed" },
@@ -61,14 +62,14 @@ export function BotThinking() {
           subtitle="Every candle runs the same reasoning: trend, structure, liquidity, volume, risk. The engine says “no” far more than “yes”. This is a representative demo of that process — not a live feed."
         />
 
-        <Reveal className="mt-14">
+        <ScrollScale className="mt-14" from={0.95}>
           <div ref={ref} className="glass mx-auto max-w-4xl overflow-hidden rounded-3xl border border-line">
             {/* terminal header */}
             <div className="flex items-center gap-3 border-b border-line px-5 py-3">
               <span className="flex gap-1.5">
-                <span className="h-2.5 w-2.5 rounded-full bg-loss/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-gold/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald/70" />
+                <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+                <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
+                <span className="h-2.5 w-2.5 rounded-full bg-white/15" />
               </span>
               <Cpu className="h-4 w-4 text-gold" />
               <span className="text-sm font-semibold text-white/90">Decision Brain</span>
@@ -90,7 +91,7 @@ export function BotThinking() {
                       pending ? "opacity-25" : "opacity-100",
                     )}>
                       <span className={cn("shrink-0",
-                        isVerdict ? "text-gold" : done ? "text-emerald" : "text-white/30")}>
+                        isVerdict ? "text-gold" : done ? "text-gold/70" : "text-white/30")}>
                         {done ? (isVerdict ? "★" : "✓") : active ? "▸" : "·"}
                       </span>
                       <span className={cn(
@@ -105,7 +106,7 @@ export function BotThinking() {
 
               {/* right — decision checklist + confidence + verdict */}
               <div className="flex flex-col gap-3 p-5">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">AI decision</p>
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-white/40">Decision</p>
                 <div className="flex flex-col gap-1.5">
                   {rows.map((r) => {
                     const stepIdx = STEPS.findIndex((s) => s.row?.key === r.key);
@@ -117,7 +118,7 @@ export function BotThinking() {
                         transition={{ duration: 0.3 }}
                         className="flex items-center justify-between rounded-lg border border-line bg-white/[0.02] px-3 py-2 text-[13px]">
                         <span className="text-white/60">{r.label}</span>
-                        <span className={cn("font-semibold", r.tone === "gold" ? "text-gold" : "text-emerald-soft")}>
+                        <span className={cn("font-semibold", r.tone === "gold" ? "text-gold" : "text-white/90")}>
                           {shown ? r.value : "—"}
                         </span>
                       </motion.div>
@@ -147,7 +148,7 @@ export function BotThinking() {
                       animate={{ opacity: approved ? 1 : 0.3, scale: approved ? 1 : 0.96 }}
                       transition={{ duration: 0.35 }}
                       className={cn("mt-1 inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold",
-                        approved ? "border-emerald/40 bg-emerald/10 text-emerald-soft" : "border-line text-white/40")}>
+                        approved ? "border-gold/40 bg-gold/10 text-gold" : "border-line text-white/40")}>
                       <CheckCircle2 className="h-4 w-4" />
                       {approved ? "LONG · Trade approved" : "Evaluating…"}
                     </motion.div>
@@ -156,7 +157,7 @@ export function BotThinking() {
               </div>
             </div>
           </div>
-        </Reveal>
+        </ScrollScale>
       </div>
     </section>
   );

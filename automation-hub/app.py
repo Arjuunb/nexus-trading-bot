@@ -645,6 +645,9 @@ def _start_auto_engine() -> None:
               f"(interval={webhook_api.status_monitor.interval_s:.0f}s)", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.outbound_webhooks.start():
         print("[startup] outbound webhooks started", flush=True)
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.econ_feed.start():
+        print(f"[startup] economic calendar feed started ({', '.join(webhook_api.econ_feed.countries)}, "
+              f"every {webhook_api.econ_feed.interval_s / 3600:.0f}h)", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
         print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
               f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)

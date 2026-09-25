@@ -24,10 +24,10 @@ const POOL: LogLine[] = [
   { tag: "feed", tone: "dim", text: "BTCUSDT 4h candle closed · O 43,780 H 43,960 C 43,912" },
   { tag: "scan", tone: "dim", text: "market structure: higher-high confirmed · trend = up" },
   { tag: "brain", tone: "gold", text: "quality 72/100 · acceptable · rr 2.4 · htf aligned" },
-  { tag: "risk", tone: "emerald", text: "risk gate passed · size 0.8% · stop 43,120 · tp 45,650" },
-  { tag: "exec", tone: "emerald", text: "LONG BTCUSDT filled @ 43,912 · mode=paper · id 0x8f2a" },
+  { tag: "risk", tone: "gold", text: "risk gate passed · size 0.8% · stop 43,120 · tp 45,650" },
+  { tag: "exec", tone: "gold", text: "LONG BTCUSDT filled @ 43,912 · mode=paper · id 0x8f2a" },
   { tag: "feed", tone: "dim", text: "ETHUSDT 4h candle closed · O 2,270 H 2,291 C 2,284" },
-  { tag: "brain", tone: "loss", text: "quality 41/100 · weak · below the 60 minimum · skip" },
+  { tag: "brain", tone: "dim", text: "quality 41/100 · weak · below the 60 minimum · skip" },
   { tag: "risk", tone: "dim", text: "SOLUSDT signal · max open positions (3) reached · hold" },
   { tag: "exec", tone: "emerald", text: "BTCUSDT take-profit hit · +2.4R realized · closed" },
   { tag: "mem", tone: "gold", text: "trade stored to memory · pattern trend-long · London" },
@@ -86,13 +86,9 @@ export function LiveTerminal({ className }: { className?: string }) {
             preview
           </span>
         </div>
-        <div className="flex items-center gap-1.5">
-          <span className="relative flex h-1.5 w-1.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald opacity-60" />
-            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald" />
-          </span>
-          <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-soft">live</span>
-        </div>
+        {/* A representative log, so it says "demo" rather than showing a
+            pulsing LIVE light over output that is not live. */}
+        <span className="font-mono text-[10px] uppercase tracking-wider text-white/35">demo</span>
       </div>
 
       {/* log body */}

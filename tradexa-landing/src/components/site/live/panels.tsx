@@ -199,9 +199,9 @@ export function DecisionPanel({ epoch, price }: { epoch: number; price: number }
 
   const d = decisions[epoch % decisions.length];
   const tone = {
-    route: { cls: "border-emerald/40 bg-emerald/10 text-emerald-soft", ring: "#2FBF71" },
+    route: { cls: "border-emerald/40 bg-emerald/10 text-emerald-soft", ring: "#22C55E" },
     hold: { cls: "border-line-strong bg-white/[0.04] text-white/60", ring: "#8A929C" },
-    veto: { cls: "border-loss/40 bg-loss/10 text-loss-soft", ring: "#E5605B" },
+    veto: { cls: "border-loss/40 bg-loss/10 text-loss-soft", ring: "#EF4444" },
   }[d.tone];
 
   return (
@@ -215,7 +215,7 @@ export function DecisionPanel({ epoch, price }: { epoch: number; price: number }
 
       <div className="mt-3 flex items-center gap-3">
         <svg viewBox="0 0 44 44" className="h-11 w-11 shrink-0">
-          <circle cx="22" cy="22" r="17" fill="none" stroke="#151C22" strokeWidth="5" />
+          <circle cx="22" cy="22" r="17" fill="none" stroke="#17171A" strokeWidth="5" />
           <motion.circle
             cx="22"
             cy="22"

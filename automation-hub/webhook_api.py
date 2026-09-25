@@ -71,6 +71,10 @@ alert_channels = AlertChannels(notifier, _os.path.join(_os.path.dirname(settings
 # Economic-event calendar (user-set / provider-fed upcoming events).
 from services.econ_guard import EconCalendar  # noqa: E402
 econ_calendar = EconCalendar(_os.path.join(_os.path.dirname(settings.providers_path), "econ_events.json"))
+# Fills the calendar from a public weekly export of scheduled releases, so the
+# blackout does not depend on someone typing dates in (services/econ_feed.py).
+from services.econ_feed import EconFeed  # noqa: E402
+econ_feed = EconFeed(econ_calendar)
 # Event-risk gate: the pipeline halts new entries in the blackout window
 # around high-impact events and halves size in the caution window.
 pipeline.econ_events = econ_calendar.events

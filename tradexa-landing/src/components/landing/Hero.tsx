@@ -13,7 +13,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { WordReveal } from "@/components/Reveal";
 import { Magnetic } from "@/components/motion/Magnetic";
-import { DashboardPreview } from "./DashboardPreview";
+import { DecisionPreview } from "./DecisionPreview";
 import { APP_URL } from "@/lib/utils";
 
 const container = {
@@ -71,14 +71,14 @@ export function Hero() {
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-700 group-hover/hero:opacity-100"
-          style={{ background: "radial-gradient(520px circle at var(--hx, 50%) var(--hy, 30%), rgba(200,169,75,0.075), transparent 60%)" }}
+          style={{ background: "radial-gradient(520px circle at var(--hx, 50%) var(--hy, 30%), rgba(234,181,79,0.075), transparent 60%)" }}
         />
       )}
       {/* hero-local ambient bloom — parallaxes independently of the page backdrop */}
       {!reduced && (
         <motion.div aria-hidden style={{ y: ambientY }} className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
           <div className="absolute -top-24 right-1/4 h-[26rem] w-[34rem] rounded-full bg-gold/[0.06] blur-[120px]" />
-          <div className="absolute top-1/3 left-[-6rem] h-[22rem] w-[28rem] rounded-full bg-emerald-deep/[0.05] blur-[130px]" />
+          <div className="absolute top-1/3 left-[-6rem] h-[22rem] w-[28rem] rounded-full bg-white/[0.025] blur-[130px]" />
         </motion.div>
       )}
 
@@ -93,22 +93,23 @@ export function Hero() {
           <motion.div variants={item}>
             <span className="eyebrow">
               <ShieldCheck className="h-3.5 w-3.5" />
-              AI Trading Intelligence System
+              Trading intelligence system
             </span>
           </motion.div>
 
           {/* The headline sets itself word by word; the gold line carries light
               moving slowly through it. */}
           <h1 className="mt-6 text-balance text-5xl font-extrabold leading-[1.03] tracking-tight text-white sm:text-6xl lg:text-[4.25rem]">
-            <WordReveal trigger="mount" text="AI-Powered Trading" delay={0.15} stagger={0.08} />
+            <WordReveal trigger="mount" text="Trading intelligence" delay={0.15} stagger={0.08} />
             <br />
-            <WordReveal trigger="mount" text="Intelligence System" delay={0.35} stagger={0.08}
+            <WordReveal trigger="mount" text="that shows its work" delay={0.35} stagger={0.08}
                         wordClassName="text-gold-shimmer" />
           </h1>
 
           <motion.p variants={item} className="mt-6 max-w-xl text-lg leading-relaxed text-white/60">
-            Analyze markets, test strategies, and automate intelligent trading decisions through a
-            powerful AI-driven platform built for modern traders.
+            Nexus reads market structure on closed candles, scores every setup from 0 to 100 and
+            takes only what clears its risk gates, on a paper account first. Every decision, taken
+            or skipped, is journaled with its reasons, and it learns from its own record.
           </motion.p>
 
           <motion.div variants={item} className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -137,7 +138,7 @@ export function Hero() {
                 transition={{ delay: 0.9 + i * 0.1, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
                 className="flex items-center gap-1.5 text-[13px] text-white/55"
               >
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-soft/80" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-gold/80" aria-hidden />
                 {text}
               </motion.li>
             ))}
@@ -151,10 +152,10 @@ export function Hero() {
           onMouseLeave={onLeave}
         >
           {reduced ? (
-            <DashboardPreview />
+            <DecisionPreview />
           ) : (
             <motion.div style={{ rotateX: rotX, rotateY: rotY, transformStyle: "preserve-3d" }}>
-              <DashboardPreview />
+              <DecisionPreview />
             </motion.div>
           )}
         </motion.div>

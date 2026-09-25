@@ -11,13 +11,13 @@ interface Metric {
 }
 
 // Counts taken from the platform's own configuration (data.historical SYMBOLS,
-// services/mtf_policy TIMEFRAME_SECONDS). The band used to show "99.9%
+// services/mtf_policy TIMEFRAME_SECONDS, auto_engine HUB_MIN_SCORE default). The band used to show "99.9%
 // uptime" and "<100ms order routing" -- neither was measured, and there is
 // no live order routing to time.
 const METRICS: Metric[] = [
   { value: 8, label: "Markets supported", sub: "BTC, ETH, SOL, XRP and more on Binance USDⓈ-M" },
   { value: 6, label: "Timeframes", sub: "1m to 1d, decided on closed candles only" },
-  { value: 24, suffix: "/7", label: "Risk Guards", sub: "Checked on every candle the engine runs" },
+  { value: 60, label: "Minimum setup score", sub: "Out of 100 by default; anything weaker is skipped and logged" },
 ];
 
 function MetricStat({ m }: { m: Metric }) {

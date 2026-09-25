@@ -84,16 +84,16 @@ export function ConvictionGauge({
   };
 
   const accepted = verdict === "accepted";
-  const stroke = accepted ? "#E7CE86" : "#8A7233";
+  const stroke = accepted ? "#F2C766" : "#A9832F";
 
   return (
     <div className="relative mx-auto" style={{ width: size, maxWidth: "100%" }}>
       <svg viewBox="0 0 256 256" className="w-full" role="img" aria-label={`Quality score ${Math.round(score)} of 100, minimum ${threshold}`}>
         <defs>
           <linearGradient id="nx-gauge" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#E7D89A" />
-            <stop offset="55%" stopColor="#C8A94B" />
-            <stop offset="100%" stopColor="#A98E3A" />
+            <stop offset="0%" stopColor="#F2C766" />
+            <stop offset="55%" stopColor="#EAB54F" />
+            <stop offset="100%" stopColor="#C99A3A" />
           </linearGradient>
           <filter id="nx-gauge-glow" x="-30%" y="-30%" width="160%" height="160%">
             <feGaussianBlur stdDeviation="4" result="b" />
@@ -119,7 +119,7 @@ export function ConvictionGauge({
               y1={inner.y}
               x2={outer.x}
               y2={outer.y}
-              stroke={i * 10 >= threshold ? "rgba(231,206,134,0.4)" : "rgba(255,255,255,0.12)"}
+              stroke={i * 10 >= threshold ? "rgba(242,199,102,0.4)" : "rgba(255,255,255,0.12)"}
               strokeWidth={i % 5 === 0 ? 1.6 : 1}
             />
           );
@@ -129,7 +129,7 @@ export function ConvictionGauge({
         <path
           d={arcPath(threshold, 100, R)}
           fill="none"
-          stroke="#C9A24B"
+          stroke="#EAB54F"
           strokeOpacity="0.16"
           strokeWidth="14"
         />
@@ -199,7 +199,7 @@ export function ConvictionGauge({
           className={cn(
             "rounded-full border px-4 py-1.5 font-mono text-[11px] tracking-[0.18em]",
             accepted
-              ? "border-gold/50 bg-gold/10 text-gold-soft shadow-[0_0_30px_-8px_rgba(201,162,75,0.8)]"
+              ? "border-gold/50 bg-gold/10 text-gold-soft shadow-[0_0_30px_-8px_rgba(234,181,79,0.8)]"
               : "border-white/12 bg-white/[0.03] text-white/45",
           )}
         >

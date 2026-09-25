@@ -5,30 +5,32 @@ import { cn } from "@/lib/utils";
 import { useVisibleActive } from "@/lib/useVisibleActive";
 
 /**
- * "Selectivity" — the fourth landing animation. Nexus scans the whole
- * watchlist, scores each symbol, and skips almost everything: an animated
- * scanner runs down the list (score bar fills, TAKE / SKIP verdict lands), while
- * an illustrative equity curve draws in beside it. Reinforces the core promise —
- * fewer, higher-quality trades. Sample data, clearly labelled.
+ * "Selectivity": Nexus scans the whole watchlist, scores each symbol, and
+ * skips almost everything. A scanner runs down the list (score bar fills, TAKE
+ * or SKIP lands) while the panel beside it names the gate that stopped each
+ * skipped symbol. The gates are the engine's real ones; the symbols and scores
+ * are an example, labelled as such. No P&L or equity is shown.
  */
 
-const ROWS = [
-  { sym: "BTC/USDT", score: 87, take: true },
-  { sym: "ETH/USDT", score: 44, take: false },
-  { sym: "SOL/USDT", score: 71, take: true },
-  { sym: "XRP/USDT", score: 38, take: false },
-  { sym: "DOGE/USDT", score: 29, take: false },
-  { sym: "LINK/USDT", score: 52, take: false },
-];
-const GOLD = "#C8A94B", EMERALD = "#2FBF71";
+type Gate = "quality" | "trend" | "regime" | "exposure";
 
-// illustrative equity curve (x 4→300, y inverted — up and to the right, with dips)
-const EQ = [
-  [4, 118], [30, 112], [52, 116], [78, 100], [104, 106], [128, 88], [152, 94],
-  [178, 74], [200, 82], [226, 60], [250, 66], [276, 46], [300, 40],
+const ROWS: { sym: string; score: number; take: boolean; gate?: Gate }[] = [
+  { sym: "BTC/USDT", score: 87, take: true },
+  { sym: "ETH/USDT", score: 44, take: false, gate: "quality" },
+  { sym: "SOL/USDT", score: 71, take: true },
+  { sym: "XRP/USDT", score: 58, take: false, gate: "trend" },
+  { sym: "DOGE/USDT", score: 29, take: false, gate: "regime" },
+  { sym: "LINK/USDT", score: 66, take: false, gate: "exposure" },
 ];
-const EQ_D = "M " + EQ.map(([x, y]) => `${x},${y}`).join(" L ");
-const EQ_AREA = EQ_D + ` L 300,130 L 4,130 Z`;
+
+const GATES: { key: Gate | "event"; name: string; detail: string }[] = [
+  { key: "quality", name: "Quality below the minimum", detail: "Score under 60, the default bar." },
+  { key: "trend", name: "Against the higher timeframe", detail: "Entry fights the trend it is meant to follow." },
+  { key: "regime", name: "Choppy regime", detail: "Ranging market blocks non-reversal entries." },
+  { key: "exposure", name: "Exposure or correlation limit", detail: "Enough risk already open in that direction." },
+  { key: "event", name: "Event blackout", detail: "A high-impact release is minutes away." },
+];
+const GOLD = "#EAB54F";
 
 export function MarketScanner() {
   const [step, setStep] = useState(-1);
@@ -48,6 +50,8 @@ export function MarketScanner() {
 
   const scannedTake = ROWS.filter((r, i) => i <= step && r.take).length;
   const scannedAll = Math.min(step + 1, ROWS.length);
+  const current = step >= 0 && step < ROWS.length ? ROWS[step] : null;
+  const firedGate = current && !current.take ? current.gate : null;
 
   return (
     <section id="selectivity" className="section" ref={root}>
@@ -79,7 +83,7 @@ export function MarketScanner() {
                       <span className="w-24 shrink-0 font-mono text-[13px] text-white/80">{r.sym}</span>
                       <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]">
                         <motion.span className="absolute inset-y-0 left-0 rounded-full"
-                          style={{ background: r.take ? EMERALD : GOLD, opacity: r.take ? 1 : 0.5 }}
+                          style={{ background: r.take ? GOLD : "rgba(255,255,255,0.28)" }}
                           initial={false}
                           animate={{ width: scanned ? `${r.score}%` : "0%" }}
                           transition={{ duration: 0.55, ease: "easeOut" }} />
@@ -87,7 +91,7 @@ export function MarketScanner() {
                       <span className="w-8 shrink-0 text-right font-mono text-[12px] text-white/55">{scanned ? r.score : "—"}</span>
                       <span className={cn("w-14 shrink-0 rounded-md border px-1.5 py-0.5 text-center text-[10px] font-bold tracking-wide transition-opacity",
                         !scanned ? "opacity-0 border-line-strong"
-                          : r.take ? "border-emerald/40 bg-emerald/10 text-emerald" : "border-line-strong bg-white/[0.03] text-white/45")}>
+                          : r.take ? "border-gold/40 bg-gold/10 text-gold" : "border-line-strong bg-white/[0.03] text-white/45")}>
                         {r.take ? "TAKE" : "SKIP"}
                       </span>
                     </li>
@@ -97,29 +101,34 @@ export function MarketScanner() {
             </div>
           </Reveal>
 
-          {/* illustrative equity curve */}
+          {/* the gate that stopped each skipped symbol */}
           <Reveal delay={0.1}>
             <div className="flex h-full flex-col rounded-2xl border border-line-strong bg-ink-800/40 p-4 sm:p-6">
               <div className="mb-1 flex items-center justify-between">
-                <span className="text-sm font-semibold text-white/80">Compounding the good ones</span>
-                <span className="rounded-full border border-emerald/30 bg-emerald/10 px-2 py-0.5 text-[10px] font-mono text-emerald">equity ↗</span>
+                <span className="text-sm font-semibold text-white/80">Why a setup is skipped</span>
+                <span className="font-mono text-[11px] text-white/40">
+                  {firedGate ? `${current?.sym} stopped here` : current?.take ? `${current.sym} cleared every gate` : "scanning…"}
+                </span>
               </div>
-              <p className="mb-3 text-xs text-white/40">Illustrative simulated equity — not a performance guarantee.</p>
-              <svg viewBox="0 0 304 134" className="mt-auto w-full" style={{ aspectRatio: "304 / 134" }}>
-                <defs>
-                  <linearGradient id="eqfill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={EMERALD} stopOpacity="0.28" />
-                    <stop offset="100%" stopColor={EMERALD} stopOpacity="0" />
-                  </linearGradient>
-                </defs>
-                {[40, 70, 100].map((y) => <line key={y} x1={4} y1={y} x2={300} y2={y} stroke="rgba(255,255,255,0.06)" strokeWidth={1} />)}
-                <motion.path d={EQ_AREA} fill="url(#eqfill)"
-                  initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} transition={{ delay: 0.8, duration: 0.6 }} />
-                <motion.path d={EQ_D} fill="none" stroke={EMERALD} strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round"
-                  initial={{ pathLength: 0 }} whileInView={{ pathLength: 1 }} viewport={{ once: true }} transition={{ duration: 1.6, ease: "easeInOut" }} />
-                <motion.circle cx={300} cy={40} r={3.5} fill={EMERALD}
-                  initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} transition={{ delay: 1.5, duration: 0.3 }} />
-              </svg>
+              <p className="mb-4 text-xs text-white/40">Every skip is logged with the rule that fired, and kept.</p>
+              <ul className="flex flex-col gap-2">
+                {GATES.map((g) => {
+                  const fired = g.key === firedGate;
+                  return (
+                    <li key={g.key}
+                      className={cn("flex items-start gap-3 rounded-xl border px-3 py-2.5 transition-colors duration-300",
+                        fired ? "border-gold/40 bg-gold/[0.06]" : "border-line bg-transparent")}>
+                      <span className={cn("mt-1 h-2 w-2 shrink-0 rounded-full transition-colors duration-300",
+                        fired ? "bg-gold" : "bg-white/15")} aria-hidden />
+                      <span>
+                        <span className={cn("block text-[13px] transition-colors", fired ? "text-white" : "text-white/70")}>{g.name}</span>
+                        <span className="block text-[12px] text-white/40">{g.detail}</span>
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="mt-auto pt-4 font-mono text-[10.5px] text-white/30">example watchlist · the gates are the engine's own</p>
             </div>
           </Reveal>
         </div>

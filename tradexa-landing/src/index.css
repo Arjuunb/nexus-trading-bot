@@ -23,13 +23,13 @@
   }
 
   ::selection {
-    background: rgba(200, 169, 75, 0.28);
+    background: rgba(234,181,79, 0.28);
     color: #fff;
   }
 
   /* Focus ring — accessible, brand-tinted */
   :focus-visible {
-    outline: 2px solid rgba(200, 169, 75, 0.7);
+    outline: 2px solid rgba(234,181,79, 0.7);
     outline-offset: 2px;
   }
 
@@ -48,7 +48,7 @@
     background-clip: content-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(200, 169, 75, 0.4);
+    background: rgba(234,181,79, 0.4);
     background-clip: content-box;
   }
 }
@@ -75,8 +75,8 @@
   /* Gold type with light slowly travelling through it. The gradient repeats
      once across a 200%-wide background so the pan loops without a seam. */
   .text-gold-shimmer {
-    background-image: linear-gradient(100deg, #A98E3A 0%, #E7D89A 18%, #C8A94B 32%, #A98E3A 50%,
-      #E7D89A 68%, #C8A94B 82%, #A98E3A 100%);
+    background-image: linear-gradient(100deg, #C99A3A 0%, #F2C766 18%, #EAB54F 32%, #C99A3A 50%,
+      #F2C766 68%, #EAB54F 82%, #C99A3A 100%);
     background-size: 200% 100%;
     -webkit-background-clip: text;
     background-clip: text;
@@ -127,12 +127,12 @@
   }
   /* soft wash under the pointer */
   .spotlight::before {
-    background: radial-gradient(420px circle at var(--mx) var(--my), rgba(200, 169, 75, 0.09), transparent 45%);
+    background: radial-gradient(420px circle at var(--mx) var(--my), rgba(234,181,79, 0.09), transparent 45%);
   }
   /* the same light caught by the 1px border only */
   .spotlight::after {
     padding: 1px;
-    background: radial-gradient(260px circle at var(--mx) var(--my), rgba(231, 206, 134, 0.55), transparent 55%);
+    background: radial-gradient(260px circle at var(--mx) var(--my), rgba(242,199,102, 0.55), transparent 55%);
     -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
     -webkit-mask-composite: xor;
     mask-composite: exclude;

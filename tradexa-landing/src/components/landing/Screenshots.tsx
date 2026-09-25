@@ -1,194 +1,189 @@
 import { useState, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { LayoutDashboard, ListOrdered, BarChart3, ShieldAlert, Wallet, type LucideIcon } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { CalendarDays, Check, Layers, LayoutDashboard, NotebookText, ShieldAlert, type LucideIcon } from "lucide-react";
 import { Reveal, SectionHeading } from "@/components/Reveal";
-import { Badge } from "@/components/ui/Badge";
+import { ScrollScale } from "@/components/motion/Scroll";
 import { cn } from "@/lib/utils";
+
+// A tour of the real dashboard screens. Each tab says what is actually on the
+// screen and shows its layout as a wireframe: labelled blocks, no invented
+// figures. Numbers belong to your own account, not to a marketing page.
 
 interface View {
   key: string;
   label: string;
   icon: LucideIcon;
-  render: () => JSX.Element;
+  summary: string;
+  points: string[];
+  wire: () => ReactNode;
 }
 
-const bars = [40, 62, 48, 78, 58, 88, 70, 96, 82];
+const EASE = [0.22, 1, 0.36, 1] as const;
 
-function Panel({ title, children }: { title: string; children: ReactNode }) {
+/** One wireframe block: a label and a few skeleton lines, assembling in order. */
+function Block({ label, i, className, children }: { label: string; i: number; className?: string; children?: ReactNode }) {
+  const reduced = useReducedMotion();
   return (
-    <div className="surface h-full p-4">
-      <p className="mb-3 text-[11px] uppercase tracking-wider text-white/40">{title}</p>
-      {children}
+    <motion.div
+      initial={{ opacity: 0, y: reduced ? 0 : 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: reduced ? 0 : 0.05 + i * 0.06, duration: 0.4, ease: EASE }}
+      className={cn("rounded-xl border border-line bg-ink-700/70 p-3", className)}
+    >
+      <p className="text-[10px] uppercase tracking-wider text-white/40">{label}</p>
+      <div className="mt-2">{children ?? <Lines />}</div>
+    </motion.div>
+  );
+}
+
+function Lines({ n = 2, widths = ["70%", "45%", "60%"] }: { n?: number; widths?: string[] }) {
+  return (
+    <div className="space-y-1.5">
+      {Array.from({ length: n }).map((_, k) => (
+        <span key={k} className="block h-1.5 rounded-full bg-white/[0.08]" style={{ width: widths[k % widths.length] }} />
+      ))}
     </div>
+  );
+}
+
+function Curve() {
+  return (
+    <svg viewBox="0 0 200 60" className="h-20 w-full" preserveAspectRatio="none" aria-hidden>
+      {[15, 30, 45].map((y) => <line key={y} x1="0" x2="200" y1={y} y2={y} stroke="rgba(255,255,255,0.05)" />)}
+      <path d="M0 42 C 30 40, 45 30, 70 33 S 110 20, 135 24 S 175 12, 200 14" fill="none"
+            stroke="rgba(255,255,255,0.28)" strokeWidth="1.5" strokeDasharray="3 3" />
+    </svg>
   );
 }
 
 const VIEWS: View[] = [
   {
     key: "dashboard",
-    label: "Nexus Terminal",
+    label: "Dashboard",
     icon: LayoutDashboard,
-    render: () => (
-      <div className="grid h-full grid-cols-3 gap-3">
-        <div className="col-span-2 space-y-3">
-          <Panel title="Equity Curve">
-            <div className="flex h-32 items-end gap-1.5">
-              {bars.map((b, i) => (
-                <motion.div
-                  key={i}
-                  initial={{ height: 0 }}
-                  animate={{ height: `${b}%` }}
-                  transition={{ delay: i * 0.05, duration: 0.5, ease: "easeOut" }}
-                  className="flex-1 rounded-t bg-gradient-to-t from-gold/30 to-gold/70"
-                />
-              ))}
-            </div>
-          </Panel>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              ["Win Rate", "61%"],
-              ["Profit Factor", "1.8"],
-              ["Max DD", "6.4%"],
-            ].map(([l, v]) => (
-              <div key={l} className="surface p-3">
-                <p className="tabular text-lg font-semibold text-white">{v}</p>
-                <p className="text-[10px] uppercase tracking-wider text-white/40">{l}</p>
-              </div>
-            ))}
-          </div>
-        </div>
-        <Panel title="Open Positions">
-          <div className="space-y-2">
-            {["BTC", "ETH", "SOL"].map((s, i) => (
-              <div key={s} className="flex items-center justify-between text-xs">
-                <span className="text-white/75">{s}/USDT</span>
-                <span className={cn("font-mono", i === 2 ? "text-loss-soft" : "text-emerald-soft")}>
-                  {i === 2 ? "-0.4R" : "+1.6R"}
-                </span>
-              </div>
-            ))}
-          </div>
-        </Panel>
+    summary: "Account, positions and engine state on one screen, with the reason behind anything that is stopped.",
+    points: [
+      "A halted or blocked system says so at the top",
+      "Market-data freshness checked per timeframe",
+      "Every active instance and its current decision",
+    ],
+    wire: () => (
+      <div className="grid h-full grid-cols-4 gap-2.5">
+        {["Equity", "Open positions", "Today", "Risk used"].map((l, i) => <Block key={l} label={l} i={i}><Lines n={1} /></Block>)}
+        <Block label="Equity curve" i={4} className="col-span-3"><Curve /></Block>
+        <Block label="Active instances" i={5}><Lines n={3} /></Block>
       </div>
     ),
   },
   {
-    key: "history",
-    label: "Trade History",
-    icon: ListOrdered,
-    render: () => (
-      <Panel title="Memory Timeline">
-        <div className="divide-y divide-line">
-          {[
-            ["BTC/USDT", "LONG", "+2.4R", true],
-            ["ETH/USDT", "LONG", "+1.1R", true],
-            ["SOL/USDT", "SHORT", "-0.6R", false],
-            ["BNB/USDT", "LONG", "+0.9R", true],
-            ["XRP/USDT", "SHORT", "+1.3R", true],
-          ].map(([sym, side, pnl, up]) => (
-            <div key={sym as string} className="grid grid-cols-3 items-center py-2.5 text-xs">
-              <span className="font-medium text-white/80">{sym}</span>
-              <span className="text-white/50">{side}</span>
-              <span className={cn("text-right font-mono", up ? "text-emerald-soft" : "text-loss-soft")}>
-                {pnl}
-              </span>
-            </div>
+    key: "instances",
+    label: "Trading Instances",
+    icon: Layers,
+    summary: "Isolated instances, each with one strategy, symbol, timeframe and risk budget of its own.",
+    points: [
+      "Start, pause or stop each one independently",
+      "A decision log and lifecycle timeline per instance",
+      "Paper execution; live routing stays locked",
+    ],
+    wire: () => (
+      <div className="grid h-full grid-cols-5 gap-2.5">
+        <div className="col-span-3 space-y-2.5">
+          {["Instance · strategy · symbol", "Instance · strategy · symbol", "Instance · strategy · symbol"].map((l, i) => (
+            <Block key={i} label={l} i={i}>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full border border-gold/30 px-1.5 py-px text-[9px] text-gold/80">{i === 2 ? "paused" : "running"}</span>
+                <Lines n={1} />
+              </div>
+            </Block>
           ))}
         </div>
-      </Panel>
+        <Block label="Decision log" i={3} className="col-span-2"><Lines n={6} /></Block>
+      </div>
     ),
   },
   {
-    key: "analytics",
-    label: "Performance Analytics",
-    icon: BarChart3,
-    render: () => (
-      <div className="grid h-full grid-cols-2 gap-3">
-        <Panel title="By Session">
-          <div className="space-y-2.5">
-            {[
-              ["London", 82],
-              ["New York", 64],
-              ["Tokyo", 41],
-            ].map(([l, v]) => (
-              <div key={l as string}>
-                <div className="mb-1 flex justify-between text-[11px] text-white/60">
-                  <span>{l}</span>
-                  <span className="tabular">{v}%</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                  <div className="h-full rounded-full bg-gold/70" style={{ width: `${v}%` }} />
-                </div>
-              </div>
+    key: "calendar",
+    label: "Calendar",
+    icon: CalendarDays,
+    summary: "Realized P&L by day across every trading source, each amount in its own currency.",
+    points: [
+      "Daily and weekly totals from the real ledgers",
+      "Profit factor, expectancy, streaks and drawdown",
+      "Any day or month exported as CSV",
+    ],
+    wire: () => (
+      <div className="grid h-full grid-cols-5 gap-2.5">
+        <Block label="Month" i={0} className="col-span-3">
+          <div className="grid grid-cols-7 gap-1">
+            {Array.from({ length: 35 }).map((_, d) => (
+              <span key={d} className={cn("aspect-square rounded-[4px] border",
+                [3, 9, 10, 16, 23, 24].includes(d) ? "border-gold/30 bg-gold/[0.08]" : "border-line bg-white/[0.02]")} />
             ))}
           </div>
-        </Panel>
-        <Panel title="Expectancy">
-          <div className="flex h-full flex-col items-center justify-center">
-            <p className="tabular text-3xl font-bold text-emerald-soft">+0.34R</p>
-            <p className="mt-1 text-[11px] text-white/40">per trade · 180 samples</p>
-          </div>
-        </Panel>
+        </Block>
+        <div className="col-span-2 space-y-2.5">
+          <Block label="Day detail" i={1}><Lines n={3} /></Block>
+          <Block label="By source · by strategy" i={2}><Lines n={3} /></Block>
+        </div>
+      </div>
+    ),
+  },
+  {
+    key: "journal",
+    label: "Journal",
+    icon: NotebookText,
+    summary: "The decision report for every candle, and the memory of every closed trade.",
+    points: [
+      "Reasons for every accept and every reject, WAIT included",
+      "Trade memory with similar-trade search",
+      "Coaching notes on recurring mistakes",
+    ],
+    wire: () => (
+      <div className="space-y-2.5">
+        {["Decision · candle closed", "Decision · candle closed", "Closed trade · review"].map((l, i) => (
+          <Block key={i} label={l} i={i}>
+            <div className="flex flex-wrap gap-1.5">
+              {[0, 1, 2, 3].map((k) => (
+                <span key={k} className="inline-flex items-center gap-1 rounded-md border border-line px-1.5 py-0.5">
+                  <Check className={cn("h-2.5 w-2.5", k < 3 - (i % 2) ? "text-gold/80" : "text-white/25")} aria-hidden />
+                  <span className="block h-1 w-8 rounded-full bg-white/[0.1]" />
+                </span>
+              ))}
+            </div>
+          </Block>
+        ))}
       </div>
     ),
   },
   {
     key: "risk",
-    label: "Risk Dashboard",
+    label: "Risk & Health",
     icon: ShieldAlert,
-    render: () => (
-      <div className="grid h-full grid-cols-2 gap-3">
-        <Panel title="Daily Loss Guard">
-          <div className="flex h-full flex-col justify-center">
-            <div className="h-2.5 overflow-hidden rounded-full bg-white/10">
-              <div className="h-full rounded-full bg-gradient-to-r from-emerald to-gold" style={{ width: "30%" }} />
+    summary: "The limits that stop trading, and the checks that say whether the system is healthy.",
+    points: [
+      "Daily and weekly loss limits, exposure and correlation caps",
+      "Emergency stop, safety checks and an event blackout",
+      "Status monitoring and a searchable log",
+    ],
+    wire: () => (
+      <div className="grid h-full grid-cols-2 gap-2.5">
+        {["Daily loss budget", "Weekly loss budget", "Exposure", "Correlation"].map((l, i) => (
+          <Block key={l} label={l} i={i}>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+              <span className="block h-full rounded-full bg-white/25" style={{ width: `${[34, 22, 48, 16][i]}%` }} />
             </div>
-            <p className="mt-2 text-xs text-white/60">0.9% used of 3.0% limit</p>
-          </div>
-        </Panel>
-        <Panel title="Guards Active">
-          <div className="space-y-2">
-            {["Position sizing", "Stop loss", "Trailing stop", "Max exposure"].map((g) => (
-              <div key={g} className="flex items-center gap-2 text-xs text-white/70">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald" />
-                {g}
-              </div>
+          </Block>
+        ))}
+        <Block label="Guards" i={4} className="col-span-2">
+          <div className="grid grid-cols-2 gap-1.5">
+            {["Position sizing", "Stop on every entry", "Drawdown breaker", "Event blackout"].map((g) => (
+              <span key={g} className="flex items-center gap-1.5 text-[11px] text-white/60">
+                <span className="h-1.5 w-1.5 rounded-full bg-gold/70" aria-hidden /> {g}
+              </span>
             ))}
           </div>
-        </Panel>
+        </Block>
       </div>
-    ),
-  },
-  {
-    key: "portfolio",
-    label: "Portfolio",
-    icon: Wallet,
-    render: () => (
-      <Panel title="Allocation">
-        <div className="flex items-center gap-6">
-          <div
-            className="h-28 w-28 shrink-0 rounded-full"
-            style={{
-              background:
-                "conic-gradient(#C8A94B 0 45%, #2FBF71 45% 72%, #E5605B 72% 86%, rgba(255,255,255,0.12) 86% 100%)",
-            }}
-          />
-          <div className="space-y-2 text-xs">
-            {[
-              ["BTC", "45%", "#C8A94B"],
-              ["ETH", "27%", "#2FBF71"],
-              ["SOL", "14%", "#E5605B"],
-              ["Cash", "14%", "rgba(255,255,255,0.3)"],
-            ].map(([l, v, c]) => (
-              <div key={l} className="flex items-center gap-2 text-white/70">
-                <span className="h-2 w-2 rounded-sm" style={{ background: c }} />
-                <span className="w-10">{l}</span>
-                <span className="tabular text-white/50">{v}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </Panel>
     ),
   },
 ];
@@ -204,53 +199,74 @@ export function Screenshots() {
           link="#product"
           eyebrow="The product"
           title="One terminal for your entire operation"
-          subtitle="A representative look at the running dashboard. Interface preview with sample data — not a live account."
+          subtitle="What each screen of the dashboard holds. Layouts shown as wireframes: the numbers are yours once it runs."
         />
 
         <Reveal className="mt-12">
-          <div className="mb-5 flex flex-wrap justify-center gap-2">
+          <div role="tablist" aria-label="Dashboard screens" className="mb-6 flex flex-wrap justify-center gap-2">
             {VIEWS.map((v) => (
               <button
                 key={v.key}
+                role="tab"
+                aria-selected={active === v.key}
                 onClick={() => setActive(v.key)}
                 className={cn(
-                  "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition-all",
+                  "inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition-colors duration-200",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-gold/60",
                   active === v.key
                     ? "border-gold/40 bg-gold/10 text-gold-soft"
                     : "border-line text-white/55 hover:border-line-strong hover:text-white",
                 )}
               >
-                <v.icon className="h-4 w-4" />
+                <v.icon className="h-4 w-4" aria-hidden />
                 {v.label}
               </button>
             ))}
           </div>
+        </Reveal>
 
-          <div className="glass-strong rounded-2xl p-3 shadow-card sm:p-5">
-            <div className="mb-3 flex items-center justify-between px-1">
-              <div className="flex items-center gap-2">
-                <span className="h-2.5 w-2.5 rounded-full bg-loss/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-gold/70" />
-                <span className="h-2.5 w-2.5 rounded-full bg-emerald/70" />
+        <ScrollScale>
+          <div className="glass-strong grid gap-6 rounded-3xl p-5 shadow-card sm:p-7 lg:grid-cols-[0.8fr_1.2fr] lg:items-center">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={`${view.key}-copy`}
+                role="tabpanel"
+                aria-label={view.label}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.3, ease: EASE }}
+              >
+                <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <view.icon className="h-4 w-4 text-gold" aria-hidden /> {view.label}
+                </p>
+                <p className="mt-3 text-[15px] leading-relaxed text-white/60">{view.summary}</p>
+                <ul className="mt-5 space-y-2.5">
+                  {view.points.map((p) => (
+                    <li key={p} className="flex items-start gap-2.5 text-sm text-white/70">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-gold/80" aria-hidden />
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              </motion.div>
+            </AnimatePresence>
+
+            <div className="min-h-[17rem] rounded-2xl border border-line bg-ink-800/70 p-3 sm:p-4">
+              <div className="mb-3 flex items-center gap-1.5 px-1" aria-hidden>
+                <span className="h-2 w-2 rounded-full bg-white/15" />
+                <span className="h-2 w-2 rounded-full bg-white/15" />
+                <span className="h-2 w-2 rounded-full bg-white/15" />
+                <span className="ml-auto font-mono text-[10px] text-white/30">{view.label.toLowerCase()} · wireframe</span>
               </div>
-              <Badge tone="neutral">{view.label} · preview</Badge>
-            </div>
-            <div className="min-h-[18rem] rounded-xl bg-ink-800/60 p-4">
               <AnimatePresence mode="wait">
-                <motion.div
-                  key={view.key}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.3 }}
-                  className="h-full"
-                >
-                  {view.render()}
+                <motion.div key={view.key} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+                  {view.wire()}
                 </motion.div>
               </AnimatePresence>
             </div>
           </div>
-        </Reveal>
+        </ScrollScale>
       </div>
     </section>
   );

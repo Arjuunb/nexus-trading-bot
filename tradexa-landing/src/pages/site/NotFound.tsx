@@ -31,7 +31,7 @@ export default function NotFoundPage() {
     description:
       "That page does not exist. The TradeLogX Nexus platform pages: features, engine, live trade, selectivity, how it works and security.",
     path: pathname,
-    themeColor: "#08080A",
+    themeColor: "#070708",
   });
 
   // Tell a crawler this is genuinely missing rather than a thin page. A static

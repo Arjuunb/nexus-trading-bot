@@ -14,7 +14,7 @@ import { useVisibleActive } from "@/lib/useVisibleActive";
  */
 
 const CAP = 3.0;            // daily-loss cap (%)
-const EMERALD = "#2FBF71", GOLD = "#C8A94B", RED = "#E5605B";
+const GOLD = "#EAB54F", GOLD_DIM = "rgba(234,181,79,0.55)", RED = "#EF4444";
 
 // semicircle gauge geometry (r=74, centered at 92,92)
 const ARC = "M 18 92 A 74 74 0 0 1 166 92";
@@ -51,7 +51,7 @@ export function RiskGuard() {
   const used = Math.min(CAP, (p / 0.78) * CAP);
   const frac = used / CAP;
   const halted = frac >= 0.999;
-  const color = halted ? RED : frac > 0.66 ? GOLD : EMERALD;
+  const color = halted ? RED : frac > 0.66 ? GOLD : GOLD_DIM;
   const openTrades = halted ? 0 : Math.min(3, 1 + Math.floor(frac * 3));
 
   const guards = [
@@ -62,7 +62,7 @@ export function RiskGuard() {
   ];
 
   const TONE = {
-    ok: "border-emerald/25 bg-emerald/[0.06] text-emerald",
+    ok: "border-line-strong bg-white/[0.02] text-white/85",
     warn: "border-gold/30 bg-gold/[0.08] text-gold",
     halt: "border-loss/40 bg-loss/10 text-loss-soft",
   };
