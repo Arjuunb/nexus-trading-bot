@@ -74,6 +74,10 @@ export const LEGACY_REDIRECTS: Record<string, { page: string; tab: string }> = {
   "risk-manager": { page: "Risk & Health", tab: "risk" },
   "bot-health": { page: "Risk & Health", tab: "health" },
   "logs": { page: "Risk & Health", tab: "logs" },
+  // Safety Center became the Safety tab of Risk & Health, but go("Safety
+  // Center") and old bookmarks still use its own slug; without this they
+  // fell through to the Dashboard under a "Safety Center" title.
+  "safety-center": { page: "Risk & Health", tab: "safety" },
 };
 
 export const slug = (page: string) => page.toLowerCase().replace(/&/g, "").trim().replace(/\s+/g, "-").replace(/-+/g, "-");

@@ -41,6 +41,10 @@ interface LabStatus {
   bot: BotStatus | null; bot_id?: string;
   sources?: Source[]; view?: View;
 }
+function isLabStatus(value: unknown): value is LabStatus {
+  const v = value as Partial<LabStatus> | null;
+  return !!v && typeof v.strategy === "object" && !!v.strategy && typeof v.mode === "string";
+}
 interface Paper {
   positions: Record<string, any>[]; trades: Record<string, any>[];
   orders: Record<string, Record<string, any>>; logs: Record<string, any>[];
@@ -97,7 +101,10 @@ export default function AdaptiveLab() {
     if (next) setSources((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next);
   }, [status.data?.sources]);
 
-  const lab = status.data;
+  // A status reply without the strategy block (an older hub, an error body)
+  // is treated as not loaded rather than dereferenced into a crash.
+  const lab = isLabStatus(status.data) ? status.data : null;
+  const labUnreadable = Boolean(status.data) && !lab;
   const view = lab?.view ?? null;
   const isInstance = view?.kind === "instance";
   const bot = view ? view.bot : lab?.bot ?? null;
@@ -207,8 +214,9 @@ export default function AdaptiveLab() {
     <header className="pa-titlebar">
       <div><span className="pa-kicker">{isInstance ? "TRADING INSTANCE · VIEW ONLY" : "ISOLATED FORWARD-PAPER"}</span><h1>Adaptive MTF Lab</h1>
         <p>{lab?.strategy.label ?? "Adaptive MTF Trend Pullback"} {lab?.strategy.version ?? ""} · live Binance USD-M data · {isInstance ? "mirroring a Trading Instance" : "its own paper account"} · no exchange routing</p></div>
-      <div className="pa-safety"><b>{!lab ? "LOADING" : isInstance ? `MIRROR · ${view?.state_label.toUpperCase()}` : modeLabel(lab.mode).toUpperCase()}</b><span>LIVE ROUTING DISABLED</span></div>
+      <div className="pa-safety"><b>{labUnreadable ? "UNAVAILABLE" : !lab ? "LOADING" : isInstance ? `MIRROR · ${view?.state_label.toUpperCase()}` : modeLabel(lab.mode).toUpperCase()}</b><span>LIVE ROUTING DISABLED</span></div>
     </header>
+    {labUnreadable && <p className="pa-note" role="status">This hub did not return the lab&rsquo;s status, so its settings and bot cannot be shown here.</p>}
     <div className={`pa-health-scope ${reliable ? "is-healthy" : isOff ? "is-off" : "is-stale"}`}>
       <b>{isInstance ? "TRADING INSTANCE (MIRROR)" : "ADAPTIVE MTF BOT"}</b><span>Candles / quote / mark: {health}</span>
       <span>Decision readiness: {reliable ? "CLOSED-BAR ELIGIBLE" : isOff ? "NOT RUNNING" : "PAUSED · FAIL CLOSED"}</span>

@@ -3,6 +3,8 @@ import { type LabBotStatus, uptime, useLive } from "../../lib/api";
 import { useApp } from "../../app-context";
 import NexusBotPet from "../nexus-pet/NexusBotPet";
 
+const usd = (value?: number | null) => typeof value === "number" && Number.isFinite(value) ? `$${value.toLocaleString()}` : "—";
+
 type Snapshot = {
   active_slots: number; max_active_slots: number; total_open_positions: number;
   current_global_risk_amount: number; max_global_risk_amount: number;
@@ -69,7 +71,9 @@ export default function TickerBar({ surface }: { surface: string }) {
     ...(instanceState.error ? [["Connection", `DEGRADED · ${footerConnectionState(instanceState.error, false)}`] as [string, string]] : []),
     ["Instance mode", "FORWARD_PAPER"], ["Instances", `${runningCount} / ${data.max_active_slots} running · ${data.active_slots} workers`],
     ["Global instance data", instanceState.error ? "STALE" : data.market_data_status], ["Open positions", String(data.total_open_positions)],
-    ["Open risk", `$${data.current_global_risk_amount.toLocaleString()} / $${data.max_global_risk_amount.toLocaleString()}`],
+    // This bar sits outside the page error boundary: a missing amount must
+    // read as unknown, not take the whole app down with it.
+    ["Open risk", `${usd(data.current_global_risk_amount)} / ${usd(data.max_global_risk_amount)}`],
     ["Bot active time", activeSeconds === undefined ? "—" : uptime(activeSeconds)],
     ["Active", selected ? `${selected.symbol} · ${selected.strategy_label} · ${selected.timeframe}` : instances],
   ] : [["System", footerConnectionState(instanceState.error, instanceState.loading)]];

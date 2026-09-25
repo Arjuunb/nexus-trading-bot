@@ -69,6 +69,8 @@ const PA_CANDLES = Array.from({ length: 80 }, (_, index) => ({
 export const PA_CHART = {
   research_id: "PRICE_ACTION_NATIVE_V1_RESEARCH", research_only: true,
   execution_allowed: false, paper_execution_allowed: true, symbol: "BTCUSDT", timeframe: "5m",
+  // services/mtf_policy.display_contract("5m") before any HTF candle arrives
+  mtf_policy: { label: "Entry 5m · HTF 1h waiting · Bias 4h waiting", available_entry_timeframes: ["1m", "5m", "15m", "1h", "4h"] },
   candles: PA_CANDLES, swings: [], zones: [], events: [], setups: [], proposals: [], orders: [], trades: [],
   metrics: { closed: 0, wins: 0, losses: 0, unfilled: 0, cancelled: 0, rejected: 0, gross_r: 0, net_r: 0, costs_r: 0,
     by_strategy: { PA1_SR_REJECTION: { closed: 0, wins: 0, losses: 0, unfilled: 0, gross_r: 0, net_r: 0, costs_r: 0 } } },
@@ -451,6 +453,8 @@ const SHAPES: [string, unknown][] = [
     best_strategy: { name: "Decision Brain", net_r: 12 }, worst_strategy: { name: "Decision Brain", net_r: 12 },
     skipped_total: 7, skipped_by_category: [{ category: "safety", count: 5 }, { category: "risk", count: 2 }],
     safety: { live_allowed: false, hard_locked: true, passed: 3, total: 6 },
+    criteria: { minimum_profit_factor: 1.15, max_drawdown_pct: 10.0, forward_data: false, execution_model: "perfect" },
+    stability: { available: false, passed: false, windows: [] },
     live_review: { eligible: false, stage: "insufficient-sample",
       reasons: ["Need ≥ 30 closed paper trades (have 24).", "Safety guards incomplete: max_daily_loss."],
       note: "Live trading stays LOCKED regardless of this verdict. This is human-review eligibility only — it never auto-enables real-money trading." },
@@ -535,6 +539,10 @@ const SHAPES: [string, unknown][] = [
       { level: "Medium", trades: 4, wins: 2, win_rate: 50, avg_rr: 0.4, avg_pnl: 5 },
       { level: "Low", trades: 4, wins: 1, win_rate: 25, avg_rr: -0.3, avg_pnl: -12 },
       { level: "Very Low", trades: 2, wins: 1, win_rate: 50, avg_rr: 0.1, avg_pnl: 2 }] }],
+  ["/ai/recommendations", { recommendations: [
+    { id: "daily-cap", title: "Set a daily loss cap", why: "There is no daily loss limit — a single bad session is uncapped.",
+      setting: "max_daily_loss_pct", current: 0.0, suggested: 0.03, unit: "%", severity: "warning" }],
+    count: 1, ready: true, note: "Everything here maps to one real setting; applying sends it straight to the live paper engine." }],
   ["/ai/alerts", { count: 2, checked: ["BTCUSDT", "ETHUSDT"], alerts: [
     { type: "strong_setup", severity: "success", title: "Strong setup — BTCUSDT", detail: "BUY at score 88/100.", symbol: "BTCUSDT" },
     { type: "outside_session", severity: "info", title: "Outside trading session", detail: "Entries held until in-session.", symbol: "" }] }],
@@ -639,6 +647,28 @@ function calendarDay(url: URL) {
 
 export async function mockApi(page: Page) {
   let paPaper: any = structuredClone(PA_PAPER);
+  // Some pages stream candles straight from Binance's public WebSocket. A
+  // test must not depend on reaching the internet, and a blocked socket makes
+  // Chrome log a console error the audit would blame on the page. Binance
+  // stream URLs get a socket that stays connecting and never errors, which is
+  // what the pages already handle (they keep polling over REST).
+  await page.addInitScript(() => {
+    const Real = window.WebSocket;
+    class QuietSocket extends EventTarget {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
+      readyState = 0; url: string; protocol = ""; extensions = ""; bufferedAmount = 0; binaryType = "blob";
+      onopen = null; onmessage = null; onclose = null; onerror = null;
+      constructor(url: string | URL) { super(); this.url = String(url); }
+      send() {}
+      close() { this.readyState = 3; }
+    }
+    const Wrapped = function (url: string | URL, protocols?: string | string[]) {
+      return /(^|\.)binance\.com/.test(new URL(String(url)).hostname)
+        ? new QuietSocket(url) : new Real(url, protocols);
+    } as unknown as typeof WebSocket;
+    Object.assign(Wrapped, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3, prototype: Real.prototype });
+    window.WebSocket = Wrapped;
+  });
   await page.route(
     (url) => url.host === "localhost:8000",
     async (route: Route) => {
@@ -658,6 +688,13 @@ export async function mockApi(page: Page) {
           next_action: "Review frozen evidence before starting an experiment.",
         } });
       }
+      // shape copied from the hub's GET /research/smc/agent/policy defaults
+      if (url.pathname === "/research/smc/agent/policy") return route.fulfill({ json: {
+        trade_management: { enabled: false, breakeven_at_r: 1.0, breakeven_offset_r: 0.0, trail_after_r: null, trail_lookback: 3, trail_buffer_r: 0.1 },
+        context: { enabled: false, daily_loss_cap_r: null, max_consecutive_losses: null, allowed_hours_utc: [], min_candle_range_bps: null, volatility_lookback: 10 },
+        memory: { enabled: false, min_sample: 20, veto_at_or_below_expectancy_r: 0.0, by_hour: false },
+        note: "Each of these changes how much and how often the agent trades. They are hypotheses to backtest and forward-test, not improvements.",
+        paper_only: true, real_execution_allowed: false } });
       if (url.pathname === "/calendar/options") return route.fulfill({ json: CALENDAR.options });
       if (url.pathname === "/calendar/month") return route.fulfill({ json: calendarMonth(url) });
       if (url.pathname === "/calendar/day") return route.fulfill({ json: calendarDay(url) });

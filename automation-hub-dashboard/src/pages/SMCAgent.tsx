@@ -67,6 +67,13 @@ interface MemoryPolicyShape { enabled: boolean; min_sample: number;
 interface PolicyResponse { trade_management: TradePolicy;
   context: ContextPolicyShape; memory: MemoryPolicyShape; note?: string }
 
+function isPolicy(value: unknown): value is PolicyResponse {
+  const v = value as Partial<PolicyResponse> | null;
+  return !!v && typeof v.trade_management === "object" && !!v.trade_management
+    && typeof v.context === "object" && !!v.context
+    && typeof v.memory === "object" && !!v.memory;
+}
+
 const OUTCOMES: Outcome[] = ["TAKEN", "REJECTED", "NOT_READY", "MISSED"];
 
 const BLURB: Record<Outcome, string> = {
@@ -102,7 +109,12 @@ function RulePanel() {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
-  useEffect(() => { if (live.data && !draft) setDraft(live.data); }, [live.data, draft]);
+  useEffect(() => { if (isPolicy(live.data) && !draft) setDraft(live.data); }, [live.data, draft]);
+  // A reply without all three rule-sets (an older hub, an error body) must
+  // not take the whole page down with it: say so and leave the rest usable.
+  if (live.data && !isPolicy(live.data)) {
+    return <p className="pa-note">The agent&rsquo;s rule-sets could not be read from this hub, so they cannot be edited here.</p>;
+  }
   if (!draft) return <p className="pa-note">Reading the agent&rsquo;s rule-sets&hellip;</p>;
 
   const set = (section: keyof PolicyResponse, key: string, value: unknown) =>
