@@ -414,6 +414,19 @@ app.add_middleware(AuditMiddleware, log_factory=_audit_log.default_log, identify
 # local), the legacy server-rendered dashboard is served instead.
 import json as _json  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+
+class _HashedAssets(StaticFiles):
+    """Vite puts a content hash in every file name under assets/, so a URL
+    never changes content: browsers may keep each file for a year and skip
+    re-checking it on every visit. index.html is served elsewhere, uncached,
+    and is what points at new file names after a deploy."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 _WEBUI = Path(__file__).resolve().parent / "webui"
 _WEBUI_READY = (_WEBUI / "index.html").exists()
 
@@ -427,9 +440,9 @@ _LANDING_READY = (_LANDING / "index.html").exists()
 if _WEBUI_READY and (_WEBUI / "assets").exists():
     # dashboard assets move to /app/assets when the landing owns /assets
     _DASH_ASSETS = "/app/assets" if _LANDING_READY else "/assets"
-    app.mount(_DASH_ASSETS, StaticFiles(directory=str(_WEBUI / "assets")), name="assets")
+    app.mount(_DASH_ASSETS, _HashedAssets(directory=str(_WEBUI / "assets")), name="assets")
 if _LANDING_READY and (_LANDING / "assets").exists():
-    app.mount("/assets", StaticFiles(directory=str(_LANDING / "assets")), name="landing-assets")
+    app.mount("/assets", _HashedAssets(directory=str(_LANDING / "assets")), name="landing-assets")
 
 # Root-level brand assets (favicons, PWA icons, OG image, manifest). Vite copies
 # these from each app's public/ into its dist root, so they live beside index.html

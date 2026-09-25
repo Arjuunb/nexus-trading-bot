@@ -1,5 +1,5 @@
 import { useEffect, useRef, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from "react";
-import * as echarts from "echarts";
+import echarts from "../../lib/echarts";
 import type { EChartsOption } from "echarts";
 
 interface EChartProps {
