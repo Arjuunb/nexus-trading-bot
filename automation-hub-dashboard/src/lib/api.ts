@@ -576,6 +576,13 @@ export interface DnaProfile { preferred_market: string; preferred_volatility: st
 export interface MemoryBucket { key: string; trades: number; net_r: number; win_rate: number; }
 export interface StrategyMemory { strategy: string; timeframe: string; sample: number; confidence: string; dna: DnaProfile; memory: Record<string, MemoryBucket | null>; by_regime: MemoryBucket[]; by_session: MemoryBucket[]; by_symbol: MemoryBucket[]; }
 export interface EconFeedStatus { enabled: boolean; source: string; countries: string[]; interval_s: number; last_attempt: string | null; last_error: string | null; last_success: string | null; events: number; }
+export interface InstanceEventGuard {
+  enabled: boolean; updated_at: string | null; calendar_connected: boolean;
+  mode: "normal" | "caution" | "blackout"; halt_new_entries: boolean; risk_multiplier: number;
+  next_event: { name: string; time: string; impact?: string } | null; minutes_to_event: number | null;
+  window: { blackout_before_min: number; blackout_after_min: number; caution_before_min: number };
+  error?: string;
+}
 export interface EconProtection { mode: string; risk_multiplier: number; stop_multiplier: number; halt_new_entries: boolean; minutes_to_event: number | null; next_event: { name: string; time: string } | null; actions: string[]; note: string; connected: boolean; tracked_event_types: { name: string; desc: string }[]; feed?: EconFeedStatus; manual_events?: number; }
 export interface JournalEntry { id: string; symbol: string; strategy: string; side: string; result: string; rr: number | null; notes: string; emotions: string; mistakes: string[]; lessons: string[]; tags: string[]; created_at: string; snapshot: { symbol: string; timeframe: string; entry_idx: number | null; exit_idx: number | null }; }
 export interface BrokerStatus { name: string; kind: string; connected: boolean; mode: string; live_enabled: boolean; note: string; }

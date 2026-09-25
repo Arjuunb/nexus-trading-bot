@@ -258,6 +258,12 @@ instance_manager = TradingInstanceManager(
     max_trades_per_day=settings.max_trades_per_day,
     trading_days_mask=settings.trading_days_mask,
 )
+# Opt-in news blackout per instance, fed by the same economic calendar as the
+# global engine. Attached before app startup restores any worker.
+from services.instance_event_guard import InstanceEventGuard  # noqa: E402
+instance_manager.event_guard = InstanceEventGuard(
+    _os.path.join(_os.path.dirname(settings.providers_path), "instance_event_guard.json"),
+    econ_calendar)
 
 def _instance_execution_status():
     rows = [instance_manager.status(item.id) for item in instance_manager._instances.values()

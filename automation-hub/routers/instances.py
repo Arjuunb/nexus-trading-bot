@@ -530,6 +530,46 @@ def update_instance(instance_id: str, body: InstanceUpdate, request: Request = N
     except RuntimeError as exc: raise HTTPException(503, str(exc))
 
 
+class EventGuardUpdate(BaseModel):
+    enabled: bool
+
+
+def _event_guard():
+    guard = getattr(_manager(), "event_guard", None)
+    if guard is None:
+        raise HTTPException(503, "News blackout is not available on this server")
+    return guard
+
+
+@router.get("/instances/{instance_id}/event-guard")
+def instance_event_guard(instance_id: str, request: Request = None):  # noqa: B008
+    """Whether this instance sits out high-impact releases, and what the
+    economic calendar says right now."""
+    _owned(_manager(), instance_id, request)
+    return _event_guard().state(instance_id)
+
+
+@router.patch("/instances/{instance_id}/event-guard")
+def update_instance_event_guard(instance_id: str, body: EventGuardUpdate, request: Request = None,  # noqa: B008
+                                x_webhook_secret: Optional[str] = Header(default=None)):
+    """Switch the news blackout on or off for one instance. Applies from the
+    next signal; a running worker is not rebuilt and open positions keep
+    their stops and targets."""
+    _wa._check_secret(x_webhook_secret)
+    manager = _manager()
+    _owned(manager, instance_id, request)
+    state = _event_guard().set(instance_id, body.enabled, by=_initiated_by(request))
+    try:
+        manager.store.append_engine_log(
+            instance_id, level="info",
+            message=("News blackout on: no new entries from 30 min before to "
+                     f"{state['window']['blackout_after_min']} min after a high-impact release; "
+                     "half size in the 2 h before." if body.enabled else "News blackout off."))
+    except Exception:  # noqa: BLE001 -- the switch is saved; the log line is a courtesy
+        pass
+    return state
+
+
 @router.post("/instances/{instance_id}/simulation-account/restart")
 def restart_simulation_account(instance_id: str, body: SimulationAccountRestart,
                                request: Request,

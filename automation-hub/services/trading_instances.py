@@ -1214,6 +1214,10 @@ class TradingInstanceManager:
         self.cycle_store = cycle_store
         self.market_hub = market_hub
         self.symbol_rules_provider = symbol_rules_provider
+        # Opt-in news blackout (services/instance_event_guard.py). The server
+        # attaches it after construction; None leaves every pipeline without
+        # an economic calendar, as before.
+        self.event_guard = None
         # Instance workers own their positions, but production risk policy is
         # supplied by the server and applied to every isolated pipeline. These
         # values were previously omitted, silently disabling several configured
@@ -1659,6 +1663,8 @@ class TradingInstanceManager:
             # keep the in-memory worker intact so a transient persistence error
             # cannot silently stop an instance that still exists after restart.
             self.store.delete(instance_id)
+            if self.event_guard is not None:
+                self.event_guard.forget(instance_id)
             # A terminal-error worker has stopped its engine thread, but its
             # independently owned WebSocket feed may still be alive. Cleanup is
             # best-effort after durable deletion; stale network resources must
@@ -1832,6 +1838,11 @@ class TradingInstanceManager:
                                       maximum_risk_amount=inst.maximum_risk_amount,
                                       minimum_equity=inst.minimum_equity)
             pipeline.global_entry_guard = lambda **kw: self._global_guard(instance_id, **kw)
+            if self.event_guard is not None:
+                # Empty unless this instance opted in; read per signal, so the
+                # switch applies without rebuilding the worker.
+                pipeline.econ_events = self.event_guard.events_for(instance_id)
+                pipeline.econ_after_min = self.event_guard.after_min
             # Trading Instances use the same explainable close/review/memory
             # lifecycle as the legacy pipeline, but retain immutable instance
             # provenance so evidence is never silently blended.
@@ -3537,7 +3548,16 @@ class TradingInstanceManager:
                     "matches": strategy_matches,
                 },
                 "metrics": metrics,
+                "event_guard": self._event_guard_state(inst.id),
                 "reboot": reboot}
+
+    def _event_guard_state(self, instance_id: str) -> dict | None:
+        if self.event_guard is None:
+            return None
+        try:
+            return self.event_guard.state(instance_id)
+        except Exception as exc:  # noqa: BLE001 -- status must render regardless
+            return {"enabled": self.event_guard.enabled(instance_id), "error": str(exc)}
 
     def snapshot(self, owner_id: str | None = None) -> tuple[list[dict], list[dict], list[dict]]:
         """Materialize one dashboard snapshot without per-instance remote reads.

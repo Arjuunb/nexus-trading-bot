@@ -52,16 +52,20 @@ def is_high_impact(event: dict) -> bool:
     return bool(event.get("source")) and str(event.get("impact", "")).lower() == "high"
 
 
-def evaluate(events: list, now=None, *, blackout_min: int = 30, caution_min: int = 120) -> dict:
+def evaluate(events: list, now=None, *, blackout_min: int = 30, caution_min: int = 120,
+             after_min: int = 0) -> dict:
     """Protection decision for the nearest upcoming high-impact event.
 
     Within ``blackout_min`` -> halt new entries; within ``caution_min`` ->
-    reduce size + widen stops; otherwise normal."""
+    reduce size + widen stops; otherwise normal. With ``after_min`` the
+    blackout also covers that many minutes after a release, when the first
+    reaction is usually the most violent (``minutes_to_event`` is then
+    negative)."""
     now = now or datetime.now(timezone.utc)
     upcoming = []
     for e in events or []:
         t = _parse(e.get("time"))
-        if t and t >= now and is_high_impact(e):
+        if t and (t - now).total_seconds() >= -after_min * 60 and is_high_impact(e):
             upcoming.append((t, e))
     upcoming.sort(key=lambda x: x[0])
 
@@ -72,7 +76,11 @@ def evaluate(events: list, now=None, *, blackout_min: int = 30, caution_min: int
 
     t, ev = upcoming[0]
     mins = (t - now).total_seconds() / 60.0
-    if mins <= blackout_min:
+    if mins < 0:
+        mode, risk, stop, halt = "blackout", 0.0, 1.0, True
+        actions = [f"Halt new entries — {ev['name']} was released {-mins:.0f} min ago.",
+                   "Let open trades run with their existing stops."]
+    elif mins <= blackout_min:
         mode, risk, stop, halt = "blackout", 0.0, 1.0, True
         actions = [f"Halt new entries — {ev['name']} in {mins:.0f} min.",
                    "Let open trades run with their existing stops."]
@@ -88,7 +96,8 @@ def evaluate(events: list, now=None, *, blackout_min: int = 30, caution_min: int
         "halt_new_entries": halt,
         "next_event": {"name": ev["name"], "time": t.isoformat(), "impact": ev.get("impact", "high")},
         "minutes_to_event": round(mins, 1), "actions": actions,
-        "note": f"Next high-impact event: {ev['name']} in {mins/60:.1f}h.",
+        "note": (f"{ev['name']} was released {-mins:.0f} min ago." if mins < 0
+                 else f"Next high-impact event: {ev['name']} in {mins/60:.1f}h."),
     }
 
 
