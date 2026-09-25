@@ -187,7 +187,7 @@ function EconProtectionPanel() {
           {e.feed ? (
             <div className="risk-list" style={{ marginTop: 8 }}>
               <div className="risk-item"><span className="dim">Calendar feed</span>
-                <b>{e.feed.enabled ? `${e.feed.source} · ${e.feed.countries.join(", ")} · ${e.feed.events} high-impact this week` : "off"}</b></div>
+                <b>{e.feed.enabled ? `${e.feed.source} · ${e.feed.countries.join(", ")} · ${e.feed.events} high-impact this week${typeof e.feed.rows_seen === "number" ? ` (of ${e.feed.rows_seen} releases in the export)` : ""}` : "off"}</b></div>
               <div className="risk-item"><span className="dim">Last fetched</span>
                 <b>{when(e.feed.last_success)}{e.feed.last_error ? <span className="neg"> · last try failed: {e.feed.last_error}</span> : null}</b></div>
               <div className="row-actions" style={{ justifyContent: "flex-end" }}>

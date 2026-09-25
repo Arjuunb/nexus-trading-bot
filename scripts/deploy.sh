@@ -42,5 +42,10 @@ fi
 
 docker compose config --quiet
 docker compose up -d --build --remove-orphans --wait --wait-timeout 180
+# nginx is a stock image this script never rebuilds, and it renders
+# nginx/templates only when its container starts. Apply the checked-out
+# templates to the running proxy now (validated, zero-downtime reload); a
+# config that fails `nginx -t` is rolled back and stops the deploy.
+docker compose exec -T nginx sh -s < nginx/reload-config.sh
 docker compose ps
 ./scripts/healthcheck.sh

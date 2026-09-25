@@ -85,6 +85,35 @@ def test_a_failed_fetch_keeps_the_last_good_events_and_says_why(tmp_path):
     assert len(cal.provider_events()) == 3                           # not wiped
 
 
+@pytest.mark.parametrize("payload, fragment", [
+    ({"error": "rate limited"}, "expected a list of releases, got dict"),
+    ("<html>blocked</html>", "expected a list of releases, got str"),
+    ([{"name": "CPI", "when": "2026-09-24"}], "releases have no impact/date fields"),
+])
+def test_an_export_in_another_shape_is_an_error_not_a_quiet_week(tmp_path, payload, fragment):
+    """It used to parse to zero events and read as "nothing high-impact this week"."""
+    cal = EconCalendar(str(tmp_path / "ev.json"))
+    feed = EconFeed(cal, fetch=lambda url: EXPORT, clock=lambda: NOW)
+    feed.sync()
+    feed.fetch = lambda url: payload
+    status = feed.sync()
+    assert fragment in status["last_error"]
+    assert status["events"] == 3                                     # the last good week is kept
+
+
+def test_status_says_how_many_releases_the_export_held(tmp_path):
+    cal = EconCalendar(str(tmp_path / "ev.json"))
+    quiet = [_item("Retail Sales m/m", "2026-09-22T08:30:00-04:00", impact="Medium")]
+    status = EconFeed(cal, fetch=lambda url: quiet, clock=lambda: NOW).sync()
+    assert status["last_error"] is None and status["events"] == 0 and status["rows_seen"] == 1
+
+
+def test_the_sites_own_high_impact_wording_counts():
+    rows = [_item("CPI m/m", "2026-09-24T08:30:00-04:00", impact="High Impact Expected"),
+            {"title": "GDP q/q", "currency": "USD", "date": "2026-09-24T08:30:00-04:00", "impact": "High"}]
+    assert [e["name"] for e in parse_forexfactory(rows)] == ["USD CPI m/m", "USD GDP q/q"]
+
+
 def test_connected_means_real_events_not_a_configured_key(tmp_path, monkeypatch):
     monkeypatch.setenv("ECON_CALENDAR_KEY", "something")
     cal = EconCalendar(str(tmp_path / "ev.json"))

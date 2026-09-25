@@ -53,9 +53,10 @@ def parse_forexfactory(payload, *, countries=DEFAULT_COUNTRIES) -> list[dict]:
     wanted = {c.strip().upper() for c in (countries or ()) if c and c.strip()}
     out: dict[tuple[str, str], dict] = {}
     for item in payload if isinstance(payload, list) else []:
-        if not isinstance(item, dict) or str(item.get("impact", "")).strip().lower() != "high":
+        # "High", and the site's own wording "High Impact Expected"
+        if not isinstance(item, dict) or not str(item.get("impact", "")).strip().lower().startswith("high"):
             continue
-        country = str(item.get("country", "")).strip().upper()
+        country = str(item.get("country") or item.get("currency") or "").strip().upper()
         if wanted and country not in wanted:
             continue
         title = str(item.get("title", "")).strip()
@@ -66,6 +67,21 @@ def parse_forexfactory(payload, *, countries=DEFAULT_COUNTRIES) -> list[dict]:
                  "source": SOURCE, "country": country}
         out[(event["name"], event["time"])] = event
     return sorted(out.values(), key=lambda e: e["time"])
+
+
+def check_shape(payload) -> int:
+    """Refuse an export that is not the list of releases this parser reads.
+
+    A wrapped object, an error body or rows without impact/date fields used to
+    parse to zero events and read as a quiet week. Returns the row count."""
+    if not isinstance(payload, list):
+        raise ValueError(f"unexpected calendar format: expected a list of releases, got "
+                         f"{type(payload).__name__} {str(payload)[:120]!r}")
+    rows = [row for row in payload if isinstance(row, dict)]
+    if payload and not any("impact" in row and "date" in row for row in rows):
+        keys = sorted(rows[0].keys())[:12] if rows else []
+        raise ValueError(f"unexpected calendar format: releases have no impact/date fields (keys {keys})")
+    return len(payload)
 
 
 def _http_fetch(url: str, timeout: float = 15.0):
@@ -101,6 +117,7 @@ class EconFeed:
         self._thread: Optional[threading.Thread] = None
         self.last_attempt: Optional[str] = None
         self.last_error: Optional[str] = None
+        self.last_rows: Optional[int] = None
 
     def sync(self) -> dict:
         """Fetch once. On success the provider events are replaced; on failure
@@ -109,19 +126,25 @@ class EconFeed:
             now = self.clock()
             self.last_attempt = now.isoformat(timespec="seconds")
             try:
-                events = parse_forexfactory(self.fetch(self.url), countries=self.countries)
+                payload = self.fetch(self.url)
+                rows = check_shape(payload)
+                events = parse_forexfactory(payload, countries=self.countries)
             except Exception as exc:  # noqa: BLE001 -- a dead feed must never break the engine
                 self.last_error = f"{type(exc).__name__}: {exc}"[:300]
                 return self.status()
             self.calendar.set_provider_events(events, fetched_at=now, source=SOURCE)
             self.last_error = None
+            self.last_rows = rows
             return self.status()
 
     def status(self) -> dict:
         provider = self.calendar.provider_status()
         return {"enabled": feed_enabled(), "source": SOURCE, "url": self.url, "countries": list(self.countries),
                 "interval_s": self.interval_s, "last_attempt": self.last_attempt, "last_error": self.last_error,
-                "last_success": provider.get("fetched_at"), "events": provider.get("count", 0)}
+                "last_success": provider.get("fetched_at"), "events": provider.get("count", 0),
+                # How many releases the export held, so "0 events" can be told
+                # apart: a quiet week for these currencies, or an empty file.
+                "rows_seen": self.last_rows}
 
     def start(self) -> bool:
         if not feed_enabled() or (self._thread and self._thread.is_alive()):

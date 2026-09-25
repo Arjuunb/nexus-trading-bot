@@ -575,7 +575,7 @@ export interface BotOsSnap { engines: number; up: number; status: string; servic
 export interface DnaProfile { preferred_market: string; preferred_volatility: string; preferred_trend: string; preferred_session: string; preferred_symbols: string[]; avoid_symbols: string[]; }
 export interface MemoryBucket { key: string; trades: number; net_r: number; win_rate: number; }
 export interface StrategyMemory { strategy: string; timeframe: string; sample: number; confidence: string; dna: DnaProfile; memory: Record<string, MemoryBucket | null>; by_regime: MemoryBucket[]; by_session: MemoryBucket[]; by_symbol: MemoryBucket[]; }
-export interface EconFeedStatus { enabled: boolean; source: string; countries: string[]; interval_s: number; last_attempt: string | null; last_error: string | null; last_success: string | null; events: number; }
+export interface EconFeedStatus { enabled: boolean; source: string; countries: string[]; interval_s: number; last_attempt: string | null; last_error: string | null; last_success: string | null; events: number; rows_seen?: number | null; }
 export interface InstanceEventGuard {
   enabled: boolean; updated_at: string | null; calendar_connected: boolean;
   mode: "normal" | "caution" | "blackout"; halt_new_entries: boolean; risk_multiplier: number;
