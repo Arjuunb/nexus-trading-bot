@@ -353,10 +353,10 @@ def test_the_executor_is_handed_the_sizing_it_must_place(agent, journal):
     assert journal.trades()[0]["order_id"] == "order-7"
 
 
-def test_an_executor_that_declines_leaves_no_trade_and_one_missed_row(agent, journal):
+def test_an_executor_without_a_response_is_uncertain_not_missed(agent, journal):
     result = agent.observe(_evaluation(), executor=lambda sizing: None)
 
-    assert result["outcome"] == MISSED
+    assert result["outcome"] == "EXECUTION_UNCERTAIN"
     assert journal.trades() == []
-    assert [d["outcome"] for d in journal.decisions()] == [MISSED]
-    assert journal.decisions()[0]["reason_code"] == "EXECUTION_DECLINED"
+    assert journal.decisions() == []
+    assert journal.execution_intents()[0]["state"] == "EXECUTION_UNCERTAIN"

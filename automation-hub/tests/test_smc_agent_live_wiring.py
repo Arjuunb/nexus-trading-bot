@@ -330,15 +330,15 @@ def test_a_restart_cannot_re_take_a_decision_already_executed(tmp_path, monkeypa
     lab.journal.close()
 
     # A restart: new runtime, new agent, new journal handle on the same file,
-    # and a lab database that has forgotten the candidate entirely — so this
-    # is the agent's own protection, not the lab's, doing the work.
-    restarted = build(tmp_path, monkeypatch, db="smc-after-restart.db",
-                      journal_path=journal_path)
+    # and the same persistent lab session/broker. A new account/session is
+    # deliberately a different identity, not a restart.
+    restarted = build(tmp_path, monkeypatch, journal_path=journal_path)
     result = restarted.runtime.tick()
 
     assert result["agent"]["outcome"] == "ALREADY_DECIDED"
     assert result["agent"]["previous_outcome"] == TAKEN
-    assert restarted.strategy_orders() == []
+    assert len(restarted.strategy_orders()) == 1
+    assert len(restarted.account.broker.orders()) == 1
     assert len(restarted.journal.trades()) == 1
 
 
@@ -350,12 +350,13 @@ def test_a_replay_of_the_same_proposal_cannot_double_the_position(tmp_path, monk
 
     # Same proposal, different closed candle: the candle key does not match,
     # so the proposal key is what has to stop it.
-    replay = build(tmp_path, monkeypatch, db="replay.db",
+    replay = build(tmp_path, monkeypatch,
                    journal_path=journal_path, candle_age_minutes=10)
     result = replay.runtime.tick()
 
     assert result["agent"]["outcome"] == "ALREADY_DECIDED"
-    assert replay.strategy_orders() == []
+    assert len(replay.strategy_orders()) == 1
+    assert len(replay.account.broker.orders()) == 1
     assert len(replay.journal.trades()) == 1
 
 
@@ -375,6 +376,8 @@ def test_an_agent_that_raises_places_nothing(tmp_path, monkeypatch):
     lab = build(tmp_path, monkeypatch)
 
     class Broken:
+        journal = lab.journal
+
         def observe(self, *args, **kwargs):
             raise RuntimeError("the agent is down")
 
@@ -390,7 +393,7 @@ def test_an_agent_that_raises_places_nothing(tmp_path, monkeypatch):
 
 def test_an_unwritable_journal_places_nothing(tmp_path, monkeypatch):
     class Unwritable(SMCAgentJournal):
-        def record_decision(self, **kwargs):
+        def create_execution_intent(self, **kwargs):
             raise sqlite3.OperationalError("attempt to write a readonly database")
 
     lab = build(tmp_path, monkeypatch, journal=Unwritable(":memory:"))
@@ -406,6 +409,36 @@ def test_an_unwritable_journal_places_nothing(tmp_path, monkeypatch):
     assert lab.candidate_status() == "PENDING_APPROVAL"
 
 
+def test_runtime_does_not_claim_absence_when_agent_and_broker_lookup_fail(tmp_path, monkeypatch):
+    lab = build(tmp_path, monkeypatch)
+    original_agent = lab.runtime.agent
+
+    class BrokenAfterExecution:
+        journal = lab.journal
+
+        def observe(self, *args, **kwargs):
+            original_agent.observe(*args, **kwargs)
+
+            def unavailable(*args, **kwargs):
+                raise RuntimeError("broker lookup unavailable")
+
+            monkeypatch.setattr(lab.account, "execution_for_key", unavailable)
+            raise RuntimeError("response lost after execution")
+
+    lab.runtime.agent = BrokenAfterExecution()
+    result = lab.runtime.tick()["agent"]
+
+    assert len(lab.account.broker.orders()) == 1
+    assert lab.account.broker.positions() == []
+    assert len(lab.journal.trades()) == 1
+    assert len(lab.journal.execution_intents()) == 1
+    assert result["outcome"] == "EXECUTION_UNCERTAIN"
+    assert result["executed"] is None
+    assert result["order_presence"] == "UNKNOWN"
+    assert result["position_count"] is None
+    assert "No order was placed" not in result["reason"]
+
+
 def test_a_journal_that_cannot_open_the_trade_rolls_the_decision_back(tmp_path, monkeypatch):
     class HalfBroken(SMCAgentJournal):
         def open_trade(self, **kwargs):
@@ -415,12 +448,16 @@ def test_a_journal_that_cannot_open_the_trade_rolls_the_decision_back(tmp_path, 
 
     result = lab.runtime.tick()
 
-    assert result["agent"]["outcome"] == MISSED
+    assert result["agent"]["outcome"] == "EXECUTION_UNCERTAIN"
     assert lab.journal.trades() == []
-    # Exactly one decision row, and it says the trade was missed rather than
-    # leaving a rolled-back TAKEN row behind.
-    assert [d["outcome"] for d in lab.decisions()] == [MISSED]
-    assert lab.decisions()[0]["reason_code"] == "EXECUTION_FAILED"
+    assert lab.decisions() == []
+    assert len(lab.account.broker.orders()) == 1
+    assert lab.account.broker.positions() == []
+    intent = lab.journal.execution_intents()[0]
+    assert intent["state"] == "EXECUTION_UNCERTAIN"
+    assert intent["broker_order_id"] == lab.account.broker.orders()[0]["id"]
+    assert result["agent"]["executed"] is True
+    assert lab.runtime.bot_status()["execution_state"] == "BLOCKED"
 
 
 def test_an_ungated_account_refuses_to_place_a_size_it_cannot_honour(tmp_path, monkeypatch):
