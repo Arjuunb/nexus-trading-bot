@@ -45,8 +45,7 @@ export default function HowItWorksPage() {
     target: heroRef,
     offset: ["start start", "end start"],
   });
-  const heroY = useTransform(heroProgress, [0, 1], [0, -70]);
-  const heroFade = useTransform(heroProgress, [0, 0.8], [1, 0]);
+  const heroY = useTransform(heroProgress, [0, 1], [0, -32]);
 
   return (
     <>
@@ -54,7 +53,7 @@ export default function HowItWorksPage() {
 
       {/* ── Hero: the whole journey at a glance ─────────────────────────── */}
       <section ref={heroRef} className="container-x flex min-h-[86vh] flex-col justify-center pt-28">
-        <motion.div style={reduced ? undefined : { y: heroY, opacity: heroFade }}>
+        <motion.div style={reduced ? undefined : { y: heroY }}>
           <motion.span
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}

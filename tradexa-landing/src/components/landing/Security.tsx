@@ -1,4 +1,4 @@
-import { Lock, KeyRound, Ban, ServerCog, type LucideIcon } from "lucide-react";
+import { Lock, KeyRound, Ban, ScrollText, ShieldCheck, type LucideIcon } from "lucide-react";
 import { Link } from "react-router-dom";
 import { Reveal, RevealGroup } from "@/components/Reveal";
 import { Card } from "@/components/ui/Card";
@@ -10,10 +10,10 @@ interface Item {
 }
 
 const ITEMS: Item[] = [
-  { icon: Lock, title: "Military-grade encryption", body: "Data is encrypted in transit and at rest with industry-standard AES-256 and TLS." },
-  { icon: KeyRound, title: "API keys encrypted", body: "Exchange keys are encrypted before storage and never exposed to the browser." },
-  { icon: Ban, title: "No withdrawal permissions", body: "Nexus trades only. It can never move or withdraw your funds — by design." },
-  { icon: ServerCog, title: "Secure infrastructure", body: "Isolated, monitored infrastructure with least-privilege access and audit logging." },
+  { icon: Lock, title: "Encrypted where it counts", body: "Exchange keys, webhook secrets and backups are sealed with AES-256-GCM under a master key kept out of the database. Everything travels over TLS." },
+  { icon: KeyRound, title: "Withdrawal keys refused", body: "Before a key is stored, the exchange is asked what it can do. A key that can withdraw or transfer funds is refused." },
+  { icon: ScrollText, title: "Tamper-evident audit log", body: "Every state-changing request lands in an append-only, hash-chained log you can verify and copy off the server." },
+  { icon: ShieldCheck, title: "Hardened, and checkable", body: "A strict Content-Security-Policy on every page, and a security checkup in the dashboard that lists what is on and what to fix." },
 ];
 
 export function Security() {
@@ -34,8 +34,8 @@ export function Security() {
             </Reveal>
             <Reveal delay={0.1}>
               <p className="mt-4 max-w-md text-white/55">
-                Automated trading only earns its place when the security is uncompromising. TradeLogX Nexus
-                is architected so it can execute — and nothing more.
+                Automated trading only earns its place when its security can be checked. TradeLogX Nexus
+                is built so a key it holds can trade — and nothing more.
               </p>
               <div className="mt-6 inline-flex items-center gap-2 rounded-full border border-emerald/25 bg-emerald/[0.07] px-4 py-2 text-sm text-emerald-soft">
                 <Ban className="h-4 w-4" />

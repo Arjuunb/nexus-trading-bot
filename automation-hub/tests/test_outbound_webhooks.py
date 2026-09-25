@@ -168,3 +168,58 @@ def test_a_redirect_is_a_failed_attempt_not_a_delivery():
     finally:
         server.shutdown()
     assert code == 302 and hits == [("POST", "/hook")]
+
+
+def _vault(tmp_path, key):
+    from services.key_vault import KeyVault
+    return KeyVault(tmp_path / "vault.db", master_key=key)
+
+
+def test_signing_secrets_are_encrypted_at_rest_and_still_sign(tmp_path):
+    import os
+    import sqlite3
+    clock, rx, dec = Clock(), Receiver(), Decisions()
+    vault = _vault(tmp_path, os.urandom(32))
+    svc = WebhookService(tmp_path / "wh.db", decision_source=dec.after, latest_decision_id=dec.max_id,
+                         post=rx, clock=clock, vault=lambda: vault)
+    sub = svc.subscribe(TENANT, "https://example.com/hook", None)
+    raw = sqlite3.connect(tmp_path / "wh.db").execute("SELECT secret FROM subscriptions").fetchone()[0]
+    assert raw.startswith("enc:v1:") and sub["secret"] not in raw
+    assert svc.list(TENANT)[0]["secret_encrypted"] is True
+    dec.add("accepted")
+    svc.run_once()
+    _, body, headers = rx.got[0]
+    assert verify(sub["secret"], body, headers["Nexus-Signature"], now=clock.t)
+
+
+def test_plaintext_secrets_are_sealed_on_start_and_survive_a_master_key_rotation(tmp_path):
+    import os
+    clock, rx, dec = Clock(), Receiver(), Decisions()
+    plain = WebhookService(tmp_path / "wh.db", decision_source=dec.after, latest_decision_id=dec.max_id,
+                           post=rx, clock=clock)
+    sub = plain.subscribe(TENANT, "https://example.com/hook", None)  # stored in plain text
+    vault = _vault(tmp_path, os.urandom(32))
+    svc = WebhookService(tmp_path / "wh.db", decision_source=dec.after, latest_decision_id=dec.max_id,
+                         post=rx, clock=clock, vault=lambda: vault)
+    assert svc.seal_existing() == 1 and svc.seal_existing() == 0
+    vault.rewrap(os.urandom(32))  # rotation: only the data key is re-wrapped
+    dec.add("rejected")
+    svc.run_once()
+    _, body, headers = rx.got[-1]
+    assert verify(sub["secret"], body, headers["Nexus-Signature"], now=clock.t)
+
+
+def test_without_the_vault_a_sealed_secret_is_never_sent_unsigned(tmp_path):
+    import os
+    clock, rx, dec = Clock(), Receiver(), Decisions()
+    vault = _vault(tmp_path, os.urandom(32))
+    sealed = WebhookService(tmp_path / "wh.db", decision_source=dec.after, latest_decision_id=dec.max_id,
+                            post=rx, clock=clock, vault=lambda: vault)
+    sub = sealed.subscribe(TENANT, "https://example.com/hook", None)
+    blind = WebhookService(tmp_path / "wh.db", decision_source=dec.after, latest_decision_id=dec.max_id,
+                           post=rx, clock=clock)
+    dec.add("accepted")
+    blind.run_once()
+    assert rx.got == []
+    d = blind.deliveries(TENANT, sub["id"])[0]
+    assert d["status"] == "pending" and d["last_error"].startswith("Not sent:")

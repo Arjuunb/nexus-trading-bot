@@ -14,6 +14,7 @@ import RiskSettings from "../components/settings/RiskSettings";
 import NotificationSettings from "../components/settings/NotificationSettings";
 import SystemSettings from "../components/settings/SystemSettings";
 import SecuritySettings from "../components/settings/SecuritySettings";
+import SecurityCheckupPanel from "../components/settings/SecurityCheckupPanel";
 import AuditLogPanel from "../components/settings/AuditLogPanel";
 import ExchangeKeysPanel from "../components/settings/ExchangeKeysPanel";
 import BackupsPanel from "../components/settings/BackupsPanel";
@@ -47,7 +48,7 @@ export default function SettingsPage() {
     : id === "risk" ? <RiskSettings />
     : id === "notifications" ? <NotificationSettings />
     : id === "system" ? <SystemSettings />
-    : id === "security" ? <><SecuritySettings /><ExchangeKeysPanel /><ApiKeysPanel /><WebhooksPanel /><BackupsPanel /><AuditLogPanel /></>
+    : id === "security" ? <><SecurityCheckupPanel /><SecuritySettings /><ExchangeKeysPanel /><ApiKeysPanel /><WebhooksPanel /><BackupsPanel /><AuditLogPanel /></>
     : <AdvancedSettings><LegacyEngineSettings /></AdvancedSettings>;
   return <>
     <PageHeader title="Settings Centre" subtitle="User preferences, platform defaults, safety limits and truthful runtime status" />

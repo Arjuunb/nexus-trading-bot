@@ -291,6 +291,41 @@ def security_status(request: Request, x_webhook_secret: Optional[str] = Header(d
     }
 
 
+@router.get("/checkup")
+def security_checkup(request: Request, x_webhook_secret: Optional[str] = Header(default=None)):
+    """Which protections are on, which are not, and what to do about each."""
+    _wa._check_secret(x_webhook_secret)
+    from config import settings as _settings
+    from services import security_checkup
+    from services.api_keys import default_store as _api_keys
+    tenant = _tenant(request)
+    vault = _vault()
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    host = (request.url.hostname or "").lower()
+    two_factor = None
+    if getattr(_settings, "auth_mode", "local") != "supabase":
+        try:
+            import app as _app
+            user = _app.store.get_user(_wa.request_user(request))
+            two_factor = bool(user.totp_enabled) if user is not None else None
+        except Exception:  # noqa: BLE001 -- unknown is reported as unknown
+            two_factor = None
+    try:
+        api_keys = _api_keys().list(tenant)
+    except Exception:  # noqa: BLE001
+        api_keys = []
+    return security_checkup.run(
+        https=proto == "https", local=host in ("localhost", "127.0.0.1", "::1", "testserver"),
+        vault=vault.status(),
+        default_session_secret=_settings.secret_key == "dev-insecure-secret",
+        default_control_key=_settings.admin_key == "dev-control-key",
+        two_factor=two_factor, backups=_backup_status(),
+        audit_available=audit_log.default_log() is not None,
+        audit_export=_wa.audit_exporter.status(),
+        exchange_keys=vault.list(tenant), api_keys=api_keys,
+        webhooks=_wa.outbound_webhooks.list(tenant), live_routing_locked=True)
+
+
 def _backup_status() -> dict:
     import config as _cfg
     from services.backup import status

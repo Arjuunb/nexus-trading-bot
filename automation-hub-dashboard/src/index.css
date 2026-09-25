@@ -2267,3 +2267,30 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .api-key-token { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .api-key-token code { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 12px/1.5 var(--mono, ui-monospace, monospace);
   background: rgba(0, 0, 0, 0.35); border-radius: 6px; padding: 6px 8px; }
+
+/* ── Security checkup ─────────────────────────────────────────────────── */
+.checkup-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.checkup-head b { font-size: 14px; font-weight: 600; }
+.checkup-head .btn { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.checkup-bar { display: flex; gap: 3px; width: min(360px, 60vw); height: 6px; margin-top: 10px; }
+.checkup-seg { border-radius: 3px; transition: flex-grow 0.5s ease; }
+.checkup-seg.pass { background: var(--green); }
+.checkup-seg.warn { background: var(--amber); }
+.checkup-seg.fail { background: var(--red); }
+.checkup-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.checkup-item { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border: 1px solid var(--card-border-soft);
+  border-radius: var(--radius-sm); background: var(--card-2); animation: checkup-in 0.35s ease both; }
+.checkup-item:nth-child(n+2) { animation-delay: 0.03s; }
+.checkup-item.fail { border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.05); }
+.checkup-item.warn { border-color: rgba(234,181,79,0.25); background: rgba(234,181,79,0.04); }
+.checkup-icon { flex-shrink: 0; margin-top: 2px; }
+.checkup-item.pass .checkup-icon { color: var(--green); }
+.checkup-item.warn .checkup-icon { color: var(--amber); }
+.checkup-item.fail .checkup-icon { color: var(--red); }
+.checkup-title { font-size: 13px; font-weight: 600; }
+.checkup-detail { margin-top: 2px; font-size: 12.5px; color: var(--dim); line-height: 1.5; }
+.checkup-fix { margin-top: 6px; font-size: 12.5px; line-height: 1.5; }
+.checkup-fix::before { content: "Fix · "; color: var(--dim); }
+@keyframes checkup-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .checkup-item { animation: none; } .checkup-seg { transition: none; } }
+@media (max-width: 560px) { .checkup-head { flex-direction: column; } }

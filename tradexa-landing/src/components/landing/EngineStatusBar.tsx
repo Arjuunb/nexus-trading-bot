@@ -31,7 +31,9 @@ export function EngineStatusBar() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
         transition={{ duration: 0.6 }}
-        className="surface flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3.5"
+        role="group"
+        aria-label="How Nexus runs today"
+        className="surface flex flex-wrap items-center gap-x-6 gap-y-3 px-5 py-3.5 lg:justify-between"
       >
         <Seg label="Mode">
           <span className="inline-flex items-center gap-1.5">
@@ -73,9 +75,6 @@ export function EngineStatusBar() {
           <span className="text-white/55">locked</span>
         </Seg>
 
-        <span className="ml-auto font-mono text-[10px] uppercase tracking-wider text-white/25">
-          how nexus runs today
-        </span>
       </motion.div>
     </div>
   );

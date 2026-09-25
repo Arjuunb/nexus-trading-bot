@@ -1051,11 +1051,17 @@ audit_exporter = AuditExporter(
 # read from the decision store, so no trading code is involved in producing them.
 from services.outbound_webhooks import WebhookService  # noqa: E402
 from services.public_shapes import decision as _public_decision  # noqa: E402
+def _key_vault():
+    from services.key_vault import default_vault
+    return default_vault()
+
+
 outbound_webhooks = WebhookService(
     _os.environ.get("HUB_WEBHOOKS_DB", _os.path.join(_os.path.dirname(settings.audit_path), "webhooks.db")),
     decision_source=lambda after, limit: decision_store.after(after, limit),
     latest_decision_id=lambda: decision_store.max_id(),
-    render=_public_decision)
+    render=_public_decision,
+    vault=_key_vault)  # signing secrets are sealed under the tenant data key when HUB_MASTER_KEY is set
 
 # The lab's bot gets the same repair loop, over the lab's own manager.
 adaptive_lab_supervisor = InstanceSupervisor(

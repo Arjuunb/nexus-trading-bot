@@ -50,7 +50,7 @@ export function ExecutionFlow() {
           subtitle="Every trade follows the same path — decision, risk, sizing, order, fill, management, close. This is a representative demo of the paper lifecycle; live broker routing is on the roadmap."
         />
 
-        <Reveal>
+        <Reveal className="mt-14">
           <div ref={ref} className="glass rounded-3xl border border-line p-5 sm:p-8">
             <div className="mb-4 flex items-center justify-between">
               <span className="text-xs text-white/40">BTCUSDT · 5m</span>

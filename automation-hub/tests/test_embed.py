@@ -21,7 +21,9 @@ def test_cookie_none_requires_secure(monkeypatch):
     assert hub_app._cookie_kwargs()["samesite"] == "lax"
 
 
-def test_frame_ancestors_header_only_when_configured(monkeypatch):
+def test_framing_is_same_origin_by_default_and_follows_the_configured_ancestors(monkeypatch):
+    """The CSP (services/csp.py) is always sent; its frame-ancestors is 'self'
+    unless HUB_FRAME_ANCESTORS names the sites allowed to embed the app."""
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     import app as hub_app
@@ -29,9 +31,8 @@ def test_frame_ancestors_header_only_when_configured(monkeypatch):
 
     monkeypatch.delenv("HUB_FRAME_ANCESTORS", raising=False)
     r = client.get("/health")
-    assert "Content-Security-Policy" not in r.headers      # default unchanged
+    assert "frame-ancestors 'self'" in r.headers["Content-Security-Policy"]
 
     monkeypatch.setenv("HUB_FRAME_ANCESTORS", "'self' https://tradexa.app")
     r2 = client.get("/health")
-    assert r2.headers["Content-Security-Policy"] == \
-        "frame-ancestors 'self' https://tradexa.app"
+    assert "frame-ancestors 'self' https://tradexa.app" in r2.headers["Content-Security-Policy"]

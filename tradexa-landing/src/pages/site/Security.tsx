@@ -207,7 +207,7 @@ export default function SecurityPage() {
           {[
             ["Entered once", "The secret goes from the form to the vault over TLS and is encrypted with AES-256-GCM before the response returns. It is never placed in a session and never shown again — the dashboard shows a four-character hint."],
             ["Decrypted only in memory", "A per-tenant data key, itself wrapped by a master key that lives only in the server's environment, is unwrapped for the moment the secret is needed — today, to ask the exchange what the key may do, since live routing is locked."],
-            ["Replaced in one step", "Attaching a new key for a venue replaces the old one, and revoking takes a key out of use immediately while keeping its record for the audit trail. A kept key can be re-checked against the exchange at any time."],
+            ["Replaced in one step", "Attaching a new key for a venue replaces the old one, and revoking takes a key out of use immediately while keeping its record for the audit trail. The master key itself can be rotated: data keys are re-wrapped under the new one, and older backups still restore with the previous key."],
             ["Never in a log", "Secrets are redacted in the response filter and in the logger rather than at each call site, so a new endpoint cannot leak one by omission."],
           ].map(([t, b], i) => (
             <motion.div
@@ -318,8 +318,10 @@ export default function SecurityPage() {
               {[
                 "Deploys rebuild the containers from the repository; nothing is patched by hand on the server",
                 "Secrets come from the server's environment file at start-up; none are in the repository or the image",
+                "A Content-Security-Policy with a fresh nonce on every response: only this site's own scripts run, and no page can be framed by a site you have not allowed",
                 "The app refuses to start in production with a default session secret or without real sign-in configured",
                 "Trading fails closed: stale market data, a breached loss limit or a pause stops new entries rather than guessing",
+                "A security checkup in the dashboard lists every protection above as on or off, with the fix for each one that is off",
               ].map((l) => (
                 <li key={l} className="flex gap-2.5 text-sm text-white/55">
                   <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-emerald" />
@@ -371,7 +373,9 @@ export default function SecurityPage() {
               the advisory are published together, with credit unless you ask otherwise. Never
               open a public issue for a vulnerability while it is unpatched, and leave real keys
               and account identifiers out of the report. SECURITY.md in the repository has the
-              scope.
+              scope, and{" "}
+              <code className="font-mono text-white/70">/.well-known/security.txt</code> points to
+              the same place for automated tools.
             </p>
           </div>
         </div>

@@ -61,7 +61,7 @@ export function BotThinking() {
           subtitle="Every candle runs the same reasoning: trend, structure, liquidity, volume, risk. The engine says “no” far more than “yes”. This is a representative demo of that process — not a live feed."
         />
 
-        <Reveal>
+        <Reveal className="mt-14">
           <div ref={ref} className="glass mx-auto max-w-4xl overflow-hidden rounded-3xl border border-line">
             {/* terminal header */}
             <div className="flex items-center gap-3 border-b border-line px-5 py-3">

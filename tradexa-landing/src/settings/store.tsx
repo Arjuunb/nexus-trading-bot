@@ -23,8 +23,12 @@ const STORAGE_KEY = "tradexa.settings.v1";
 // backend (same-origin). That is the signal that a per-user server workspace
 // exists: the DB becomes the source of truth and localStorage is only the
 // fast-boot cache. Signed-out visitors keep local-only behavior.
+/** The server says whether this visitor is signed in. Older servers sent the
+ *  config only to signed-in visitors, so a config without the flag still counts. */
 function signedIn(): boolean {
-  return typeof window !== "undefined" && Boolean((window as { __HUB_CONFIG__?: unknown }).__HUB_CONFIG__);
+  if (typeof window === "undefined") return false;
+  const cfg = (window as { __HUB_CONFIG__?: { signedIn?: boolean } }).__HUB_CONFIG__;
+  return Boolean(cfg) && cfg?.signedIn !== false;
 }
 
 export type SaveState = "idle" | "saving" | "saved" | "error";

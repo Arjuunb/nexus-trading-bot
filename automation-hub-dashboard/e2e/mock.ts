@@ -270,6 +270,12 @@ const SECURITY_AUDIT = {
 
 const SHAPES: [string, unknown][] = [
   ["/security/status", SECURITY_STATUS],
+  ["/security/checkup", { checked_at: "2026-09-24T12:00:00+00:00", counts: { pass: 2, warn: 1, fail: 1 }, total: 4, checks: [
+    { id: "master_key", title: "Master key for secrets", status: "pass", detail: "Exchange keys, webhook secrets and backups are sealed with AES-256-GCM (master key 1a2b3c4d).", fix: "" },
+    { id: "two_factor", title: "Two-factor sign-in", status: "warn", detail: "Your account signs in with a password alone.", fix: "Turn on two-factor in Settings → Security and store the recovery codes." },
+    { id: "defaults", title: "No default credentials", status: "fail", detail: "Still on the development default: control key (HUB_CONTROL_KEY).", fix: "Set them to long random values in .env and redeploy." },
+    { id: "live_routing", title: "Live order routing locked", status: "pass", detail: "Every strategy trades on a paper account; no order reaches an exchange.", fix: "" },
+  ] }],
   ["/security/webhooks", { webhooks: [{ id: "whk_1", url: "https://example.com/nexus-events", events: ["decision.accepted", "decision.rejected"],
     description: "", created_at: "2026-09-24T12:00:00Z", active: true }], event_types: ["decision.accepted", "decision.rejected"] }],
   ["/security/api-keys", { keys: [{ id: "a1b2c3d4", name: "research notebook", scopes: ["read"], version: "2026-09-24",

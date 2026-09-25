@@ -311,6 +311,36 @@ class KeyVault:
         api_key, api_secret, _ = self._decrypt(tenant, row["id"])
         return api_key, api_secret
 
+    # ------------------------------------------------- other small secrets
+    SEAL_PREFIX = "enc:v1:"
+
+    def seal(self, tenant: str, context: str, plaintext: str) -> str:
+        """Encrypt a small secret (a webhook signing secret, say) under the
+        tenant's data key, bound to ``context`` as authenticated data. The
+        result is text safe to store anywhere; a master-key rotation re-wraps
+        the data key, so sealed values survive it untouched."""
+        with self._lock:
+            dek = self._tenant_dek(tenant, create=True)
+        nonce = os.urandom(12)
+        ct = AESGCM(dek).encrypt(nonce, plaintext.encode("utf-8"), _aad("sealed", tenant, context))
+        return self.SEAL_PREFIX + base64.b64encode(nonce + ct).decode("ascii")
+
+    def unseal(self, tenant: str, context: str, token: str) -> str:
+        """The plaintext of a ``seal`` result. Raises VaultNotConfigured when
+        the master key is missing or wrong, or the value was moved from the
+        row it was sealed for."""
+        if not token.startswith(self.SEAL_PREFIX):
+            raise ValueError("Not a sealed value.")
+        raw = base64.b64decode(token[len(self.SEAL_PREFIX):])
+        with self._lock:
+            dek = self._tenant_dek(tenant, create=False)
+        if dek is None:
+            raise VaultNotConfigured("No data key exists for this tenant.")
+        try:
+            return AESGCM(dek).decrypt(raw[:12], raw[12:], _aad("sealed", tenant, context)).decode("utf-8")
+        except InvalidTag:
+            raise VaultNotConfigured("A sealed value failed authentication.") from None
+
     # ------------------------------------------------- master key rotation
     def rewrap(self, new_master_key: bytes) -> int:
         """Re-wrap every tenant data key under a new master key. Credentials are
@@ -377,8 +407,10 @@ def _main(argv: list[str]) -> int:
             return 2
         vault = default_vault()
         count = vault.rewrap(new)
-        print(f"Re-wrapped {count} tenant data key(s). Now set HUB_MASTER_KEY to the value of "
-              f"HUB_MASTER_KEY_NEW and restart the app.")
+        print(f"Re-wrapped {count} tenant data key(s) (exchange keys and webhook secrets follow them).\n"
+              "Now, in .env: set HUB_MASTER_KEY_PREVIOUS to the old HUB_MASTER_KEY (backups taken\n"
+              "before today are sealed with it), set HUB_MASTER_KEY to the value of HUB_MASTER_KEY_NEW,\n"
+              "remove HUB_MASTER_KEY_NEW, and redeploy. Until the app restarts it cannot read the vault.")
         return 0
     print(_main.__doc__)
     return 2

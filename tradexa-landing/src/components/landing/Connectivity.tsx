@@ -38,7 +38,7 @@ export function Connectivity() {
           subtitle="Nexus streams live Binance market data today. Broker execution for more venues is on the roadmap — we won't show a connection that isn't there."
         />
 
-        <Reveal>
+        <Reveal className="mt-14">
           <div ref={ref} className="glass mx-auto max-w-5xl rounded-3xl border border-line p-6 sm:p-8">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {VENUES.map((v) => (

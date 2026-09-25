@@ -136,3 +136,16 @@ def test_an_archive_with_a_path_escaping_entry_is_refused(data, key, tmp_path_fa
     back = restore_to(str(data), stamp, str(out), master_key=key)
     assert not back["ok"] and "unexpected entry" in back["error"]
     assert not (out.parent / "escaped.txt").exists()
+
+
+def test_after_a_rotation_old_snapshots_restore_with_the_previous_key(data, key, tmp_path_factory, monkeypatch):
+    import base64
+    new = os.urandom(32)
+    old_snap = backup_now(data, master_key=key)["snapshot"]
+    monkeypatch.setenv("HUB_MASTER_KEY", base64.b64encode(new).decode())
+    monkeypatch.delenv("HUB_MASTER_KEY_PREVIOUS", raising=False)
+    refused = restore_to(data, old_snap, str(tmp_path_factory.mktemp("r1")))
+    assert not refused["ok"] and "HUB_MASTER_KEY_PREVIOUS" in refused["error"]
+    monkeypatch.setenv("HUB_MASTER_KEY_PREVIOUS", base64.b64encode(key).decode())
+    assert restore_to(data, old_snap, str(tmp_path_factory.mktemp("r2")))["ok"]
+    assert restore_check(data, old_snap)["ok"]

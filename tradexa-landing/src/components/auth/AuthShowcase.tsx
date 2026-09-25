@@ -2,9 +2,9 @@ import { motion } from "framer-motion";
 import { TrendingUp, ShieldCheck, Zap } from "lucide-react";
 
 const STATS = [
-  { icon: TrendingUp, label: "Strategies executed", value: "Fully automated" },
+  { icon: TrendingUp, label: "Decisions", value: "Every one journaled" },
   { icon: ShieldCheck, label: "Keys", value: "Encrypted · No withdrawals" },
-  { icon: Zap, label: "Execution", value: "Sub-100ms routing" },
+  { icon: Zap, label: "Execution", value: "Paper account · live locked" },
 ];
 
 // Hand-authored demo equity shape for the showcase panel (not real returns).

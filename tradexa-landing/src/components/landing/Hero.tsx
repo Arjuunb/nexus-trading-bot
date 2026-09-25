@@ -32,14 +32,13 @@ export function Hero() {
   const reduced = useReducedMotion() ?? false;
   const ref = useRef<HTMLElement | null>(null);
 
-  // scroll-driven depth: as the hero scrolls away, layers travel at different
-  // rates so the scene reads as parallax rather than a flat page.
+  // scroll-driven depth: as the hero scrolls away, layers travel at slightly
+  // different rates. Nothing fades out — a hero that dissolves while it is
+  // still on screen leaves an empty band above the next section.
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
-  const copyY = useTransform(scrollYProgress, [0, 1], [0, -64]);
-  const copyOpacity = useTransform(scrollYProgress, [0, 0.85], [1, 0]);
-  const previewY = useTransform(scrollYProgress, [0, 1], [0, -128]);
+  const copyY = useTransform(scrollYProgress, [0, 1], [0, -24]);
+  const previewY = useTransform(scrollYProgress, [0, 1], [0, -56]);
   const ambientY = useTransform(scrollYProgress, [0, 1], [0, 90]);
-  const cueOpacity = useTransform(scrollYProgress, [0, 0.15], [1, 0]);
 
   // pointer-driven 3D tilt on the preview (subtle, spring-smoothed).
   const px = useMotionValue(0); // -0.5 .. 0.5
@@ -89,7 +88,7 @@ export function Hero() {
           variants={container}
           initial="hidden"
           animate="show"
-          style={reduced ? undefined : { y: copyY, opacity: copyOpacity }}
+          style={reduced ? undefined : { y: copyY }}
         >
           <motion.div variants={item}>
             <span className="eyebrow">
@@ -161,23 +160,6 @@ export function Hero() {
         </motion.div>
       </div>
 
-      {/* scroll cue */}
-      {!reduced && (
-        <motion.div
-          style={{ opacity: cueOpacity }}
-          className="pointer-events-none mx-auto mt-16 hidden w-fit flex-col items-center gap-2 sm:flex"
-          aria-hidden
-        >
-          <span className="text-[10px] uppercase tracking-[0.2em] text-white/30">Scroll</span>
-          <span className="flex h-8 w-5 items-start justify-center rounded-full border border-line p-1">
-            <motion.span
-              className="h-1.5 w-1 rounded-full bg-gold"
-              animate={{ y: [0, 8, 0], opacity: [1, 0.3, 1] }}
-              transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-            />
-          </span>
-        </motion.div>
-      )}
     </section>
   );
 }
