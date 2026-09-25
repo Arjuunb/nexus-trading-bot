@@ -35,22 +35,35 @@ def _metrics_on(strategy, symbol, timeframe, tuning, rows, custom_spec=None):
     return _metrics(r), r
 
 
+def _gate(quality_gate: str) -> dict:
+    """Tuning that selects the gate-off rule, or nothing for the default gate."""
+    if str(quality_gate).lower() not in ("on", "off"):
+        raise ValueError("quality_gate must be 'on' or 'off'")
+    return {"quality_gate": "off"} if str(quality_gate).lower() == "off" else {}
+
+
 def _trade_rs(results) -> list:
     return [t["r"] for t in (results.get("trades") or []) if t.get("r") is not None]
 
 
 # ─────────────────────────────────── walk-forward ───────────────────────────
 def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int = 4000,
-                 folds: int = 4, custom_spec: Optional[dict] = None) -> dict:
+                 folds: int = 4, custom_spec: Optional[dict] = None,
+                 quality_gate: str = "on") -> dict:
     """Rolling walk-forward: optimise the min-score on each train block, validate
-    on the next (unseen) block, and aggregate the out-of-sample result."""
+    on the next (unseen) block, and aggregate the out-of-sample result.
+
+    ``quality_gate="off"`` runs the gate-off rule a Trading Instance can be
+    switched to (services/quality_gate.py). There is no score to optimise
+    then, so each fold is a plain train/test pair."""
+    gate = _gate(quality_gate)
     rows, src = _fetch(symbol, timeframe, bars)
     if not rows:
         return {"available": False, "error": "Historical data not available. Load Binance data first."}
     n = len(rows)
     folds = max(2, min(folds, n // 150))
     block = n // (folds + 1)
-    grid = [50, 60, 70, 80]
+    grid = [50, 60, 70, 80] if not gate else [0]
     out = []
     for i in range(folds):
         train = rows[i * block:(i + 1) * block]
@@ -59,12 +72,12 @@ def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int
             continue
         best = None
         for ms in grid:
-            m = _metrics_on(strategy, symbol, timeframe, {"min_score": ms}, train, custom_spec)
+            m = _metrics_on(strategy, symbol, timeframe, {"min_score": ms, **gate}, train, custom_spec)
             if m and m[0]["trades"] >= 3 and (best is None or m[0]["net_r"] > best[1]["net_r"]):
                 best = (ms, m[0])
         if best is None:
             continue
-        tm = _metrics_on(strategy, symbol, timeframe, {"min_score": best[0]}, test, custom_spec)
+        tm = _metrics_on(strategy, symbol, timeframe, {"min_score": best[0], **gate}, test, custom_spec)
         tmet = tm[0] if tm else {"net_r": 0.0, "trades": 0, "profit_factor": 0.0}
         out.append({
             "fold": i + 1, "best_min_score": best[0],
@@ -81,6 +94,7 @@ def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int
     else:
         verdict, note = "mixed", "Some folds hold up, others don't — treat the edge as marginal."
     return {"available": True, "data_source": src, "symbol": symbol, "timeframe": timeframe,
+            "quality_gate": "off" if gate else "on",
             "folds": out, "total_folds": total, "positive_folds": pos,
             "oos_net_r": oos, "verdict": verdict, "note": note}
 
@@ -88,7 +102,7 @@ def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int
 # ─────────────────────────────────── Monte Carlo ────────────────────────────
 def monte_carlo(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int = 4000,
                 runs: int = 1000, seed: int = 1, ruin_r: float = 20.0,
-                custom_spec: Optional[dict] = None) -> dict:
+                custom_spec: Optional[dict] = None, quality_gate: str = "on") -> dict:
     """Bootstrap-resample the realised trade sequence into a distribution of net
     R and max drawdown, plus probability of ruin / survival / recovery — how much
     of the result is luck vs edge, and how survivable it is. ``ruin_r`` is the
@@ -96,7 +110,7 @@ def monte_carlo(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int 
     rows, src = _fetch(symbol, timeframe, bars)
     if not rows:
         return {"available": False, "error": "Historical data not available. Load Binance data first."}
-    m = _metrics_on(strategy, symbol, timeframe, {}, rows, custom_spec)
+    m = _metrics_on(strategy, symbol, timeframe, _gate(quality_gate), rows, custom_spec)
     rs = _trade_rs(m[1]) if m else []
     if len(rs) < 10:
         return {"available": True, "data_source": src, "trades": len(rs),
@@ -165,7 +179,8 @@ def monte_carlo(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int 
 # ─────────────────────────────────── out-of-sample ──────────────────────────
 def out_of_sample(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int = 4000,
                   split: float = 0.7, tuning: Optional[dict] = None,
-                  custom_spec: Optional[dict] = None) -> dict:
+                  custom_spec: Optional[dict] = None, quality_gate: str = "on") -> dict:
+    tuning = {**(tuning or {}), **_gate(quality_gate)}
     rows, src = _fetch(symbol, timeframe, bars)
     if not rows:
         return {"available": False, "error": "Historical data not available. Load Binance data first."}

@@ -158,6 +158,11 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
     slippage = 0.0002 + max(0.0, float(fill_cost))
     min_score = int((tuning or {}).get("min_score", DEFAULT_TUNING["min_score"]))
     brain = TradeBrain()
+    if str((tuning or {}).get("quality_gate", "on")).lower() == "off":
+        # The same gate-off a Trading Instance runs (services/quality_gate.py):
+        # the score never blocks; only the size/account safety blocks do.
+        from services.quality_gate import SafetyOnlyBrain
+        brain, min_score = SafetyOnlyBrain(brain), 0
     if desc["kind"] == "builtin":
         from services.strategy_factory import make_builtin_strategy
         strat = make_builtin_strategy(desc["key"], symbol)
