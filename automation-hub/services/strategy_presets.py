@@ -29,6 +29,7 @@ PRESETS: dict = {
                   "rules": [{"type": "ema_cross", "fast": 20, "slow": 50, "dir": "above"}]},
     "Liquidity Sweep": {"kind": "builtin", "key": "liquidity_sweep"},
     "Adaptive MTF Trend Pullback": {"kind": "builtin", "key": "adaptive_trend_pullback"},
+    "3-Candle Rejection · EMA 9/33": {"kind": "builtin", "key": "three_candle_rejection"},
     "Custom Strategy": {"kind": "custom_user"},
 }
 STRATEGY_OPTIONS = list(PRESETS)
@@ -55,6 +56,10 @@ REGISTRY = [
      "version": builtin_strategy_version("adaptive_trend_pullback"), "kind": "builtin",
      "timeframes": ["5m"],
      "description": "5m entry + native 1h regime gate + native 4h bias + 15m pullback context"},
+    {"id": "three_candle_rejection", "name": "3-Candle Rejection · EMA 9/33",
+     "version": builtin_strategy_version("three_candle_rejection"), "kind": "builtin",
+     "timeframes": ["5m", "15m", "1h", "4h"],
+     "description": "Push, rejection and confirmation at a 2-touch swing level; EMA 9/33 trend filter; wick stop, 2R"},
     {"id": "custom", "name": "Custom Strategy", "version": "1.0", "kind": "custom_user",
      "timeframes": [], "description": "User-built rule strategy"},
 ]

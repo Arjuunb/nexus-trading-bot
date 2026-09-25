@@ -46,6 +46,9 @@ def make_builtin_strategy(key: str, symbol: str, *,
     if key == "price_action_flip_retest":
         from strategies.price_action_rejection import PriceActionFlipRetestStrategy
         return PriceActionFlipRetestStrategy(symbol)
+    if key == "three_candle_rejection":
+        from strategies.three_candle_rejection import ThreeCandleRejectionStrategy
+        return ThreeCandleRejectionStrategy(symbol)
     if key == "pa_rulebook":
         from strategies.pa_rulebook_strategy import PriceActionRulebookStrategy
         return PriceActionRulebookStrategy(symbol)

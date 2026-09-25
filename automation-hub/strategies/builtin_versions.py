@@ -90,6 +90,23 @@ BUILTIN_STRATEGY_VERSIONS: Mapping[str, BuiltinStrategyVersion] = MappingProxyTy
         fixture_signal_count=2,
         fixture_signal_sha256="1b2043dd98cf75f32b5ce24d74833794074feae5763612e3dea782ee51a0e701",
     ),
+    "three_candle_rejection": BuiltinStrategyVersion(
+        key="three_candle_rejection",
+        version="1.0.0",
+        label="3-Candle Rejection · EMA 9/33",
+        # The owner's own setup, specified by them: push, reject, confirm at a
+        # swing level touched twice or more, EMA 9/33 trend filter, stop beyond
+        # the rejection wick, 2R target. New code, not an existing baseline.
+        source_ref="source-controlled owner specification",
+        source_blob="strategies/three_candle_rejection.py@1.0.0",
+        defaults=(("ema_fast", 9), ("ema_slow", 33), ("pivot", 3),
+                  ("level_lookback", 150), ("min_touches", 2),
+                  ("level_tolerance_atr_mult", 0.25), ("stop_buffer_atr_mult", 0.1),
+                  ("atr_period", 14), ("rr_target", 2.0)),
+        fixture="BTCUSDT bundled 1h sample, 2,000 bars, causal signal stream",
+        fixture_signal_count=14,
+        fixture_signal_sha256="dc15ef634f53a4d5d579b5782cabd28e4481abcb9ec7cf5bf6d25cfa56fcb1c8",
+    ),
 })
 
 

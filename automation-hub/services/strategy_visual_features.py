@@ -333,7 +333,49 @@ def _indicator_overlays(strategy, strategy_id: str) -> list[Overlay]:
     return out
 
 
+def _three_candle_overlays(strategy, strategy_id: str) -> list[Overlay]:
+    """Levels and rejection events the strategy holds as state, and its two
+    EMAs from the same indicator function it calls, over its own bars."""
+    from bot.data.indicators import ema
+
+    module = "strategies.three_candle_rejection"
+    bars = list(getattr(strategy, "bars", []) or [])
+    params = dict(getattr(strategy, "params", {}) or {})
+    if len(bars) < 5:
+        raise FeatureUnavailable(
+            f"the strategy has only {len(bars)} bars; nothing to draw yet")
+    out: list[Overlay] = []
+    closes = [float(bar.close) for bar in bars]
+    for name in ("ema_fast", "ema_slow"):
+        period = int(params.get(name) or 0)
+        if period:
+            out.append(_series_overlay(strategy_id, "ema", name, f"EMA {period}",
+                                       bars, ema(closes, period), f"ema(closes, params['{name}'])"))
+    last_close = closes[-1]
+    for level in list(getattr(strategy, "levels", []) or []):
+        role = "support" if level.price < last_close else "resistance"
+        out.append(Overlay(
+            kind="zone", feature=role, id=level.id,
+            provenance={"strategy_id": strategy_id, "module": module,
+                        "field": "strategy.levels", "object": "Level"},
+            payload={"role": role, "lower": float(level.lower), "upper": float(level.upper),
+                     "price": float(level.price), "touch_count": level.touches,
+                     "created_at": _iso(level.first_touch), "last_touch": _iso(level.last_touch),
+                     "label": f"{role.title()} · {level.touches} touches"}))
+    for event in list(getattr(strategy, "events", []) or []):
+        out.append(Overlay(
+            kind="marker", feature="rejection_candle", id=event.id,
+            provenance={"strategy_id": strategy_id, "module": module,
+                        "field": "strategy.events", "object": "RejectionEvent"},
+            payload={"direction": event.direction, "price": float(event.level),
+                     "occurred_at": _iso(event.occurred_at), "confirmed_at": _iso(event.confirmed_at),
+                     "entry": float(event.entry), "stop": float(event.stop),
+                     "target": float(event.target), "event_type": "three_candle_rejection"}))
+    return out
+
+
 _EXTRACTORS = {
+    "three_candle_rejection": _three_candle_overlays,
     "price_action_rejection": _price_action_overlays,
     "price_action_flip_retest": _price_action_overlays,
     "smc": _smc_overlays,
