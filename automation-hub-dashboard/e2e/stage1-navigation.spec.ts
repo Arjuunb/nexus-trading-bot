@@ -30,7 +30,7 @@ test("Settings Centre exposes working controls and keeps unsupported trading loc
   await expect(page.getByText("These defaults are applied only when creating a new Trading Instance.")).toBeVisible();
   await expect(page.locator('input[value="Spot (only supported Trading Instance market)"]')).toBeVisible();
   await page.locator(".settings-nav").getByRole("button", { name: "Live Trading" }).click();
-  await expect(page.getByText("LOCKED")).toBeVisible();
+  await expect(page.locator(".content").getByText("LOCKED", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Enable Live Trading/i })).toHaveCount(0);
   await page.locator(".settings-nav").getByRole("button", { name: "Advanced" }).click();
   await expect(page.getByText("These settings control the legacy autonomous engine and do not configure Trading Instances.", { exact: true })).toBeVisible();
