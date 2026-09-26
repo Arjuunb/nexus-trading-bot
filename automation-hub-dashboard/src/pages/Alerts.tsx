@@ -1,6 +1,18 @@
 import Icon from "../components/common/Icon";
 import { Badge, PageHeader } from "../components/common/ui";
-import { useLive, hhmmss, type AlertRow } from "../lib/api";
+import { useLive, type AlertRow } from "../lib/api";
+
+/** Local time, with the date when it is not today: an outage from yesterday
+ *  must not look like one from an hour ago. */
+function when(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return iso;
+  const time = at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return at.toDateString() === new Date().toDateString()
+    ? time
+    : `${at.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
+}
 
 const sevTone = (s: string) => ({ info: "blue", warning: "amber", critical: "red" }[s] as any) ?? "default";
 const catTone = (c: string) => ({ risk: "purple", trade: "green", system: "blue", controls: "amber" }[c] as any) ?? "default";
@@ -33,7 +45,7 @@ export default function AlertsPage() {
               </div>
               <span className="dim">{a.detail}</span>
             </div>
-            <span className="alert-time">{hhmmss(a.ts)}</span>
+            <span className="alert-time" title={a.ts ?? undefined}>{when(a.ts)}</span>
           </div>
         ))}
         {items.length === 0 && <div className="empty-state">No alerts yet.</div>}

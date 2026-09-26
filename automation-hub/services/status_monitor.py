@@ -117,10 +117,66 @@ def market_data_probe(snapshot: Callable[[], list[dict]]) -> Probe:
     return probe
 
 
+# ---------------------------------------------------------- private detail
+# An alert that only says "None of the 3 workers is running" sends the owner
+# off to run diagnostics. These explain it in the alert itself: which worker,
+# in what state, with its last recorded error and what the supervisor is doing
+# about it. They contain error text, so they go to the owner's alert list and
+# channels only -- never into the incidents table or public_view.
+_EXPLAIN_LIMIT = 700
+
+
+def workers_explainer(manager, supervisor=None) -> Callable[[], str]:
+    def explain() -> str:
+        backoff: dict = {}
+        report: dict = {}
+        parts: list[str] = []
+        if supervisor is not None:
+            try:
+                status = supervisor.status()
+                backoff = status.get("backoff") or {}
+                report = {row.get("instance_id"): row for row in status.get("last_report") or []}
+                if not status.get("running"):
+                    parts.append("the instance supervisor is not running, so nothing will restart them")
+                elif status.get("last_error"):
+                    parts.append(f"supervisor error: {str(status['last_error'])[:160]}")
+            except Exception:  # noqa: BLE001 -- an explanation must never break the alert
+                pass
+        for inst in list(getattr(manager, "_instances", {}).values()):
+            if inst.mode != "trading" or not inst.desired_running or manager.worker_alive(inst.id):
+                continue
+            text = f"{inst.symbol} {inst.timeframe}: {inst.state}"
+            if inst.last_error:
+                text += f" ({str(inst.last_error)[:160]})"
+            action = (report.get(inst.id) or {}).get("action")
+            retry = backoff.get(inst.id)
+            if action == "blocked":
+                text += "; blocked, needs you: the supervisor does not retry it"
+            elif action == "no_slot":
+                text += "; no free trading slot"
+            elif action == "lease_held":
+                text += "; another worker holds its lease"
+            elif retry:
+                text += (f"; restart attempt {retry.get('consecutive_failures')} failed, "
+                         f"next in {float(retry.get('retry_in_s') or 0):.0f}s")
+            parts.append(text)
+        return " | ".join(parts)[:_EXPLAIN_LIMIT]
+    return explain
+
+
+def market_data_explainer(snapshot: Callable[[], list[dict]]) -> Callable[[], str]:
+    def explain() -> str:
+        late = [f"{r.get('symbol')}: {r.get('market_data_status')}" for r in snapshot()
+                if r.get("alive") and str(r.get("market_data_status") or "") in ("stale", "error", "disconnected")]
+        return ", ".join(late)[:_EXPLAIN_LIMIT]
+    return explain
+
+
 # -------------------------------------------------------------------- store
 class StatusMonitor:
     def __init__(self, path: str | Path, probes: dict[str, Probe], *,
                  notify: Optional[Callable[[dict], None]] = None,
+                 explain: Optional[dict[str, Callable[[], str]]] = None,
                  interval_s: float = 60.0, confirm: int = 2,
                  clock: Callable[[], float] = time.time):
         self.path = str(path)
@@ -134,6 +190,8 @@ class StatusMonitor:
             self._c.commit()
         self.probes = probes
         self.notify = notify
+        #: Private "why" appended to an opening alert (see workers_explainer).
+        self.explain = dict(explain or {})
         self.interval_s = float(interval_s)
         self.confirm = max(1, int(confirm))
         self.clock = clock
@@ -283,12 +341,19 @@ class StatusMonitor:
             return
         name = COMPONENTS.get(component, (component, ""))[0]
         if opened and ended is None:
+            why = ""
+            if component in self.explain:
+                try:
+                    why = str(self.explain[component]() or "").strip()
+                except Exception:  # noqa: BLE001 -- the alert goes out without it
+                    why = ""
             alert = {"severity": "critical" if state == OUTAGE else "warning",
-                     "title": f"{name}: {'outage' if state == OUTAGE else 'degraded'}", "detail": detail}
+                     "title": f"{name}: {'outage' if state == OUTAGE else 'degraded'}",
+                     "detail": f"{detail}. {why}" if why else detail}
         else:
             minutes = max(1, round(((ended or started) - started) / 60))
             alert = {"severity": "info", "title": f"{name}: recovered",
-                     "detail": f"{detail} — lasted {minutes} min"}
+                     "detail": f"Back to normal after {minutes} min (was: {detail})"}
         try:
             self.notify(alert)
         except Exception:  # noqa: BLE001 -- a failed notification never breaks monitoring

@@ -1066,6 +1066,9 @@ status_monitor = _status.StatusMonitor(
         "database": _status.database_probe(lambda: ledger.get_logs(limit=1)),
     },
     notify=_status_alert,
+    # Private: which workers are down and why, in the alert itself.
+    explain={"workers": _status.workers_explainer(instance_manager, instance_supervisor),
+             "market_data": _status.market_data_explainer(lambda: instance_manager.worker_health())},
     interval_s=float(_os.environ.get("HUB_STATUS_INTERVAL", "60")))
 
 # Scheduled copy of the audit log to storage the operator controls

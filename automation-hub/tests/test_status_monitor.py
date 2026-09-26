@@ -185,3 +185,100 @@ def test_degraded_turning_into_an_outage_is_one_incident(rig):
     [inc] = mon.public_view(cache_s=0)["incidents"]
     assert inc["state"] == OUTAGE and not inc["ongoing"]
     assert [a["title"] for a in alerts] == ["Database: degraded", "Database: outage", "Database: recovered"]
+
+
+# ─────────────────────── private "why" on the owner's alerts ───────────────────────
+def test_an_outage_alert_says_why_but_the_public_page_does_not(tmp_path):
+    clock, db, alerts = Clock(), Switch(), []
+    mon = StatusMonitor(tmp_path / "s.db", {"database": db}, notify=alerts.append, confirm=2, clock=clock,
+                        explain={"database": lambda: "sqlite3.OperationalError: disk I/O error"})
+    run(mon, clock, 2)
+    db.state, db.detail = OUTAGE, "The ledger is not answering"
+    run(mon, clock, 3)
+    assert alerts[-1]["detail"] == "The ledger is not answering. sqlite3.OperationalError: disk I/O error"
+    view = mon.public_view(cache_s=0)
+    assert "OperationalError" not in str(view)          # error text never goes public
+    [inc] = view["incidents"]
+    assert inc["detail"] == "The ledger is not answering"
+
+
+def test_a_broken_explanation_never_stops_the_alert(tmp_path):
+    clock, db, alerts = Clock(), Switch(), []
+
+    def broken():
+        raise RuntimeError("no")
+    mon = StatusMonitor(tmp_path / "s.db", {"database": db}, notify=alerts.append, confirm=2, clock=clock,
+                        explain={"database": broken})
+    run(mon, clock, 2)
+    db.state, db.detail = OUTAGE, "The ledger is not answering"
+    run(mon, clock, 3)
+    assert alerts[-1]["detail"] == "The ledger is not answering"
+
+
+def test_a_recovery_reads_as_a_recovery(rig):
+    mon, clock, db, alerts = rig
+    run(mon, clock, 2)
+    db.state, db.detail = OUTAGE, "The ledger is not answering"
+    run(mon, clock, 3)
+    db.state = OPERATIONAL
+    run(mon, clock, 2)
+    assert alerts[-1]["title"] == "Database: recovered"
+    assert alerts[-1]["detail"].startswith("Back to normal after ")
+    assert alerts[-1]["detail"].endswith("(was: The ledger is not answering)")
+
+
+class _Inst:
+    def __init__(self, iid, symbol, state, last_error="", desired=True, mode="trading", tf="5m"):
+        self.id, self.symbol, self.state, self.last_error = iid, symbol, state, last_error
+        self.desired_running, self.mode, self.timeframe = desired, mode, tf
+
+
+class _Manager:
+    def __init__(self, instances, alive=()):
+        self._instances = {i.id: i for i in instances}
+        self._alive = set(alive)
+
+    def worker_alive(self, iid):
+        return iid in self._alive
+
+
+class _Supervisor:
+    def __init__(self, status):
+        self._status = status
+
+    def status(self):
+        return self._status
+
+
+def test_the_workers_explanation_names_each_stopped_worker_and_the_supervisors_plan():
+    manager = _Manager([
+        _Inst("a", "BTCUSDT", "error", "Binance USD-M market-data hub failed to start"),
+        _Inst("b", "ETHUSDT", "blocked", "reconciliation mismatch"),
+        _Inst("c", "SOLUSDT", "running"),                    # alive: not mentioned
+        _Inst("d", "XRPUSDT", "stopped", desired=False),     # not scheduled: not mentioned
+    ], alive={"c"})
+    supervisor = _Supervisor({"running": True, "last_error": None,
+                              "backoff": {"a": {"consecutive_failures": 4, "retry_in_s": 240.4}},
+                              "last_report": [{"instance_id": "b", "action": "blocked"}]})
+    text = sm.workers_explainer(manager, supervisor)()
+    assert "BTCUSDT 5m: error (Binance USD-M market-data hub failed to start)" in text
+    assert "restart attempt 4 failed, next in 240s" in text
+    assert "ETHUSDT 5m: blocked (reconciliation mismatch); blocked, needs you" in text
+    assert "SOLUSDT" not in text and "XRPUSDT" not in text
+
+    stopped = sm.workers_explainer(manager, _Supervisor({"running": False}))()
+    assert stopped.startswith("the instance supervisor is not running")
+    assert sm.workers_explainer(manager, None)()          # works without a supervisor
+
+
+def test_the_market_data_explanation_lists_the_late_feeds():
+    rows = [{"symbol": "BTCUSDT", "alive": True, "market_data_status": "stale"},
+            {"symbol": "ETHUSDT", "alive": True, "market_data_status": "live"},
+            {"symbol": "SOLUSDT", "alive": False, "market_data_status": "stale"}]
+    assert sm.market_data_explainer(lambda: rows)() == "BTCUSDT: stale"
+
+
+def test_the_server_wires_the_explanations_in():
+    pytest.importorskip("fastapi")
+    import webhook_api
+    assert set(webhook_api.status_monitor.explain) == {"workers", "market_data"}
