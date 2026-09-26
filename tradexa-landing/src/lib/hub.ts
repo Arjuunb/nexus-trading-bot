@@ -1,28 +1,38 @@
 /**
- * Runtime config injected by the backend when this SPA is served single-origin
- * to a SIGNED-IN operator (see automation-hub/app.py::_serve_landing). Anonymous
- * visitors never receive it — pages that drive the live engine must degrade to
- * an honest "sign in" state when this returns null.
+ * Runtime config the backend injects when this SPA is served single-origin
+ * (see automation-hub/app.py::_serve_landing). Every visitor receives it; its
+ * `signedIn` flag says whether this one is signed in. Pages that drive the
+ * live engine degrade to an honest "sign in" state when this returns null.
+ *
+ * The browser never holds the control credential: a signed-in operator's
+ * session cookie is enough, and the server supplies the credential to the
+ * endpoint itself.
  */
 export interface HubConfig {
   apiBase: string;
-  secret: string;
+  signedIn?: boolean;
+  /** Only from very old servers; current ones never send it. */
+  secret?: string;
 }
 
 export function hubConfig(): HubConfig | null {
   if (typeof window === "undefined") return null;
-  const w = window as unknown as { __HUB_CONFIG__?: HubConfig };
-  return w.__HUB_CONFIG__ ?? null;
+  const cfg = (window as unknown as { __HUB_CONFIG__?: HubConfig }).__HUB_CONFIG__;
+  if (!cfg || cfg.signedIn === false) return null;
+  return cfg;
 }
 
-/** Call a hub API endpoint with the operator's control secret. */
+/** Call a hub API endpoint as the signed-in operator. */
 export async function hubFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const cfg = hubConfig();
   if (!cfg) throw new Error("Not signed in");
   const res = await fetch(`${cfg.apiBase}${path}`, {
+    credentials: "same-origin",
     ...init,
     headers: {
-      "X-Webhook-Secret": cfg.secret,
+      // Sending an absent secret would transmit the string "undefined", which
+      // the server would take as a (wrong) credential instead of using the session.
+      ...(cfg.secret ? { "X-Webhook-Secret": cfg.secret } : {}),
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
       ...init?.headers,
     },

@@ -28,6 +28,25 @@ _BINANCE_FAPI = ("https://fapi.binance.com", "https://www.binance.com")
 _CACHE: dict = {}
 
 
+def _econ_calendar_status() -> dict:
+    """What the event guard's calendar actually holds (services/econ_feed.py)."""
+    try:
+        import webhook_api as _wa
+        feed = _wa.econ_feed.status()
+        connected = _wa.econ_calendar.connected
+    except Exception:  # noqa: BLE001 -- context is informational
+        return {"available": False, "connected": False, "note": "Economic calendar status unavailable."}
+    if connected:
+        note = (f"{feed['events']} high-impact {'/'.join(feed['countries'])} releases this week "
+                f"(fetched {feed['last_success']})" if feed.get("last_success") else "Events added by hand.")
+    else:
+        note = ("Not connected — " + (f"the calendar feed has not fetched yet ({feed['last_error']})."
+                                      if feed.get("last_error")
+                                      else "the calendar feed is turned off (HUB_ECON_FEED=off)."
+                                      if not feed.get("enabled") else "the calendar feed has not fetched yet."))
+    return {"available": bool(connected), "connected": bool(connected), "note": note, "feed": feed}
+
+
 def _iso(ts: float | None) -> str | None:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts else None
 
@@ -281,10 +300,7 @@ def market_context(settings: ProviderSettings) -> dict:
                          "note": "Not connected — add a Coinglass API key in Data Providers."
                                  if not settings.key("liquidations") else
                                  "Configured — provider endpoint not wired yet."},
-        "economic_calendar": {"available": False, "connected": bool(settings.key("econ_calendar")),
-                              "note": "Not connected — add an economic-calendar provider key."
-                                      if not settings.key("econ_calendar") else
-                                      "Configured — provider endpoint not wired yet."},
+        "economic_calendar": _econ_calendar_status(),
         "providers": settings.status(),
         "provider_debug": provider_debug(settings),
         "last_updated": _iso(time.time()),

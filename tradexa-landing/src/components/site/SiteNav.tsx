@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Menu, X } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/Button";
-import { NAV_ROUTES, ACCENT_CLASSES, routeFor, prefetchRoute } from "@/site/routes";
+import { NAV_ROUTES, ACCENT_CLASSES, prefetchRoute } from "@/site/routes";
 import { cn, APP_URL, LOGIN_URL } from "@/lib/utils";
 
 /**
@@ -44,8 +44,6 @@ export function SiteNav() {
     };
   }, [open]);
 
-  const current = routeFor(pathname);
-  const accent = current ? ACCENT_CLASSES[current.accent] : ACCENT_CLASSES.gold;
 
   return (
     <motion.header
@@ -59,16 +57,6 @@ export function SiteNav() {
           : "border-b border-transparent",
       )}
     >
-      {/* hairline that carries the current page's accent across the top */}
-      <div
-        aria-hidden
-        className={cn(
-          "absolute inset-x-0 top-0 h-px opacity-70 transition-colors duration-500",
-          accent.bg,
-        )}
-        style={{ maskImage: "linear-gradient(to right, transparent, black 20%, black 80%, transparent)" }}
-      />
-
       <nav className="container-x flex h-16 items-center justify-between">
         <Link to="/" aria-label="TradeLogX Nexus home" className="shrink-0">
           <Logo />

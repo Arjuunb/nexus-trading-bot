@@ -59,7 +59,7 @@ export default function MarketContextPanel() {
         <W label="BTC Funding" ok={!!c?.funding_rate?.available} note={c?.funding_rate?.note}>{c?.funding_rate?.value}%</W>
         <W label="BTC Open Interest" ok={!!c?.open_interest?.available} note={c?.open_interest?.note}>{c?.open_interest?.value?.toLocaleString()}</W>
         <W label="Liquidations" ok={false} note={c?.liquidations?.note}><span /></W>
-        <W label="Econ Calendar" ok={false} note={c?.economic_calendar?.note}><span /></W>
+        <W label="Econ Calendar" ok={!!c?.economic_calendar?.connected} note={c?.economic_calendar?.note}><span /></W>
       </div>
 
       {/* news */}

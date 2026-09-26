@@ -2,8 +2,12 @@ import { test, expect } from "@playwright/test";
 import { mockApi } from "./mock";
 
 const NAV = [
-  "Dashboard", "Trading Instances", "Strategy Studio", "Paper Trading", "Live Trading", "Price Action Lab",
-  "SMC Visual Lab", "SMC Strategy Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation", "Portfolio", "Analytics", "Journal",
+  "Dashboard",
+  "Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading",
+  "Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting",
+  "Optimization Lab", "Forward Validation",
+  "Portfolio", "Analytics",
+  "Calendar", "Journal",
   "Market Data", "Risk & Health",
 ];
 
@@ -26,7 +30,7 @@ test("Settings Centre exposes working controls and keeps unsupported trading loc
   await expect(page.getByText("These defaults are applied only when creating a new Trading Instance.")).toBeVisible();
   await expect(page.locator('input[value="Spot (only supported Trading Instance market)"]')).toBeVisible();
   await page.locator(".settings-nav").getByRole("button", { name: "Live Trading" }).click();
-  await expect(page.getByText("LOCKED")).toBeVisible();
+  await expect(page.locator(".content").getByText("LOCKED", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /Enable Live Trading/i })).toHaveCount(0);
   await page.locator(".settings-nav").getByRole("button", { name: "Advanced" }).click();
   await expect(page.getByText("These settings control the legacy autonomous engine and do not configure Trading Instances.", { exact: true })).toBeVisible();

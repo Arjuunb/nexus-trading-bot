@@ -32,6 +32,8 @@ from execution.paper_engine import PaperExecutionEngine
 from services.market_data_freshness import (
     assess_timeframe, grace_for_interval, is_live_source,
 )
+from services.quality_gate import SAFETY_BLOCKS as QUALITY_GATE_SAFETY_BLOCKS, safety_blocks  # noqa: F401
+from services.quality_gate import STREAK_BLOCK_AT as QUALITY_GATE_STREAK_BLOCK_AT, streak_for_gate, streak_resumes_at
 from services.signal_pipeline import SignalPipeline, gate_blocker
 
 
@@ -66,6 +68,7 @@ def _default_fetcher(symbol: str, timeframe: str, limit: int):
     """Return (bars, source). Real candles when HUB_USE_LIVE_DATA=1, else local."""
     from data.market_data import get_bars
     return get_bars(symbol, n=limit, timeframe=timeframe)
+
 
 
 class AutoStrategyEngine:
@@ -203,6 +206,11 @@ class AutoStrategyEngine:
         # apply the IDENTICAL gate or live results run worse than the promise.
         # 0 disables; the gate stands down below 60 bars of history (warmup).
         self.min_quality_score = int(_os.environ.get("HUB_MIN_SCORE", "60"))
+        # A Trading Instance owner may switch the gate off for one instance
+        # (services/trading_instances.py). The setup is still scored and the
+        # verdict journaled; only a rejection stops blocking the entry. None,
+        # or any error reading the switch, leaves the gate on.
+        self.quality_gate_bypass: Optional[Callable[[], bool]] = None
         from strategies.brain import TradeBrain
         self._quality_brain = TradeBrain()
         # Context-aware modifiers (cross-asset gate / funding / sentiment) —
@@ -1742,7 +1750,7 @@ class AutoStrategyEngine:
                 bars, len(bars) - 1,
                 side="long" if signal.type == SignalType.LONG else "short",
                 entry=signal.entry, stop=signal.stop_loss,
-                target=signal.take_profit, recent_losses=recent_losses,
+                target=signal.take_profit, recent_losses=self._brain_streak(sym, recent_losses),
                 native_htf_bars=(getattr(strategy, "_native_mtf_context", {}) or {}).get(
                     ((getattr(strategy, "_native_mtf_evidence", {}) or {}).get("primary") or {}).get(
                         "htf_timeframe"), ()),
@@ -1757,6 +1765,21 @@ class AutoStrategyEngine:
                 confidence=getattr(signal, "confidence", None), verdict=v,
                 min_score=self.min_quality_score,
                 regime_hint=getattr(signal, "regime", ""))
+            if decision["decision"] == "rejected" and any(
+                    b.startswith("losing-streak cooldown") for b in (v.blocks if v else [])):
+                resume = streak_resumes_at(recent_losses, self._symbol_last_loss_at(sym))
+                if resume is not None:
+                    decision["reason"] += f"; {sym} resumes {resume.strftime('%Y-%m-%d %H:%M')} UTC"
+            if decision["decision"] == "rejected" and self._quality_gate_bypassed():
+                # services/quality_gate.py: the blocks that guard position
+                # size and the account still apply with the gate off.
+                if safety_blocks(v):
+                    decision["reason"] += ("; the quality gate is off for this instance, but this "
+                                           "block protects position size and always applies")
+                else:
+                    decision["decision"] = "accepted"
+                    decision["reason"] = ("Quality gate off for this instance by its owner; the "
+                                          f"Decision Brain would have rejected it: {decision['reason']}")
             # InstanceLedger carries the persisted ownership boundary.  Keep
             # decision history in that same boundary so the UI never credits a
             # BTC decision from another strategy/instance to this worker.
@@ -2024,6 +2047,14 @@ class AutoStrategyEngine:
         except Exception:  # noqa: BLE001 — evidence must never change execution
             pass
 
+    def _quality_gate_bypassed(self) -> bool:
+        if self.quality_gate_bypass is None:
+            return False
+        try:
+            return bool(self.quality_gate_bypass())
+        except Exception:  # noqa: BLE001 -- an unreadable switch keeps the gate on
+            return False
+
     def _health_factor(self, sym: str) -> float:
         """Return a bounded, evidence-based new-entry risk multiplier.
 
@@ -2053,6 +2084,26 @@ class AutoStrategyEngine:
             self.ledger.log(level="warning", stage="strategy_health", symbol=sym,
                             message=f"{sym}: health guard unavailable ({type(exc).__name__}); no risk change")
             return 1.0
+
+    def _symbol_last_loss_at(self, sym: str) -> Optional[datetime]:
+        """When this symbol's most recent closed trade closed, if it lost."""
+        try:
+            trades = [t for t in self.paper.history() if t.get("symbol") == sym]
+            last = max(trades, key=lambda t: str(t.get("closed_at") or ""), default=None)
+            if not last or float(last.get("pnl") or 0) >= 0 or not last.get("closed_at"):
+                return None
+            at = datetime.fromisoformat(str(last["closed_at"]).replace("Z", "+00:00"))
+            return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+        except Exception:  # noqa: BLE001 -- unknown means the block holds, as before
+            return None
+
+    def _brain_streak(self, sym: str, streak: int) -> int:
+        """The streak the Decision Brain sees: its losing-streak block lasts
+        24 hours from the latest loss instead of forever (services/quality_gate.py).
+        Closed trades carry wall-clock times, so the pause runs on the clock."""
+        if streak < QUALITY_GATE_STREAK_BLOCK_AT:
+            return streak
+        return streak_for_gate(streak, self._symbol_last_loss_at(sym), datetime.now(timezone.utc))
 
     def _symbol_loss_streak(self, sym: str) -> int:
         """Return the current closed-paper loss streak for one symbol.

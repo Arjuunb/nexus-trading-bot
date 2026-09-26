@@ -1,4 +1,5 @@
 import type { Page, Route } from "@playwright/test";
+import { readFileSync } from "node:fs";
 
 /** Deterministic mock backend for the E2E audit. Intercepts every request to
  *  the API host (:8000) and returns plausible JSON so pages render without a
@@ -68,6 +69,8 @@ const PA_CANDLES = Array.from({ length: 80 }, (_, index) => ({
 export const PA_CHART = {
   research_id: "PRICE_ACTION_NATIVE_V1_RESEARCH", research_only: true,
   execution_allowed: false, paper_execution_allowed: true, symbol: "BTCUSDT", timeframe: "5m",
+  // services/mtf_policy.display_contract("5m") before any HTF candle arrives
+  mtf_policy: { label: "Entry 5m · HTF 1h waiting · Bias 4h waiting", available_entry_timeframes: ["1m", "5m", "15m", "1h", "4h"] },
   candles: PA_CANDLES, swings: [], zones: [], events: [], setups: [], proposals: [], orders: [], trades: [],
   metrics: { closed: 0, wins: 0, losses: 0, unfilled: 0, cancelled: 0, rejected: 0, gross_r: 0, net_r: 0, costs_r: 0,
     by_strategy: { PA1_SR_REJECTION: { closed: 0, wins: 0, losses: 0, unfilled: 0, gross_r: 0, net_r: 0, costs_r: 0 } } },
@@ -270,6 +273,12 @@ const SECURITY_AUDIT = {
 
 const SHAPES: [string, unknown][] = [
   ["/security/status", SECURITY_STATUS],
+  ["/security/checkup", { checked_at: "2026-09-24T12:00:00+00:00", counts: { pass: 2, warn: 1, fail: 1 }, total: 4, checks: [
+    { id: "master_key", title: "Master key for secrets", status: "pass", detail: "Exchange keys, webhook secrets and backups are sealed with AES-256-GCM (master key 1a2b3c4d).", fix: "" },
+    { id: "two_factor", title: "Two-factor sign-in", status: "warn", detail: "Your account signs in with a password alone.", fix: "Turn on two-factor in Settings → Security and store the recovery codes." },
+    { id: "defaults", title: "No default credentials", status: "fail", detail: "Still on the development default: control key (HUB_CONTROL_KEY).", fix: "Set them to long random values in .env and redeploy." },
+    { id: "live_routing", title: "Live order routing locked", status: "pass", detail: "Every strategy trades on a paper account; no order reaches an exchange.", fix: "" },
+  ] }],
   ["/security/webhooks", { webhooks: [{ id: "whk_1", url: "https://example.com/nexus-events", events: ["decision.accepted", "decision.rejected"],
     description: "", created_at: "2026-09-24T12:00:00Z", active: true }], event_types: ["decision.accepted", "decision.rejected"] }],
   ["/security/api-keys", { keys: [{ id: "a1b2c3d4", name: "research notebook", scopes: ["read"], version: "2026-09-24",
@@ -444,6 +453,8 @@ const SHAPES: [string, unknown][] = [
     best_strategy: { name: "Decision Brain", net_r: 12 }, worst_strategy: { name: "Decision Brain", net_r: 12 },
     skipped_total: 7, skipped_by_category: [{ category: "safety", count: 5 }, { category: "risk", count: 2 }],
     safety: { live_allowed: false, hard_locked: true, passed: 3, total: 6 },
+    criteria: { minimum_profit_factor: 1.15, max_drawdown_pct: 10.0, forward_data: false, execution_model: "perfect" },
+    stability: { available: false, passed: false, windows: [] },
     live_review: { eligible: false, stage: "insufficient-sample",
       reasons: ["Need ≥ 30 closed paper trades (have 24).", "Safety guards incomplete: max_daily_loss."],
       note: "Live trading stays LOCKED regardless of this verdict. This is human-review eligibility only — it never auto-enables real-money trading." },
@@ -528,6 +539,10 @@ const SHAPES: [string, unknown][] = [
       { level: "Medium", trades: 4, wins: 2, win_rate: 50, avg_rr: 0.4, avg_pnl: 5 },
       { level: "Low", trades: 4, wins: 1, win_rate: 25, avg_rr: -0.3, avg_pnl: -12 },
       { level: "Very Low", trades: 2, wins: 1, win_rate: 50, avg_rr: 0.1, avg_pnl: 2 }] }],
+  ["/ai/recommendations", { recommendations: [
+    { id: "daily-cap", title: "Set a daily loss cap", why: "There is no daily loss limit — a single bad session is uncapped.",
+      setting: "max_daily_loss_pct", current: 0.0, suggested: 0.03, unit: "%", severity: "warning" }],
+    count: 1, ready: true, note: "Everything here maps to one real setting; applying sends it straight to the live paper engine." }],
   ["/ai/alerts", { count: 2, checked: ["BTCUSDT", "ETHUSDT"], alerts: [
     { type: "strong_setup", severity: "success", title: "Strong setup — BTCUSDT", detail: "BUY at score 88/100.", symbol: "BTCUSDT" },
     { type: "outside_session", severity: "info", title: "Outside trading session", detail: "Entries held until in-session.", symbol: "" }] }],
@@ -590,8 +605,70 @@ function bodyFor(pathname: string): unknown {
   return {};
 }
 
+// /calendar/* responses produced by the real calendar service over real
+// engine trades (see e2e/fixtures/generate_calendar_fixture.py). Other months
+// answer as months with no closed trades, exactly as the API would.
+export const CALENDAR = JSON.parse(readFileSync(new URL("./fixtures/calendar.json", import.meta.url), "utf8"));
+
+function calendarMonth(url: URL) {
+  const year = Number(url.searchParams.get("year")); const month = Number(url.searchParams.get("month"));
+  const source = url.searchParams.get("source");
+  if (year === 2026 && month === 9) return source ? CALENDAR.month_by_source[source] : CALENDAR.month;
+  const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const iso = (t: Date) => t.toISOString().slice(0, 10);
+  const first = new Date(Date.UTC(year, month - 1, 1));
+  const last = new Date(Date.UTC(year, month - 1, days));
+  const weeks = [];
+  for (let start = new Date(first.getTime() - ((first.getUTCDay() + 6) % 7) * 864e5); start <= last;
+    start = new Date(start.getTime() + 7 * 864e5)) {
+    const end = new Date(start.getTime() + 6 * 864e5);
+    weeks.push({ start: iso(start), from: iso(start < first ? first : start), to: iso(end > last ? last : end),
+      state: "none", by_currency: {}, closed_trades: 0, realizations: 0 });
+  }
+  return {
+    year, month, summary: {}, currencies: [], timezone: CALENDAR.month.timezone, filters: {}, weeks,
+    days: Array.from({ length: days }, (_, i) => ({
+      date: `${year}-${String(month).padStart(2, "0")}-${String(i + 1).padStart(2, "0")}`,
+      state: "none", by_currency: {}, closed_trades: 0, realizations: 0 })),
+    diagnostics: CALENDAR.month.diagnostics,
+    conversion: { display_currency: "USDT", needed: false, available: false, unconverted: [], note: "" },
+  };
+}
+
+function calendarDay(url: URL) {
+  const date = url.searchParams.get("date_") ?? "";
+  return CALENDAR.days[date] ?? {
+    date, summary: {}, currencies: [], state: "none", sources: [], strategies: [], hourly: [], trades: [],
+    time_of_day: CALENDAR.days["2026-09-20"].time_of_day, timezone: CALENDAR.month.timezone, filters: {},
+    diagnostics: CALENDAR.month.diagnostics,
+    conversion: { display_currency: "USDT", needed: false, available: false, unconverted: [], note: "" },
+  };
+}
+
 export async function mockApi(page: Page) {
   let paPaper: any = structuredClone(PA_PAPER);
+  // Some pages stream candles straight from Binance's public WebSocket. A
+  // test must not depend on reaching the internet, and a blocked socket makes
+  // Chrome log a console error the audit would blame on the page. Binance
+  // stream URLs get a socket that stays connecting and never errors, which is
+  // what the pages already handle (they keep polling over REST).
+  await page.addInitScript(() => {
+    const Real = window.WebSocket;
+    class QuietSocket extends EventTarget {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
+      readyState = 0; url: string; protocol = ""; extensions = ""; bufferedAmount = 0; binaryType = "blob";
+      onopen = null; onmessage = null; onclose = null; onerror = null;
+      constructor(url: string | URL) { super(); this.url = String(url); }
+      send() {}
+      close() { this.readyState = 3; }
+    }
+    const Wrapped = function (url: string | URL, protocols?: string | string[]) {
+      return /(^|\.)binance\.com/.test(new URL(String(url)).hostname)
+        ? new QuietSocket(url) : new Real(url, protocols);
+    } as unknown as typeof WebSocket;
+    Object.assign(Wrapped, { CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3, prototype: Real.prototype });
+    window.WebSocket = Wrapped;
+  });
   await page.route(
     (url) => url.host === "localhost:8000",
     async (route: Route) => {
@@ -610,6 +687,32 @@ export async function mockApi(page: Page) {
           forward_evidence: { experiments: 0, counted_candles: 0, decisions: 0, trades: 0, note: "No forward evidence." },
           next_action: "Review frozen evidence before starting an experiment.",
         } });
+      }
+      // shape copied from the hub's GET /research/smc/agent/policy defaults
+      if (url.pathname === "/research/smc/agent/policy") return route.fulfill({ json: {
+        trade_management: { enabled: false, breakeven_at_r: 1.0, breakeven_offset_r: 0.0, trail_after_r: null, trail_lookback: 3, trail_buffer_r: 0.1 },
+        context: { enabled: false, daily_loss_cap_r: null, max_consecutive_losses: null, allowed_hours_utc: [], min_candle_range_bps: null, volatility_lookback: 10 },
+        memory: { enabled: false, min_sample: 20, veto_at_or_below_expectancy_r: 0.0, by_hour: false },
+        note: "Each of these changes how much and how often the agent trades. They are hypotheses to backtest and forward-test, not improvements.",
+        paper_only: true, real_execution_allowed: false } });
+      // shape of the hub's GET /research/event-guard/{lab} (routers/lab_event_guard.py)
+      const labGuard = url.pathname.match(/^\/research\/event-guard\/(price_action|smc|adaptive)$/);
+      if (labGuard) {
+        const lab = labGuard[1];
+        const enabled = route.request().method() === "PATCH" ? Boolean((route.request().postDataJSON() as { enabled?: boolean }).enabled) : false;
+        return route.fulfill({ json: {
+          lab, label: { price_action: "Price Action Lab", smc: "SMC Lab", adaptive: "Adaptive Lab" }[lab],
+          enabled, updated_at: null, calendar_connected: true, mode: "normal", halt_new_entries: false,
+          risk_multiplier: 1.0, next_event: { name: "Non-Farm Employment Change", time: "2026-10-02T12:30:00+00:00", impact: "high" },
+          minutes_to_event: 9000, window: { blackout_before_min: 30, blackout_after_min: 15, caution_before_min: 120 } } });
+      }
+      if (url.pathname === "/calendar/options") return route.fulfill({ json: CALENDAR.options });
+      if (url.pathname === "/calendar/month") return route.fulfill({ json: calendarMonth(url) });
+      if (url.pathname === "/calendar/day") return route.fulfill({ json: calendarDay(url) });
+      if (url.pathname === "/calendar/export.csv") {
+        return route.fulfill({ status: 200, contentType: "text/csv; charset=utf-8",
+          headers: { "Content-Disposition": `attachment; filename="realized-pnl_${url.searchParams.get("start")}_${url.searchParams.get("end")}.csv"` },
+          body: "closed_at,net\n" });
       }
       if (url.pathname === "/research/price-action/journal") {
         return route.fulfill({ json: { entries: [], real_execution_allowed: false,

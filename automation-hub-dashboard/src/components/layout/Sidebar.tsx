@@ -2,7 +2,8 @@ import Logo from "../common/Logo";
 import {
   LayoutDashboard, CandlestickChart, Search, Layers, FlaskConical, RefreshCw, PlayCircle,
   NotebookPen, Rocket, Wallet, BarChart3, ShieldAlert, Brain,
-  BookOpen, Activity, BadgeCheck, Settings, Lock, Blocks, SquareTerminal, SlidersHorizontal, GitCompareArrows, type LucideIcon,
+  BookOpen, Activity, BadgeCheck, Settings, Lock, Blocks, SquareTerminal, SlidersHorizontal, GitCompareArrows, CalendarDays,
+  type LucideIcon,
 } from "lucide-react";
 import { NAV_GROUPS } from "../../app-context";
 
@@ -32,6 +33,7 @@ const NAV_LUCIDE: Record<string, LucideIcon> = {
   "Instance Visual Lab": Activity,
   "Risk & Health": ShieldAlert,
   Evolution: Brain,
+  Calendar: CalendarDays,
   Journal: BookOpen,
   Settings: Settings,
   "Safety Center": Lock,

@@ -13,6 +13,7 @@ interface Window {
     supabaseUrl?: string | null;
     supabaseAnonKey?: string | null;
     oauthProviders?: string[];
+    signedIn?: boolean;
   };
 }
 

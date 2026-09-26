@@ -7,6 +7,13 @@ test("Security settings show key custody, redaction and a verifiable audit log",
   await mockApi(page);
   await page.goto("/#/settings?section=security");
 
+  const checkup = page.locator("section", { has: page.getByRole("heading", { name: "Security checkup" }) });
+  await expect(checkup.getByText("1 to fix · 1 to review · 2 of 4 in place")).toBeVisible();
+  // problems first, each with its fix; passing checks carry no fix line
+  await expect(checkup.locator(".checkup-item").first()).toHaveClass(/fail/);
+  await expect(checkup.locator(".checkup-item.fail .checkup-fix")).toContainText("long random values");
+  await expect(checkup.locator(".checkup-item.pass .checkup-fix")).toHaveCount(0);
+
   const keys = page.locator("section", { has: page.getByRole("heading", { name: "Exchange keys" }) });
   await expect(keys.getByText("AES-256-GCM envelope (per-tenant data keys)")).toBeVisible();
   await expect(keys.getByText("…9Q2x")).toBeVisible();
@@ -50,6 +57,7 @@ test("Security settings survive an API that returns nothing useful", async ({ pa
   await page.route((url) => url.pathname.startsWith("/security/"), (route) => route.fulfill({ json: {} }));
   await page.goto("/#/settings?section=security");
   await expect(page.getByRole("heading", { name: "Audit log" })).toBeVisible();
+  await expect(page.getByText("The checkup could not run.")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Exchange keys" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Backups" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "API keys" })).toBeVisible();

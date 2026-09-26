@@ -63,7 +63,7 @@ const PRIMARY: SitePage[] = [
       "Explore what TradeLogX Nexus runs today: the decision engine, risk checks, backtesting and validation, paper execution, the trade journal and alerts.",
     accent: "gold",
     blurb: "Every built capability, searchable",
-    themeColor: "#07080B",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Features"),
   },
   {
@@ -74,7 +74,7 @@ const PRIMARY: SitePage[] = [
       "See how the Nexus Engine turns closed Binance candles into a scored, risk-checked decision and a paper fill, with every step written to the record.",
     accent: "electric",
     blurb: "The decision path, stage by stage",
-    themeColor: "#0B0E12",
+    themeColor: "#0B0B0D",
     load: () => import("@/pages/site/Engine"),
   },
   {
@@ -85,7 +85,7 @@ const PRIMARY: SitePage[] = [
       "Explore the TradeLogX Nexus terminal: live Binance candles, open positions, scored decisions and a timestamped record of every paper fill.",
     accent: "terminal",
     blurb: "Chart, positions and paper fills",
-    themeColor: "#06080A",
+    themeColor: "#070708",
     load: () => import("@/pages/site/LiveTrade"),
   },
   {
@@ -107,7 +107,7 @@ const PRIMARY: SitePage[] = [
       "Follow a TradeLogX Nexus trade through market data, analysis, a scored decision, risk checks, paper execution, the journal and analytics.",
     accent: "spectrum",
     blurb: "The seven-stage journey",
-    themeColor: "#05070C",
+    themeColor: "#060607",
     load: () => import("@/pages/site/HowItWorks"),
   },
   {
@@ -118,7 +118,7 @@ const PRIMARY: SitePage[] = [
       "TradeLogX Nexus security: encrypted exchange keys, withdrawal scopes refused, a hash-chained audit log, encrypted backups and how to report a vulnerability.",
     accent: "emerald",
     blurb: "Keys, scopes and audit trails",
-    themeColor: "#060B15",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Security"),
   },
 ];
@@ -143,7 +143,7 @@ const SECONDARY: SitePage[] = [
       "TradeLogX Nexus publishes no performance figure it cannot back. See the recorded strategy validation and the method a result must pass to appear here.",
     accent: "emerald",
     blurb: "Recorded validation and method",
-    themeColor: "#06090B",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Performance"),
   },
   {
@@ -154,7 +154,7 @@ const SECONDARY: SitePage[] = [
       "A tour of the TradeLogX Nexus dashboard: the overview, open positions, the trading journal, the Strategy Lab and the risk console, panel by panel.",
     accent: "spectrum",
     blurb: "Every panel, toured",
-    themeColor: "#070A0F",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Dashboard"),
   },
 
@@ -167,7 +167,7 @@ const SECONDARY: SitePage[] = [
       "Use TradeLogX Nexus documentation to install, connect an exchange, run backtests, configure paper trading and understand core platform concepts.",
     accent: "electric",
     blurb: "Quickstart, concepts, guides",
-    themeColor: "#06080C",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Docs"),
   },
   {
@@ -178,7 +178,7 @@ const SECONDARY: SitePage[] = [
       "Explore the TradeLogX Nexus API for authentication, strategies, positions, decisions, backtests, webhooks, rate limits and structured errors.",
     accent: "electric",
     blurb: "Endpoints, auth, webhooks",
-    themeColor: "#06080C",
+    themeColor: "#070708",
     load: () => import("@/pages/site/ApiReference"),
   },
   {
@@ -189,7 +189,7 @@ const SECONDARY: SitePage[] = [
       "TradeLogX Nexus clients in Python, TypeScript, Go and Rust: install from the repository, a first request in each, and an honest feature-parity table.",
     accent: "electric",
     blurb: "Four clients, one API",
-    themeColor: "#06080C",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Sdks"),
   },
   {
@@ -200,7 +200,7 @@ const SECONDARY: SitePage[] = [
       "The whole TradeLogX Nexus platform is in one public MIT-licensed repository: risk gates, backtests, the API, the SDKs and the deployment, and how to contribute.",
     accent: "electric",
     blurb: "All of it, MIT-licensed",
-    themeColor: "#06080C",
+    themeColor: "#070708",
     load: () => import("@/pages/site/OpenSource"),
   },
   {
@@ -211,7 +211,7 @@ const SECONDARY: SitePage[] = [
       "The TradeLogX Nexus repository: what lives where, how changes ship, how to file an issue that gets fixed, and what a good pull request looks like.",
     accent: "electric",
     blurb: "The repository and how to contribute",
-    themeColor: "#06080C",
+    themeColor: "#070708",
     load: () => import("@/pages/site/GitHub"),
   },
 
@@ -224,7 +224,7 @@ const SECONDARY: SitePage[] = [
       "TradeLogX Nexus answers for exchange keys, stale data, risk limits, exports and two-factor, and where to take anything else: issues, security reports, status.",
     accent: "gold",
     blurb: "Answers, and where to go next",
-    themeColor: "#08080A",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Support"),
   },
   {
@@ -235,7 +235,7 @@ const SECONDARY: SitePage[] = [
       "The TradeLogX Nexus community on the public repository: issues, proposals argued before they are built, the code of conduct, and what is still planned.",
     accent: "gold",
     blurb: "Issues, proposals, conduct",
-    themeColor: "#08080A",
+    themeColor: "#070708",
     load: () => import("@/pages/site/Community"),
   },
   {
@@ -246,7 +246,7 @@ const SECONDARY: SitePage[] = [
       "Live TradeLogX Nexus service status, checked every minute: API, trading workers, market data and database, with measured uptime and incident history.",
     accent: "terminal",
     blurb: "Live service health",
-    themeColor: "#050708",
+    themeColor: "#060607",
     load: () => import("@/pages/site/Status"),
   },
 
@@ -370,28 +370,28 @@ export const ACCENT_CLASSES: Record<Accent, AccentClasses> = {
     bg: "bg-gold",
     border: "border-gold/30",
     hoverBorder: "hover:border-gold/40",
-    glow: "shadow-[0_0_24px_-6px_rgba(201,162,75,0.65)]",
+    glow: "shadow-[0_0_24px_-6px_rgba(234,181,79,0.65)]",
   },
   electric: {
     text: "text-electric-soft",
     bg: "bg-electric",
     border: "border-electric/40",
     hoverBorder: "hover:border-electric/50",
-    glow: "shadow-[0_0_24px_-6px_rgba(46,123,255,0.7)]",
+    glow: "shadow-[0_0_24px_-6px_rgba(234,181,79,0.7)]",
   },
   terminal: {
     text: "text-emerald-soft",
     bg: "bg-emerald",
     border: "border-emerald/40",
     hoverBorder: "hover:border-emerald/50",
-    glow: "shadow-[0_0_24px_-6px_rgba(47,191,113,0.7)]",
+    glow: "shadow-[0_0_24px_-6px_rgba(34,197,94,0.7)]",
   },
   aurum: {
     text: "text-gold-soft",
     bg: "bg-gold-soft",
     border: "border-gold/40",
     hoverBorder: "hover:border-gold-soft/50",
-    glow: "shadow-[0_0_24px_-6px_rgba(231,206,134,0.7)]",
+    glow: "shadow-[0_0_24px_-6px_rgba(242,199,102,0.7)]",
   },
   spectrum: {
     text: "text-aqua-soft",
@@ -405,6 +405,6 @@ export const ACCENT_CLASSES: Record<Accent, AccentClasses> = {
     bg: "bg-emerald",
     border: "border-emerald/40",
     hoverBorder: "hover:border-emerald/50",
-    glow: "shadow-[0_0_24px_-6px_rgba(47,191,113,0.7)]",
+    glow: "shadow-[0_0_24px_-6px_rgba(34,197,94,0.7)]",
   },
 };

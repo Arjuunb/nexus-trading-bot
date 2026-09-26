@@ -288,6 +288,11 @@ class SignalPipeline:
         # Event-risk gate: callable returning upcoming econ events. Blackout
         # halts new entries; caution halves size (exits are never blocked).
         self.econ_events = None
+        # Minutes after a release that still count as blackout. 0 here; the
+        # server sets 15 for the main engine, and Trading Instances and labs
+        # that opt in to the news guard use the same 15, so every gate sits
+        # out the first reaction to a release.
+        self.econ_after_min = 0
         # Allocator tilt: callable(symbol) -> size multiplier from the live
         # per-symbol record (evidence-only, capped — see services/allocator.py).
         self.allocator = None
@@ -595,11 +600,12 @@ class SignalPipeline:
         econ_risk = 1.0
         if self.econ_events is not None:
             from services.econ_guard import evaluate as _econ_eval
-            ev = _econ_eval(self.econ_events())
+            ev = _econ_eval(self.econ_events(), after_min=self.econ_after_min)
             if ev["halt_new_entries"]:
+                mins = ev["minutes_to_event"]
+                when = (f"released {-mins:.0f}m ago" if mins < 0 else f"in {mins:.0f}m")
                 return reject("event_risk",
-                              f"Event blackout: {ev['next_event']['name']} in "
-                              f"{ev['minutes_to_event']:.0f}m — no new entries")
+                              f"Event blackout: {ev['next_event']['name']} {when} — no new entries")
             econ_risk = ev.get("risk_multiplier", 1.0) or 1.0
             if econ_risk < 1.0:
                 steps.append(Step("event_risk", True,

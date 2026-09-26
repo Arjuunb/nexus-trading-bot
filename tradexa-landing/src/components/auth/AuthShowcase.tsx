@@ -1,26 +1,17 @@
 import { motion } from "framer-motion";
 import { TrendingUp, ShieldCheck, Zap } from "lucide-react";
+import { AuthPipeline } from "./AuthPipeline";
 
 const STATS = [
-  { icon: TrendingUp, label: "Strategies executed", value: "Fully automated" },
+  { icon: TrendingUp, label: "Decisions", value: "Every one journaled" },
   { icon: ShieldCheck, label: "Keys", value: "Encrypted · No withdrawals" },
-  { icon: Zap, label: "Execution", value: "Sub-100ms routing" },
+  { icon: Zap, label: "Execution", value: "Paper account · live locked" },
 ];
 
-// Hand-authored demo equity shape for the showcase panel (not real returns).
-const CURVE = [10, 26, 20, 38, 33, 52, 48, 66, 62, 80];
-const W = 260;
-const H = 80;
-const path = CURVE.map((v, i) => {
-  const x = (i / (CURVE.length - 1)) * W;
-  const y = H - (v / 100) * H;
-  return `${i === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
-}).join(" ");
-
 /**
- * Left panel of the split auth layout — a quiet, premium showcase of the
- * product with a drawing equity line and floating statistic chips. Sample data
- * only, clearly a design element, never a real account.
+ * Left panel of the split auth layout — a quiet showcase of what the product
+ * does. It carries no performance numbers: a sign-in page is no place for
+ * returns nobody earned.
  */
 export function AuthShowcase() {
   return (
@@ -52,30 +43,15 @@ export function AuthShowcase() {
         </p>
       </div>
 
-      {/* animated preview card */}
-      <div className="px-10 xl:px-14">
+      {/* how a decision flows, animated (a product description, not results) */}
+      <div className="flex flex-1 items-center px-10 xl:px-14">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.2 }}
-          className="glass-strong rounded-2xl p-5 shadow-card"
+          className="w-full max-w-xl"
         >
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-wider text-white/40">Equity · demo</span>
-            <span className="text-xs text-emerald-soft">+18.4%</span>
-          </div>
-          <svg viewBox={`0 0 ${W} ${H}`} className="h-20 w-full" preserveAspectRatio="none">
-            <motion.path
-              d={path}
-              fill="none"
-              stroke="#4FD98E"
-              strokeWidth="2"
-              strokeLinecap="round"
-              initial={{ pathLength: 0 }}
-              animate={{ pathLength: 1 }}
-              transition={{ duration: 1.6, ease: "easeInOut", delay: 0.4 }}
-            />
-          </svg>
+          <AuthPipeline />
         </motion.div>
       </div>
 

@@ -4,7 +4,7 @@ import { Switch } from "@/components/ui/Switch";
 import { useSettings } from "@/settings/store";
 import { cn } from "@/lib/utils";
 
-const ACCENTS = ["#C8A94B", "#2FBF71", "#4F8CFF", "#B072F0", "#E5605B", "#E08D3C"];
+const ACCENTS = ["#EAB54F", "#2FBF71", "#4F8CFF", "#B072F0", "#E5605B", "#E08D3C"];
 
 export default function Appearance() {
   const { settings, update } = useSettings();

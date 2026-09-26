@@ -29,6 +29,7 @@ PRESETS: dict = {
                   "rules": [{"type": "ema_cross", "fast": 20, "slow": 50, "dir": "above"}]},
     "Liquidity Sweep": {"kind": "builtin", "key": "liquidity_sweep"},
     "Adaptive MTF Trend Pullback": {"kind": "builtin", "key": "adaptive_trend_pullback"},
+    "3-Candle Rejection · EMA 9/33": {"kind": "builtin", "key": "three_candle_rejection"},
     "Custom Strategy": {"kind": "custom_user"},
 }
 STRATEGY_OPTIONS = list(PRESETS)
@@ -55,6 +56,10 @@ REGISTRY = [
      "version": builtin_strategy_version("adaptive_trend_pullback"), "kind": "builtin",
      "timeframes": ["5m"],
      "description": "5m entry + native 1h regime gate + native 4h bias + 15m pullback context"},
+    {"id": "three_candle_rejection", "name": "3-Candle Rejection · EMA 9/33",
+     "version": builtin_strategy_version("three_candle_rejection"), "kind": "builtin",
+     "timeframes": ["5m", "15m", "1h", "4h"],
+     "description": "Push, rejection and confirmation at a 2-touch swing level; EMA 9/33 trend filter; wick stop, 2R"},
     {"id": "custom", "name": "Custom Strategy", "version": "1.0", "kind": "custom_user",
      "timeframes": [], "description": "User-built rule strategy"},
 ]
@@ -153,6 +158,15 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
     slippage = 0.0002 + max(0.0, float(fill_cost))
     min_score = int((tuning or {}).get("min_score", DEFAULT_TUNING["min_score"]))
     brain = TradeBrain()
+    gate_mode = str((tuning or {}).get("quality_gate", "on")).lower()
+    if gate_mode == "off":
+        # The same gate-off a Trading Instance runs (services/quality_gate.py):
+        # the score never blocks; only the size/account safety blocks do.
+        from services.quality_gate import SafetyOnlyBrain
+        brain, min_score = SafetyOnlyBrain(brain), 0
+    elif gate_mode == "raw":
+        # Research only: the strategy's own signals, no Decision Brain at all.
+        brain, min_score = None, 0
     if desc["kind"] == "builtin":
         from services.strategy_factory import make_builtin_strategy
         strat = make_builtin_strategy(desc["key"], symbol)

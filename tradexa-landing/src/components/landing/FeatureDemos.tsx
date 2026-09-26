@@ -30,13 +30,13 @@ function ScoreDemo({ play, reduced }: DemoProps) {
             {/* threshold marker at 70 */}
             <span className="absolute inset-y-0 z-10 w-px bg-white/25" style={{ left: "70%" }} aria-hidden />
             <motion.span
-              className={b.act ? "block h-full rounded-full bg-emerald" : "block h-full rounded-full bg-white/25"}
+              className={b.act ? "block h-full rounded-full bg-gold" : "block h-full rounded-full bg-white/25"}
               initial={reduced ? false : { width: 0 }}
               animate={{ width: on ? `${b.score}%` : 0 }}
               transition={{ duration: 0.7, ease: EASE, delay: i * 0.12 }}
             />
           </div>
-          <span className={`w-10 shrink-0 text-right font-mono text-[10.5px] ${b.act ? "text-emerald-soft" : "text-white/40"}`}>
+          <span className={`w-10 shrink-0 text-right font-mono text-[10.5px] ${b.act ? "text-gold" : "text-white/40"}`}>
             {b.act ? "act" : "skip"}
           </span>
         </div>
@@ -86,7 +86,7 @@ function EquityDemo({ play, reduced }: DemoProps) {
         <motion.path
           d={d}
           fill="none"
-          stroke="#2FBF71"
+          stroke="#22C55E"
           strokeWidth="1.6"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -105,7 +105,7 @@ function FeedDemo({ play, reduced }: DemoProps) {
   const on = play || reduced;
   const lines = [
     { t: "scan BTCUSDT · 5m", c: "text-white/45" },
-    { t: "signal → LONG · conf 0.82", c: "text-emerald-soft" },
+    { t: "signal → LONG · conf 0.82", c: "text-gold" },
     { t: "filled 0.42 @ 64,981", c: "text-white/70" },
   ];
   return (

@@ -1,8 +1,14 @@
 import type { Config } from "tailwindcss";
 
 /**
- * Tradexa Trading Bot — dark-luxury design tokens.
- * Bloomberg Terminal precision × Apple restraint × Linear polish.
+ * TradeLogX Nexus design tokens, shared with the dashboard.
+ *
+ * One palette for the whole platform: the dashboard's near-black surfaces,
+ * white text in a few tiers, ONE accent (the dashboard's gold, #EAB54F), and
+ * green / red reserved for what they mean (profit / loss, pass / fail).
+ * Everything else is neutral. The values mirror the dashboard's CSS tokens
+ * (automation-hub-dashboard/src/index.css: --bg, --card-*, --gold, --green,
+ * --red, --dim) so moving from the site into the app changes nothing.
  */
 export default {
   darkMode: "class",
@@ -12,75 +18,76 @@ export default {
       colors: {
         // Core surfaces
         ink: {
-          DEFAULT: "#08080A", // primary black
-          800: "#0C0C0F",
-          700: "#111114",
-          600: "#17171B",
-          500: "#1E1E23",
-          400: "#2A2A31",
+          DEFAULT: "#070708", // primary black
+          800: "#0E0E10",
+          700: "#121214",
+          600: "#17171A",
+          500: "#1E1E22",
+          400: "#2A2A2F",
         },
         // Brand
         gold: {
-          DEFAULT: "#C9A24B",
-          soft: "#E7CE86",
-          deep: "#8A7233",
+          DEFAULT: "#EAB54F",
+          soft: "#F2C766",
+          deep: "#A9832F",
         },
-        // Secondary brand accent — TradeLogX Nexus "signal blue" (data / links)
+        // Secondary tone for data and links: neutral silver (the dashboard's
+        // --dim), not a second hue. Kept as its own name so it can still be
+        // told apart from gold in two-series diagrams.
         signal: {
-          DEFAULT: "#3E7BD6",
-          soft: "#6EA3EC",
-          deep: "#13233F",
+          DEFAULT: "#B0B8C4",
+          soft: "#D4D9E0",
+          deep: "#1A1A1E",
         },
         emerald: {
-          DEFAULT: "#2FBF71",
-          soft: "#4FD98E",
-          deep: "#1E9457",
+          DEFAULT: "#22C55E",
+          soft: "#4ADE80",
+          deep: "#16A34A",
         },
+        // Semantic only: profit / pass and loss / fail. Never decoration.
         loss: {
-          DEFAULT: "#E5605B", // soft red
-          soft: "#F07E7A",
-          deep: "#C24A45",
+          DEFAULT: "#EF4444",
+          soft: "#F87171",
+          deep: "#DC2626",
         },
         line: "rgba(255,255,255,0.08)",
         "line-strong": "rgba(255,255,255,0.14)",
 
-        // ── Per-page palettes ────────────────────────────────────────────
-        // Each dedicated route gets its own surface + accent family so the
-        // page reads as its own product, while every family is derived from
-        // the same Nexus primaries (gold, signal blue, emerald) rather than
-        // introducing unrelated hues.
+        // ── Page surface aliases ─────────────────────────────────────────
+        // Product pages used to carry their own hue families (electric blue,
+        // aqua, navy, phosphor green). They now alias the one platform
+        // palette, so every page reads as the same product the dashboard is.
+        // The names stay so the pages need no rewrite.
 
-        // /engine — AI operating system: cold graphite under electric blue
+        // /engine surfaces; `electric` is the gold accent, `aqua` the silver
         graphite: {
-          DEFAULT: "#0B0E12",
-          800: "#0E1219",
-          700: "#131A24",
-          600: "#1A2331",
-          500: "#243043",
+          DEFAULT: "#0B0B0D",
+          800: "#121214",
+          700: "#141417",
+          600: "#1C1C20",
+          500: "#26262B",
         },
         electric: {
-          DEFAULT: "#2E7BFF",
-          soft: "#7CADFF",
-          deep: "#0E1E3C",
+          DEFAULT: "#EAB54F",
+          soft: "#F2C766",
+          deep: "#1F1A10",
         },
-        // named `aqua` rather than `cyan` so Tailwind's default cyan scale
-        // stays intact for anything that still uses it
         aqua: {
-          DEFAULT: "#22D3EE",
-          soft: "#7DE9F8",
-          deep: "#0B4453",
+          DEFAULT: "#B0B8C4",
+          soft: "#D4D9E0",
+          deep: "#1A1C20",
         },
 
-        // /live-trade — trading terminal: near-black with phosphor accents
+        // /live-trade surfaces
         term: {
-          DEFAULT: "#06080A",
-          800: "#0A0D11",
-          700: "#0E1318",
-          600: "#151C22",
-          500: "#1E272F",
+          DEFAULT: "#070708",
+          800: "#0E0E10",
+          700: "#0F0F11",
+          600: "#17171A",
+          500: "#1E1E22",
         },
 
-        // /selectivity — premium black + gold
+        // /selectivity surfaces
         obsidian: {
           DEFAULT: "#040404",
           800: "#0A0908",
@@ -89,13 +96,13 @@ export default {
           500: "#272117",
         },
 
-        // /security — dark navy under emerald
+        // /security surfaces
         navy: {
-          DEFAULT: "#060B15",
-          800: "#09101F",
-          700: "#0D172A",
-          600: "#132239",
-          500: "#1B3050",
+          DEFAULT: "#070708",
+          800: "#0C0C0E",
+          700: "#111113",
+          600: "#1A1A1E",
+          500: "#26262B",
         },
       },
       fontFamily: {
@@ -114,16 +121,16 @@ export default {
       },
       boxShadow: {
         glass: "0 1px 0 0 rgba(255,255,255,0.05) inset, 0 24px 60px -20px rgba(0,0,0,0.7)",
-        gold: "0 10px 40px -12px rgba(200,169,75,0.45)",
+        gold: "0 10px 40px -12px rgba(234,181,79,0.45)",
         card: "0 20px 50px -24px rgba(0,0,0,0.8)",
       },
       backgroundImage: {
-        "gold-sheen": "linear-gradient(135deg, #E7D89A 0%, #C8A94B 45%, #A98E3A 100%)",
-        "radial-fade": "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(200,169,75,0.14), transparent 60%)",
+        "gold-sheen": "linear-gradient(135deg, #F2C766 0%, #EAB54F 45%, #C99A3A 100%)",
+        "radial-fade": "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(234,181,79,0.14), transparent 60%)",
         // page base: barely-warm charcoal falling to true black — depth without
         // leaving the near-black identity
         "page-depth":
-          "radial-gradient(120% 85% at 50% 0%, #0D0C0A 0%, #08080A 48%, #050506 100%)",
+          "radial-gradient(120% 85% at 50% 0%, #0D0C0A 0%, #070708 48%, #050506 100%)",
         // Landing-only. There used to be three more grid variants beside this
         // one — grid-cool, grid-emerald and grid-term, one per product page,
         // all the same 1px lattice in a different hue — and the app painted
@@ -134,8 +141,8 @@ export default {
         // a texture gets its own in components/site/backdrops.tsx.
         "grid-lines":
           "linear-gradient(to right, rgba(226,214,182,0.045) 1px, transparent 1px), linear-gradient(to bottom, rgba(226,214,182,0.045) 1px, transparent 1px)",
-        "electric-sheen": "linear-gradient(135deg, #7CADFF 0%, #2E7BFF 45%, #22D3EE 100%)",
-        "emerald-sheen": "linear-gradient(135deg, #7DF0B4 0%, #2FBF71 50%, #1E9457 100%)",
+        "electric-sheen": "linear-gradient(135deg, #F2C766 0%, #EAB54F 45%, #C99A3A 100%)",
+        "emerald-sheen": "linear-gradient(135deg, #86EFAC 0%, #22C55E 50%, #16A34A 100%)",
         // phosphor scanlines — the terminal surface only
         scanlines:
           "repeating-linear-gradient(to bottom, rgba(255,255,255,0.028) 0px, rgba(255,255,255,0.028) 1px, transparent 1px, transparent 3px)",
@@ -161,9 +168,9 @@ export default {
           "100%": { transform: "translateX(100%)" },
         },
         "pulse-ring": {
-          "0%": { boxShadow: "0 0 0 0 rgba(47,191,113,0.45)" },
-          "70%": { boxShadow: "0 0 0 8px rgba(47,191,113,0)" },
-          "100%": { boxShadow: "0 0 0 0 rgba(47,191,113,0)" },
+          "0%": { boxShadow: "0 0 0 0 rgba(34,197,94,0.45)" },
+          "70%": { boxShadow: "0 0 0 8px rgba(34,197,94,0)" },
+          "100%": { boxShadow: "0 0 0 0 rgba(34,197,94,0)" },
         },
         "grid-pan": {
           "0%": { backgroundPosition: "0 0" },

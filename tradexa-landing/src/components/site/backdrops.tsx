@@ -36,7 +36,7 @@ export function LandingAmbient() {
   return (
     <Ambient base="bg-ink bg-page-depth">
       <div className="absolute -top-48 left-1/2 h-[34rem] w-[46rem] -translate-x-1/2 rounded-full bg-gold/[0.05] blur-[130px] motion-safe:animate-bloom" />
-      <div className="absolute -bottom-56 right-[-12rem] h-[30rem] w-[40rem] rounded-full bg-emerald-deep/[0.05] blur-[150px] motion-safe:animate-bloom-slow" />
+      <div className="absolute -bottom-56 right-[-12rem] h-[30rem] w-[40rem] rounded-full bg-gold/[0.05] blur-[150px] motion-safe:animate-bloom-slow" />
       <div className="absolute bottom-1/4 left-[-14rem] h-[24rem] w-[30rem] rounded-full bg-gold-deep/[0.035] blur-[140px]" />
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_58%,rgba(0,0,0,0.6))]" />
       {/* fine grain over the whole backdrop: the big soft blooms read as
@@ -84,7 +84,7 @@ export function AppSurface() {
 
 export function FeaturesBackdrop() {
   return (
-    <Ambient base="bg-[#07080B]">
+    <Ambient base="bg-[#070708]">
       <div className="absolute -left-40 -top-40 h-[38rem] w-[46rem] rounded-full bg-signal/[0.07] blur-[150px]" />
       <div className="absolute right-[-16rem] top-1/3 h-[30rem] w-[38rem] rounded-full bg-gold/[0.035] blur-[160px]" />
       <div
@@ -184,7 +184,7 @@ export function EngineBackdrop() {
             y1={nodes[a][1]}
             x2={nodes[b][0]}
             y2={nodes[b][1]}
-            stroke="#2E7BFF"
+            stroke="#EAB54F"
             strokeOpacity="0.2"
             strokeWidth="0.12"
           />
@@ -195,7 +195,7 @@ export function EngineBackdrop() {
             cx={x}
             cy={y}
             r="0.34"
-            fill="#7CADFF"
+            fill="#F2C766"
             initial={{ opacity: 0.35 }}
             animate={reduced ? { opacity: 0.35 } : { opacity: [0.18, 0.62, 0.18] }}
             transition={{ duration: 5 + (i % 6), repeat: Infinity, ease: "easeInOut", delay: (i % 17) * 0.4 }}
@@ -209,7 +209,7 @@ export function EngineBackdrop() {
               <motion.circle
                 key={`p${k}`}
                 r="0.45"
-                fill="#22D3EE"
+                fill="#B0B8C4"
                 initial={{ cx: nodes[a][0], cy: nodes[a][1], opacity: 0 }}
                 animate={{
                   cx: [nodes[a][0], nodes[b][0]],
@@ -242,13 +242,13 @@ export function TerminalBackdrop() {
   const reduced = useReducedMotion() ?? false;
   return (
     <Ambient base="bg-term">
-      <div className="absolute left-1/2 top-0 h-[26rem] w-[52rem] -translate-x-1/2 rounded-full bg-emerald/[0.05] blur-[160px]" />
+      <div className="absolute left-1/2 top-0 h-[26rem] w-[52rem] -translate-x-1/2 rounded-full bg-gold/[0.05] blur-[160px]" />
       <div className="absolute bottom-0 right-0 h-[24rem] w-[34rem] rounded-full bg-loss/[0.035] blur-[150px]" />
       {/* phosphor scanlines — the only texture, at the pitch a CRT actually had */}
       <div className="absolute inset-0 bg-scanlines opacity-[0.55]" />
       {/* a slow refresh band drifting down the screen */}
       {!reduced && (
-        <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-transparent via-emerald/[0.035] to-transparent motion-safe:animate-scan-down" />
+        <div className="absolute inset-x-0 top-0 h-40 bg-gradient-to-b from-transparent via-gold/[0.035] to-transparent motion-safe:animate-scan-down" />
       )}
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_45%,rgba(0,0,0,0.75))]" />
     </Ambient>
@@ -265,7 +265,7 @@ export function SelectivityBackdrop() {
       <div
         className="absolute inset-0 opacity-40 mask-fade-b"
         style={{
-          backgroundImage: "linear-gradient(to right, rgba(201,162,75,0.05) 1px, transparent 1px)",
+          backgroundImage: "linear-gradient(to right, rgba(234,181,79,0.05) 1px, transparent 1px)",
           backgroundSize: "112px 100%",
         }}
       />
@@ -282,7 +282,7 @@ export function SelectivityBackdrop() {
  */
 export function JourneyBackdrop({ color }: { color: string }) {
   return (
-    <Ambient base="bg-[#05070C]">
+    <Ambient base="bg-[#060607]">
       <motion.div
         className="absolute left-1/2 top-[-20rem] h-[46rem] w-[62rem] -translate-x-1/2 rounded-full blur-[170px]"
         animate={{ backgroundColor: `${color}14` }}
@@ -314,7 +314,7 @@ export function JourneyBackdrop({ color }: { color: string }) {
 export function SecurityBackdrop() {
   return (
     <Ambient base="bg-navy">
-      <div className="absolute right-[-14rem] top-[-16rem] h-[40rem] w-[48rem] rounded-full bg-emerald/[0.06] blur-[170px]" />
+      <div className="absolute right-[-14rem] top-[-16rem] h-[40rem] w-[48rem] rounded-full bg-gold/[0.06] blur-[170px]" />
       <div className="absolute bottom-[-16rem] left-[-12rem] h-[34rem] w-[42rem] rounded-full bg-signal/[0.05] blur-[160px]" />
 
       <svg className="absolute inset-0 h-full w-full opacity-[0.5] mask-fade-b" aria-hidden>
@@ -324,7 +324,7 @@ export function SecurityBackdrop() {
             <path
               d="M28 0 L56 16 L56 48 L28 64 L0 48 L0 16 Z M28 64 L56 80 L56 112 M28 64 L0 80 L0 112"
               fill="none"
-              stroke="#2FBF71"
+              stroke="#22C55E"
               strokeOpacity="0.16"
               strokeWidth="1"
             />
@@ -349,8 +349,8 @@ export function PerformanceBackdrop() {
     "repeating-linear-gradient(-45deg, rgba(0,0,0,0.5) 0 3px, transparent 3px 6px)";
 
   return (
-    <Ambient base="bg-[#06090B]">
-      <div className="absolute left-1/2 top-[-20rem] h-[38rem] w-[54rem] -translate-x-1/2 rounded-full bg-emerald/[0.055] blur-[170px]" />
+    <Ambient base="bg-[#070708]">
+      <div className="absolute left-1/2 top-[-20rem] h-[38rem] w-[54rem] -translate-x-1/2 rounded-full bg-gold/[0.055] blur-[170px]" />
       <div className="absolute bottom-[-14rem] left-[-10rem] h-[28rem] w-[34rem] rounded-full bg-loss/[0.03] blur-[150px]" />
       <div
         className="absolute inset-0 opacity-[0.7] mask-fade-b"
@@ -370,7 +370,7 @@ export function PerformanceBackdrop() {
  */
 export function DashboardBackdrop() {
   return (
-    <Ambient base="bg-[#070A0F]">
+    <Ambient base="bg-[#070708]">
       <div className="absolute right-[-14rem] top-[-16rem] h-[36rem] w-[46rem] rounded-full bg-aqua/[0.06] blur-[165px]" />
       <div className="absolute bottom-[-14rem] left-[-12rem] h-[30rem] w-[38rem] rounded-full bg-signal/[0.05] blur-[155px]" />
       <div
@@ -384,7 +384,7 @@ export function DashboardBackdrop() {
         className="absolute inset-0 opacity-40 mask-fade-b"
         style={{
           backgroundImage:
-            "linear-gradient(to right, rgba(125,233,248,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(125,233,248,0.08) 1px, transparent 1px)",
+            "linear-gradient(to right, rgba(176,184,196,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(176,184,196,0.08) 1px, transparent 1px)",
           backgroundSize: "240px 240px",
         }}
       />
@@ -405,8 +405,8 @@ export function DashboardBackdrop() {
  */
 export function DocsBackdrop() {
   return (
-    <Ambient base="bg-[#06080C]">
-      <div className="absolute inset-x-0 top-0 h-[26rem] bg-[linear-gradient(to_bottom,rgba(46,123,255,0.055),transparent)]" />
+    <Ambient base="bg-[#070708]">
+      <div className="absolute inset-x-0 top-0 h-[26rem] bg-[linear-gradient(to_bottom,rgba(234,181,79,0.055),transparent)]" />
     </Ambient>
   );
 }
@@ -416,13 +416,13 @@ export function DocsBackdrop() {
 /** Slow concentric rings — a help desk, radiating. */
 export function SupportBackdrop() {
   return (
-    <Ambient base="bg-[#08080A]">
+    <Ambient base="bg-[#070708]">
       <div className="absolute left-1/2 top-[-22rem] h-[38rem] w-[50rem] -translate-x-1/2 rounded-full bg-gold/[0.05] blur-[170px]" />
       <div
         className="absolute left-1/2 top-[-30rem] h-[80rem] w-[80rem] -translate-x-1/2 opacity-[0.45] mask-fade-b"
         style={{
           backgroundImage:
-            "repeating-radial-gradient(circle at 50% 50%, rgba(201,162,75,0.06) 0 1px, transparent 1px 88px)",
+            "repeating-radial-gradient(circle at 50% 50%, rgba(234,181,79,0.06) 0 1px, transparent 1px 88px)",
         }}
       />
     </Ambient>
@@ -433,7 +433,7 @@ export function SupportBackdrop() {
 
 export function CommunityBackdrop() {
   return (
-    <Ambient base="bg-[#08080A]">
+    <Ambient base="bg-[#070708]">
       <div className="absolute right-[-12rem] top-[-18rem] h-[36rem] w-[46rem] rounded-full bg-gold/[0.05] blur-[165px]" />
       <div className="absolute bottom-[-14rem] left-[-12rem] h-[30rem] w-[38rem] rounded-full bg-signal/[0.04] blur-[155px]" />
     </Ambient>
@@ -445,17 +445,17 @@ export function CommunityBackdrop() {
 /** Narrow vertical ticks, the same shape as the uptime bars on the page. */
 export function StatusBackdrop({ healthy }: { healthy: boolean }) {
   return (
-    <Ambient base="bg-[#050708]">
+    <Ambient base="bg-[#060607]">
       <div
         className={`absolute left-1/2 top-[-20rem] h-[34rem] w-[48rem] -translate-x-1/2 rounded-full blur-[165px] ${
-          healthy ? "bg-emerald/[0.06]" : "bg-gold/[0.05]"
+          healthy ? "bg-gold/[0.06]" : "bg-gold/[0.05]"
         }`}
       />
       <div
         className="absolute inset-0 opacity-[0.5] mask-fade-b"
         style={{
           backgroundImage:
-            "repeating-linear-gradient(90deg, rgba(79,217,142,0.07) 0 2px, transparent 2px 14px)",
+            "repeating-linear-gradient(90deg, rgba(176,184,196,0.07) 0 2px, transparent 2px 14px)",
           backgroundSize: "auto 40%",
           backgroundRepeat: "repeat-x",
         }}

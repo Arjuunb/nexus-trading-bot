@@ -32,7 +32,7 @@ export const STAGES: Stage[] = [
     n: "01",
     label: "Exchange",
     icon: Building2,
-    color: "#3E7BD6",
+    color: "#B0B8C4",
     textClass: "text-signal-soft",
     borderClass: "border-signal/40",
     headline: "It starts with a connection you control",
@@ -48,7 +48,7 @@ export const STAGES: Stage[] = [
     n: "02",
     label: "Analysis",
     icon: ScanLine,
-    color: "#2E7BFF",
+    color: "#EAB54F",
     textClass: "text-electric-soft",
     borderClass: "border-electric/40",
     headline: "Prices become a description of the market",
@@ -64,7 +64,7 @@ export const STAGES: Stage[] = [
     n: "03",
     label: "AI",
     icon: BrainCircuit,
-    color: "#22D3EE",
+    color: "#B0B8C4",
     textClass: "text-aqua-soft",
     borderClass: "border-aqua/40",
     headline: "The Decision Brain scores it",
@@ -80,7 +80,7 @@ export const STAGES: Stage[] = [
     n: "04",
     label: "Risk",
     icon: ShieldCheck,
-    color: "#2FBF71",
+    color: "#22C55E",
     textClass: "text-emerald-soft",
     borderClass: "border-emerald/40",
     headline: "Then it has to get past risk",
@@ -96,7 +96,7 @@ export const STAGES: Stage[] = [
     n: "05",
     label: "Execution",
     icon: Send,
-    color: "#C9A24B",
+    color: "#EAB54F",
     textClass: "text-gold-soft",
     borderClass: "border-gold/40",
     headline: "The order fills on paper, at the live price",
@@ -112,7 +112,7 @@ export const STAGES: Stage[] = [
     n: "06",
     label: "Journal",
     icon: NotebookPen,
-    color: "#E7CE86",
+    color: "#F2C766",
     textClass: "text-gold-soft",
     borderClass: "border-gold/30",
     headline: "Every outcome is written down and kept",
@@ -128,7 +128,7 @@ export const STAGES: Stage[] = [
     n: "07",
     label: "Analytics",
     icon: BarChart3,
-    color: "#6EA3EC",
+    color: "#D4D9E0",
     textClass: "text-signal-soft",
     borderClass: "border-signal/40",
     headline: "And the record tells you what is actually working",
@@ -190,13 +190,13 @@ function ExchangeViz({ color, play }: { color: string; play: boolean }) {
         const y = 60 + i * 60;
         return (
           <g key={v} opacity={live ? 1 : 0.45}>
-            <rect x="18" y={y - 15} width="86" height="30" rx="7" fill="#0E1219" stroke={color}
+            <rect x="18" y={y - 15} width="86" height="30" rx="7" fill="#121214" stroke={color}
                   strokeOpacity="0.5" strokeDasharray={live ? undefined : "3 3"} />
-            <text x="61" y={live ? y + 4 : y} textAnchor="middle" fill="#9FB0C4" style={{ fontSize: 10 }}>
+            <text x="61" y={live ? y + 4 : y} textAnchor="middle" fill="#B0B8C4" style={{ fontSize: 10 }}>
               {v}
             </text>
             {!live && (
-              <text x="61" y={y + 10} textAnchor="middle" fill="#9FB0C4" className="font-mono" style={{ fontSize: 6.5 }}>
+              <text x="61" y={y + 10} textAnchor="middle" fill="#B0B8C4" className="font-mono" style={{ fontSize: 6.5 }}>
                 roadmap
               </text>
             )}
@@ -214,7 +214,7 @@ function ExchangeViz({ color, play }: { color: string; play: boolean }) {
           </g>
         );
       })}
-      <rect x="196" y="94" width="106" height="52" rx="10" fill="#0A0D11" stroke={color} strokeOpacity="0.8" />
+      <rect x="196" y="94" width="106" height="52" rx="10" fill="#0E0E10" stroke={color} strokeOpacity="0.8" />
       <text x="249" y="115" textAnchor="middle" fill="#E9EEF3" style={{ fontSize: 11, fontWeight: 600 }}>
         Normalised
       </text>
@@ -240,8 +240,8 @@ function AnalysisViz({ color, play }: { color: string; play: boolean }) {
         const up = i % 3 !== 1;
         return (
           <g key={i}>
-            <line x1={x} x2={x} y1={200 - b - 14} y2={200 - b + 16} stroke={up ? "#2FBF71" : "#E5605B"} strokeWidth="1" opacity="0.8" />
-            <rect x={x - 4} y={200 - b - 6} width="8" height="16" fill={up ? "#2FBF71" : "#E5605B"} opacity="0.85" rx="1" />
+            <line x1={x} x2={x} y1={200 - b - 14} y2={200 - b + 16} stroke={up ? "#22C55E" : "#EF4444"} strokeWidth="1" opacity="0.8" />
+            <rect x={x - 4} y={200 - b - 6} width="8" height="16" fill={up ? "#22C55E" : "#EF4444"} opacity="0.85" rx="1" />
           </g>
         );
       })}
@@ -268,8 +268,8 @@ function AiViz({ color, play }: { color: string; play: boolean }) {
     <svg viewBox="0 0 320 240" className="relative w-full max-w-[380px]">
       {nodes.map((n, i) => (
         <g key={n.label}>
-          <circle cx="66" cy={n.y} r="20" fill="#0A0D11" stroke={color} strokeOpacity="0.55" />
-          <text x="66" y={n.y + 3} textAnchor="middle" fill="#9FB0C4" style={{ fontSize: 7.5 }}>
+          <circle cx="66" cy={n.y} r="20" fill="#0E0E10" stroke={color} strokeOpacity="0.55" />
+          <text x="66" y={n.y + 3} textAnchor="middle" fill="#B0B8C4" style={{ fontSize: 7.5 }}>
             {n.label}
           </text>
           <path d={`M88 ${n.y} C 130 ${n.y}, 140 120, 176 120`} fill="none" stroke={color} strokeOpacity={0.25 + i * 0.12} strokeWidth={0.9 + i * 0.5} />
@@ -280,7 +280,7 @@ function AiViz({ color, play }: { color: string; play: boolean }) {
           )}
         </g>
       ))}
-      <circle cx="206" cy="120" r="32" fill="#0A0D11" stroke={color} strokeWidth="1.6" />
+      <circle cx="206" cy="120" r="32" fill="#0E0E10" stroke={color} strokeWidth="1.6" />
       <motion.circle
         cx="206" cy="120" r="32" fill="none" stroke={color} strokeWidth="1.6"
         initial={{ opacity: 0.5, scale: 1 }}
@@ -290,7 +290,7 @@ function AiViz({ color, play }: { color: string; play: boolean }) {
       />
       <text x="206" y="118" textAnchor="middle" fill="#fff" style={{ fontSize: 17, fontWeight: 700 }}>84</text>
       <text x="206" y="132" textAnchor="middle" fill={color} className="font-mono" style={{ fontSize: 7 }}>quality</text>
-      <text x="266" y="124" textAnchor="middle" fill="#4FD98E" className="font-mono" style={{ fontSize: 9 }}>▸ ≥ 60</text>
+      <text x="266" y="124" textAnchor="middle" fill="#4ADE80" className="font-mono" style={{ fontSize: 9 }}>▸ ≥ 60</text>
     </svg>
   );
 }
@@ -298,7 +298,7 @@ function AiViz({ color, play }: { color: string; play: boolean }) {
 function RiskViz({ color, play }: { color: string; play: boolean }) {
   return (
     <svg viewBox="0 0 320 240" className="relative w-full max-w-[380px]">
-      <text x="24" y="42" fill="#9FB0C4" style={{ fontSize: 10 }}>order intent</text>
+      <text x="24" y="42" fill="#B0B8C4" style={{ fontSize: 10 }}>order intent</text>
       {/* one slat per reject stage in services/signal_pipeline.py */}
       {Array.from({ length: 20 }).map((_, i) => {
         const x = 30 + i * 13;
@@ -307,7 +307,7 @@ function RiskViz({ color, play }: { color: string; play: boolean }) {
           <motion.rect
             key={i}
             x={x} y="70" width="9" height="100" rx="2"
-            fill={blocked ? "#E5605B" : color}
+            fill={blocked ? "#EF4444" : color}
             initial={{ opacity: 0.25 }}
             animate={play ? { opacity: blocked ? [0.3, 1, 0.3] : [0.25, 0.7, 0.25] } : { opacity: 0.4 }}
             transition={{ duration: 2, repeat: Infinity, delay: i * 0.09 }}
@@ -315,7 +315,7 @@ function RiskViz({ color, play }: { color: string; play: boolean }) {
         );
       })}
       <text x="30" y="188" fill={color} className="font-mono" style={{ fontSize: 8.5 }}>20 checks · any one rejects</text>
-      <text x="30" y="204" fill="#E5605B" className="font-mono" style={{ fontSize: 8.5 }}>1 veto · order never created</text>
+      <text x="30" y="204" fill="#EF4444" className="font-mono" style={{ fontSize: 8.5 }}>1 veto · order never created</text>
       <path d="M24 50 L292 50" stroke={color} strokeOpacity="0.25" strokeDasharray="3 3" />
     </svg>
   );
@@ -326,12 +326,12 @@ function ExecutionViz({ color, play }: { color: string; play: boolean }) {
   // ladder here: the engine fills on the paper broker against the live price
   // and never reads an order book.
   const levels = [
-    { y: 56, label: "target 69,590.0", fill: "#4FD98E" },
-    { y: 184, label: "stop 67,820.0", fill: "#F07E7A" },
+    { y: 56, label: "target 69,590.0", fill: "#4ADE80" },
+    { y: 184, label: "stop 67,820.0", fill: "#F87171" },
   ];
   return (
     <svg viewBox="0 0 320 240" className="relative w-full max-w-[380px]">
-      <text x="30" y="30" fill="#9FB0C4" style={{ fontSize: 9.5 }}>live quote · paper fill</text>
+      <text x="30" y="30" fill="#B0B8C4" style={{ fontSize: 9.5 }}>live quote · paper fill</text>
       {levels.map((l) => (
         <g key={l.label}>
           <path d={`M30 ${l.y} L290 ${l.y}`} stroke={l.fill} strokeOpacity="0.55" strokeDasharray="4 4" />
@@ -345,7 +345,7 @@ function ExecutionViz({ color, play }: { color: string; play: boolean }) {
         animate={play ? { opacity: [0.55, 1, 0.55] } : {}} transition={{ duration: 1.8, repeat: Infinity }}
       />
       <text x="40" y="124" fill={color} className="font-mono" style={{ fontSize: 9 }}>limit fill 0.42 @ 68,408.0 · maker</text>
-      <text x="30" y="214" fill="#9FB0C4" className="font-mono" style={{ fontSize: 8.5 }}>fee 0.02% · no spread or slippage at the limit</text>
+      <text x="30" y="214" fill="#B0B8C4" className="font-mono" style={{ fontSize: 8.5 }}>fee 0.02% · no spread or slippage at the limit</text>
     </svg>
   );
 }

@@ -50,6 +50,24 @@ def _resolve_key(master_key) -> Optional[bytes]:
     return _env_master_key() if master_key is _ENV else master_key
 
 
+def _restore_keys(master_key) -> list[bytes]:
+    """Keys a snapshot may have been sealed with: the current master key and,
+    after a rotation, the previous one (HUB_MASTER_KEY_PREVIOUS), so backups
+    taken before the rotation still restore."""
+    if master_key is not _ENV:
+        return [master_key] if master_key else []
+    keys: list[bytes] = []
+    for name in ("HUB_MASTER_KEY", "HUB_MASTER_KEY_PREVIOUS"):
+        try:
+            from services.key_vault import parse_master_key
+            key = parse_master_key(os.environ.get(name))
+        except Exception:  # noqa: BLE001 -- a malformed key is simply not a candidate
+            key = None
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -201,17 +219,23 @@ def restore_to(data_dir: str, snapshot: str, dest_dir: str, *, master_key=_ENV) 
         return {"ok": True, "snapshot": snapshot, "encrypted": False, "files": sorted(names)}
     if not archive.exists():
         return {"ok": False, "error": f"snapshot {snapshot} not found"}
-    key = _resolve_key(master_key)
-    if key is None:
+    keys = _restore_keys(master_key)
+    if not keys:
         return {"ok": False, "error": "This snapshot is encrypted and HUB_MASTER_KEY is not set."}
-    try:
-        with tempfile.TemporaryDirectory() as td:
-            tar_path = Path(td) / "snapshot.tar.gz"
-            open_file(archive, tar_path, key, context=snapshot)
-            names = _safe_extract(tar_path, dest)
-    except BackupSealError as e:
-        return {"ok": False, "snapshot": snapshot, "error": str(e)}
-    return {"ok": True, "snapshot": snapshot, "encrypted": True, "files": sorted(names)}
+    error = ""
+    for key in keys:
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                tar_path = Path(td) / "snapshot.tar.gz"
+                open_file(archive, tar_path, key, context=snapshot)
+                names = _safe_extract(tar_path, dest)
+            return {"ok": True, "snapshot": snapshot, "encrypted": True, "files": sorted(names)}
+        except BackupSealError as e:
+            error = str(e)
+    if master_key is _ENV and len(keys) == 1:
+        error += (" If the master key was rotated after this snapshot, set HUB_MASTER_KEY_PREVIOUS "
+                  "to the key it was sealed with.")
+    return {"ok": False, "snapshot": snapshot, "error": error}
 
 
 def restore_check(data_dir: str, snapshot: str, *, master_key=_ENV) -> dict:

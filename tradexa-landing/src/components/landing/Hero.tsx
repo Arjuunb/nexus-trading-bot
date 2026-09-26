@@ -13,7 +13,7 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/Button";
 import { WordReveal } from "@/components/Reveal";
 import { Magnetic } from "@/components/motion/Magnetic";
-import { DashboardPreview } from "./DashboardPreview";
+import { DecisionPreview } from "./DecisionPreview";
 import { APP_URL } from "@/lib/utils";
 
 const container = {
@@ -32,14 +32,13 @@ export function Hero() {
   const reduced = useReducedMotion() ?? false;
   const ref = useRef<HTMLElement | null>(null);
 
-  // scroll-driven depth: as the hero scrolls away, layers travel at different
-  // rates so the scene reads as parallax rather than a flat page.
+  // scroll-driven depth: as the hero scrolls away, layers travel at slightly
+  // different rates. Nothing fades out — a hero that dissolves while it is
+  // still on screen leaves an empty band above the next section.
   const { scrollYProgress } = useScroll({ target: ref, offset: ["start start", "end start"] });
-  const copyY = useTransform(scrollYProgress, [0, 1], [0, -64]);
-  const copyOpacity = useTransform(scrollYProgress, [0, 0.85], [1, 0]);
-  const previewY = useTransform(scrollYProgress, [0, 1], [0, -128]);
+  const copyY = useTransform(scrollYProgress, [0, 1], [0, -24]);
+  const previewY = useTransform(scrollYProgress, [0, 1], [0, -56]);
   const ambientY = useTransform(scrollYProgress, [0, 1], [0, 90]);
-  const cueOpacity = useTransform(scrollYProgress, [0, 0.15], [1, 0]);
 
   // pointer-driven 3D tilt on the preview (subtle, spring-smoothed).
   const px = useMotionValue(0); // -0.5 .. 0.5
@@ -72,14 +71,14 @@ export function Hero() {
         <div
           aria-hidden
           className="pointer-events-none absolute inset-0 -z-10 opacity-0 transition-opacity duration-700 group-hover/hero:opacity-100"
-          style={{ background: "radial-gradient(520px circle at var(--hx, 50%) var(--hy, 30%), rgba(200,169,75,0.075), transparent 60%)" }}
+          style={{ background: "radial-gradient(520px circle at var(--hx, 50%) var(--hy, 30%), rgba(234,181,79,0.075), transparent 60%)" }}
         />
       )}
       {/* hero-local ambient bloom — parallaxes independently of the page backdrop */}
       {!reduced && (
         <motion.div aria-hidden style={{ y: ambientY }} className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
           <div className="absolute -top-24 right-1/4 h-[26rem] w-[34rem] rounded-full bg-gold/[0.06] blur-[120px]" />
-          <div className="absolute top-1/3 left-[-6rem] h-[22rem] w-[28rem] rounded-full bg-emerald-deep/[0.05] blur-[130px]" />
+          <div className="absolute top-1/3 left-[-6rem] h-[22rem] w-[28rem] rounded-full bg-white/[0.025] blur-[130px]" />
         </motion.div>
       )}
 
@@ -89,27 +88,28 @@ export function Hero() {
           variants={container}
           initial="hidden"
           animate="show"
-          style={reduced ? undefined : { y: copyY, opacity: copyOpacity }}
+          style={reduced ? undefined : { y: copyY }}
         >
           <motion.div variants={item}>
             <span className="eyebrow">
               <ShieldCheck className="h-3.5 w-3.5" />
-              AI Trading Intelligence System
+              Trading intelligence system
             </span>
           </motion.div>
 
           {/* The headline sets itself word by word; the gold line carries light
               moving slowly through it. */}
           <h1 className="mt-6 text-balance text-5xl font-extrabold leading-[1.03] tracking-tight text-white sm:text-6xl lg:text-[4.25rem]">
-            <WordReveal trigger="mount" text="AI-Powered Trading" delay={0.15} stagger={0.08} />
+            <WordReveal trigger="mount" text="Trading intelligence" delay={0.15} stagger={0.08} />
             <br />
-            <WordReveal trigger="mount" text="Intelligence System" delay={0.35} stagger={0.08}
+            <WordReveal trigger="mount" text="that shows its work" delay={0.35} stagger={0.08}
                         wordClassName="text-gold-shimmer" />
           </h1>
 
           <motion.p variants={item} className="mt-6 max-w-xl text-lg leading-relaxed text-white/60">
-            Analyze markets, test strategies, and automate intelligent trading decisions through a
-            powerful AI-driven platform built for modern traders.
+            Nexus reads market structure on closed candles, scores every setup from 0 to 100 and
+            takes only what clears its risk gates, on a paper account first. Every decision, taken
+            or skipped, is journaled with its reasons, and it learns from its own record.
           </motion.p>
 
           <motion.div variants={item} className="mt-9 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -138,7 +138,7 @@ export function Hero() {
                 transition={{ delay: 0.9 + i * 0.1, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
                 className="flex items-center gap-1.5 text-[13px] text-white/55"
               >
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-soft/80" />
+                <CheckCircle2 className="h-3.5 w-3.5 text-gold/80" aria-hidden />
                 {text}
               </motion.li>
             ))}
@@ -152,32 +152,15 @@ export function Hero() {
           onMouseLeave={onLeave}
         >
           {reduced ? (
-            <DashboardPreview />
+            <DecisionPreview />
           ) : (
             <motion.div style={{ rotateX: rotX, rotateY: rotY, transformStyle: "preserve-3d" }}>
-              <DashboardPreview />
+              <DecisionPreview />
             </motion.div>
           )}
         </motion.div>
       </div>
 
-      {/* scroll cue */}
-      {!reduced && (
-        <motion.div
-          style={{ opacity: cueOpacity }}
-          className="pointer-events-none mx-auto mt-16 hidden w-fit flex-col items-center gap-2 sm:flex"
-          aria-hidden
-        >
-          <span className="text-[10px] uppercase tracking-[0.2em] text-white/30">Scroll</span>
-          <span className="flex h-8 w-5 items-start justify-center rounded-full border border-line p-1">
-            <motion.span
-              className="h-1.5 w-1 rounded-full bg-gold"
-              animate={{ y: [0, 8, 0], opacity: [1, 0.3, 1] }}
-              transition={{ duration: 1.6, repeat: Infinity, ease: "easeInOut" }}
-            />
-          </span>
-        </motion.div>
-      )}
     </section>
   );
 }

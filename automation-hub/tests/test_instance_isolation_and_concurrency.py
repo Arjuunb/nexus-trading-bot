@@ -282,6 +282,101 @@ def test_an_unreadable_lease_expiry_fails_closed(tmp_path):
         manager.start(instance.id)
 
 
+def test_a_start_that_fails_after_claiming_the_lease_gives_it_back(tmp_path, fast_worker):
+    """Found running the app: the market-data hub refused the subscription,
+    start() raised, and the lease stayed held for its full TTL. Shutdown only
+    releases running workers' leases, so a restart inside that window was
+    refused its own instance."""
+    path = str(tmp_path / "shared.db")
+    _a, manager = _manager(path)
+    instance = _create(manager)
+
+    def hub_refused(*_a, **_k):
+        raise RuntimeError("Binance USD-M market-data hub failed to start")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(TradingInstanceManager, "_split_pending_orders", hub_refused)
+        with pytest.raises(RuntimeError, match="hub failed to start"):
+            manager.start(instance.id)
+
+    assert manager.worker_ownership(instance.id)["held"] is False
+    _b, successor = _manager(path)               # the restart that used to be refused
+    successor.start(instance.id)
+    assert successor.worker_ownership(instance.id)["this_process"] is True
+
+
+def test_a_failed_start_never_releases_a_lease_it_does_not_hold(tmp_path, fast_worker):
+    path = str(tmp_path / "shared.db")
+    _a, first = _manager(path)
+    instance = _create(first)
+    first.start(instance.id)
+
+    _b, second = _manager(path)
+    with pytest.raises(WorkerLeaseError):
+        second.start(instance.id)
+    assert first.worker_ownership(instance.id)["this_process"] is True
+
+
+def test_a_lease_left_by_the_previous_container_delays_the_restart_not_forever(tmp_path, fast_worker):
+    """Found running the app: startup restore met a lease the previous process
+    still held, marked the instance "blocked" -- a state the supervisor never
+    retries -- and the worker stayed down until someone pressed Start."""
+    from services.instance_supervisor import InstanceSupervisor
+    from services.status_monitor import workers_explainer
+
+    path = str(tmp_path / "shared.db")
+    _a, crashed = _manager(path)
+    instance = _create(crashed)
+    crashed.start(instance.id)                   # then the process dies: no shutdown
+
+    _b, restarted = _manager(path)
+    assert restarted.restore_desired_instances() == []
+    row = restarted._instances[instance.id]
+    assert row.state == "error" and row.desired_running is True
+    assert row.last_error.startswith("WORKER_LEASE_HELD")
+
+    clock = [1_000.0]
+    supervisor = InstanceSupervisor(restarted, interval_s=60, clock=lambda: clock[0])
+    [held] = supervisor.sweep()
+    assert held["action"] == "lease_held"
+    # retried just after the 120 s lease lapses, not after the 600 s maximum
+    assert 100 <= held["retry_in_s"] <= 125
+    assert "another worker holds its lease, next attempt in" in workers_explainer(restarted, supervisor)()
+
+    with restarted.ledger._lock:                 # the lease ages out
+        restarted.ledger._c.execute(
+            "UPDATE instance_worker_leases SET lease_expires_at='2000-01-01T00:00:00+00:00'")
+        restarted.ledger._c.commit()
+    clock[0] += held["retry_in_s"] + 1
+    assert [r["action"] for r in supervisor.sweep()] == ["restored"]
+    assert restarted.worker_ownership(instance.id)["this_process"] is True
+
+
+def test_a_failed_repair_records_why_it_is_down_now(tmp_path, fast_worker):
+    """The row kept the first reason (a lease long gone) while every retry
+    failed on something else; the dashboard and the alert showed the lease."""
+    from services.instance_supervisor import InstanceSupervisor
+
+    path = str(tmp_path / "shared.db")
+    _a, manager = _manager(path)
+    trading, paused = _create(manager), _create(manager, symbol="ETHUSDT")
+    for inst, state in ((trading, "error"), (paused, "paused")):
+        inst.state, inst.desired_running, inst.last_error = state, True, "WORKER_LEASE_HELD: old"
+        manager.store.save(inst)
+
+    def hub_refused(*_a, **_k):
+        raise RuntimeError("Binance USD-M market-data hub failed to start")
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(TradingInstanceManager, "_split_pending_orders", hub_refused)
+        report = InstanceSupervisor(manager, interval_s=60).sweep()
+
+    assert [r["action"] for r in report] == ["failed", "failed"]
+    reloaded = {i.id: i for i in _manager(path)[1]._instances.values()}
+    for inst, state in ((trading, "error"), (paused, "paused")):
+        row = reloaded[inst.id]
+        assert row.last_error == "RuntimeError: Binance USD-M market-data hub failed to start"
+        assert row.state == state and row.desired_running is True   # paused stays gated
+
+
 def test_a_worker_that_loses_its_lease_stops_itself(tmp_path, fast_worker):
     from services.instance_supervisor import InstanceSupervisor
 

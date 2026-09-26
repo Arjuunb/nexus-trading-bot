@@ -179,6 +179,19 @@ _ENTRIES: tuple[StrategyEntry, ...] = (
         evidence=("tests/test_price_action_instance_strategy.py",
                   "tests/test_price_action_continuation.py"),
     ),
+    StrategyEntry(
+        strategy_id="three_candle_rejection", display_name="3-Candle Rejection · EMA 9/33",
+        lifecycle=PRODUCTION,
+        description=("Push, rejection and confirmation candles at a swing level touched "
+                     "2+ times, EMA 9/33 trend filter, stop beyond the wick, 2R target"),
+        supported_markets=(FORWARD_PAPER_MARKET,),
+        supported_timeframes=ALL_ENTRY_TIMEFRAMES,
+        required_data=("entry_candles",),
+        warmup_candles=200,
+        warmup_basis="level lookback 150 + swing pivot 3 + pattern 3, EMA 33, ATR 14",
+        evidence=("tests/test_three_candle_rejection.py",
+                  "tests/test_builtin_strategy_versions.py"),
+    ),
     # ---------------------------------------------------------------- research
     # These four are implemented and do produce signals (measured: SMC 55,
     # Liquidity Sweep 72, EMA 55, Ensemble 30 over the bundled 1h BTCUSDT

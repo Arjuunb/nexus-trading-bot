@@ -85,10 +85,10 @@ function FlowStrip() {
   // anything while the strip is off screen.
   const active = useVisibleActive(ref);
   const lanes = [
-    { label: "closed candles", color: "#2E7BFF", speed: 5.5, count: 5 },
-    { label: "signals", color: "#22D3EE", speed: 7, count: 4 },
-    { label: "approved", color: "#7CADFF", speed: 9.5, count: 3 },
-    { label: "paper fills", color: "#2FBF71", speed: 12, count: 2 },
+    { label: "closed candles", color: "#EAB54F", speed: 5.5, count: 5 },
+    { label: "signals", color: "#B0B8C4", speed: 7, count: 4 },
+    { label: "approved", color: "#F2C766", speed: 9.5, count: 3 },
+    { label: "paper fills", color: "#22C55E", speed: 12, count: 2 },
   ];
 
   return (
@@ -382,10 +382,10 @@ export default function EnginePage() {
           <ArchitectureDiagram />
           <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-graphite-600 pt-4 font-mono text-[10px] text-white/30">
             {[
-              ["#243043", "data in · fills out"],
-              ["#2E7BFF", "decision"],
-              ["#2FBF71", "guard"],
-              ["#22D3EE", "storage"],
+              ["#26262B", "data in · fills out"],
+              ["#EAB54F", "decision"],
+              ["#22C55E", "guard"],
+              ["#B0B8C4", "storage"],
             ].map(([c, l]) => (
               <span key={l} className="inline-flex items-center gap-2">
                 <span className="h-2 w-2 rounded-sm" style={{ background: c }} />

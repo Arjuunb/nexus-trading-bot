@@ -121,7 +121,8 @@ def _post(url: str, body: bytes, headers: dict, timeout: float) -> int:
 def _public_sub(row: sqlite3.Row) -> dict:
     return {"id": row["id"], "url": row["url"], "events": row["events"].split(","),
             "description": row["description"], "created_at": _iso(row["created_at"]),
-            "active": row["disabled_at"] is None, "disabled_at": _iso(row["disabled_at"])}
+            "active": row["disabled_at"] is None, "disabled_at": _iso(row["disabled_at"]),
+            "secret_encrypted": str(row["secret"]).startswith("enc:v1:")}
 
 
 def _public_delivery(row: sqlite3.Row) -> dict:
@@ -137,7 +138,8 @@ class WebhookService:
     def __init__(self, path: str | Path, *, decision_source: Optional[Callable[[int, int], list[dict]]] = None,
                  latest_decision_id: Optional[Callable[[], int]] = None,
                  render: Optional[Callable[[dict], dict]] = None, post: Optional[Poster] = None,
-                 clock: Callable[[], float] = time.time, interval_s: float = 15.0, timeout_s: float = 10.0):
+                 clock: Callable[[], float] = time.time, interval_s: float = 15.0, timeout_s: float = 10.0,
+                 vault: Optional[Callable[[], object]] = None):
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -157,6 +159,47 @@ class WebhookService:
         self.timeout_s = timeout_s
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        # vault() -> the KeyVault (services/key_vault.py) or None. When it is
+        # configured, signing secrets are stored sealed under the tenant's data
+        # key rather than in plain text.
+        self.vault = vault
+
+    # ------------------------------------------------------ secrets at rest
+    _SEALED = "enc:v1:"
+
+    def _vault(self):
+        try:
+            v = self.vault() if self.vault else None
+        except Exception:  # noqa: BLE001 -- no vault means "store as before"
+            return None
+        return v if v is not None and getattr(v, "configured", False) else None
+
+    def _store_secret(self, tenant: str, sub_id: str, secret: str) -> str:
+        v = self._vault()
+        return v.seal(tenant, f"webhook:{sub_id}", secret) if v else secret
+
+    def _signing_secret(self, tenant: str, sub_id: str, stored: str) -> str:
+        """The plaintext secret, unsealed in memory for one signature."""
+        if not stored.startswith(self._SEALED):
+            return stored
+        v = self._vault()
+        if v is None:
+            raise RuntimeError("the signing secret is encrypted and the key vault is not configured")
+        return v.unseal(tenant, f"webhook:{sub_id}", stored)
+
+    def seal_existing(self) -> int:
+        """Seal any signing secret still stored in plain text. Returns how many."""
+        v = self._vault()
+        if v is None:
+            return 0
+        with self._lock:
+            rows = self._c.execute("SELECT id, tenant, secret FROM subscriptions WHERE secret NOT LIKE ?",
+                                   (self._SEALED + "%",)).fetchall()
+            for r in rows:
+                self._c.execute("UPDATE subscriptions SET secret=? WHERE id=?",
+                                (v.seal(r["tenant"], f"webhook:{r['id']}", r["secret"]), r["id"]))
+            self._c.commit()
+        return len(rows)
 
     # -------------------------------------------------------- subscriptions
     def subscribe(self, tenant: str, url: str, events, *, description: str = "") -> dict:
@@ -175,12 +218,13 @@ class WebhookService:
             sub_id = f"whk_{secrets.token_hex(6)}"
             secret = f"whsec_{secrets.token_urlsafe(32)}"
             self._c.execute("INSERT INTO subscriptions VALUES (?,?,?,?,?,?,?,NULL)",
-                            (sub_id, tenant, url, secret, ",".join(wanted), (description or "")[:120],
-                             self.clock()))
+                            (sub_id, tenant, url, self._store_secret(tenant, sub_id, secret), ",".join(wanted),
+                             (description or "")[:120], self.clock()))
             self._c.commit()
             if self._state("decision_cursor") is None:
                 # A first subscription starts from now, not from the whole history.
                 self._set_state("decision_cursor", str(int(self.latest_decision_id() or 0)))
+                self._c.commit()
             row = self._c.execute("SELECT * FROM subscriptions WHERE id=?", (sub_id,)).fetchone()
         return {**_public_sub(row), "secret": secret}
 
@@ -281,20 +325,25 @@ class WebhookService:
         now = self.clock()
         with self._lock:
             due = self._c.execute(
-                "SELECT d.*, s.url, s.secret FROM deliveries d JOIN subscriptions s ON s.id = d.subscription_id "
+                "SELECT d.*, s.url, s.secret, s.tenant FROM deliveries d JOIN subscriptions s ON s.id = d.subscription_id "
                 "WHERE d.status='pending' AND d.next_attempt_at <= ? AND s.disabled_at IS NULL "
                 "ORDER BY d.id LIMIT ?", (now, limit)).fetchall()
         sent = failed = 0
         for row in due:
             body = row["payload"].encode()
             ts = int(self.clock())
-            headers = {"Content-Type": "application/json", "User-Agent": "TradeLogX-Nexus-webhooks/1",
-                       "Nexus-Event-Id": row["event_id"], "Nexus-Event-Type": row["event_type"],
-                       "Nexus-Signature": sign(row["secret"], body, ts)}
             try:
-                code, error = int(self.post(row["url"], body, headers, self.timeout_s)), ""
-            except Exception as exc:  # noqa: BLE001 -- the attempt is recorded, not raised
-                code, error = 0, f"{type(exc).__name__}"
+                secret = self._signing_secret(row["tenant"], row["subscription_id"], row["secret"])
+            except Exception as exc:  # noqa: BLE001 -- never send an unsigned event
+                secret, code, error = None, 0, f"Not sent: {exc}"
+            if secret is not None:
+                headers = {"Content-Type": "application/json", "User-Agent": "TradeLogX-Nexus-webhooks/1",
+                           "Nexus-Event-Id": row["event_id"], "Nexus-Event-Type": row["event_type"],
+                           "Nexus-Signature": sign(secret, body, ts)}
+                try:
+                    code, error = int(self.post(row["url"], body, headers, self.timeout_s)), ""
+                except Exception as exc:  # noqa: BLE001 -- the attempt is recorded, not raised
+                    code, error = 0, f"{type(exc).__name__}"
             attempts = row["attempts"] + 1
             with self._lock:
                 if 200 <= code < 300:
@@ -321,6 +370,10 @@ class WebhookService:
     def start(self) -> bool:
         if self._thread and self._thread.is_alive():
             return False
+        try:
+            self.seal_existing()
+        except Exception:  # noqa: BLE001 -- sealing is retried at the next start
+            pass
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="outbound-webhooks", daemon=True)
         self._thread.start()

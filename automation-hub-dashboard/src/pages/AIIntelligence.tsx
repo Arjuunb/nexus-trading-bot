@@ -86,7 +86,7 @@ export default function AIIntelligencePage() {
       </div>
 
       {/* AI recommendations — one-click apply to the live risk settings */}
-      {!!recs.data && (
+      {Array.isArray(recs.data?.recommendations) && recs.data && (
         <Card title="AI Recommendations"
           subtitle={recs.data.count > 0 ? `${recs.data.count} setting${recs.data.count === 1 ? "" : "s"} the AI would change` : "Your risk guardrails look sound"}
           right={<button className="btn btn-soft btn-sm" onClick={() => go("Settings")}>Open Settings</button>}>

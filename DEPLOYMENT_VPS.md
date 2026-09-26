@@ -114,6 +114,29 @@ The compose configuration uses `restart: unless-stopped`, bounded local logs,
 health checks, a non-root application user, persistent trading and certificate
 volumes, an internal-only FastAPI port, and only Nginx publishes ports 80/443.
 
+## Rotating the master key
+
+`HUB_MASTER_KEY` protects the per-tenant data keys, which in turn seal exchange
+keys and webhook signing secrets; backups are sealed with it directly. To
+replace it (for example after it may have been exposed):
+
+```bash
+cd /opt/nexus-trading-bot
+NEW=$(docker compose exec -T app python -m services.key_vault new-key)
+docker compose exec -T -e HUB_MASTER_KEY_NEW="$NEW" app python -m services.key_vault rewrap
+OLD=$(grep '^HUB_MASTER_KEY=' .env | cut -d= -f2-)
+sed -i '/^HUB_MASTER_KEY_PREVIOUS=/d; /^HUB_MASTER_KEY=/d' .env
+printf 'HUB_MASTER_KEY_PREVIOUS=%s\nHUB_MASTER_KEY=%s\n' "$OLD" "$NEW" >> .env
+bash scripts/deploy.sh
+```
+
+`rewrap` re-encrypts only the data keys, so exchange keys and webhook secrets
+keep working unchanged. Between `rewrap` and the redeploy the running app still
+holds the old key and cannot read the vault; run the steps together. Backups
+taken before the rotation restore with `HUB_MASTER_KEY_PREVIOUS`; once they have
+aged out (seven days), remove that line. Keep a copy of the new key off the
+server. Settings → Security → Security checkup confirms the result.
+
 ## Supabase customer authentication (required before production use)
 
 TradeLogX customer sign-up, passwords, email confirmation, password reset,

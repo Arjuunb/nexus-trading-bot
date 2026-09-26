@@ -120,6 +120,38 @@ class InstanceSupervisor:
     def _worker_alive(self, instance_id: str) -> bool:
         return self.manager.worker_alive(instance_id)
 
+    def _record_failure(self, instance_id: str, error: str) -> None:
+        """Put the latest failed attempt's reason on the instance row.
+
+        Only startup restore wrote one, so a worker that first failed on a
+        held lease and then on the market-data hub went on showing the lease
+        -- on the dashboard and in the outage alert -- long after it had gone.
+        The state is left alone: "paused" is what keeps a paused instance's
+        entry gate closed when it does come back.
+        """
+        try:
+            with self.manager._lock:
+                inst = self.manager._instances.get(instance_id)
+                if inst is None or not inst.desired_running or self._worker_alive(instance_id):
+                    return
+                inst.last_error = error[:500]
+                self.manager.store.save(inst)
+        except Exception:  # noqa: BLE001 -- the retry matters more than the note
+            pass
+
+    def _lease_wait_s(self, instance_id: str) -> float:
+        """Seconds until another holder's lease lapses, within the backoff bounds."""
+        try:
+            lease = self.manager.store.worker_lease(instance_id) or {}
+            expires = datetime.fromisoformat(
+                str(lease.get("lease_expires_at")).replace("Z", "+00:00"))
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            wait = (expires - datetime.now(timezone.utc)).total_seconds() + 2.0
+        except Exception:  # noqa: BLE001 -- unreadable: the old, patient wait
+            return self.max_backoff_s
+        return min(self.max_backoff_s, max(self.base_backoff_s, wait))
+
     def sweep(self) -> list[dict]:
         """One reconciliation pass. Returns what it did, for tests and status."""
         report: list[dict] = []
@@ -208,11 +240,17 @@ class InstanceSupervisor:
                 # Somebody else owns it. That is not a fault to retry hard:
                 # back off quietly and let the lease expire if the holder is
                 # genuinely gone. Starting anyway would duplicate every order.
-                self._next_attempt[inst.id] = now + self.max_backoff_s
+                # Try again just after the expiry the lease records: a lease
+                # left by a restarted container lapses within its TTL, and a
+                # holder that is still alive renews it, so the retry is
+                # refused again at the cost of one conditional write.
+                delay = self._lease_wait_s(inst.id)
+                self._next_attempt[inst.id] = now + delay
                 report.append({"instance_id": inst.id, "action": "lease_held",
-                               "error": str(exc)})
+                               "retry_in_s": round(delay, 1), "error": str(exc)})
                 log_event(self.manager, inst, "INSTANCE_ERROR", status="blocked",
                           detail=f"another worker owns this instance: {exc}")
+                self._record_failure(inst.id, f"WORKER_LEASE_HELD: {exc}")
                 continue
             except Exception as exc:
                 attempts = self._failures.get(inst.id, 0) + 1
@@ -226,6 +264,7 @@ class InstanceSupervisor:
                 log_event(self.manager, inst, "INSTANCE_ERROR", status="retrying",
                           detail=(f"supervisor start attempt {attempts} failed, retrying in "
                                   f"{delay:.0f}s: {type(exc).__name__}: {exc}"))
+                self._record_failure(inst.id, f"{type(exc).__name__}: {exc}")
                 continue
             self._failures.pop(inst.id, None)
             self._next_attempt.pop(inst.id, None)

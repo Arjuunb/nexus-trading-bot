@@ -8,7 +8,7 @@ import { Logo } from "@/components/Logo";
 
 export default function SessionExpired() {
   return (
-    <AuthShell split={false}>
+    <AuthShell>
       <Card className="p-8 text-center">
         <div className="mb-6 flex justify-center">
           <Logo />

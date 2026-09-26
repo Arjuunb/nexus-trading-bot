@@ -124,8 +124,8 @@ function PanelMock({ id }: { id: PanelId }) {
         <div className="grid grid-cols-3 gap-2">
           {[
             ["equity", "$128,402", "#E9EEF3"],
-            ["today", "+0.82%", "#4FD98E"],
-            ["open risk", "1.4 / 3.0%", "#7CADFF"],
+            ["today", "+0.82%", "#4ADE80"],
+            ["open risk", "1.4 / 3.0%", "#F2C766"],
           ].map(([k, v, c]) => (
             <div key={k} className="rounded-lg border border-white/[0.07] bg-black/30 p-3">
               <p className="font-mono text-[9px] uppercase tracking-wider text-white/30">{k}</p>
@@ -139,7 +139,7 @@ function PanelMock({ id }: { id: PanelId }) {
           <p className="mb-2 font-mono text-[9px] uppercase tracking-wider text-white/30">
             daily budget
           </p>
-          <Bar pct={47} tone="#7CADFF" />
+          <Bar pct={47} tone="#F2C766" />
           <p className="mt-1.5 font-mono text-[9px] text-white/25">−1.4% of −3.0% · trading</p>
         </div>
         <div className="space-y-1 rounded-lg border border-white/[0.07] bg-black/30 p-3 font-mono text-[10px]">
@@ -290,10 +290,10 @@ function PanelMock({ id }: { id: PanelId }) {
   return (
     <div className="space-y-3">
       {[
-        ["daily budget", 47, "−1.4% of −3.0%", "#7CADFF"],
-        ["weekly budget", 28, "−2.1% of −7.5%", "#7CADFF"],
-        ["exposure", 52, "2.1x of 4.0x", "#4FD98E"],
-        ["correlation load", 57, "0.34 of 0.60", "#E7CE86"],
+        ["daily budget", 47, "−1.4% of −3.0%", "#F2C766"],
+        ["weekly budget", 28, "−2.1% of −7.5%", "#F2C766"],
+        ["exposure", 52, "2.1x of 4.0x", "#4ADE80"],
+        ["correlation load", 57, "0.34 of 0.60", "#F2C766"],
       ].map(([label, pct, note, tone]) => (
         <div key={label as string}>
           <div className="mb-1 flex justify-between font-mono text-[10px]">

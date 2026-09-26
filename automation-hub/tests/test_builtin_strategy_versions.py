@@ -12,6 +12,7 @@ from strategies.builtin_versions import BUILTIN_STRATEGY_VERSIONS
 from strategies.custom import simulate_strategy
 from strategies.donchian_strategy import DonchianStrategy
 from strategies.supertrend_strategy import SupertrendStrategy
+from strategies.three_candle_rejection import ThreeCandleRejectionStrategy
 
 
 def _fingerprint(strategy) -> tuple[int, str]:
@@ -53,6 +54,13 @@ def test_supertrend_v1_0_0_causal_signal_baseline():
 def test_donchian_v1_0_0_causal_signal_baseline():
     version = BUILTIN_STRATEGY_VERSIONS["donchian"]
     count, digest = _fingerprint(DonchianStrategy("BTCUSDT"))
+    assert version.version == "1.0.0"
+    assert (count, digest) == (version.fixture_signal_count, version.fixture_signal_sha256)
+
+
+def test_three_candle_rejection_v1_0_0_causal_signal_baseline():
+    version = BUILTIN_STRATEGY_VERSIONS["three_candle_rejection"]
+    count, digest = _fingerprint(ThreeCandleRejectionStrategy("BTCUSDT"))
     assert version.version == "1.0.0"
     assert (count, digest) == (version.fixture_signal_count, version.fixture_signal_sha256)
 

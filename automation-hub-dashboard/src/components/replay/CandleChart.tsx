@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import * as echarts from "echarts";
+import echarts from "../../lib/echarts";
 import type { EChartsOption } from "echarts";
 import type { ReplayData } from "../../lib/api";
 

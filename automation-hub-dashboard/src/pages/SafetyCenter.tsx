@@ -151,7 +151,21 @@ function LiveReadinessPanel() {
 }
 
 function EconProtectionPanel() {
-  const e = useLive<EconProtection>("/econ/protection", 15000).data;
+  const app = useApp();
+  const live = useLive<EconProtection>("/econ/protection", 15000);
+  const e = live.data;
+  const [syncing, setSyncing] = useState(false);
+  const syncNow = async () => {
+    setSyncing(true);
+    try {
+      const r = await apiPost<{ last_error: string | null; events: number }>("/econ/feed/sync");
+      if (r.last_error) app.toast(`Calendar fetch failed: ${r.last_error}`, "error");
+      else app.toast(`Calendar updated: ${r.events} high-impact releases this week`, "success");
+      void live.refetch();
+    } catch { app.toast("Fetching needs the webhook secret", "error"); }
+    finally { setSyncing(false); }
+  };
+  const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleString() : "never");
   const tone = e?.mode === "normal" ? "green" : e?.mode === "caution" ? "amber" : "red";
   return (
     <Card title="Economic Event Protection" subtitle="halt / reduce size / widen stops around CPI · FOMC · NFP · rate decisions"
@@ -159,7 +173,7 @@ function EconProtectionPanel() {
       {!e ? <div className="dim">—</div> : (
         <>
           <div className="risk-list">
-            <div className="risk-item"><span className="dim">Next high-impact event</span> <b>{e.next_event ? `${e.next_event.name} · in ${e.minutes_to_event! >= 60 ? `${(e.minutes_to_event! / 60).toFixed(1)}h` : `${e.minutes_to_event}m`}` : "none scheduled"}</b></div>
+            <div className="risk-item"><span className="dim">Next high-impact event</span> <b>{e.next_event ? `${e.next_event.name} · ${e.minutes_to_event! < 0 ? `released ${Math.round(-e.minutes_to_event!)}m ago` : e.minutes_to_event! >= 60 ? `in ${(e.minutes_to_event! / 60).toFixed(1)}h` : `in ${e.minutes_to_event}m`}` : "none scheduled"}</b></div>
             <div className="risk-item"><span className="dim">Risk multiplier</span> <b>{Math.round(e.risk_multiplier * 100)}%</b></div>
             <div className="risk-item"><span className="dim">Stop multiplier</span> <b>{e.stop_multiplier}×</b></div>
             <div className="risk-item"><span className="dim">New entries</span> <Badge text={e.halt_new_entries ? "halted" : "allowed"} tone={e.halt_new_entries ? "red" : "green"} /></div>
@@ -170,6 +184,19 @@ function EconProtectionPanel() {
               <ul style={{ margin: "6px 0 0", paddingLeft: 18, lineHeight: 1.5 }}>{e.actions.map((a, i) => <li key={i}>{a}</li>)}</ul>
             </div>
           )}
+          {e.feed ? (
+            <div className="risk-list" style={{ marginTop: 8 }}>
+              <div className="risk-item"><span className="dim">Calendar feed</span>
+                <b>{e.feed.enabled ? `${e.feed.source} · ${e.feed.countries.join(", ")} · ${e.feed.events} high-impact this week${typeof e.feed.rows_seen === "number" ? ` (of ${e.feed.rows_seen} releases in the export)` : ""}` : "off"}</b></div>
+              <div className="risk-item"><span className="dim">Last fetched</span>
+                <b>{when(e.feed.last_success)}{e.feed.last_error ? <span className="neg"> · last try failed: {e.feed.last_error}</span> : null}</b></div>
+              <div className="row-actions" style={{ justifyContent: "flex-end" }}>
+                <button className="btn btn-ghost btn-sm" onClick={syncNow} disabled={syncing || !e.feed.enabled}>
+                  <Icon name="refresh" size={12} /> {syncing ? "Fetching…" : "Fetch now"}
+                </button>
+              </div>
+            </div>
+          ) : null}
           {!e.connected && <p className="dim" style={{ fontSize: 11, marginTop: 8 }}><Icon name="info" size={12} /> {e.note}</p>}
         </>
       )}

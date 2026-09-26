@@ -99,6 +99,9 @@ def render_overview(manager, user: str = "") -> str:
                     '<div class="empty">No activity yet. Start a bot to populate the feed.</div></div>')
 
     from dashboard.stream import LIVE_FEED_CARD
+    from services import csp
+    # The live feed's script is ours; it carries this response's CSP nonce.
+    LIVE_FEED_CARD = LIVE_FEED_CARD.replace("<script>", f'<script nonce="{csp.nonce()}">', 1)
 
     estop = ('<form class="inline" method="post" action="/emergency-stop">'
              '<button class="btn btn-danger" type="submit">■ Emergency Stop</button></form>')

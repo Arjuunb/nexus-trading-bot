@@ -51,13 +51,15 @@ def test_calendar_store_roundtrip(tmp_path):
 
 # ───────────────────────── endpoints ─────────────────────────
 @pytest.fixture()
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import webhook_api
     from services.econ_guard import EconCalendar
-    webhook_api.econ_calendar = EconCalendar(str(tmp_path / "ev.json"))
+    # monkeypatch, not assignment: a replaced module global outlives the test
+    # and its events would leak into every later reader of the calendar.
+    monkeypatch.setattr(webhook_api, "econ_calendar", EconCalendar(str(tmp_path / "ev.json")))
     app = FastAPI(); app.include_router(webhook_api.router)
     return TestClient(app)
 

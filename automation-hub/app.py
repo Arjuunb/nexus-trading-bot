@@ -192,20 +192,29 @@ async def _security_headers(request, call_next):
     set X-Frame-Options — framing is governed by the configurable CSP
     frame-ancestors below so the dashboard can still be embedded in the Tradexa
     app when HUB_FRAME_ANCESTORS is set."""
+    from services import csp as _csp
+    nonce = _csp.new_nonce()  # read by any template that writes an inline script
     resp = await call_next(request)
     # always-safe hardening
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    resp.headers.setdefault("Permissions-Policy", _csp.PERMISSIONS_POLICY)
+    resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin-allow-popups")
+    resp.headers.setdefault("Cross-Origin-Resource-Policy", "same-site")
+    resp.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
     # HSTS only on HTTPS (honours Render's X-Forwarded-Proto) — never on plain
     # HTTP, where browsers ignore it and it only risks dev confusion.
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     if proto == "https":
         resp.headers.setdefault(
             "Strict-Transport-Security", "max-age=63072000; includeSubDomains")
-    # configurable framing policy (unchanged): opt-in embedding allow-list
-    ancestors = _mw_os.environ.get("HUB_FRAME_ANCESTORS", "").strip()
-    if ancestors:
-        resp.headers["Content-Security-Policy"] = f"frame-ancestors {ancestors}"
+    # Scripts only from this origin or carrying this response's nonce. Framing
+    # stays governed by frame-ancestors: HUB_FRAME_ANCESTORS opts embedding
+    # sites in, and without it only this origin may frame a page.
+    resp.headers.setdefault("Content-Security-Policy", _csp.policy(
+        nonce, supabase_url=supabase_auth.url,
+        frame_ancestors=_mw_os.environ.get("HUB_FRAME_ANCESTORS", ""),
+        https=proto == "https", path=request.url.path))
     return resp
 
 # API protection: every data/control endpoint requires a signed-in session
@@ -217,8 +226,9 @@ _AUTH_EXEMPT = ("/login", "/signup", "/auth/", "/webhook", "/assets",
                 "/api/v1/docs", "/api/v1/redoc",   # Swagger/ReDoc moved off "/docs"; same audience as before
                 "/nexus-mark", "/apple-touch", "/icon-", "/maskable-", "/mstile-",
                 "/og-image", "/logo-mark", "/site.webmanifest", "/robots.txt",
-                "/sitemap.xml",
+                "/sitemap.xml", "/.well-known/security.txt",
                 "/status/public",  # the public status feed: it must answer people who cannot sign in
+                "/public/track-record",  # paper records the owner chose to publish; percent only
                 "/v1/")  # the public API authenticates every call itself, with API keys
 
 # The public marketing site's pages.
@@ -405,6 +415,19 @@ app.add_middleware(AuditMiddleware, log_factory=_audit_log.default_log, identify
 # local), the legacy server-rendered dashboard is served instead.
 import json as _json  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+
+class _HashedAssets(StaticFiles):
+    """Vite puts a content hash in every file name under assets/, so a URL
+    never changes content: browsers may keep each file for a year and skip
+    re-checking it on every visit. index.html is served elsewhere, uncached,
+    and is what points at new file names after a deploy."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 _WEBUI = Path(__file__).resolve().parent / "webui"
 _WEBUI_READY = (_WEBUI / "index.html").exists()
 
@@ -418,9 +441,9 @@ _LANDING_READY = (_LANDING / "index.html").exists()
 if _WEBUI_READY and (_WEBUI / "assets").exists():
     # dashboard assets move to /app/assets when the landing owns /assets
     _DASH_ASSETS = "/app/assets" if _LANDING_READY else "/assets"
-    app.mount(_DASH_ASSETS, StaticFiles(directory=str(_WEBUI / "assets")), name="assets")
+    app.mount(_DASH_ASSETS, _HashedAssets(directory=str(_WEBUI / "assets")), name="assets")
 if _LANDING_READY and (_LANDING / "assets").exists():
-    app.mount("/assets", StaticFiles(directory=str(_LANDING / "assets")), name="landing-assets")
+    app.mount("/assets", _HashedAssets(directory=str(_LANDING / "assets")), name="landing-assets")
 
 # Root-level brand assets (favicons, PWA icons, OG image, manifest). Vite copies
 # these from each app's public/ into its dist root, so they live beside index.html
@@ -445,20 +468,55 @@ def _brand_asset(name: str):
     raise HTTPException(status_code=404, detail="not found")
 
 
+SECURITY_REPORT_URL = "https://github.com/Arjuunb/nexus-trading-bot/security/advisories/new"
+SECURITY_POLICY_URL = "https://github.com/Arjuunb/nexus-trading-bot/blob/main/SECURITY.md"
+
+
+@app.get("/.well-known/security.txt", include_in_schema=False)
+def security_txt(request: Request):
+    """RFC 9116: where to report a vulnerability. ``Expires`` rolls forward so
+    the file is never stale; it is always well under the one-year maximum."""
+    from datetime import datetime, timedelta, timezone
+    from fastapi.responses import PlainTextResponse
+    expires = (datetime.now(timezone.utc) + timedelta(days=180)).replace(microsecond=0)
+    base = f"{request.headers.get('x-forwarded-proto', request.url.scheme)}://{request.url.netloc}"
+    body = (f"Contact: {SECURITY_REPORT_URL}\n"
+            f"Expires: {expires.isoformat().replace('+00:00', 'Z')}\n"
+            f"Policy: {SECURITY_POLICY_URL}\n"
+            "Preferred-Languages: en\n"
+            f"Canonical: {base}/.well-known/security.txt\n")
+    return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=86400"})
+
+
 for _bf in _BRAND_FILES:
     app.add_api_route(f"/{_bf}", (lambda n: lambda: _brand_asset(n))(_bf),
                       methods=["GET"], include_in_schema=False)
 
 
+def _runtime_config_script(request: Optional[Request] = None) -> str:
+    """The browser's runtime config as an inline script carrying this
+    response's CSP nonce. The values are public: API base, auth mode, the
+    Supabase URL and anon key, the enabled OAuth providers, and whether this
+    visitor is signed in (so a public page does not call a signed-in endpoint
+    for an anonymous visitor). The JSON is escaped so no value can close the
+    script element. Without a request the page is a signed-in surface."""
+    from services import csp as _csp
+    try:
+        signed_in = True if request is None else bool(_user(request))
+    except Exception:  # noqa: BLE001 -- an unreadable session is an anonymous visitor
+        signed_in = False
+    body = _json.dumps({"apiBase": "", "authMode": settings.auth_mode, "signedIn": signed_in,
+                        "supabaseUrl": supabase_auth.url or None,
+                        "supabaseAnonKey": supabase_auth.anon_key or None,
+                        "oauthProviders": [p for p in ("google", "apple")
+                                           if _sec_os.environ.get(f"HUB_AUTH_{p.upper()}_ENABLED", "").lower() in ("1", "true", "yes")]})
+    body = body.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+    return _csp.script("window.__HUB_CONFIG__=" + body)
+
+
 def _serve_react() -> HTMLResponse:
     html = (_WEBUI / "index.html").read_text(encoding="utf-8")
-    cfg = ('<script>window.__HUB_CONFIG__='
-           + _json.dumps({"apiBase": "", "authMode": settings.auth_mode,
-                          "supabaseUrl": supabase_auth.url or None,
-                          "supabaseAnonKey": supabase_auth.anon_key or None,
-                          "oauthProviders": [p for p in ("google", "apple")
-                                            if _sec_os.environ.get(f"HUB_AUTH_{p.upper()}_ENABLED", "").lower() in ("1", "true", "yes")]})
-           + '</script>')
+    cfg = _runtime_config_script()
     return HTMLResponse(
         html.replace("<head>", "<head>" + cfg, 1),
         headers={
@@ -503,13 +561,7 @@ def _serve_landing(request: Optional[Request] = None) -> HTMLResponse:
     # URL and anon key are deliberately public Supabase browser values. Runtime
     # injection avoids baking deployment-specific keys into a Docker image; the
     # service-role key is never present here.
-    cfg = ('<script>window.__HUB_CONFIG__='
-           + _json.dumps({"apiBase": "", "authMode": settings.auth_mode,
-                          "supabaseUrl": supabase_auth.url or None,
-                          "supabaseAnonKey": supabase_auth.anon_key or None,
-                          "oauthProviders": [p for p in ("google", "apple")
-                                            if _sec_os.environ.get(f"HUB_AUTH_{p.upper()}_ENABLED", "").lower() in ("1", "true", "yes")]})
-           + '</script>')
+    cfg = _runtime_config_script(request)
     html = html.replace("<head>", "<head>" + cfg, 1)
     clean = path.rstrip("/") or "/"
     public_document = clean == "/" or clean in _LANDING_PAGE_PATHS
@@ -524,16 +576,32 @@ def _serve_landing(request: Optional[Request] = None) -> HTMLResponse:
     return HTMLResponse(html, headers=headers)
 
 
+def _landing_auth_pages(auth_mode: str) -> tuple[str, ...]:
+    """The /auth/* pages the landing SPA serves (GET only; every POST stays here).
+
+    Which store owns accounts decides who can finish the email flows. In legacy
+    mode that is this app's users table, so forgot/reset password and
+    verify-email are the server-rendered pages below, and the landing's
+    versions would reset or confirm nobody. With Supabase Auth it is the
+    reverse: Supabase sends the reset and verification emails, and its links
+    arrive at /auth/reset-password and /auth/verify-email carrying the session
+    in the URL fragment, which only the SPA can read. The server pages there
+    work against the local table, which holds no Supabase account, so a reset
+    link showed "Link missing" and could never be completed."""
+    pages = ("login", "register", "session-expired")
+    if auth_mode == "supabase":
+        pages += ("forgot-password", "reset-password", "verify-email")
+    return pages
+
+
 # Single-origin routing (only when the landing build is bundled): the public
 # landing SPA owns "/", "/auth/*" and "/settings/*"; the dashboard lives at "/app"
 # and stays session-gated. BrowserRouter paths need a real HTML response per route.
 if _LANDING_READY:
-    # Only the SPA shells that merely forward to the backend. The functional
-    # flows — forgot/reset password, verify-email, two-factor — are served by
-    # this app, because they need the users table and the session cookie. The
-    # landing's versions of those pages were Supabase stubs against a second,
-    # empty identity store; routing to them would authenticate nobody.
-    _LANDING_AUTH = ("login", "register", "session-expired")
+    # Registered before the server-rendered auth pages further down, so these
+    # win for GET. Two-factor always stays here: it completes this app's own
+    # pending-2FA cookie.
+    _LANDING_AUTH = _landing_auth_pages(settings.auth_mode)
 
     def _landing_page(request: Request) -> HTMLResponse:
         return _serve_landing(request)
@@ -578,6 +646,9 @@ def _start_auto_engine() -> None:
               f"(interval={webhook_api.status_monitor.interval_s:.0f}s)", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.outbound_webhooks.start():
         print("[startup] outbound webhooks started", flush=True)
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.econ_feed.start():
+        print(f"[startup] economic calendar feed started ({', '.join(webhook_api.econ_feed.countries)}, "
+              f"every {webhook_api.econ_feed.interval_s / 3600:.0f}h)", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
         print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
               f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)
@@ -912,9 +983,9 @@ _SHOWCASE = f'''<aside class="showcase">
     <svg viewBox="0 0 260 80" preserveAspectRatio="none" class="sc-svg"><path d="{_SC_PATH}" pathLength="1" fill="none" stroke="#4FD98E" stroke-width="2" stroke-linecap="round" class="sc-line"/></svg>
   </div>
   <div class="sc-stats">
-    <div class="sc-chip"><span class="sc-ic">{_IC_TREND}</span><div><b>Fully automated</b><span>Strategies executed</span></div></div>
+    <div class="sc-chip"><span class="sc-ic">{_IC_TREND}</span><div><b>Every one journaled</b><span>Decisions</span></div></div>
     <div class="sc-chip"><span class="sc-ic">{_IC_SHIELD}</span><div><b>Encrypted · No withdrawals</b><span>Keys</span></div></div>
-    <div class="sc-chip"><span class="sc-ic">{_IC_ZAP}</span><div><b>Sub-100ms routing</b><span>Execution</span></div></div>
+    <div class="sc-chip"><span class="sc-ic">{_IC_ZAP}</span><div><b>Paper account · live locked</b><span>Execution</span></div></div>
   </div>
 </aside>'''
 
@@ -1019,9 +1090,18 @@ _AUTH_HEAD_LINKS = (
     '<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">'
     '<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png">')
 
-_AUTH_JS = ('<script>function tpw(b){var i=document.getElementById("pw");if(i){i.type=i.type==="password"?"text":"password";}}'
-            'function tpw2(b){var i=document.getElementById("pw2");if(i){i.type=i.type==="password"?"text":"password";}}'
-            'function subm(f){var b=f.querySelector(".btn-gold");if(b)b.classList.add("loading");return true;}</script>')
+# Behaviour for the sign-in pages, attached as listeners: the CSP forbids
+# inline event-handler attributes, and the script itself carries the nonce.
+_AUTH_JS = ('document.querySelectorAll("[data-toggle-pw]").forEach(function(b){b.addEventListener("click",function(){'
+            'var i=document.getElementById(b.getAttribute("data-toggle-pw"));'
+            'if(i){i.type=i.type==="password"?"text":"password";}});});'
+            'document.querySelectorAll("form").forEach(function(f){f.addEventListener("submit",function(){'
+            'var b=f.querySelector(".btn-gold");if(b)b.classList.add("loading");});});')
+
+
+def _auth_script() -> str:
+    from services import csp as _csp
+    return _csp.script(_AUTH_JS)
 
 
 def _auth_page(title: str, body: str) -> str:
@@ -1036,7 +1116,7 @@ def _auth_page(title: str, body: str) -> str:
 <div class="bloom bloom-gold"></div><div class="bloom bloom-emer"></div><div class="vig"></div></div>
 <div class="topbar"><a href="/">← Back to site</a></div>
 <div class="auth">{_SHOWCASE}<div class="formcol"><div class="card">{body}</div></div></div>
-{_AUTH_JS}
+{_auth_script()}
 </body></html>'''
 
 
@@ -1044,7 +1124,7 @@ def _pw_field(name: str, label: str, fid: str, toggle: str, autocomplete: str, h
     return (f'<label class="fld"><span class="lbl">{label}{hint}</span>'
             f'<div class="inp"><span class="ico">{_IC_LOCK}</span>'
             f'<input id="{fid}" name="{name}" type="password" autocomplete="{autocomplete}" placeholder="••••••••">'
-            f'<button type="button" class="eye" onclick="{toggle}(this)" aria-label="Show password">{_IC_EYE}</button></div></label>')
+            f'<button type="button" class="eye" data-toggle-pw="{fid}" aria-label="Show password">{_IC_EYE}</button></div></label>')
 
 
 from services import auth_flows as _af  # noqa: E402
@@ -1092,7 +1172,7 @@ def login_form(error: str = "") -> str:
     return _auth_page("Sign in", f'''{_BRAND_HEAD}
 <h1>Welcome back</h1>
 <p class="sub">Sign in to your TradeLogX Nexus workspace.</p>
-<form method="post" action="/login" onsubmit="return subm(this)" novalidate>
+<form method="post" action="/login" novalidate>
 <label class="fld"><span class="lbl">Username or email</span>
 <div class="inp"><span class="ico">{_IC_USER}</span><input name="username" autocomplete="username" placeholder="you@email.com or a username" autofocus></div></label>
 {_pw_field("password", "Password", "pw", "tpw", "current-password")}
@@ -1188,7 +1268,7 @@ def signup_form(error: str = "") -> str:
     return _auth_page("Create account", f'''{_BRAND_HEAD}
 <h1>Create your account</h1>
 <p class="sub">Set up the owner account for your TradeLogX Nexus workspace.</p>
-<form method="post" action="/signup" onsubmit="return subm(this)" novalidate>
+<form method="post" action="/signup" novalidate>
 <label class="fld"><span class="lbl">Username or email</span>
 <div class="inp"><span class="ico">{_IC_USER}</span><input name="username" autocomplete="username" placeholder="you@email.com or a username" autofocus></div></label>
 {_pw_field("password", "Password", "pw", "tpw", "new-password", hint="<span style='font-weight:400;color:rgba(255,255,255,.4)'>8+ characters</span>")}
@@ -1481,7 +1561,7 @@ def forgot_password_form(sent: str = "") -> str:
     return _auth_page("Reset password", f'''{_BRAND_HEAD}
 <h1>Forgot your password?</h1>
 <p class="sub">We'll email you a link to set a new one.</p>
-<form method="post" action="/auth/forgot-password" onsubmit="return subm(this)" novalidate>
+<form method="post" action="/auth/forgot-password" novalidate>
 <label class="fld"><span class="lbl">Username or email</span>
 <div class="inp"><span class="ico">{_IC_USER}</span><input name="identifier" autocomplete="username" placeholder="you@email.com or a username" autofocus></div></label>
 <button class="btn-gold" type="submit"><span class="sheen"></span><span class="spin"></span><span class="txt">Send reset link</span></button>
@@ -1513,7 +1593,7 @@ def reset_password_form(token: str = "", error: str = "") -> str:
     return _auth_page("Reset password", f'''{_BRAND_HEAD}
 <h1>Set a new password</h1>
 <p class="sub">This link works once and expires an hour after it was sent.</p>
-<form method="post" action="/auth/reset-password" onsubmit="return subm(this)" novalidate>
+<form method="post" action="/auth/reset-password" novalidate>
 <input type="hidden" name="token" value="{w.esc(token)}">
 {_pw_field("password", "New password", "np", "tnp", "new-password")}
 {_pw_field("confirm", "Confirm password", "nc", "tnc", "new-password")}
@@ -1554,7 +1634,7 @@ def verify_email_page(request: Request, token: str = "") -> str:
     return _auth_page("Verify email", f'''{_BRAND_HEAD}
 <h1>Confirm your email</h1>
 <p class="sub">Signed in as {w.esc(u)}. Send yourself a fresh confirmation link.</p>
-<form method="post" action="/auth/resend-verification" onsubmit="return subm(this)">
+<form method="post" action="/auth/resend-verification">
 <button class="btn-gold" type="submit"><span class="sheen"></span><span class="spin"></span><span class="txt">Send confirmation link</span></button>
 </form>''')
 
@@ -1580,7 +1660,7 @@ def two_factor_page(request: Request, error: str = "") -> str:
     return _auth_page("Two-factor", f'''{_BRAND_HEAD}
 <h1>Two-factor</h1>
 <p class="sub">Enter the 6-digit code from your authenticator app, or a recovery code.</p>
-<form method="post" action="/auth/two-factor" onsubmit="return subm(this)" novalidate>
+<form method="post" action="/auth/two-factor" novalidate>
 <label class="fld"><span class="lbl">Code</span>
 <div class="inp"><span class="ico">{_IC_LOCK}</span><input name="code" inputmode="text" autocomplete="one-time-code" placeholder="123456" autofocus></div></label>
 <button class="btn-gold" type="submit"><span class="sheen"></span><span class="spin"></span><span class="txt">Verify</span></button>

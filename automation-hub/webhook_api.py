@@ -71,9 +71,18 @@ alert_channels = AlertChannels(notifier, _os.path.join(_os.path.dirname(settings
 # Economic-event calendar (user-set / provider-fed upcoming events).
 from services.econ_guard import EconCalendar  # noqa: E402
 econ_calendar = EconCalendar(_os.path.join(_os.path.dirname(settings.providers_path), "econ_events.json"))
+# Fills the calendar from a public weekly export of scheduled releases, so the
+# blackout does not depend on someone typing dates in (services/econ_feed.py).
+from services.econ_feed import EconFeed  # noqa: E402
+econ_feed = EconFeed(econ_calendar)
 # Event-risk gate: the pipeline halts new entries in the blackout window
-# around high-impact events and halves size in the caution window.
+# around high-impact events and halves size in the caution window. The window
+# runs from 30 min before a release to 15 min after it, the same as Trading
+# Instances and labs that opt in: the first reaction to a release is usually
+# the most violent part, and it happens after the timestamp.
+from services.instance_event_guard import AFTER_MIN as _ECON_AFTER_MIN  # noqa: E402
 pipeline.econ_events = econ_calendar.events
+pipeline.econ_after_min = _ECON_AFTER_MIN
 # Allocator tilt: size up symbols with a proven recent live record (bounded).
 from services.allocator import risk_weights as _alloc_weights  # noqa: E402
 pipeline.allocator = lambda sym: _alloc_weights(paper.history(), [sym]).get(sym.upper(), 1.0)
@@ -254,6 +263,25 @@ instance_manager = TradingInstanceManager(
     max_trades_per_day=settings.max_trades_per_day,
     trading_days_mask=settings.trading_days_mask,
 )
+# Opt-in news blackout per instance, fed by the same economic calendar as the
+# global engine. Attached before app startup restores any worker.
+from services.instance_event_guard import InstanceEventGuard  # noqa: E402
+instance_manager.event_guard = InstanceEventGuard(
+    _os.path.join(_os.path.dirname(settings.providers_path), "instance_event_guard.json"),
+    econ_calendar)
+# The same opt-in blackout for the three research labs, one switch per lab
+# (services/lab_event_guard.py), kept in its own file.
+lab_event_guard = InstanceEventGuard(
+    _os.path.join(_os.path.dirname(settings.providers_path), "lab_event_guard.json"),
+    econ_calendar)
+# Opt-in public paper record per instance: off until the owner publishes one.
+from services.public_track_record import PublicTrackRecord  # noqa: E402
+instance_manager.track_record = PublicTrackRecord(
+    _os.path.join(_os.path.dirname(settings.providers_path), "public_track_record.json"))
+# Opt-in per instance: the Decision Brain score stops blocking its entries.
+from services.instance_switches import InstanceSwitches  # noqa: E402
+instance_manager.quality_gate = InstanceSwitches(
+    _os.path.join(_os.path.dirname(settings.providers_path), "instance_quality_gate.json"))
 
 def _instance_execution_status():
     rows = [instance_manager.status(item.id) for item in instance_manager._instances.values()
@@ -994,6 +1022,9 @@ adaptive_lab = AdaptiveLab(
     symbol_rules_provider=v2_market_data.usdm_symbol_rules,
     supported_symbols=tuple(_ADAPTIVE_SYMBOLS),
     journal=AdaptiveJournal(settings.adaptive_lab_journal_db))
+# The lab's bot takes the instance news gate, answering to the lab's switch.
+from services.lab_event_guard import LabKeyedEventGuard  # noqa: E402
+adaptive_lab.manager.event_guard = LabKeyedEventGuard(lab_event_guard, "adaptive")
 # The lab also mirrors, view only, any Trading Instance running this strategy.
 # Attached here, before app startup restores instances, so every instance
 # worker carries the report tee that journals its candles beside cycle_store.
@@ -1035,6 +1066,9 @@ status_monitor = _status.StatusMonitor(
         "database": _status.database_probe(lambda: ledger.get_logs(limit=1)),
     },
     notify=_status_alert,
+    # Private: which workers are down and why, in the alert itself.
+    explain={"workers": _status.workers_explainer(instance_manager, instance_supervisor),
+             "market_data": _status.market_data_explainer(lambda: instance_manager.worker_health())},
     interval_s=float(_os.environ.get("HUB_STATUS_INTERVAL", "60")))
 
 # Scheduled copy of the audit log to storage the operator controls
@@ -1051,11 +1085,17 @@ audit_exporter = AuditExporter(
 # read from the decision store, so no trading code is involved in producing them.
 from services.outbound_webhooks import WebhookService  # noqa: E402
 from services.public_shapes import decision as _public_decision  # noqa: E402
+def _key_vault():
+    from services.key_vault import default_vault
+    return default_vault()
+
+
 outbound_webhooks = WebhookService(
     _os.environ.get("HUB_WEBHOOKS_DB", _os.path.join(_os.path.dirname(settings.audit_path), "webhooks.db")),
     decision_source=lambda after, limit: decision_store.after(after, limit),
     latest_decision_id=lambda: decision_store.max_id(),
-    render=_public_decision)
+    render=_public_decision,
+    vault=_key_vault)  # signing secrets are sealed under the tenant data key when HUB_MASTER_KEY is set
 
 # The lab's bot gets the same repair loop, over the lab's own manager.
 adaptive_lab_supervisor = InstanceSupervisor(
@@ -1063,11 +1103,41 @@ adaptive_lab_supervisor = InstanceSupervisor(
     interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
-price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
-                                              starting_balance=10_000.0)
+from services.lab_event_guard import (  # noqa: E402
+    EventGuardedPriceActionPaperAccount, EventGuardedSMCPaperAccount)
+price_action_paper = EventGuardedPriceActionPaperAccount(settings.price_action_paper_db,
+                                                          starting_balance=10_000.0)
+price_action_paper.event_guard = lab_event_guard
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
-smc_paper = AgentGatedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+smc_paper = EventGuardedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+smc_paper.event_guard = lab_event_guard
+
+
+# App-wide realized P&L calendar (services/pnl_calendar.py, docs/PNL_CALENDAR.md):
+# a read-only view over every ledger that holds real paper/live closes. Each
+# collector reads one source through its own interface; nothing is written.
+from services import pnl_calendar as _pnl  # noqa: E402
+
+
+def _instance_meta(manager) -> dict:
+    return {inst.id: {"name": f"{inst.strategy_label} · {inst.symbol}", "strategy_key": inst.strategy_key,
+                      "strategy_label": inst.strategy_label, "mode": inst.mode}
+            for inst in manager.list()}
+
+
+pnl_calendar = _pnl.PnlCalendar({
+    "ledger": lambda: _pnl.collect_ledger(
+        _pnl.read_paper_trades(ledger), scope="ledger", default_source="paper_trading",
+        instances=_instance_meta(instance_manager), journal=decision_journal_store.get),
+    "adaptive_lab": lambda: _pnl.collect_ledger(
+        _pnl.read_paper_trades(adaptive_lab.ledger), scope="adaptive", default_source="adaptive_lab",
+        instances=_instance_meta(adaptive_lab.manager)),
+    "pa_lab": lambda: _pnl.collect_v2_lab(
+        _pnl.v2_lab_history(price_action_paper, source="pa_lab", currency="USDT"), source="pa_lab"),
+    "smc_lab": lambda: _pnl.collect_v2_lab(
+        _pnl.v2_lab_history(smc_paper, source="smc_lab", currency="USDT"), source="smc_lab"),
+})
 smc_agent_journal = SMCAgentJournal(settings.smc_agent_journal_db)
 # equity here is only a fallback: on every live tick the runtime supplies the
 # paper account's actual equity and the session's saved risk percentage.
@@ -1364,6 +1434,8 @@ import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 import routers.security  # noqa: E402
 import routers.status  # noqa: E402
+import routers.lab_event_guard  # noqa: E402
+import routers.calendar  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
@@ -1388,6 +1460,8 @@ router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 router.include_router(routers.security.router)
 router.include_router(routers.status.router)
+router.include_router(routers.lab_event_guard.router)
+router.include_router(routers.calendar.router)
 
 
 # ───────────────────────────── server-side grid (paper, 24/7) ─────────────────

@@ -251,7 +251,7 @@ export function ScreenMock({ kind, play = true }: { kind: ScreenKind; play?: boo
             <span className="text-[10px] text-white/35">Decision Brain 1.0.0</span>
             <span className="text-[10px] text-loss-soft/80">insufficient evidence</span>
           </div>
-          <Sparkline seed={7} drift={-0.7} tone="#C9A24B" />
+          <Sparkline seed={7} drift={-0.7} tone="#EAB54F" />
           <div className="grid grid-cols-4 gap-2 border-t border-line pt-2">
             {[
               ["net", "−2.98R"],

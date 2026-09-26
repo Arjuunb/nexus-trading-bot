@@ -4,6 +4,8 @@ import Card from "../components/common/Card";
 import Icon from "../components/common/Icon";
 import { Badge, PageHeader, StatCard } from "../components/common/ui";
 import { useLive, API_BASE } from "../lib/api";
+import { copyText } from "../lib/clipboard";
+import { useApp } from "../app-context";
 
 /** Decisions — the Explainable Trading feed. One complete Decision Report per
  *  analysis cycle (including WAIT candles): narrated market analysis, the
@@ -134,6 +136,7 @@ function ReportDetail({ id }: { id: number }) {
 }
 
 export default function DecisionsPage({ focusId }: { focusId?: string } = {}) {
+  const { toast } = useApp();
   const [decision, setDecision] = usePref<(typeof DECISIONS)[number]>("decisions.filter", "all");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState<number | null>(focusId ? Number(focusId) : null);
@@ -171,7 +174,7 @@ export default function DecisionsPage({ focusId }: { focusId?: string } = {}) {
             <Icon name="external" size={13} className="amber" />
             <b>Linked decision · cycle #{focusId}</b>
             <button className="chip-btn" style={{ marginLeft: "auto" }}
-              onClick={() => { navigator.clipboard?.writeText(window.location.href); }}>Copy link</button>
+              onClick={() => { void copyText(window.location.href, toast); }}>Copy link</button>
           </div>
           <ReportDetail id={Number(focusId)} />
         </div>
@@ -184,11 +187,11 @@ export default function DecisionsPage({ focusId }: { focusId?: string } = {}) {
       )}
 
       <Card title="Core Engine V2 Shadow Diagnostics" subtitle="Evidence is recorded alongside paper cycles for comparison only; V2 cannot execute trades.">
-        {v2Health.data ? (
+        {typeof v2Health.data?.total_decisions === "number" ? (
           <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
             <Badge text="SHADOW ONLY" tone="amber" />
             <span className="mono">{v2Health.data.total_decisions} observations</span>
-            <span className="dim">{Object.keys(v2Health.data.engine_status_counts).length} evidence engines observed</span>
+            <span className="dim">{Object.keys(v2Health.data.engine_status_counts ?? {}).length} evidence engines observed</span>
             <span className="dim">Execution: disabled</span>
           </div>
         ) : (
@@ -256,7 +259,7 @@ export default function DecisionsPage({ focusId }: { focusId?: string } = {}) {
                         <td colSpan={7} style={{ background: "var(--surface-2, #121214)", padding: 0 }}>
                           <div style={{ display: "flex", justifyContent: "flex-end", padding: "6px 10px 0" }}>
                             <button className="chip-btn" title="Copy a shareable link to this decision"
-                              onClick={() => { navigator.clipboard?.writeText(`${location.origin}${location.pathname}#/decision/${c.id}`); }}>
+                              onClick={() => { void copyText(`${location.origin}${location.pathname}#/decision/${c.id}`, toast); }}>
                               <Icon name="external" size={11} /> Copy link
                             </button>
                           </div>

@@ -1214,6 +1214,17 @@ class TradingInstanceManager:
         self.cycle_store = cycle_store
         self.market_hub = market_hub
         self.symbol_rules_provider = symbol_rules_provider
+        # Opt-in news blackout (services/instance_event_guard.py). The server
+        # attaches it after construction; None leaves every pipeline without
+        # an economic calendar, as before.
+        self.event_guard = None
+        # Opt-in public paper record (services/public_track_record.py), also
+        # attached by the server. Nothing is published unless switched on.
+        self.track_record = None
+        # Opt-in per instance: the Decision Brain quality score stops blocking
+        # this instance's entries (an InstanceSwitches, attached by the
+        # server). None, or no entry for the instance, keeps the gate on.
+        self.quality_gate = None
         # Instance workers own their positions, but production risk policy is
         # supplied by the server and applied to every isolated pipeline. These
         # values were previously omitted, silently disabling several configured
@@ -1659,6 +1670,12 @@ class TradingInstanceManager:
             # keep the in-memory worker intact so a transient persistence error
             # cannot silently stop an instance that still exists after restart.
             self.store.delete(instance_id)
+            if self.event_guard is not None:
+                self.event_guard.forget(instance_id)
+            if self.track_record is not None:
+                self.track_record.forget(instance_id)
+            if self.quality_gate is not None:
+                self.quality_gate.forget(instance_id)
             # A terminal-error worker has stopped its engine thread, but its
             # independently owned WebSocket feed may still be alive. Cleanup is
             # best-effort after durable deletion; stale network resources must
@@ -1728,6 +1745,28 @@ class TradingInstanceManager:
               allow_during_reboot: bool = False,
               owner_id: str | None = None,
               only_if_desired: bool = False) -> TradingInstance:
+        # A start that fails after claiming the lease -- the market-data hub
+        # refusing the subscription, a strategy that will not build -- used to
+        # keep it until the TTL lapsed. Shutdown releases only running workers'
+        # leases, so a restart inside that window found this process's orphan
+        # and refused the instance. Released under the lifecycle lock, so a
+        # concurrent Start cannot have claimed it in between.
+        with self._lifecycle_lock(instance_id):
+            try:
+                return self._start(instance_id, entry_gate_closed=entry_gate_closed,
+                                   allow_during_reboot=allow_during_reboot,
+                                   owner_id=owner_id, only_if_desired=only_if_desired)
+            except BaseException:
+                with self._lock:
+                    runtime = self._runtime.get(instance_id)
+                    alive = runtime is not None and runtime[0].running
+                if not alive:
+                    self._release_lease(instance_id)
+                raise
+
+    def _start(self, instance_id: str, *, entry_gate_closed: bool,
+               allow_during_reboot: bool, owner_id: str | None,
+               only_if_desired: bool) -> TradingInstance:
         with self._lifecycle_lock(instance_id), self._lock:
             if only_if_desired:
                 # A repair acts on intent, so it must read the intent here,
@@ -1832,6 +1871,11 @@ class TradingInstanceManager:
                                       maximum_risk_amount=inst.maximum_risk_amount,
                                       minimum_equity=inst.minimum_equity)
             pipeline.global_entry_guard = lambda **kw: self._global_guard(instance_id, **kw)
+            if self.event_guard is not None:
+                # Empty unless this instance opted in; read per signal, so the
+                # switch applies without rebuilding the worker.
+                pipeline.econ_events = self.event_guard.events_for(instance_id)
+                pipeline.econ_after_min = self.event_guard.after_min
             # Trading Instances use the same explainable close/review/memory
             # lifecycle as the legacy pipeline, but retain immutable instance
             # provenance so evidence is never silently blended.
@@ -2101,6 +2145,9 @@ class TradingInstanceManager:
             engine.strategy_version = inst.strategy_version
             engine.decisions = self.decision_store
             engine.reports = self.cycle_store
+            if self.quality_gate is not None:
+                # Read per signal, so the switch applies without a rebuild.
+                engine.quality_gate_bypass = lambda: self.quality_gate.enabled(instance_id)
             self._runtime[instance_id] = (engine, paper, pipeline, controls)
             # A start with the entry gate closed IS a paused instance. Writing
             # "starting" over it destroyed the only durable record that the
@@ -3162,9 +3209,14 @@ class TradingInstanceManager:
                 # Another process still owns this instance. Fail closed and
                 # keep the intent: the supervisor retries once the lease
                 # expires, which is the only safe way to recover from a crash
-                # whose worker might still be alive somewhere.
-                inst.state = "blocked"
-                inst.last_error = f"WORKER_LEASE_HELD: {exc}"[:500]
+                # whose worker might still be alive somewhere. Not "blocked":
+                # the supervisor never retries that state, so a lease the
+                # previous container left behind kept the worker down until
+                # someone pressed Start. The lease itself keeps it safe.
+                inst.state = "error"
+                inst.last_error = (f"WORKER_LEASE_HELD: {exc}; retried once "
+                                   "the lease expires")[:500]
+                inst.stopped_at = _now()
                 self.store.save(inst)
                 continue
             except Exception as exc:  # one broken instance cannot block others
@@ -3537,7 +3589,26 @@ class TradingInstanceManager:
                     "matches": strategy_matches,
                 },
                 "metrics": metrics,
+                "event_guard": self._event_guard_state(inst.id),
+                "quality_gate": self.quality_gate_state(inst.id),
                 "reboot": reboot}
+
+    def quality_gate_state(self, instance_id: str) -> dict | None:
+        if self.quality_gate is None:
+            return None
+        row = self.quality_gate.row(instance_id)
+        runtime = self._runtime.get(instance_id)
+        min_score = runtime[0].min_quality_score if runtime else int(os.environ.get("HUB_MIN_SCORE", "60"))
+        return {"enforced": not row.get("enabled"), "min_score": min_score,
+                "updated_at": row.get("updated_at"), "by": row.get("by") or None}
+
+    def _event_guard_state(self, instance_id: str) -> dict | None:
+        if self.event_guard is None:
+            return None
+        try:
+            return self.event_guard.state(instance_id)
+        except Exception as exc:  # noqa: BLE001 -- status must render regardless
+            return {"enabled": self.event_guard.enabled(instance_id), "error": str(exc)}
 
     def snapshot(self, owner_id: str | None = None) -> tuple[list[dict], list[dict], list[dict]]:
         """Materialize one dashboard snapshot without per-instance remote reads.

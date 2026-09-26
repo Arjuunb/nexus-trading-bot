@@ -124,9 +124,9 @@ export const portfolioSchema = z.object({
 
 export const appearanceSchema = z.object({
   theme: themeEnum.default("dark"),
-  accent: z.string().default("#C8A94B"),
-  chartUp: z.string().default("#2FBF71"),
-  chartDown: z.string().default("#E5605B"),
+  accent: z.string().default("#EAB54F"),
+  chartUp: z.string().default("#22C55E"),
+  chartDown: z.string().default("#EF4444"),
   compact: z.boolean().default(false),
   animations: z.boolean().default(true),
 });
