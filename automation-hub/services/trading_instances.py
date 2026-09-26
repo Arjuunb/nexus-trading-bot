@@ -1745,6 +1745,28 @@ class TradingInstanceManager:
               allow_during_reboot: bool = False,
               owner_id: str | None = None,
               only_if_desired: bool = False) -> TradingInstance:
+        # A start that fails after claiming the lease -- the market-data hub
+        # refusing the subscription, a strategy that will not build -- used to
+        # keep it until the TTL lapsed. Shutdown releases only running workers'
+        # leases, so a restart inside that window found this process's orphan
+        # and refused the instance. Released under the lifecycle lock, so a
+        # concurrent Start cannot have claimed it in between.
+        with self._lifecycle_lock(instance_id):
+            try:
+                return self._start(instance_id, entry_gate_closed=entry_gate_closed,
+                                   allow_during_reboot=allow_during_reboot,
+                                   owner_id=owner_id, only_if_desired=only_if_desired)
+            except BaseException:
+                with self._lock:
+                    runtime = self._runtime.get(instance_id)
+                    alive = runtime is not None and runtime[0].running
+                if not alive:
+                    self._release_lease(instance_id)
+                raise
+
+    def _start(self, instance_id: str, *, entry_gate_closed: bool,
+               allow_during_reboot: bool, owner_id: str | None,
+               only_if_desired: bool) -> TradingInstance:
         with self._lifecycle_lock(instance_id), self._lock:
             if only_if_desired:
                 # A repair acts on intent, so it must read the intent here,
@@ -3187,9 +3209,14 @@ class TradingInstanceManager:
                 # Another process still owns this instance. Fail closed and
                 # keep the intent: the supervisor retries once the lease
                 # expires, which is the only safe way to recover from a crash
-                # whose worker might still be alive somewhere.
-                inst.state = "blocked"
-                inst.last_error = f"WORKER_LEASE_HELD: {exc}"[:500]
+                # whose worker might still be alive somewhere. Not "blocked":
+                # the supervisor never retries that state, so a lease the
+                # previous container left behind kept the worker down until
+                # someone pressed Start. The lease itself keeps it safe.
+                inst.state = "error"
+                inst.last_error = (f"WORKER_LEASE_HELD: {exc}; retried once "
+                                   "the lease expires")[:500]
+                inst.stopped_at = _now()
                 self.store.save(inst)
                 continue
             except Exception as exc:  # one broken instance cannot block others

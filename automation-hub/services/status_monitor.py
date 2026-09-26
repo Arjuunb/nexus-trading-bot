@@ -148,17 +148,21 @@ def workers_explainer(manager, supervisor=None) -> Callable[[], str]:
             text = f"{inst.symbol} {inst.timeframe}: {inst.state}"
             if inst.last_error:
                 text += f" ({str(inst.last_error)[:160]})"
-            action = (report.get(inst.id) or {}).get("action")
+            row = report.get(inst.id) or {}
+            action = row.get("action")
             retry = backoff.get(inst.id)
             if action == "blocked":
                 text += "; blocked, needs you: the supervisor does not retry it"
             elif action == "no_slot":
                 text += "; no free trading slot"
             elif action == "lease_held":
-                text += "; another worker holds its lease"
+                text += (f"; another worker holds its lease, next attempt in "
+                         f"{float(row.get('retry_in_s') or 0):.0f}s")
             elif retry:
                 text += (f"; restart attempt {retry.get('consecutive_failures')} failed, "
                          f"next in {float(retry.get('retry_in_s') or 0):.0f}s")
+            elif action == "backoff":
+                text += f"; next attempt in {float(row.get('retry_in_s') or 0):.0f}s"
             parts.append(text)
         return " | ".join(parts)[:_EXPLAIN_LIMIT]
     return explain
