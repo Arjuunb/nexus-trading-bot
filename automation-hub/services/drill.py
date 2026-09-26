@@ -69,7 +69,7 @@ def drill_crash_mid_position() -> dict:
 def drill_backup_restore() -> dict:
     from data.ledger import SqliteLedger
     from execution.paper_engine import PaperExecutionEngine
-    from services.backup import backup_now, restore_check
+    from services.backup import backup_now, restore_check, restore_to
     try:
         with tempfile.TemporaryDirectory() as td:
             led = SqliteLedger(str(Path(td) / "ledger.db"))
@@ -82,7 +82,12 @@ def drill_backup_restore() -> dict:
             chk = restore_check(td, b["snapshot"])
             if not chk["ok"]:
                 return _result("ledger-backup-restore", False, f"restore check failed: {chk}")
-            restored = SqliteLedger(str(Path(td) / "backups" / b["snapshot"] / "ledger.db"))
+            # Restore the way an operator would -- into a separate directory,
+            # decrypting when the snapshot is sealed -- and read it back.
+            back = restore_to(td, b["snapshot"], str(Path(td) / "restored"))
+            if not back["ok"]:
+                return _result("ledger-backup-restore", False, f"restore failed: {back}")
+            restored = SqliteLedger(str(Path(td) / "restored" / "ledger.db"))
             trades = [t for t in restored.get_paper_trades() if t["status"] == "closed"]
             ok = len(trades) == 1 and trades[0]["pnl"] == 10.0
             return _result("ledger-backup-restore", ok,

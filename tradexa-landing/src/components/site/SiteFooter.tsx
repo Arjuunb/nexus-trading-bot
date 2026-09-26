@@ -240,8 +240,8 @@ export function SiteFooter() {
             <Logo />
           </Link>
           <p className="mt-4 max-w-xs text-sm leading-relaxed text-white/45">
-            It remembers every trade, learns from every mistake, and builds a trading
-            intelligence that’s yours alone — with full transparency over every decision.
+            It records every trade and every decision, trades smaller on losing patterns it
+            has seen repeat, and shows you the reasoning behind all of it.
           </p>
 
           <div className="mt-6 flex flex-wrap gap-2">

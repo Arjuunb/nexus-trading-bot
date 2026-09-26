@@ -54,7 +54,7 @@ const METHOD: Method[] = [
   {
     icon: Scale,
     title: "Costs in every simulated fill",
-    body: "The realistic fill model charges a 0.04% spread, 0.03% slippage and 0.04% taker / 0.02% maker fees on every simulated order, so a result is never gross by accident.",
+    body: "Every simulated fill pays a fee — 0.04% taker, 0.02% maker. Market and stop orders also pay half of a 0.04% spread plus 0.03% slippage; resting limit entries fill at their price, as they would on an exchange.",
   },
   {
     icon: CandlestickChart,

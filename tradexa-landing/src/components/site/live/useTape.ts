@@ -21,9 +21,9 @@ export interface Candle {
  * opening series because the walk is seeded.
  *
  * One clock drives the whole page. Four panels each running their own
- * `setInterval` would drift apart within seconds, and a book that updates on a
- * different beat from the candle it belongs to reads as broken rather than
- * fast.
+ * `setInterval` would drift apart within seconds, and a decision that updates
+ * on a different beat from the candle it belongs to reads as broken rather
+ * than fast.
  */
 
 /** Mulberry32 — small, fast, and identical across browsers. */
@@ -65,18 +65,11 @@ function seedCandles(): Candle[] {
   return out;
 }
 
-export interface BookLevel {
-  price: number;
-  size: number;
-}
-
 export interface TapeState {
   candles: Candle[];
   price: number;
   /** Change over the visible window, in percent. */
   changePct: number;
-  bids: BookLevel[];
-  asks: BookLevel[];
   /** Increments once per candle close — panels use it to advance in step. */
   epoch: number;
 }
@@ -130,19 +123,5 @@ export function useTape(ref: RefObject<Element | null>): TapeState {
   const first = candles[0].o;
   const changePct = ((price - first) / first) * 100;
 
-  // The book is derived from the price rather than stored, so it can never
-  // disagree with the chart it sits beside.
-  const { bids, asks } = useMemo(() => {
-    const r = rng(Math.floor(price));
-    const tick = 1.5;
-    const askSide: BookLevel[] = [];
-    const bidSide: BookLevel[] = [];
-    for (let i = 0; i < 9; i++) {
-      askSide.push({ price: price + tick * (i + 1), size: 0.15 + r() * 1.5 });
-      bidSide.push({ price: price - tick * (i + 1), size: 0.15 + r() * 1.5 });
-    }
-    return { bids: bidSide, asks: askSide.reverse() };
-  }, [price]);
-
-  return { candles, price, changePct, bids, asks, epoch };
+  return { candles, price, changePct, epoch };
 }

@@ -16,6 +16,10 @@ ccxt>=4.3.0
 # Fear & Greed feed, and the Evolution market-context widgets. Required for the
 # real-data features to work on deploy (the engine fails closed without it).
 requests>=2.31
+# AES-256-GCM for the exchange-key vault and sealed backups
+# (services/key_vault.py, services/backup_crypto.py). Declared directly rather
+# than relied on through ccxt, which happens to require it today.
+cryptography>=42
 websockets>=12,<16       # Binance public Price Action market-data streams
 anthropic>=0.69
 pandas>=2.0

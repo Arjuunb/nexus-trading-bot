@@ -408,9 +408,9 @@ export default function FeaturesPage() {
               transition={{ duration: 0.6, delay: 0.12, ease: EASE }}
               className="mt-5 max-w-lg text-[17px] leading-relaxed text-white/55"
             >
-              Every capability in the platform, written out in full and indexed by the words
-              you would actually search for. Expand any card for what it does, how it is
-              configured, and what it looks like in the product.
+              Every capability the platform runs today, written out in full and indexed by the
+              words you would actually search for. Expand any card for what it does, how it is
+              configured, and a sketch of how it appears in the product.
             </motion.p>
           </div>
 
@@ -423,7 +423,7 @@ export default function FeaturesPage() {
             {[
               ["Categories", String(CATEGORIES.length)],
               ["Capabilities", String(FEATURES.length)],
-              ["Screens", "9"],
+              ["Sketches", "9"],
             ].map(([label, value]) => (
               <div key={label} className="rounded-xl border border-line bg-white/[0.02] p-4">
                 <p className="font-mono text-2xl font-semibold tabular text-white">{value}</p>

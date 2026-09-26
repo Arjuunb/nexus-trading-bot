@@ -84,7 +84,7 @@ const VIEWS: View[] = [
             ["ETH/USDT", "LONG", "+1.1R", true],
             ["SOL/USDT", "SHORT", "-0.6R", false],
             ["BNB/USDT", "LONG", "+0.9R", true],
-            ["AVAX/USDT", "SHORT", "+1.3R", true],
+            ["XRP/USDT", "SHORT", "+1.3R", true],
           ].map(([sym, side, pnl, up]) => (
             <div key={sym as string} className="grid grid-cols-3 items-center py-2.5 text-xs">
               <span className="font-medium text-white/80">{sym}</span>

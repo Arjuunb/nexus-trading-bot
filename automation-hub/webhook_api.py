@@ -1008,6 +1008,55 @@ from services.instance_supervisor import InstanceSupervisor  # noqa: E402
 instance_supervisor = InstanceSupervisor(
     instance_manager,
     interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
+# Measured service status for the public /status page (services/status_monitor.py).
+# The probes read module globals at call time, so tests that rebind ``ledger``
+# or ``instance_manager`` are measured as rebound.
+from services import status_monitor as _status  # noqa: E402
+
+
+def _status_alert(alert: dict) -> None:
+    """A status change goes where every other alert goes: the ledger's alert
+    list and the configured Telegram / Discord / email channels."""
+    from services.alerts import dispatch_alert
+    try:
+        ledger.add_alert(severity=alert["severity"], category="status",
+                         title=alert["title"], detail=alert["detail"])
+    except Exception:  # noqa: BLE001 -- the outage being reported may be this one
+        pass
+    dispatch_alert(alert, alert_channels)
+
+
+status_monitor = _status.StatusMonitor(
+    _os.environ.get("HUB_STATUS_DB", _os.path.join(_os.path.dirname(settings.audit_path), "status.db")),
+    {
+        "api": _status.api_probe,
+        "workers": _status.workers_probe(lambda: instance_manager.worker_health()),
+        "market_data": _status.market_data_probe(lambda: instance_manager.worker_health()),
+        "database": _status.database_probe(lambda: ledger.get_logs(limit=1)),
+    },
+    notify=_status_alert,
+    interval_s=float(_os.environ.get("HUB_STATUS_INTERVAL", "60")))
+
+# Scheduled copy of the audit log to storage the operator controls
+# (services/audit_shipper.py). Inert until HUB_AUDIT_EXPORT_URL is set.
+from services.audit_shipper import AuditExporter  # noqa: E402
+from services import audit_log as _audit_log  # noqa: E402
+audit_exporter = AuditExporter(
+    _audit_log.default_log,
+    url=_os.environ.get("HUB_AUDIT_EXPORT_URL", ""),
+    token=_os.environ.get("HUB_AUDIT_EXPORT_TOKEN", ""),
+    interval_s=float(_os.environ.get("HUB_AUDIT_EXPORT_INTERVAL", "900")))
+
+# Signed outbound webhooks (services/outbound_webhooks.py): decision events
+# read from the decision store, so no trading code is involved in producing them.
+from services.outbound_webhooks import WebhookService  # noqa: E402
+from services.public_shapes import decision as _public_decision  # noqa: E402
+outbound_webhooks = WebhookService(
+    _os.environ.get("HUB_WEBHOOKS_DB", _os.path.join(_os.path.dirname(settings.audit_path), "webhooks.db")),
+    decision_source=lambda after, limit: decision_store.after(after, limit),
+    latest_decision_id=lambda: decision_store.max_id(),
+    render=_public_decision)
+
 # The lab's bot gets the same repair loop, over the lab's own manager.
 adaptive_lab_supervisor = InstanceSupervisor(
     adaptive_lab.manager,
@@ -1313,6 +1362,8 @@ import routers.instance_visual_lab  # noqa: E402
 import routers.adaptive_lab  # noqa: E402
 import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
+import routers.security  # noqa: E402
+import routers.status  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
@@ -1335,6 +1386,8 @@ router.include_router(routers.instance_visual_lab.router)
 router.include_router(routers.adaptive_lab.router)
 router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
+router.include_router(routers.security.router)
+router.include_router(routers.status.router)
 
 
 # ───────────────────────────── server-side grid (paper, 24/7) ─────────────────

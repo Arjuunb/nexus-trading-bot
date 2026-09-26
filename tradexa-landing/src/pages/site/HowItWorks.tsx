@@ -256,13 +256,17 @@ export default function HowItWorksPage() {
               And then it starts again
             </span>
             <h2 className="mt-4 max-w-2xl text-balance text-3xl font-bold tracking-tight text-white sm:text-4xl">
-              Stage seven feeds stage three
+              What feeds back, and what does not
             </h2>
             <p className="mt-4 max-w-2xl leading-relaxed text-white/55">
-              Analytics is not the end of the pipeline, it is the input to the next one. Realised
-              performance per regime is what recalibrates the arbiter's model weights, and the
-              journal is what the analogue-recall model reads. The loop is the product — a system
-              that trades without closing it is just a faster way to repeat yourself.
+              What feeds back on its own is size, never rules. After every closed trade an
+              instance re-reads its own record: a losing pattern that repeats — on a symbol, in a
+              regime, in one direction — trades smaller, never below half size; two losses in a
+              row halve risk and four quarter it; and trading below its recent equity average
+              halves it again. A pattern that has proven itself may add at most 25%, and only
+              when nothing else is cutting size. Lessons lapse after 14 days unless newer trades
+              confirm them. A strategy's rules, its risk settings and where it trades change only
+              when a person changes them.
             </p>
 
             <ol className="mt-8 flex flex-wrap items-center gap-x-2 gap-y-3">

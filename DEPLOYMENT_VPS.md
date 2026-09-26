@@ -71,6 +71,26 @@ echo | openssl s_client -connect trade-logx.com:443 -servername trade-logx.com 2
 docker compose logs --tail=100 nginx certbot app
 ```
 
+### Optional: the public API at api.trade-logx.com
+
+The public `/v1` API is always reachable at `https://trade-logx.com/v1/`. To
+also serve it on its own name (TLS 1.3 only, and nothing but `/v1/` and
+`/status` reachable there):
+
+1. Add a DNS `A` record for `api.trade-logx.com` pointing at `2.24.141.144`.
+2. Issue its certificate through the same webroot:
+
+```sh
+docker compose run --rm --entrypoint certbot certbot certonly --webroot \
+  -w /var/www/certbot -d api.trade-logx.com \
+  --email YOUR_EMAIL@example.com --agree-tos --no-eff-email
+docker compose restart nginx
+curl -fsS https://api.trade-logx.com/status | head -c 200; echo
+```
+
+Until that certificate exists the API name is simply not served; Nginx never
+fails to start over it, and renewals are picked up by the same watcher.
+
 Expected results: both HTTPS URLs return a successful response; both HTTP URLs
 return `301` with an `https://` location; certificate dates show a valid
 Let's Encrypt certificate; and `app` is healthy while `nginx` is healthy/running.
@@ -173,6 +193,13 @@ only retained for a deliberately disabled emergency recovery mode.
 Never commit `.env`, Supabase keys, SMTP passwords, OAuth private keys, or
 certificate material. A production startup fails closed if Supabase Auth is
 selected without its URL and anon key.
+
+`.env` reaches the container only through compose's `env_file`; `.dockerignore`
+keeps every `.env` file out of the image. Images built before that rule existed
+copied `.env` into a layer, so after the first deploy that includes it remove
+the old images (`docker image prune -a` once the new containers are healthy).
+If such an image was ever pushed to a registry or copied off the server,
+rotate the secrets it contained.
 
 ## Migrate existing VPS SQLite history to Supabase
 

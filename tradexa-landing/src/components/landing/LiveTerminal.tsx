@@ -23,11 +23,11 @@ interface LogLine {
 const POOL: LogLine[] = [
   { tag: "feed", tone: "dim", text: "BTCUSDT 4h candle closed · O 43,780 H 43,960 C 43,912" },
   { tag: "scan", tone: "dim", text: "market structure: higher-high confirmed · trend = up" },
-  { tag: "brain", tone: "gold", text: "setup graded A · score 72/100 · rr 2.4 · htf aligned" },
+  { tag: "brain", tone: "gold", text: "quality 72/100 · acceptable · rr 2.4 · htf aligned" },
   { tag: "risk", tone: "emerald", text: "risk gate passed · size 0.8% · stop 43,120 · tp 45,650" },
   { tag: "exec", tone: "emerald", text: "LONG BTCUSDT filled @ 43,912 · mode=paper · id 0x8f2a" },
   { tag: "feed", tone: "dim", text: "ETHUSDT 4h candle closed · O 2,270 H 2,291 C 2,284" },
-  { tag: "brain", tone: "loss", text: "setup graded C · score 41/100 · below threshold · skip" },
+  { tag: "brain", tone: "loss", text: "quality 41/100 · weak · below the 60 minimum · skip" },
   { tag: "risk", tone: "dim", text: "SOLUSDT signal · max open positions (3) reached · hold" },
   { tag: "exec", tone: "emerald", text: "BTCUSDT take-profit hit · +2.4R realized · closed" },
   { tag: "mem", tone: "gold", text: "trade stored to memory · pattern trend-long · London" },

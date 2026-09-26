@@ -15,6 +15,7 @@ production shape later phases fill in.
 """
 from __future__ import annotations
 
+import hmac
 import queue
 import secrets
 import sys
@@ -143,6 +144,10 @@ app.include_router(webhook_router)
 # router in a later slice), so /api/v1 covers the router-based API surface.
 app.include_router(webhook_router, prefix="/api/" + API_VERSION)
 app.include_router(create_core_v2_router(core_v2_store))
+# The public API (/v1), keyed with personal API keys (routers/public_api.py).
+from routers import public_api as _public_api  # noqa: E402
+app.include_router(_public_api.router)
+app.add_exception_handler(_public_api.PublicApiError, _public_api.public_api_error_handler)
 
 
 @app.get("/api/" + API_VERSION)
@@ -212,7 +217,9 @@ _AUTH_EXEMPT = ("/login", "/signup", "/auth/", "/webhook", "/assets",
                 "/api/v1/docs", "/api/v1/redoc",   # Swagger/ReDoc moved off "/docs"; same audience as before
                 "/nexus-mark", "/apple-touch", "/icon-", "/maskable-", "/mstile-",
                 "/og-image", "/logo-mark", "/site.webmanifest", "/robots.txt",
-                "/sitemap.xml")
+                "/sitemap.xml",
+                "/status/public",  # the public status feed: it must answer people who cannot sign in
+                "/v1/")  # the public API authenticates every call itself, with API keys
 
 # The public marketing site's pages.
 #
@@ -347,6 +354,49 @@ async def _require_auth(request: Request, call_next):
         return await call_next(request)
     from fastapi.responses import JSONResponse
     return JSONResponse({"error": "Sign in required"}, status_code=401)
+
+
+# Secret redaction for every JSON response (services/redaction.py). Added after
+# the middleware above, so it wraps them and sees every body the app produces --
+# a route returning its own JSONResponse is covered as well as one returning a
+# dict. The paths below exist to hand a credential to its owner, so they
+# keep name-based fields; live secret VALUES are still removed from them.
+from services.redaction import RedactionMiddleware  # noqa: E402
+app.add_middleware(RedactionMiddleware, credential_paths=(
+    "/auth/login", "/auth/2fa/setup",
+    # API key creation: the one response that shows a new key to its owner
+    "/security/api-keys", "/api/v1/security/api-keys",
+    # webhook creation: shows the signing secret once
+    "/security/webhooks", "/api/v1/security/webhooks"))
+
+
+def _audit_identify(scope: dict, client_headers: dict) -> tuple[str, str]:
+    """Who made a state-changing request, and how they proved it -- judged
+    on the headers the client actually sent (see services/audit_middleware)."""
+    path = scope.get("path", "")
+    if path.startswith("/webhook"):
+        return "tradingview-webhook", "webhook"  # the status says whether its secret was accepted
+    try:
+        user = _user(Request(scope))
+    except Exception:  # noqa: BLE001 -- an unreadable session is simply no session
+        user = None
+    if user:
+        return str(user), "session"
+    presented = client_headers.get("x-webhook-secret", "")
+    if presented and hmac.compare_digest(presented, settings.admin_key):
+        return "control-key", "control_key"
+    api_key = (scope.get("state") or {}).get("api_key")
+    if api_key:
+        return f"api-key:{api_key['name']} ({api_key['id']})", "api_key"
+    return "anonymous", "none"
+
+
+# The security audit log (services/audit_log.py). Outermost of all, so refused
+# requests (401/403/429) are recorded alongside the ones that succeeded.
+from services import audit_log as _audit_log  # noqa: E402
+from services.audit_middleware import AuditMiddleware  # noqa: E402
+app.add_middleware(AuditMiddleware, log_factory=_audit_log.default_log, identify=_audit_identify,
+                   sign_in_paths=("/login", "/auth/login"))
 
 # Single-origin UI: when the React build is present (copied into ./webui by the
 # Docker image), serve it from this backend so Render shows the SAME dashboard as
@@ -521,6 +571,16 @@ def _start_auto_engine() -> None:
     """Start the autonomous strategy engine when the server boots (real signals
     -> paper execution -> ledger). Disabled under pytest and via HUB_AUTO_ENGINE=0."""
     import os
+    # Status monitoring starts first and unconditionally: the early return
+    # below (primary ledger unreachable) is exactly the case it must report.
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.status_monitor.start():
+        print(f"[startup] status monitor started "
+              f"(interval={webhook_api.status_monitor.interval_s:.0f}s)", flush=True)
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.outbound_webhooks.start():
+        print("[startup] outbound webhooks started", flush=True)
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
+        print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
+              f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)
     backend = type(webhook_api.ledger).__name__
     print(f"[startup] ledger backend = {backend} "
           f"(Supabase active: {backend == 'SupabaseLedger'})", flush=True)
@@ -622,6 +682,9 @@ def _shutdown_all_runtimes() -> None:
     # Stop supervising before quiescing workers, or the supervisor would treat
     # an intentionally stopping worker as a fault and start a replacement.
     run("instance_supervisor", webhook_api.instance_supervisor.stop)
+    run("status_monitor", webhook_api.status_monitor.stop)
+    run("audit_exporter", webhook_api.audit_exporter.stop)
+    run("outbound_webhooks", webhook_api.outbound_webhooks.stop)
     run("adaptive_lab_supervisor", webhook_api.adaptive_lab_supervisor.stop)
     run("trading_instances", webhook_api.instance_manager.shutdown)
     run("adaptive_lab", webhook_api.adaptive_lab.shutdown)

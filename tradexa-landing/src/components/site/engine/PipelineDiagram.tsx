@@ -20,83 +20,91 @@ export interface Stage {
   role: string;
   /** Inspector copy. */
   detail: string;
-  /** Latency budget for this stage. */
+  /** What this stage writes down (shown as "records"). */
   budget: string;
   io: { in: string; out: string };
 }
 
+/**
+ * The path every closed candle takes in a Trading Instance, as the code runs
+ * it (services/auto_engine.py, strategies/brain.py, services/signal_pipeline.py,
+ * services/fill_model.py). This used to describe an ensemble of three models,
+ * an "analogue recall" model, an arbiter, a separate risk service with
+ * thirteen rules, venue order routing and per-stage latency budgets — none of
+ * which exist. Stages 4 to 7 only run when the strategy produces a signal.
+ */
 export const STAGES: Stage[] = [
   {
     id: "ingest",
-    label: "Ingest",
-    role: "Feed normalisation",
+    label: "Data",
+    role: "Closed candles",
     detail:
-      "Websocket and REST feeds from every connected venue are normalised into one internal candle and book representation, checked for gaps and duplicates, and stamped with the venue clock alongside ours. A strategy never sees a venue's quirks.",
-    budget: "< 4 ms",
-    io: { in: "raw venue frames", out: "normalised OHLCV + book" },
+      "Binance USDⓈ-M candles arrive over one shared websocket hub, with REST history to warm indicators up. A candle is only used once it has closed, and a stale or out-of-order feed pauses new entries rather than trading on it.",
+    budget: "market state · freshness",
+    io: { in: "Binance stream + history", out: "closed, verified candles" },
   },
   {
     id: "structure",
-    label: "Structure",
-    role: "Market reading",
+    label: "Context",
+    role: "Higher timeframes",
     detail:
-      "Trend state, swing structure, ranges, liquidity pockets and session context are extracted on every timeframe the strategy declares. This is the layer that turns prices into a description of the market rather than a series of numbers.",
-    budget: "< 9 ms",
-    io: { in: "normalised candles", out: "structure graph" },
+      "Strategies that declare higher timeframes are given 15m, 1h or 4h context built from the same feed, so a 5-minute decision can be checked against the trend it sits inside.",
+    budget: "multi-timeframe evidence",
+    io: { in: "closed candles", out: "multi-timeframe context" },
   },
   {
     id: "features",
-    label: "Features",
-    role: "Vector assembly",
+    label: "Strategy",
+    role: "Signal or wait",
     detail:
-      "The structure graph, regime classification, correlation state and open-exposure context are assembled into a single fixed-shape feature vector. It is stored verbatim, which is what makes a decision replayable months later with the exact inputs it saw.",
-    budget: "< 3 ms",
-    io: { in: "structure + context", out: "feature vector" },
+      "The strategy you chose — seven are in production, four are research-only — reads the candle and its context and returns a signal with entry, stop and target, or WAIT with the reason.",
+    budget: "strategy decision report",
+    io: { in: "candles + context", out: "signal · or WAIT + reason" },
   },
   {
     id: "ensemble",
-    label: "Ensemble",
-    role: "Model scoring",
+    label: "Quality",
+    role: "Decision Brain",
     detail:
-      "Several models score the vector independently — a structure model, a regime-conditioned momentum model, and an analogue-recall model that consults previous trades in similar conditions. Each returns a score and an attribution, never a bare verdict.",
-    budget: "< 40 ms",
-    io: { in: "feature vector", out: "scores + attribution" },
+      "The Decision Brain scores the setup from 0 to 100 on eight weighted factors — higher-timeframe alignment, regime fit, momentum, reward:risk, stop safety, volatility, structure and volume — and blocks outright on reward:risk below 1 or a stop that is too tight or too wide.",
+    budget: "score · passed and failed rules",
+    io: { in: "signal", out: "quality score + checklist" },
   },
   {
     id: "arbiter",
-    label: "Arbiter",
-    role: "Decision",
-    detail:
-      "Model outputs disagree, and the arbiter is where that disagreement is resolved rather than averaged away. It weighs scores by each model's recent calibration in the current regime, applies the conviction threshold, and writes the rationale.",
-    budget: "< 6 ms",
-    io: { in: "scores + attribution", out: "decision + rationale" },
-  },
-  {
-    id: "sizing",
     label: "Sizing",
     role: "Position maths",
     detail:
-      "Size is derived from the invalidation distance and the configured risk-per-trade, then reduced for existing correlated exposure and rounded to the venue's lot and notional rules. The output is an order intent, not yet an order.",
-    budget: "< 2 ms",
-    io: { in: "decision", out: "order intent" },
+      "Size comes from the distance to the stop and the risk you set per trade, then is rounded to Binance's lot and notional rules. A size the venue would reject is refused here.",
+    budget: "order intent",
+    io: { in: "accepted signal", out: "sized order intent" },
+  },
+  {
+    id: "sizing",
+    label: "Risk",
+    role: "Checks every order",
+    detail:
+      "Every intent passes the risk checks: max open positions, no pyramiding, correlation, daily and weekly loss limits, cooldown after a loss, trades per day, session and trading day, exposure, and the global risk manager. Any one failing rejects the order with a written reason; if a check cannot run, nothing trades.",
+    budget: "accepted · or rejected with reason",
+    io: { in: "order intent", out: "approved · or rejected" },
   },
   {
     id: "risk",
-    label: "Risk",
-    role: "Mandatory veto",
+    label: "Paper",
+    role: "Simulated fill",
     detail:
-      "A separate service with veto power over every intent. Thirteen responsibilities — daily budget, exposure ceiling, correlation load, schedule, venue health and more — and any one of them failing means the order is never created. It fails closed.",
-    budget: "< 5 ms",
-    io: { in: "order intent", out: "approved order · or veto" },
+      "Approved orders fill on the paper broker against the live Binance price. Limit entries fill at their price when it trades through (0.02% maker fee); market and stop orders pay half of a 0.04% spread, 0.03% slippage and a 0.04% taker fee. Stops and targets are managed by the engine. Live order routing is locked.",
+    budget: "fills · positions",
+    io: { in: "approved order", out: "simulated fill" },
   },
   {
     id: "route",
-    label: "Route",
-    role: "Execution",
+    label: "Record",
+    role: "Written down",
     detail:
-      "Placement is chosen from live book conditions, size is split when depth is thin, and realised slippage is measured against the decision price on every fill. Protective orders are placed at the venue the moment the position exists.",
-    budget: "< 12 ms",
-    io: { in: "approved order", out: "fills + protective orders" },
+      "Every candle ends in a decision report — WAIT included — and every trade is kept in the ledger with the decision that opened it, so the dashboard can show why each order happened or didn't.",
+    budget: "decision report · ledger",
+    io: { in: "fill · or no trade", out: "report + trade history" },
   },
 ];
 
@@ -201,12 +209,12 @@ export function ArchitectureDiagram() {
   const [hover, setHover] = useState<string | null>(null);
 
   const boxes: { id: string; x: number; y: number; w: number; h: number; label: string; sub: string; tone: "edge" | "core" | "guard" | "store" }[] = [
-    { id: "venues", x: 8, y: 96, w: 108, h: 52, label: "Venue adapters", sub: "ws · rest", tone: "edge" },
-    { id: "bus", x: 148, y: 96, w: 104, h: 52, label: "Event bus", sub: "envelope · replay", tone: "core" },
-    { id: "engine", x: 284, y: 30, w: 118, h: 60, label: "Nexus Engine", sub: "8-stage pipeline", tone: "core" },
-    { id: "memory", x: 284, y: 154, w: 118, h: 60, label: "Memory store", sub: "trades · lessons", tone: "store" },
-    { id: "risk", x: 436, y: 96, w: 104, h: 52, label: "Risk service", sub: "13 rules · veto", tone: "guard" },
-    { id: "exec", x: 572, y: 96, w: 104, h: 52, label: "Execution", sub: "routing · fills", tone: "edge" },
+    { id: "venues", x: 8, y: 96, w: 108, h: 52, label: "Binance hub", sub: "ws · rest warm-up", tone: "edge" },
+    { id: "bus", x: 148, y: 96, w: 104, h: 52, label: "Worker", sub: "one per instance", tone: "core" },
+    { id: "engine", x: 284, y: 30, w: 118, h: 60, label: "Strategy + Brain", sub: "signal · score", tone: "core" },
+    { id: "memory", x: 284, y: 154, w: 118, h: 60, label: "Ledger", sub: "trades · decisions", tone: "store" },
+    { id: "risk", x: 436, y: 96, w: 104, h: 52, label: "Risk checks", sub: "every order", tone: "guard" },
+    { id: "exec", x: 572, y: 96, w: 104, h: 52, label: "Paper broker", sub: "simulated fills", tone: "edge" },
   ];
 
   const TONES = {
@@ -220,7 +228,7 @@ export function ArchitectureDiagram() {
     { from: "venues", to: "bus", d: "M116 122 H148" },
     { from: "bus", to: "engine", d: "M252 122 C268 122 268 60 284 60" },
     { from: "bus", to: "memory", d: "M252 122 C268 122 268 184 284 184" },
-    { from: "memory", to: "engine", d: "M343 154 V90", label: "recall" },
+    { from: "memory", to: "engine", d: "M343 154 V90", label: "loss streak" },
     { from: "engine", to: "risk", d: "M402 60 C420 60 420 122 436 122" },
     { from: "risk", to: "exec", d: "M540 122 H572", label: "approved only" },
     { from: "exec", to: "bus", d: "M624 148 C624 214 200 214 200 148" },
@@ -229,7 +237,7 @@ export function ArchitectureDiagram() {
   return (
     <div className="overflow-x-auto">
       <svg viewBox="0 0 690 232" className="min-w-[640px] w-full" role="img"
-           aria-label="Architecture: venue adapters feed an event bus, which feeds the engine and the memory store; the engine's output passes through the risk service before execution, and fills return to the bus.">
+           aria-label="Architecture: the shared Binance hub feeds one worker per Trading Instance; the worker runs the strategy and the Decision Brain, keeps trades and decisions in the ledger, and every order passes the risk checks before the paper broker fills it.">
         <defs>
           <marker id="nx-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
             <path d="M0 0 L8 4 L0 8 z" fill="#3E5675" />

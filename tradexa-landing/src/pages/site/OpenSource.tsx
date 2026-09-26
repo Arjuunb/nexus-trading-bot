@@ -1,40 +1,36 @@
 import { Link } from "react-router-dom";
-import { Scale, Package, GitPullRequest } from "lucide-react";
+import { Scale, Package, GitPullRequest, FolderGit2 } from "lucide-react";
 import { DevShell, DevSection, Code, Callout } from "@/components/site/dev/DevShell";
 import { useRouteMeta } from "@/site/seo";
 import { routeFor, prefetchRoute } from "@/site/routes";
+import { REPO_URL } from "@/site/platform";
 
-interface Project {
-  name: string;
-  licence: string;
+interface Part {
+  path: string;
   summary: string;
   why: string;
 }
 
-const PROJECTS: Project[] = [
+const PARTS: Part[] = [
   {
-    name: "risk-engine-spec",
-    licence: "Apache-2.0",
-    summary: "The thirteen responsibilities, written as an executable specification.",
-    why: "A risk system you cannot inspect is a risk system you are taking on faith. The spec and its conformance suite are public so the behaviour can be checked rather than believed — including by people who never use the platform.",
+    path: "automation-hub/",
+    summary: "The platform itself: strategies, the pre-trade risk gates, paper execution, the backtest harness with its cost model, the /v1 API, webhooks, the audit log and the key vault.",
+    why: "A risk system you cannot inspect is one you take on faith. Every rule that can block a trade, and every cost a backtest charges, is in this directory with the tests that pin it down.",
   },
   {
-    name: "event-envelope",
-    licence: "Apache-2.0",
-    summary: "The envelope format, registry and replay semantics used on the internal bus.",
-    why: "It is also the webhook payload format. Publishing it means an integrator can generate types and test against a real schema instead of reverse-engineering examples.",
+    path: "sdks/",
+    summary: "The Python, TypeScript, Go and Rust clients, each with its own tests.",
+    why: "Client libraries live in your codebase, so they should be readable, forkable and patchable without waiting for anyone.",
   },
   {
-    name: "backtest-harness",
-    licence: "Apache-2.0",
-    summary: "Cost modelling, walk-forward windowing and the parameter-surface reporter.",
-    why: "Backtest results are only meaningful if you can see how costs were modelled. This is the part where the numbers are made, so it is the part most worth being open.",
+    path: "automation-hub-dashboard/ · tradexa-landing/",
+    summary: "The operator dashboard and this website.",
+    why: "What the site says the platform does can be checked against the code that does it, in the same commit.",
   },
   {
-    name: "nexus-clients",
-    licence: "MIT",
-    summary: "The Python, TypeScript, Go and Rust SDKs, plus the generator that produces them.",
-    why: "Client libraries live in your codebase, so they should be readable, forkable and patchable without waiting for us.",
+    path: "nginx/ · scripts/ · compose.yaml",
+    summary: "The deployment: reverse proxy, TLS, containers, backups and the deploy script.",
+    why: "Self-hosting is a real option, not a sales conversation.",
   },
 ];
 
@@ -45,26 +41,33 @@ export default function OpenSourcePage() {
   return (
     <DevShell
       eyebrow="Open source"
-      title="The parts worth checking are the parts we publish"
-      intro="Not everything is open, and the split is not arbitrary. The components that make claims you would otherwise have to take on trust — how risk is enforced, how costs are modelled, what an event actually contains — are public. The models and the hosted platform are not."
+      title="All of it is public"
+      intro="The whole platform — strategies, risk gates, paper execution, backtests, the API, the dashboard, this site and the deployment — lives in one public repository under the MIT licence. Nothing on this site describes a closed component."
     >
       <DevSection
         id="projects"
-        title="What is public"
-        lead="Four repositories, two licences, and a reason for each."
+        title="What is in the repository"
+        lead="One repository, one licence. The directories that matter, and why each is worth reading."
       >
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="mb-4 inline-flex items-center gap-2 font-mono text-[13px] text-electric-soft underline-offset-2 hover:underline"
+        >
+          <FolderGit2 className="h-4 w-4" />
+          github.com/Arjuunb/nexus-trading-bot
+          <span className="rounded border border-white/[0.1] px-2 py-0.5 text-[10px] text-white/45">MIT</span>
+        </a>
         <ul className="space-y-3">
-          {PROJECTS.map((p) => (
+          {PARTS.map((p) => (
             <li
-              key={p.name}
+              key={p.path}
               className="group rounded-xl border border-white/[0.08] bg-white/[0.02] p-5 transition-all duration-300 hover:-translate-y-0.5 hover:border-electric/30"
             >
               <div className="flex flex-wrap items-center gap-3">
                 <Package className="h-4 w-4 shrink-0 text-electric-soft" />
-                <code className="font-mono text-[14px] text-white">{p.name}</code>
-                <span className="rounded border border-white/[0.1] px-2 py-0.5 font-mono text-[10px] text-white/45">
-                  {p.licence}
-                </span>
+                <code className="font-mono text-[14px] text-white">{p.path}</code>
               </div>
               <p className="mt-3 text-sm leading-relaxed text-white/60">{p.summary}</p>
               <p className="mt-2 text-sm leading-relaxed text-white/40">{p.why}</p>
@@ -73,26 +76,18 @@ export default function OpenSourcePage() {
         </ul>
       </DevSection>
 
-      <DevSection id="not-open" title="What is not, and why">
+      <DevSection id="not-open" title="What is not in it">
         <div className="grid gap-3 sm:grid-cols-2">
-          <Callout tone="warn" title="The model ensemble">
-            The structure, momentum and analogue-recall models and their calibration are closed.
-            They are the product. Their <em>inputs</em> and <em>outputs</em> are fully inspectable
-            per decision, which is the property that actually matters to someone deciding whether
-            to trust a verdict.
+          <Callout tone="warn" title="Your credentials and data">
+            Exchange keys, API keys, the vault master key, databases and backups live on the
+            server that runs the platform, never in the repository. The code that encrypts them
+            is public; the secrets are not.
           </Callout>
-          <Callout tone="warn" title="The hosted platform">
-            Deployment, tenancy and key custody are closed for the ordinary reason: publishing the
-            exact shape of the system that holds trading credentials makes it easier to attack and
-            no easier to verify.
+          <Callout tone="warn" title="Published packages">
+            The SDKs are not on PyPI, npm or crates.io yet. Until they are, install them from
+            the repository as the SDK page shows.
           </Callout>
         </div>
-
-        <p className="mt-5 max-w-2xl text-sm leading-relaxed text-white/45">
-          We would rather state this boundary plainly than describe the project as "open source"
-          and let the ambiguity do work. What is open is genuinely open — Apache-2.0 and MIT, no
-          commons clause, no source-available licence pretending otherwise.
-        </p>
       </DevSection>
 
       <DevSection
@@ -103,18 +98,17 @@ export default function OpenSourcePage() {
         <Code
           lang="bash"
           label="get set up"
-          code={`git clone https://github.com/tradelogx/risk-engine-spec
-cd risk-engine-spec
-make install          # dev dependencies and hooks
-make test             # the conformance suite, ~40s
-make test-watch       # while you work`}
+          code={`git clone https://github.com/Arjuunb/nexus-trading-bot
+cd nexus-trading-bot
+python -m pip install -e ".[dev]" -r automation-hub/requirements.txt
+(cd automation-hub && python -m pytest -q)   # the platform's test suite`}
         />
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           {[
-            [Scale, "Licence", "Contributions are under the repository's licence. No CLA — a DCO sign-off on each commit is enough."],
-            [GitPullRequest, "Review", "Two maintainers on anything touching risk semantics, one on everything else. Reviews are public."],
-            [Package, "Releases", "Tagged from main, changelog derived from commits, published to PyPI, npm, pkg.go.dev and crates.io."],
+            [Scale, "Licence", "Contributions are made under the repository's MIT licence. There is no CLA."],
+            [GitPullRequest, "Review", "The maintainer reviews every pull request, in public, and CI runs every test suite on every push."],
+            [Package, "Rules", "CONTRIBUTING.md in the repository has the setup, the checks, and the changes that are not accepted — live order routing among them."],
           ].map(([Icon, title, body]) => {
             const I = Icon as typeof Scale;
             return (
@@ -128,7 +122,7 @@ make test-watch       # while you work`}
         </div>
 
         <p className="mt-6 max-w-2xl text-sm leading-relaxed text-white/45">
-          Where the repositories live and what a good issue looks like is covered on the{" "}
+          Where the code lives and what a good issue looks like is covered on the{" "}
           <Link
             to="/github"
             onPointerEnter={() => prefetchRoute("/github")}

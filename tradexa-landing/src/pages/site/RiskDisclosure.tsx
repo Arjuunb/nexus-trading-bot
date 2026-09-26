@@ -44,12 +44,12 @@ const SECTIONS: LegalSection[] = [
     id: "automation-specific",
     heading: "Failure modes that belong to automation",
     body: [
-      "These are the risks a generic disclosure will not mention, and they are the ones worth understanding before you enable live trading.",
+      "These are the risks a generic disclosure will not mention, and they are the ones worth understanding before you rely on any result.",
       [
-        "Overfitting. A strategy tuned until it looks excellent on history has usually been tuned to that history. The Strategy Lab reports the whole parameter surface rather than the best cell precisely because a peak surrounded by cliffs should look like one.",
+        "Overfitting. A strategy tuned until it looks excellent on history has usually been tuned to that history. The Strategy Lab can run the same rules across every symbol and timeframe, and validation judges a strategy on data held back from its design, because a result that holds in only one place is more likely luck than edge.",
         "Regime change. Conditions that produced an edge stop. A system does not notice it has become obsolete; it keeps executing with the same confidence.",
         "Correlated positions. Several trades that look independent can be one position wearing different tickers, and discover it simultaneously.",
-        "Connectivity and venue failure. A dropped connection mid-position, a rejected order, an exchange in maintenance. Protective orders are placed at the venue precisely so a disconnect is not an unprotected position, but a venue outage is still an outage.",
+        "Connectivity and venue failure. A dropped connection mid-position, a rejected order, an exchange in maintenance. Stops and targets are managed by the engine rather than held at an exchange, so while the engine is disconnected or stopped, an open position is not being managed — and a venue outage is still an outage.",
         "Misconfiguration. A risk budget entered as 5% instead of 0.5% behaves exactly as instructed. The system enforces the limits you set, including the wrong ones.",
         "Silent degradation. A data feed with gaps, a strategy trading conditions it was never meant to see. Gap detection and regime allowlists exist to catch this, and they are mitigations rather than guarantees.",
       ],
@@ -85,7 +85,7 @@ const SECTIONS: LegalSection[] = [
     id: "if-in-doubt",
     heading: "If you are not sure",
     body: [
-      "Do not enable live trading. There is no cost to staying in paper mode, and the record it produces is identical to the live one — you can find out how a strategy behaves across a full month of real conditions without a dollar at risk.",
+      "Run a strategy in paper mode for long enough to see it in more than one kind of market. Live order routing is locked today, so paper is how every strategy runs: it trades live Binance market data with simulated fills and costs, and every decision is written down — you can see how a strategy behaves across a full month of real conditions without a dollar at risk.",
       "If trading is affecting your sleep, your finances or your relationships, that is a signal to stop rather than to optimise. Support for problem trading and gambling exists in most countries and is worth using.",
     ],
   },

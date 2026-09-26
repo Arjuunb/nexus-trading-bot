@@ -1,250 +1,105 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, useReducedMotion } from "framer-motion";
-import { useVisibleActive } from "@/lib/useVisibleActive";
+import { useRef } from "react";
+import { motion, useInView, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 /**
- * The Decision Engine, visualised.
+ * The Decision Brain's quality score, drawn from its own definition.
  *
- * Three models score the same feature vector, disagree, and an arbiter
- * resolves them by each model's recent calibration rather than by averaging.
- * That last point is the whole argument of the page, and it is invisible in
- * prose — so the edge thickness carries the weight, the arbiter ring carries
- * the result, and the verdict changes as the weights do.
- *
- * The cycle is representative, not live: it steps through a fixed set of
- * scenarios so the same story is told to every visitor, including the one who
- * arrives while nothing interesting is happening in the market.
+ * This used to show three models (structure, momentum, "analogue recall")
+ * weighted by an arbiter into ROUTE / HOLD / VETO. The engine has no such
+ * ensemble. What it has is TradeBrain (automation-hub/strategies/brain.py):
+ * one 0-100 score summed from eight weighted components, grade bands, and a
+ * set of hard blocks that refuse a setup whatever its score. The weights and
+ * rules below are copied from that file.
  */
 
-interface Scenario {
-  symbol: string;
-  regime: string;
-  models: { structure: number; momentum: number; analogue: number };
-  weights: { structure: number; momentum: number; analogue: number };
-  verdict: "route" | "hold" | "veto";
-  note: string;
-}
-
-const SCENARIOS: Scenario[] = [
-  {
-    symbol: "SOL/USDT",
-    regime: "trend · expanding",
-    models: { structure: 88, momentum: 84, analogue: 71 },
-    weights: { structure: 0.42, momentum: 0.4, analogue: 0.18 },
-    verdict: "route",
-    note: "All three agree; momentum is well calibrated in expanding trend, so it carries near-equal weight.",
-  },
-  {
-    symbol: "ETH/USDT",
-    regime: "range · compressed",
-    models: { structure: 74, momentum: 39, analogue: 31 },
-    weights: { structure: 0.3, momentum: 0.12, analogue: 0.58 },
-    verdict: "hold",
-    note: "Momentum is unreliable in compression and is down-weighted. Analogue recall dominates — and it remembers this setup losing.",
-  },
-  {
-    symbol: "BTC/USDT",
-    regime: "trend · late",
-    models: { structure: 81, momentum: 77, analogue: 66 },
-    weights: { structure: 0.38, momentum: 0.34, analogue: 0.28 },
-    verdict: "veto",
-    note: "Conviction cleared the bar. The risk service vetoed it anyway — the daily budget was already spent.",
-  },
+const FACTORS = [
+  { key: "htf", label: "Higher-timeframe alignment", weight: 22, note: "the bigger trend agrees with the side" },
+  { key: "regime", label: "Regime fit", weight: 18, note: "the regime suits the setup" },
+  { key: "rr", label: "Reward : risk", weight: 14, note: "≥ 2 scores best; below 1 is blocked" },
+  { key: "momentum", label: "Momentum", weight: 12, note: "RSI supports the side, not exhausted" },
+  { key: "stop", label: "Stop safety", weight: 10, note: "neither absurdly tight nor wide" },
+  { key: "vol", label: "Volatility", weight: 10, note: "ATR% in a tradeable band" },
+  { key: "structure", label: "Structure", weight: 8, note: "price on the right side of the structural EMA" },
+  { key: "volume", label: "Volume", weight: 6, note: "participation confirms the move" },
 ];
 
-const MODEL_META = [
-  { key: "structure" as const, label: "Structure", note: "market geometry", color: "#2E7BFF" },
-  { key: "momentum" as const, label: "Momentum", note: "regime-conditioned", color: "#22D3EE" },
-  { key: "analogue" as const, label: "Analogue", note: "memory recall", color: "#C9A24B" },
+const BANDS = [
+  { range: "80 – 100", label: "High", cls: "border-emerald/40 bg-emerald/10 text-emerald-soft" },
+  { range: "60 – 79", label: "Acceptable", cls: "border-aqua/40 bg-aqua/10 text-aqua-soft" },
+  { range: "0 – 59", label: "Weak", cls: "border-loss/40 bg-loss/10 text-loss-soft" },
 ];
 
-const VERDICT_META = {
-  route: { label: "ROUTE", cls: "text-emerald-soft border-emerald/40 bg-emerald/10", ring: "#2FBF71" },
-  hold: { label: "HOLD", cls: "text-white/60 border-line-strong bg-white/[0.04]", ring: "#8A929C" },
-  veto: { label: "VETO", cls: "text-loss-soft border-loss/40 bg-loss/10", ring: "#E5605B" },
-} as const;
+const BLOCKS = [
+  "Reward : risk below 1.0",
+  "Stop too tight or too wide",
+  "Volatility far too low to trade",
+  "Strong higher-timeframe trend against a non-reversal trade",
+  "Choppy or unclear regime for a non-reversal trade",
+  "Losing-streak cooldown",
+];
 
 export function DecisionCore() {
   const reduced = useReducedMotion() ?? false;
   const ref = useRef<HTMLDivElement>(null);
-  const active = useVisibleActive(ref);
-  const [index, setIndex] = useState(0);
-  const [paused, setPaused] = useState(false);
-
-  useEffect(() => {
-    if (reduced || paused || !active) return;
-    const id = window.setInterval(() => setIndex((i) => (i + 1) % SCENARIOS.length), 5200);
-    return () => window.clearInterval(id);
-  }, [reduced, paused, active]);
-
-  const s = SCENARIOS[index];
-  const conviction = useMemo(
-    () =>
-      Math.round(
-        s.models.structure * s.weights.structure +
-          s.models.momentum * s.weights.momentum +
-          s.models.analogue * s.weights.analogue,
-      ),
-    [s],
-  );
-  const verdict = VERDICT_META[s.verdict];
-
-  // Arbiter ring geometry
-  const R = 42;
-  const C = 2 * Math.PI * R;
+  const inView = useInView(ref, { once: true, margin: "-80px" });
+  const grow = inView || reduced;
 
   return (
-    <div
-      ref={ref}
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-      className="rounded-2xl border border-graphite-500/70 bg-graphite-800/70 p-5 backdrop-blur-sm sm:p-6"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5">
-          <span className="relative flex h-2 w-2">
-            {!reduced && <span className="absolute inline-flex h-full w-full rounded-full bg-aqua opacity-60 motion-safe:animate-ping-ring" />}
-            <span className="relative inline-flex h-2 w-2 rounded-full bg-aqua" />
-          </span>
-          <span className="font-mono text-xs text-white/60">{s.symbol}</span>
-          <span className="font-mono text-xs text-white/25">{s.regime}</span>
+    <div ref={ref} className="grid gap-6 lg:grid-cols-[1.25fr_0.75fr]">
+      {/* the eight components, as their share of the 100 points */}
+      <div className="rounded-3xl border border-graphite-500/60 bg-graphite-800/40 p-5 backdrop-blur-sm sm:p-7">
+        <div className="flex items-baseline justify-between">
+          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-white/35">Quality score</span>
+          <span className="font-mono text-[11px] text-white/35">weights sum to 100</span>
         </div>
-        <div className="flex gap-1.5">
-          {SCENARIOS.map((sc, i) => (
-            <button
-              key={sc.symbol}
-              onClick={() => setIndex(i)}
-              aria-label={`Show ${sc.symbol} decision`}
-              className={cn(
-                "h-1.5 rounded-full transition-all duration-300",
-                i === index ? "w-6 bg-aqua" : "w-1.5 bg-white/20 hover:bg-white/40",
-              )}
-            />
+        <ul className="mt-5 space-y-3.5">
+          {FACTORS.map((f, i) => (
+            <li key={f.key}>
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-[13px] text-white/80">{f.label}</span>
+                <span className="font-mono text-[12px] tabular text-aqua-soft">{f.weight}</span>
+              </div>
+              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-graphite-600/70">
+                <motion.div
+                  className="h-full rounded-full bg-gradient-to-r from-electric to-aqua"
+                  initial={{ width: reduced ? `${(f.weight / 22) * 100}%` : "0%" }}
+                  animate={{ width: grow ? `${(f.weight / 22) * 100}%` : "0%" }}
+                  transition={{ duration: 0.9, delay: reduced ? 0 : 0.1 + i * 0.07, ease: [0.22, 1, 0.36, 1] }}
+                />
+              </div>
+              <p className="mt-1 text-[11px] text-white/35">{f.note}</p>
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
 
-      <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_auto_1fr] lg:items-center">
-        {/* left: the three models */}
-        <div className="space-y-3">
-          {MODEL_META.map((m) => {
-            const score = s.models[m.key];
-            const weight = s.weights[m.key];
-            return (
-              <div key={m.key} className="rounded-xl border border-graphite-600 bg-black/25 p-3">
-                <div className="flex items-baseline justify-between">
-                  <span className="text-[13px] font-medium text-white/85">{m.label}</span>
-                  <motion.span
-                    key={`${index}-${m.key}`}
-                    initial={{ opacity: 0, y: -4 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.35 }}
-                    className="font-mono text-sm tabular"
-                    style={{ color: m.color }}
-                  >
-                    {score}
-                  </motion.span>
-                </div>
-                <p className="mt-0.5 font-mono text-[10px] text-white/25">{m.note}</p>
-                <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/[0.07]">
-                  <motion.div
-                    className="h-full rounded-full"
-                    style={{ background: m.color }}
-                    animate={{ width: `${score}%` }}
-                    transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                  />
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <span className="font-mono text-[9px] uppercase tracking-wider text-white/25">weight</span>
-                  <div className="h-[3px] flex-1 overflow-hidden rounded-full bg-white/[0.05]">
-                    <motion.div
-                      className="h-full rounded-full opacity-70"
-                      style={{ background: m.color }}
-                      animate={{ width: `${weight * 100}%` }}
-                      transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                    />
-                  </div>
-                  <span className="font-mono text-[10px] tabular text-white/45">
-                    {weight.toFixed(2)}
-                  </span>
-                </div>
+      <div className="flex flex-col gap-4">
+        <div className="rounded-3xl border border-graphite-500/60 bg-graphite-800/40 p-5 sm:p-6">
+          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-white/35">Grades</span>
+          <div className="mt-4 space-y-2">
+            {BANDS.map((b) => (
+              <div key={b.label} className="flex items-center justify-between gap-3">
+                <span className="font-mono text-[12px] tabular text-white/60">{b.range}</span>
+                <span className={cn("rounded-md border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider", b.cls)}>
+                  {b.label}
+                </span>
               </div>
-            );
-          })}
-        </div>
-
-        {/* centre: the arbiter */}
-        <div className="flex flex-col items-center justify-center py-2">
-          <svg viewBox="0 0 110 110" className="h-32 w-32">
-            <circle cx="55" cy="55" r={R} fill="none" stroke="#1A2331" strokeWidth="7" />
-            <motion.circle
-              cx="55"
-              cy="55"
-              r={R}
-              fill="none"
-              stroke={verdict.ring}
-              strokeWidth="7"
-              strokeLinecap="round"
-              transform="rotate(-90 55 55)"
-              strokeDasharray={C}
-              animate={{ strokeDashoffset: C - (conviction / 100) * C }}
-              transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
-            />
-            <text x="55" y="53" textAnchor="middle" fill="#fff" style={{ fontSize: 24, fontWeight: 700 }} className="tabular">
-              {conviction}
-            </text>
-            <text x="55" y="68" textAnchor="middle" fill="#6B7788" className="font-mono" style={{ fontSize: 8 }}>
-              conviction
-            </text>
-          </svg>
-          <span
-            className={cn(
-              "mt-1 rounded-full border px-3 py-1 font-mono text-[11px] tracking-[0.14em]",
-              verdict.cls,
-            )}
-          >
-            {verdict.label}
-          </span>
-          <span className="mt-2 font-mono text-[10px] text-white/25">bar · 72</span>
-        </div>
-
-        {/* right: what the arbiter concluded */}
-        <div className="rounded-xl border border-graphite-600 bg-black/25 p-4">
-          <p className="font-mono text-[10px] uppercase tracking-[0.16em] text-electric-soft">
-            arbiter rationale
-          </p>
-          <motion.p
-            key={index}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="mt-2.5 text-sm leading-relaxed text-white/60"
-          >
-            {s.note}
-          </motion.p>
-          <div className="mt-4 space-y-1.5 border-t border-graphite-600 pt-3 font-mono text-[10px]">
-            <div className="flex justify-between">
-              <span className="text-white/25">weighted score</span>
-              <span className="tabular text-white/70">{conviction}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-white/25">threshold</span>
-              <span className="tabular text-white/70">72</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-white/25">risk envelope</span>
-              <span className={cn("tabular", s.verdict === "veto" ? "text-loss-soft" : "text-emerald-soft")}>
-                {s.verdict === "veto" ? "breached" : "clear"}
-              </span>
-            </div>
+            ))}
           </div>
         </div>
+        <div className="rounded-3xl border border-loss/25 bg-loss/[0.04] p-5 sm:p-6">
+          <span className="font-mono text-[11px] uppercase tracking-[0.16em] text-loss-soft">Blocked whatever the score</span>
+          <ul className="mt-3 space-y-2">
+            {BLOCKS.map((b) => (
+              <li key={b} className="flex gap-2.5 text-[13px] leading-snug text-white/60">
+                <span className="mt-[7px] h-1 w-1 shrink-0 rounded-full bg-loss-soft" />
+                {b}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
-
-      <p className="mt-4 border-t border-graphite-600 pt-3 font-mono text-[10px] text-white/20">
-        representative decisions · not live market data · hover to pause
-      </p>
     </div>
   );
 }

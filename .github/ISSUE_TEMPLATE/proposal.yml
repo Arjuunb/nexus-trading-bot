@@ -1,0 +1,26 @@
+name: Proposal
+description: A change to the product, argued before it is built.
+labels: [proposal]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What is hard or impossible today, and for whom.
+    validations:
+      required: true
+  - type: textarea
+    id: change
+    attributes:
+      label: The proposed change
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: For anything that touches trading decisions, the backtest or forward-test record. Improvements are hypotheses until tested.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

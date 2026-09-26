@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
-  CalendarClock,
+  GitMerge,
   GitPullRequest,
   Heart,
   MessagesSquare,
@@ -12,28 +12,40 @@ import {
 import { CommunityBackdrop } from "@/components/site/backdrops";
 import { useRouteMeta } from "@/site/seo";
 import { routeFor, prefetchRoute } from "@/site/routes";
+import { REPO_URL } from "@/site/platform";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
 const CHANNELS = [
   {
     icon: MessagesSquare,
-    name: "Discussion",
-    what: "Strategy design, regime classification, configuration questions and post-mortems on trades that went wrong. The most useful threads are the ones about losses.",
-    tone: "Peer-to-peer. Staff read it; it is not a support queue.",
-  },
-  {
-    icon: Sparkles,
-    name: "Strategy exchange",
-    what: "Published strategies with their full parameter history and out-of-sample record attached. Publishing requires the record — a strategy without one cannot be listed.",
-    tone: "Transparency enforced, not requested.",
+    name: "Issues",
+    what: "Bugs, configuration questions and post-mortems on trades that went wrong, on the public repository. The most useful threads are the ones about losses.",
+    tone: "Public. Answered by the maintainer; not a support queue with a guarantee.",
+    planned: false,
   },
   {
     icon: GitPullRequest,
     name: "Proposals",
-    what: "Changes to the product, argued in public before they are built. Every accepted proposal links to the pull request that implemented it.",
-    tone: "Where roadmap decisions actually happen.",
+    what: "Changes to the product, argued in a proposal issue before they are built. The form asks for evidence — for anything that touches trading decisions, the backtest or forward-test record.",
+    tone: "Where roadmap decisions happen.",
+    planned: false,
   },
+  {
+    icon: Sparkles,
+    name: "Strategy exchange",
+    what: "Not built yet. The plan: published strategies with their full parameter history and out-of-sample record attached, and no listing without the record.",
+    tone: "Planned — not available today.",
+    planned: true,
+  },
+];
+
+const FLOW = [
+  ["Proposal", "An issue on the proposal form: the problem, the change, the evidence."],
+  ["Argument", "Comments on the issue, in public, until the approach is agreed or declined."],
+  ["Pull request", "The change, with a test that fails before it and passes after, linked to the issue."],
+  ["Checks", "CI runs every test suite, both front-end builds and all four SDK suites."],
+  ["Merge", "Reviewed in public by the maintainer; the issue closes with the pull request."],
 ];
 
 const CONDUCT = [
@@ -67,8 +79,8 @@ export default function CommunityPage() {
           </h1>
           <p className="mt-6 text-[17px] leading-relaxed text-white/55">
             Trading communities usually optimise for confidence. This one is set up for the
-            opposite: published strategies must carry their out-of-sample record, product
-            proposals are argued before they are built, and the threads worth reading are the
+            opposite: it lives on the public repository, product proposals are argued before they
+            are built, every review happens in the open, and the threads worth reading are the
             ones about trades that lost.
           </p>
         </motion.div>
@@ -89,7 +101,14 @@ export default function CommunityPage() {
               <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-gold/25 bg-gold/[0.08] text-gold-soft transition-transform duration-300 group-hover:scale-110">
                 <c.icon className="h-4.5 w-4.5" />
               </span>
-              <h2 className="mt-5 text-lg font-semibold text-white">{c.name}</h2>
+              <h2 className="mt-5 flex items-center gap-2 text-lg font-semibold text-white">
+                {c.name}
+                {c.planned && (
+                  <span className="rounded border border-white/15 px-1.5 py-0.5 font-mono text-[9px] font-normal uppercase tracking-wider text-white/45">
+                    planned
+                  </span>
+                )}
+              </h2>
               <p className="mt-2.5 text-sm leading-relaxed text-white/50">{c.what}</p>
               <p className="mt-4 border-t border-white/[0.07] pt-3 font-mono text-[10px] leading-relaxed text-white/30">
                 {c.tone}
@@ -103,46 +122,40 @@ export default function CommunityPage() {
         </div>
 
         <p className="mt-4 text-sm leading-relaxed text-white/35">
-          Access is tied to your account rather than an open invite link, which keeps the strategy
-          exchange attributable and the discussion free of drive-by promotion. Request access from
-          the{" "}
-          <Link
-            to="/support"
-            onPointerEnter={() => prefetchRoute("/support")}
+          Reading needs nothing; opening an issue or a proposal needs a GitHub account.{" "}
+          <a
+            href={`${REPO_URL}/issues`}
+            target="_blank"
+            rel="noreferrer"
             className="text-gold-soft underline-offset-2 hover:underline"
           >
-            support center
-          </Link>
+            Open the issue tracker
+          </a>
           .
         </p>
       </section>
 
-      {/* office hours */}
+      {/* proposal flow */}
       <section className="container-x mt-16">
         <div className="grid gap-8 rounded-2xl border border-white/[0.08] bg-black/30 p-6 backdrop-blur-sm sm:p-8 lg:grid-cols-[1fr_1fr] lg:gap-14">
           <div>
             <h2 className="flex items-center gap-2 text-2xl font-bold tracking-tight text-white">
-              <CalendarClock className="h-5 w-5 text-gold-soft" />
-              Office hours
+              <GitMerge className="h-5 w-5 text-gold-soft" />
+              From proposal to change
             </h2>
             <p className="mt-4 leading-relaxed text-white/55">
-              An open call every second Thursday. No agenda beyond what people bring — usually a
-              configuration someone cannot get right, a decision nobody can explain, or an
-              argument about whether a strategy is overfitted.
+              Every change to the product can be traced back through the same five steps, and
+              every step is public — so the reason something was built, or declined, is on
+              record rather than in someone's memory.
             </p>
             <p className="mt-4 leading-relaxed text-white/40">
-              Recorded and published with the questions timestamped, because the answer someone
-              needed at 14:32 is usually the answer somebody else needs next month.
+              A proposal that touches trading decisions needs evidence, and an improvement is a
+              hypothesis until a backtest and a forward test say otherwise.
             </p>
           </div>
 
           <ul className="space-y-3">
-            {[
-              ["Format", "60 minutes, screen sharing, no slides"],
-              ["Cadence", "Every second Thursday, alternating timezone-friendly slots"],
-              ["Who runs it", "Whoever built the thing being discussed"],
-              ["Recordings", "Published with a timestamped index"],
-            ].map(([k, v]) => (
+            {FLOW.map(([k, v]) => (
               <li
                 key={k}
                 className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-white/[0.06] pb-3 last:border-0"
@@ -150,7 +163,7 @@ export default function CommunityPage() {
                 <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-white/30">
                   {k}
                 </span>
-                <span className="text-[14px] text-white/65">{v}</span>
+                <span className="text-[14px] text-white/65 sm:max-w-[70%] sm:text-right">{v}</span>
               </li>
             ))}
           </ul>
@@ -171,8 +184,9 @@ export default function CommunityPage() {
             </p>
             <p className="mt-4 flex items-start gap-2 text-sm leading-relaxed text-white/35">
               <Heart className="mt-0.5 h-4 w-4 shrink-0 text-white/25" />
-              Breaches are handled privately first. Repeated ones end access — including for
-              paying accounts, because the alternative is charging people to be advertised at.
+              Breaches are raised privately first. Repeated ones lead to comments being removed
+              and, if needed, the account being blocked from the repository. The rules are in
+              CODE_OF_CONDUCT.md.
             </p>
           </div>
 

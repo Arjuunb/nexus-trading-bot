@@ -6,7 +6,7 @@ webhook_api at request time. That keeps the test suite's fixture rebinding
 (``webhook_api.pipeline = <fresh>``) working exactly as before the split.
 """
 import webhook_api as _wa
-from fastapi import APIRouter, Header, HTTPException, Body, Query, Depends  # noqa: F401
+from fastapi import APIRouter, Header, HTTPException, Body, Query, Depends, Request  # noqa: F401
 from typing import Optional, List, Dict  # noqa: F401
 
 # Fallback: expose every webhook_api global by name so references the qualifier
@@ -219,8 +219,10 @@ def get_settings():
     }
 
 @router.post("/settings")
-def update_settings(body: _wa.SettingsUpdate, x_webhook_secret: _wa.Optional[str] = _wa.Header(default=None)):
+def update_settings(body: _wa.SettingsUpdate, request: Request,
+                    x_webhook_secret: _wa.Optional[str] = _wa.Header(default=None)):
     _wa._check_secret(x_webhook_secret)
+    before = _wa._settings_snapshot()
     changed = {}
     if body.risk_per_trade_pct is not None:
         if not (0 < body.risk_per_trade_pct <= 0.5):
@@ -317,6 +319,11 @@ def update_settings(body: _wa.SettingsUpdate, x_webhook_secret: _wa.Optional[str
     snap = _wa._settings_snapshot()
     _wa.save_overrides(_wa.settings.settings_path, snap)
     _wa.ledger.log(level="info", stage="audit", message=f"Settings updated: {changed}")
+    if changed:
+        from services.audit_log import record_change
+        record_change(action="settings.update", actor=_wa.request_user(request),
+                      before={k: before.get(k) for k in changed}, after=changed,
+                      ip=request.client.host if request.client else "")
     return {"saved": True, "editable": snap}
 
 @router.get("/notifications/status")

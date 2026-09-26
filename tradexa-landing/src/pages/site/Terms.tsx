@@ -24,8 +24,8 @@ const SECTIONS: LegalSection[] = [
     id: "what-it-is",
     heading: "What the service is",
     body: [
-      "TradeLogX Nexus is trading software. It analyses market data, scores potential trades, enforces the risk limits you configure, and places orders on exchanges you have connected using credentials you supply.",
-      "It is a tool you operate. You choose the strategies, the risk budget, the venues and the capital. The system executes within those bounds and records what it did.",
+      "TradeLogX Nexus is trading software. It analyses market data, scores potential trades, enforces the risk limits you configure, and fills the resulting orders on a paper account against live market data. Live order routing to an exchange is locked today; if it is enabled, orders will be placed only on exchanges you have connected, using credentials you supply.",
+      "It is a tool you operate. You choose the strategies, the risk budget, the symbols and the paper capital. The system executes within those bounds and records what it did.",
     ],
   },
   {

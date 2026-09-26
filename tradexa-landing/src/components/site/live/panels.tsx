@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { LucideIcon } from "lucide-react";
-import type { BookLevel } from "./useTape";
 import { cn } from "@/lib/utils";
 
 /** Terminal panel chrome: a title strip, a hairline border, no rounding drama. */
@@ -36,71 +35,51 @@ export function Panel({
 }
 
 /**
- * Depth of book.
+ * The paper account the positions sit in.
  *
- * Depth bars are anchored to the *inside* edge on both sides — asks growing
- * leftward, bids growing leftward too — because that is where the mid sits, and
- * the shape of the imbalance is the only thing a glance at a book is for.
+ * This used to be an L2 order book with an imbalance meter. The engine neither
+ * reads nor shows depth -- it decides on closed candles and fills on the paper
+ * broker -- so the panel shows what the product does have: the account, the
+ * risk open against it and the fees its fills have paid.
  */
-export function OrderBook({
-  bids,
-  asks,
-  price,
-}: {
-  bids: BookLevel[];
-  asks: BookLevel[];
-  price: number;
-}) {
-  const maxSize = Math.max(...bids.map((b) => b.size), ...asks.map((a) => a.size));
-  const bidTotal = bids.reduce((s, b) => s + b.size, 0);
-  const askTotal = asks.reduce((s, a) => s + a.size, 0);
-  const imbalance = bidTotal / (bidTotal + askTotal);
+const PAPER_BALANCE = 100_000;
+const MAKER_FEE = 0.0002;
 
-  const Level = ({ l, side }: { l: BookLevel; side: "bid" | "ask" }) => (
-    <div className="relative flex items-center justify-between px-3 py-[3px] font-mono text-[10px]">
-      <div
-        className={cn("absolute inset-y-0 right-0", side === "bid" ? "bg-emerald/[0.13]" : "bg-loss/[0.13]")}
-        style={{ width: `${(l.size / maxSize) * 100}%` }}
-      />
-      <span className={cn("relative tabular", side === "bid" ? "text-emerald-soft" : "text-loss-soft")}>
-        {l.price.toFixed(1)}
-      </span>
-      <span className="relative tabular text-white/40">{l.size.toFixed(3)}</span>
-    </div>
-  );
+export function PaperAccount({ positions }: { positions: Position[] }) {
+  let unrealised = 0;
+  let openRisk = 0;
+  let fees = 0;
+  for (const p of positions) {
+    const size = Number(p.size);
+    const dir = p.side === "LONG" ? 1 : -1;
+    unrealised += (p.mark - p.entry) * dir * size;
+    openRisk += Math.abs(p.entry - p.stop) * size;
+    fees += p.entry * size * MAKER_FEE;
+  }
+  const money = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const rows: [string, string, string?][] = [
+    ["starting balance", money(PAPER_BALANCE)],
+    ["unrealised", `${unrealised >= 0 ? "+" : ""}${money(unrealised)}`, unrealised >= 0 ? "text-emerald-soft" : "text-loss-soft"],
+    ["equity", money(PAPER_BALANCE + unrealised)],
+    ["open risk", `${((openRisk / PAPER_BALANCE) * 100).toFixed(2)}%`],
+    ["entry fees", money(fees)],
+    ["positions", String(positions.length)],
+  ];
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex justify-between border-b border-term-500/50 px-3 py-1.5 font-mono text-[9px] uppercase tracking-wider text-white/25">
-        <span>price</span>
-        <span>size</span>
-      </div>
-      <div>
-        {asks.map((a) => (
-          <Level key={a.price} l={a} side="ask" />
+      <div className="divide-y divide-term-500/30">
+        {rows.map(([k, v, cls]) => (
+          <div key={k} className="flex items-baseline justify-between px-3 py-2 font-mono text-[10px]">
+            <span className="text-white/35">{k}</span>
+            <span className={cn("tabular", cls ?? "text-white/70")}>{v}</span>
+          </div>
         ))}
       </div>
-      <div className="flex items-baseline justify-between border-y border-term-500/70 bg-black/40 px-3 py-2">
-        <span className="font-mono text-sm font-semibold tabular text-white">{price.toFixed(1)}</span>
-        <span className="font-mono text-[9px] text-white/30">spread 1.5</span>
-      </div>
-      <div>
-        {bids.map((b) => (
-          <Level key={b.price} l={b} side="bid" />
-        ))}
-      </div>
-      {/* imbalance meter */}
-      <div className="mt-auto border-t border-term-500/50 px-3 py-2">
-        <div className="mb-1 flex justify-between font-mono text-[9px] text-white/25">
-          <span>bid {(imbalance * 100).toFixed(0)}%</span>
-          <span>ask {((1 - imbalance) * 100).toFixed(0)}%</span>
-        </div>
-        <div className="flex h-1.5 overflow-hidden rounded-full bg-loss/25">
-          <motion.div
-            className="h-full bg-emerald"
-            animate={{ width: `${imbalance * 100}%` }}
-            transition={{ duration: 0.5 }}
-          />
+      <div className="mt-auto border-t border-term-500/50 px-3 py-2.5">
+        <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-wider">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-gold" />
+          <span className="text-white/45">paper · live routing locked</span>
         </div>
       </div>
     </div>
@@ -175,7 +154,7 @@ export function Positions({ positions }: { positions: Position[] }) {
 }
 
 /**
- * The AI decision panel.
+ * The decision panel.
  *
  * Its job on this page is narrower than on /engine: not to explain how the
  * decision is made, but to show that at any instant there *is* one, in words,
@@ -191,27 +170,27 @@ export function DecisionPanel({ epoch, price }: { epoch: number; price: number }
         tone: "hold" as const,
         lines: [
           "Trend intact on 4h; 1h momentum flattening.",
-          "Position already open — no add above 0.75% equity risk.",
+          "Position already open — no pyramiding into it.",
         ],
       },
       {
         symbol: "SOL/USDT",
-        action: "ROUTE LONG",
+        action: "PAPER LONG",
         score: 84,
         tone: "route" as const,
         lines: [
-          "Range high reclaimed and retested; liquidity above.",
-          "Risk envelope clear · sized 0.68% equity.",
+          "4h trend agrees; reward : risk 2.6; regime fits the setup.",
+          "Risk checks passed · sized to 0.5% of equity at the stop.",
         ],
       },
       {
-        symbol: "ARB/USDT",
+        symbol: "DOGE/USDT",
         action: "VETO",
-        score: 61,
+        score: 48,
         tone: "veto" as const,
         lines: [
-          "Score below the 72 bar for compressed volatility.",
-          "Analogue recall: 3 similar setups, average −0.4R.",
+          "Quality score 48, below the minimum of 60.",
+          "Volatility below the tradeable band; regime is a tight range.",
         ],
       },
     ],
@@ -276,9 +255,9 @@ export function DecisionPanel({ epoch, price }: { epoch: number; price: number }
 
       <div className="mt-3 grid grid-cols-3 gap-2 border-t border-term-500/50 pt-2.5 font-mono text-[9px]">
         {[
-          ["bar", "72"],
+          ["minimum", "60"],
           ["mark", price.toFixed(0)],
-          ["latency", "62 ms"],
+          ["mode", "paper"],
         ].map(([k, v]) => (
           <div key={k}>
             <p className="text-white/25">{k}</p>
@@ -316,13 +295,13 @@ export function ExecutionTimeline({ epoch }: { epoch: number }) {
   const reduced = useReducedMotion() ?? false;
   const script: TimelineEvent[] = useMemo(
     () => [
-      { t: "+0.00s", kind: "eval", text: "SOL/USDT close · conviction 84 · above bar" },
-      { t: "+0.06s", kind: "risk", text: "envelope clear · 0.68% equity · corr 0.31" },
-      { t: "+0.07s", kind: "order", text: "limit buy 12.4 SOL @ 148.22 · post-only" },
-      { t: "+1.42s", kind: "fill", text: "filled 12.4 @ 148.24 · slip 1.3bp" },
-      { t: "+1.44s", kind: "amend", text: "stop 143.10 · target 161.80 placed at venue" },
-      { t: "+4.10s", kind: "eval", text: "ARB/USDT close · conviction 61" },
-      { t: "+4.11s", kind: "veto", text: "below bar for compressed volatility · logged" },
+      { t: "+0.00s", kind: "eval", text: "SOL/USDT 15m close · quality 84 · minimum 60" },
+      { t: "+0.06s", kind: "risk", text: "risk checks passed · 0.5% equity at the stop" },
+      { t: "+0.07s", kind: "order", text: "paper limit buy 12.4 SOL @ 148.22" },
+      { t: "+15m", kind: "fill", text: "filled 12.4 @ 148.22 · maker · fee 0.02%" },
+      { t: "+15m", kind: "amend", text: "stop 143.10 · target 161.80 set · engine-managed" },
+      { t: "+30m", kind: "eval", text: "DOGE/USDT 15m close · quality 48" },
+      { t: "+30m", kind: "veto", text: "below the 60 minimum · reason recorded" },
     ],
     [],
   );

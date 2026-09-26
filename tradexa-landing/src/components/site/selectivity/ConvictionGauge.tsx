@@ -51,7 +51,7 @@ function useAnimatedNumber(target: number, duration = 1100) {
  */
 export function ConvictionGauge({
   score,
-  threshold = 72,
+  threshold = 60,
   verdict,
   size = 300,
 }: {
@@ -88,7 +88,7 @@ export function ConvictionGauge({
 
   return (
     <div className="relative mx-auto" style={{ width: size, maxWidth: "100%" }}>
-      <svg viewBox="0 0 256 256" className="w-full" role="img" aria-label={`Conviction ${Math.round(score)} of 100, threshold ${threshold}`}>
+      <svg viewBox="0 0 256 256" className="w-full" role="img" aria-label={`Quality score ${Math.round(score)} of 100, minimum ${threshold}`}>
         <defs>
           <linearGradient id="nx-gauge" x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="#E7D89A" />

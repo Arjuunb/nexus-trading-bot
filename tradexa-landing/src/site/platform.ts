@@ -73,11 +73,11 @@ export interface TrustBadge {
 }
 
 export const TRUST_BADGES: TrustBadge[] = [
-  { label: "AES-256 envelope", detail: "Per-tenant data keys under a managed master key" },
-  { label: "TLS 1.3", detail: "Everything in transit, no downgrade" },
-  { label: "Withdrawal-disabled", detail: "Keys with withdrawal scope are refused at connection" },
+  { label: "AES-256 envelope", detail: "Per-tenant data keys under a master key kept out of the database" },
+  { label: "TLS in transit", detail: "TLS 1.2 and 1.3 on the site; TLS 1.3 only on the API host" },
+  { label: "Withdrawal-disabled", detail: "Keys that can withdraw or transfer funds are refused before storage" },
   { label: "Append-only audit", detail: "Hash-chained; no product path can amend an entry" },
-  { label: "Zero trust", detail: "Every internal hop authenticates independently" },
+  { label: "No implicit trust", detail: "Every request authenticates, whatever address it comes from" },
 ];
 
 /**
@@ -97,13 +97,12 @@ export const TICKER: TickerRow[] = [
   { symbol: "BTC/USDT", price: "68,408.0", change: 0.42 },
   { symbol: "ETH/USDT", price: "3,284.15", change: -0.18 },
   { symbol: "SOL/USDT", price: "148.24", change: 1.36 },
-  { symbol: "ARB/USDT", price: "0.8412", change: -0.94 },
-  { symbol: "AVAX/USDT", price: "27.61", change: 0.22 },
-  { symbol: "OP/USDT", price: "1.7420", change: -0.51 },
+  { symbol: "XRP/USDT", price: "0.5412", change: -0.94 },
+  { symbol: "BNB/USDT", price: "584.30", change: 0.22 },
+  { symbol: "ADA/USDT", price: "0.3920", change: -0.51 },
   { symbol: "LINK/USDT", price: "16.88", change: 0.77 },
   { symbol: "DOGE/USDT", price: "0.1284", change: 0.09 },
-  { symbol: "MATIC/USDT", price: "0.4917", change: -0.33 },
 ];
 
 /** The project's public repository. Used by the developer pages. */
-export const REPO_URL = "https://github.com/Arjuunb/Tradexa-Trading-Bot";
+export const REPO_URL = "https://github.com/Arjuunb/nexus-trading-bot";
