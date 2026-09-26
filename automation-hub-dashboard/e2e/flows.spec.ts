@@ -151,23 +151,37 @@ test("no unexpected 4xx/5xx from the app's own requests during a page tour", asy
   expect(bad, bad.join("\n")).toHaveLength(0);
 });
 
-test("Journal page — lists journaled trades and expands the full decision journal", async ({ page }) => {
+test("Journal — canonical trade records, full detail with timeline, memory with provenance", async ({ page }) => {
   await mockApi(page);
   await page.goto("/#/journal");
   await page.waitForTimeout(700);
-  // page + a journaled trade row render
-  await expect(page.getByRole("heading", { name: /Bot Trade Journal/i })).toBeVisible();
-  await expect(page.locator("table.data-table").first()).toContainText("BTCUSDT");
-  // expand the decision journal for that trade
-  await page.getByRole("button", { name: /^View$/ }).first().click();
-  await page.waitForTimeout(400);
-  // the 9-section panel is now visible with real captured data + honesty markers
-  await expect(page.getByText("1 · Trade Summary")).toBeVisible();
-  await expect(page.getByText(/Not checked/).first()).toBeVisible();
-  await expect(page.getByText(/never bypassed/i)).toBeVisible();
-  // evolution memory table shows the staged setup
-  await expect(page.getByText(/Evolution Memory/i)).toBeVisible();
-  await expect(page.locator("table.data-table").last()).toContainText("early-signal");
+  await expect(page.locator("h1.pagehead-title", { hasText: "Journal" })).toBeVisible();
+  // KPIs are the API's deterministic figures, not computed in the page
+  await expect(page.locator(".stat-card").filter({ hasText: "Completed trades" })).toContainText("2");
+  await expect(page.locator(".stat-card").filter({ hasText: "Profit factor" })).toContainText("1.92");
+  const table = page.locator("table.jr-table").first();
+  await expect(table).toContainText("BTCUSDT");
+  await expect(table).toContainText("+1.96R");
+  // a legacy notice, never mixed into the forward-paper figures
+  await expect(page.getByText(/legacy record\(s\) from the old journal are kept separately/)).toBeVisible();
+  // the record: every section, planned vs actual, and the ten-stage timeline
+  await page.getByRole("button", { name: /Open BTCUSDT long trade record/ }).click();
+  for (const section of ["Overview", "Setup", "Strategy evidence", "Trade plan", "Execution", "Risk",
+    "Result", "Timeline", "Agent review", "Notes"]) {
+    await expect(page.locator(".jr-section-head h3", { hasText: new RegExp(`^${section}$`) })).toBeVisible();
+  }
+  await expect(page.locator(".jr-stage")).toHaveCount(10);
+  await expect(page.getByText("Planned entry and actual fill are recorded separately")).toBeVisible();
+  await expect(page.getByText("Interpretation — stored apart from the facts above")).toBeVisible();
+  // Memory: verified memory opens to records; the old counters are labelled, not presented as history
+  await page.goto("/#/journal?tab=memory");
+  await page.waitForTimeout(600);
+  await expect(page.getByText("Legacy evolution counters")).toBeVisible();
+  const legacy = page.locator("table.jr-table").nth(1);
+  await expect(legacy).toContainText("59 trades");
+  await expect(legacy).toContainText("UNVERIFIED");
+  await page.locator("table.jr-table").first().getByRole("button", { name: "1 trades" }).click();
+  await expect(page.getByRole("dialog")).toContainText("1 record(s)");
 });
 
 test("Memory — remembers trades, coaches from real data, and keeps honesty markers", async ({ page }) => {
@@ -266,6 +280,13 @@ test("Decisions — every cycle explained: checklist, scores, reasons, recommend
   await page.goto("/#/decisions");               // old address: now Journal > Decisions
   await page.waitForTimeout(700);
   await expect(page).toHaveURL(/#\/journal\?tab=decisions$/);
+  // material decisions first: a blocked signal says why no order was placed
+  await expect(page.locator("table.jr-table")).toContainText("Risk blocked");
+  await page.getByRole("button", { name: /Open BTCUSDT decision/ }).first().click();
+  await expect(page.getByText("Why no order was placed")).toBeVisible();
+  await expect(page.getByText("max open positions reached")).toBeVisible();
+  // the per-candle archive is one click away
+  await page.getByRole("button", { name: "Candle archive" }).click();
   await expect(page.locator("h1.pagehead-title", { hasText: "Decision Archive" })).toBeVisible();
   // cycle rows render with decision badges (SKIP + WAIT from the mock)
   await expect(page.getByText("SKIP").first()).toBeVisible();
