@@ -7,7 +7,7 @@ import { useApp } from "../../app-context";
 // Off lets this instance's own strategy decide: the Brain's score and its
 // views on trend, regime and volatility stop blocking entries. Blocks that
 // protect position size (target under 1R, stop too tight or too wide, the
-// losing-streak cooldown) and every risk limit still apply.
+// the 24-hour losing-streak pause) and every risk limit still apply.
 
 export default function QualityGatePanel({ instanceId }: { instanceId: string }) {
   const app = useApp();
@@ -50,7 +50,7 @@ export default function QualityGatePanel({ instanceId }: { instanceId: string })
       <p className="dim" style={{ margin: "6px 0 0", fontSize: 12.5 }}>
         {g.enforced
           ? `Every entry is scored by the Decision Brain and blocked below ${g.min_score}, or when the Brain judges the trend, regime or volatility wrong for it.`
-          : "The strategy's own rules decide. Setups are still scored and journaled, but only the size protections (target under 1R, stop too tight or too wide, losing-streak cooldown) and the risk limits can block an entry."}
+          : "The strategy's own rules decide. Setups are still scored and journaled, but only the size protections (target under 1R, stop too tight or too wide), the losing-streak pause (24 h after 5 losses in a row on a symbol) and the risk limits can block an entry."}
         {" "}Applies from the next signal.
       </p>
     </div>

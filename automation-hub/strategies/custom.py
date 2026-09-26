@@ -49,6 +49,9 @@ class _RiskGate:
         self.day_count = 0
         self.recent_losses = 0
         self.cooldown_until = None
+        #: Exit time of the most recent losing trade, for the Decision Brain's
+        #: 24-hour losing-streak pause (services/quality_gate.py).
+        self.last_loss_at = None
         self.max_daily_loss_r = float(max_daily_loss_r or 0.0)
         self.max_drawdown_r = float(max_drawdown_r or 0.0)
         self.daily_net_r = 0.0
@@ -97,6 +100,7 @@ class _RiskGate:
             self.recent_losses, self.cooldown_until = 0, None
         else:
             self.recent_losses += 1
+            self.last_loss_at = exit_ts
             if self.cooldown_min:
                 self.cooldown_until = exit_ts + timedelta(minutes=self.cooldown_min)
         if self.max_consec and self.recent_losses >= self.max_consec:
@@ -104,6 +108,13 @@ class _RiskGate:
         if (self.max_drawdown_r
                 and self.peak_r - self.equity_r >= self.max_drawdown_r):
             self.halted = True
+
+
+def _brain_streak(gate, now) -> int:
+    """The loss streak the Decision Brain sees in a simulation: the same
+    24-hour losing-streak pause the live engine applies, on candle time."""
+    from services.quality_gate import streak_for_gate
+    return streak_for_gate(gate.recent_losses, gate.last_loss_at, now)
 
 
 # ----------------------------------------------------------------- indicators
@@ -645,7 +656,8 @@ def simulate(spec: dict, bars, *, fee: float = 0.0004, slippage: float = 0.0002,
                 if brain is not None:
                     is_rev = reversal if reversal is not None else _detect_reversal(spec)
                     v = brain.evaluate(bars, i, side=side, entry=entry_px, stop=stop,
-                                       target=target, reversal=is_rev, recent_losses=gate.recent_losses)
+                                       target=target, reversal=is_rev,
+                                       recent_losses=_brain_streak(gate, bar.timestamp))
                     if not v.allowed or v.score < min_score:
                         blocked.append({
                             "time": bar.timestamp.isoformat(), "side": side,
@@ -892,7 +904,7 @@ def simulate_strategy(strat, bars, *, fee: float = 0.0004, slippage: float = 0.0
                     v = brain.evaluate(causal, len(causal) - 1,
                                        side=side, entry=entry, stop=stop,
                                        target=sig.take_profit,
-                                       recent_losses=gate.recent_losses)
+                                       recent_losses=_brain_streak(gate, bar.timestamp))
                     if enforce_brain and (not v.allowed or v.score < min_score):
                         blocked.append({"time": bar.timestamp.isoformat(), "side": side,
                                         "score": v.score, "regime": v.regime, "htf_bias": v.htf_bias,

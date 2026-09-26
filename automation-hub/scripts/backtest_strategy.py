@@ -19,10 +19,10 @@ For each market it
    exactly as the Backtesting Lab does (services/backtest_lab.py);
 3. prints one table and a plain verdict, and writes everything to JSON.
 
-It also says when a run stopped trading for good. TradeBrain's
-"losing-streak cooldown" (5 losses in a row) has no end: it lifts only on a
-win, and a blocked strategy cannot win. When it fires, every later signal in
-that run is refused, so the rest of the history is not a test of the strategy.
+It also counts the signals TradeBrain's losing-streak pause refused: after 5
+losses in a row a symbol sits out 24 hours from its latest loss (the same rule
+the live engine applies, services/quality_gate.py). Those signals were not
+tested, so a run with many of them says less about the strategy.
 
 Costs are the simulator's: 0.04% fee and 0.02% slippage on each side.
 Nothing here trades, places an order or changes an instance.
@@ -86,7 +86,7 @@ def run_market(strategy: str, symbol: str, timeframe: str, bars: int, gates: lis
         whole = lab._metrics_on(strategy, symbol, timeframe, tuning, rows)
         out[gate] = {
             "whole_period": whole[0] if whole else None,
-            "streak_lock": streak_lock(whole[1]) if whole else None,
+            "streak_pauses": streak_pauses(whole[1]) if whole else None,
             "out_of_sample": lab.out_of_sample(strategy, symbol, timeframe, bars=bars, quality_gate=gate),
             "walk_forward": lab.walk_forward(strategy, symbol, timeframe, bars=bars, quality_gate=gate),
             "monte_carlo": lab.monte_carlo(strategy, symbol, timeframe, bars=bars, runs=runs, quality_gate=gate),
@@ -96,13 +96,13 @@ def run_market(strategy: str, symbol: str, timeframe: str, bars: int, gates: lis
     return out
 
 
-def streak_lock(results: dict) -> dict | None:
-    """When the losing-streak block froze this run, and how much it refused."""
-    locked = [b for b in (results.get("blocked") or [])
-              if str(b.get("reason", "")).startswith("losing-streak cooldown")]
-    if not locked:
+def streak_pauses(results: dict) -> dict | None:
+    """How many signals the 24-hour losing-streak pause refused in this run."""
+    refused = [b for b in (results.get("blocked") or [])
+               if str(b.get("reason", "")).startswith("losing-streak cooldown")]
+    if not refused:
         return None
-    return {"from": str(locked[0].get("time", ""))[:10], "signals_refused": len(locked)}
+    return {"first": str(refused[0].get("time", ""))[:10], "signals_refused": len(refused)}
 
 
 def _fmt(value, spec: str = ".2f") -> str:
@@ -144,11 +144,11 @@ def summary_rows(report: dict) -> list[str]:
             name = ""
     for market in report["markets"]:
         for gate in report["gates"]:
-            lock = (market.get(gate) or {}).get("streak_lock")
-            if lock:
-                lines.append(f"  ! {market['symbol']} {market['timeframe']} gate {gate}: 5 losses in a row "
-                             f"locked the Decision Brain on {lock['from']}; the {lock['signals_refused']} "
-                             "signals after that were refused, so the rest of this run tested nothing.")
+            pauses = (market.get(gate) or {}).get("streak_pauses")
+            if pauses:
+                lines.append(f"  ! {market['symbol']} {market['timeframe']} gate {gate}: "
+                             f"{pauses['signals_refused']} signal(s) refused by the 24-hour pause after "
+                             f"5 losses in a row (first on {pauses['first']}); those were not tested.")
     return lines
 
 

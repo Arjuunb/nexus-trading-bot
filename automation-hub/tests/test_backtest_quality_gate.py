@@ -122,34 +122,37 @@ def test_the_script_runs_all_three_modes_and_writes_the_report(monkeypatch, tmp_
     [market] = report["markets"]
     assert report["gates"] == ["on", "off", "raw"] and market["candles"] == 1500
     for gate in ("on", "off", "raw"):
-        assert set(market[gate]) == {"whole_period", "streak_lock", "out_of_sample",
+        assert set(market[gate]) == {"whole_period", "streak_pauses", "out_of_sample",
                                      "walk_forward", "monte_carlo"}
         assert "paths" not in market[gate]["monte_carlo"]
         assert market[gate]["walk_forward"]["quality_gate"] == gate
-    assert market["raw"]["streak_lock"] is None         # no Brain, so no lock
+    assert market["raw"]["streak_pauses"] is None       # no Brain, so no pause
 
 
-def test_a_run_frozen_by_the_losing_streak_block_is_called_out():
+def test_signals_refused_by_the_streak_pause_are_counted_and_called_out():
     script = _script()
     results = {"blocked": [
         {"time": "2026-07-01T10:00:00+00:00", "reason": "score 40 < 60"},
         {"time": "2026-07-02T09:15:00+00:00", "reason": "losing-streak cooldown (5 in a row)"},
-        {"time": "2026-08-11T12:00:00+00:00", "reason": "losing-streak cooldown (5 in a row)"},
+        {"time": "2026-08-11T12:00:00+00:00", "reason": "losing-streak cooldown (6 in a row)"},
     ]}
-    lock = script.streak_lock(results)
-    assert lock == {"from": "2026-07-02", "signals_refused": 2}
-    assert script.streak_lock({"blocked": [{"reason": "score 40 < 60"}]}) is None
+    pauses = script.streak_pauses(results)
+    assert pauses == {"first": "2026-07-02", "signals_refused": 2}
+    assert script.streak_pauses({"blocked": [{"reason": "score 40 < 60"}]}) is None
     report = {"gates": ["on"], "markets": [{
         "symbol": "BTCUSDT", "timeframe": "15m",
-        "on": {"whole_period": {"trades": 10}, "streak_lock": lock,
+        "on": {"whole_period": {"trades": 10}, "streak_pauses": pauses,
                "out_of_sample": {}, "walk_forward": {}, "monte_carlo": {}}}]}
     lines = "\n".join(script.summary_rows(report))
-    assert "locked the Decision Brain on 2026-07-02" in lines and "2 signals after that were refused" in lines
+    assert "2 signal(s) refused by the 24-hour pause" in lines and "first on 2026-07-02" in lines
 
 
-def test_the_simulator_really_locks_after_five_losses():
-    """Why the report says so: the streak only resets on a win, and every
-    signal after the fifth loss is refused, so no win can ever come."""
+def test_five_losses_in_a_row_pause_the_symbol_for_24_hours_then_it_trades_again():
+    """The Decision Brain's losing-streak block used to have no end: only a win
+    reset the streak, and a refused strategy cannot win. It now holds for 24
+    hours from the latest loss (services/quality_gate.py). On a market that
+    only falls, every long loses, so the run shows the pattern plainly: five
+    losses, a 24-hour pause, one more trade, another pause, and so on."""
     from datetime import datetime, timedelta, timezone
 
     from bot.types import Bar, Signal, SignalType
@@ -177,11 +180,23 @@ def test_the_simulator_really_locks_after_five_losses():
 
     results = simulate_strategy(LongEveryFiveBars(), bars, brain=SafetyOnlyBrain(), min_score=0,
                                 manage=False)
-    trades = results["trades"]
+    trades = sorted(results["trades"], key=lambda t: t["entry_time"])
     refused = [b for b in results["blocked"] if b["reason"].startswith("losing-streak cooldown")]
-    assert len(trades) == 5 and all(t["r"] < 0 for t in trades)
-    assert len(refused) > 40                   # every later signal, to the end of the data
-    assert min(b["time"] for b in refused) >= max(t["exit_time"] for t in trades)
+    assert all(t["r"] < 0 for t in trades)
+    assert len(trades) > 5 and refused, "it must pause, and it must trade again afterwards"
+
+    def ts(text):
+        return datetime.fromisoformat(text)
+
+    # Every refusal falls inside the 24 hours after a loss that made the streak 5+.
+    streak_exits = [ts(t["exit_time"]) for t in trades[4:]]
+    for row in refused:
+        at = ts(row["time"])
+        latest = max(e for e in streak_exits if e <= at)
+        assert at - latest < timedelta(hours=24), row
+    # And after the fifth loss, no trade opens until its pause is over.
+    for before, after in zip(trades[4:], trades[5:]):
+        assert ts(after["entry_time"]) - ts(before["exit_time"]) >= timedelta(hours=24)
 
 
 def test_the_script_refuses_an_unknown_strategy(capsys):
