@@ -165,3 +165,14 @@ def test_memory_claims_open_to_the_exact_records(store):
     for rid in a["journal_record_ids"]:
         assert store.get(rid)["record_origin"] == "FORWARD_PAPER"
     assert memory(store)["legacy"] == []
+
+
+def test_rule_compliance_ignores_reviews_that_could_not_assess_it(store):
+    rows = store.query_trades(where="instance_id='inst-A'", limit=10)
+    ids = [r["journal_record_id"] for r in rows]
+    reviews = {ids[0]: {"strategy_compliance": "COMPLIANT", "risk_compliance": "COMPLIANT"},
+               ids[1]: {"strategy_compliance": "VIOLATION", "risk_compliance": "COMPLIANT"},
+               ids[2]: {"strategy_compliance": "UNKNOWN", "risk_compliance": "UNKNOWN"}}
+    s = stats.summarize(rows, reviews=reviews)
+    assert s["reviewed"] == 3 and s["compliance_assessed"] == 2
+    assert s["rule_compliance"] == pytest.approx(0.5)

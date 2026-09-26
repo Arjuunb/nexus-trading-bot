@@ -61,7 +61,12 @@ def summarize(records: Iterable[dict], *, reviews: Optional[dict] = None) -> dic
     pains = -sum(float(v) for v in nets if v is not None and v < 0)
     reviewed = [(reviews or {}).get(r["journal_record_id"]) for r in rows]
     reviewed = [v for v in reviewed if v]
-    compliant = [v for v in reviewed if v.get("strategy_compliance") == "COMPLIANT"
+    # A review that could not assess compliance (UNKNOWN) is neither
+    # compliant nor a violation; it stays out of the rate.
+    assessable = [v for v in reviewed
+                  if v.get("strategy_compliance") in ("COMPLIANT", "VIOLATION")
+                  and v.get("risk_compliance") in (None, "COMPLIANT", "VIOLATION")]
+    compliant = [v for v in assessable if v.get("strategy_compliance") == "COMPLIANT"
                  and v.get("risk_compliance") in (None, "COMPLIANT")]
     return {
         "trades": n,
@@ -79,8 +84,8 @@ def summarize(records: Iterable[dict], *, reviews: Optional[dict] = None) -> dic
         "average_achieved_r": _mean(r.get("achieved_rr") for r in rows),
         "max_drawdown": drawdown(nets),
         "max_drawdown_r": drawdown(rs),
-        "rule_compliance": (round(len(compliant) / len(reviewed), 4) if reviewed else None),
-        "reviewed": len(reviewed),
+        "rule_compliance": (round(len(compliant) / len(assessable), 4) if assessable else None),
+        "reviewed": len(reviewed), "compliance_assessed": len(assessable),
         "sample_warning": ("INSUFFICIENT_SAMPLE" if n < MIN_SAMPLE else None),
         "journal_record_ids": [r["journal_record_id"] for r in rows],
         "period": {"start": _close_key(rows[0]) if rows else None,

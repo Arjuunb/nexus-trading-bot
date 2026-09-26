@@ -474,14 +474,19 @@ def test_24_legacy_migration_verifies_what_it_can_and_labels_the_rest(tmp_path):
     rec.reconcile(); rec.reconcile()
     rows = {r["trade_id"]: r for r in store.query_trades()}
     assert len(rows) == 2
+    # The ledger still has the first trade: its execution is VERIFIED. Nothing
+    # recorded which market data it ran on, so it is not forward paper.
     assert rows[ids[0]]["verification"] == "VERIFIED" and rows[ids[0]]["record_source"] == "LEGACY_ENGINE"
+    assert rows[ids[0]]["record_origin"] == "LEGACY_MIGRATION"
+    assert "no decision-time evidence" in store.get(ids[0])["source_ref"]["origin_basis"]
+    # The second trade's ledger row is gone: only the old journal row remains.
     assert rows[ids[1]]["record_origin"] == "LEGACY_MIGRATION"
     assert rows[ids[1]]["verification"] == "UNVERIFIED"
     assert rows[ids[1]]["planned_take_profit"] is None                   # never invented
     labels = {row["side"]: row["provenance"] for row in evolution_provenance(old, store)}
     assert labels == {"long": "VERIFIED", "short": "LEGACY"}
     # legacy never counts as forward-paper performance
-    assert store.count_trades(where="record_origin='FORWARD_PAPER'") == 1
+    assert store.count_trades(where="record_origin='FORWARD_PAPER'") == 0
     # the old journal was only read
     assert old._c.execute("SELECT COUNT(*) FROM trade_decision_journal").fetchone()[0] == 2
 

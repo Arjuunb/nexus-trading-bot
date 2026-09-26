@@ -437,9 +437,7 @@ class LedgerProjector:
         side = _side(root.get("side"))
         name = self._source_name(source, instance_id)
         forward = bool(fill)
-        market_mode = str(journal_exec.get("market_data_mode") or "").lower()
-        origin = ("SIMULATION" if market_mode in ("synthetic", "demo", "replay", "backtest")
-                  else "FORWARD_PAPER")
+        origin, origin_basis = _ledger_origin(forward, journal_exec, payload)
         # timeline
         signal_at = _ts(payload.get("timestamp") or fill.get("signal_timestamp"))
         decision_at = _ts((decision_row or {}).get("received_at"))
@@ -570,7 +568,8 @@ class LedgerProjector:
                           for l in legs_sorted],
             "source_ref_json": {"ledger": source.name, "alert_id": alert_id or None,
                                 "fill_event": (fills[0]["alert_id"] if fills else None),
-                                "trade_ids": [l["id"] for l in legs_sorted]},
+                                "trade_ids": [l["id"] for l in legs_sorted],
+                                "origin_basis": origin_basis},
         }
         if status == "CLOSED":
             last_leg = closed_legs[-1]
@@ -651,6 +650,28 @@ class LedgerProjector:
                                     events=_timeline(rec))
             written += 1
         return written
+
+
+def _ledger_origin(forward: bool, journal_exec: dict, payload: dict) -> tuple[str, str]:
+    """FORWARD_PAPER only with evidence that the trade ran on live market data.
+
+    A ledger trade with no decision-time evidence of its data source could
+    have come from synthetic, demo or replayed candles; counting it as
+    forward paper would let it into forward-paper statistics unproven.
+    """
+    mode = str(journal_exec.get("market_data_mode") or "").lower()
+    source = str(payload.get("market_data_source") or journal_exec.get("market_data_source")
+                 or "").lower()
+    # An explicit simulated-data marker wins over everything else.
+    if mode in ("synthetic", "demo", "replay", "backtest") or any(
+            word in source for word in ("synthetic", "demo", "replay", "backtest")):
+        return "SIMULATION", f"decision recorded market data as {mode or source}"
+    if forward:
+        return "FORWARD_PAPER", "filled from a live Binance quote after the decision"
+    if mode == "live" or any(word in source for word in ("live", "binance", "websocket")):
+        return "FORWARD_PAPER", f"decision recorded live market data ({mode or source})"
+    return "LEGACY_MIGRATION", ("no decision-time evidence of the market data source; kept "
+                                "out of forward-paper statistics")
 
 
 # ======================================================================
