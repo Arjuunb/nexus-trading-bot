@@ -55,4 +55,10 @@ EXPOSE 8000
 USER tradexa
 
 # Honour an operator-provided port while remaining self-contained on a VPS.
-CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=*"]
+# "exec" matters: without it sh stays PID 1 with uvicorn as its child, and sh
+# as PID 1 ignores the SIGTERM "docker stop" sends. Every deploy then ended in
+# SIGKILL after the grace period, so the shutdown hook never ran -- no entry
+# gate checkpoint, and every worker lease left held for the next container.
+# The graceful-shutdown timeout ends open dashboard streams (SSE) so that hook
+# is reached well inside compose.yaml's stop_grace_period.
+CMD ["sh", "-c", "exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=* --timeout-graceful-shutdown 5"]

@@ -132,7 +132,8 @@ class InstanceSupervisor:
         try:
             with self.manager._lock:
                 inst = self.manager._instances.get(instance_id)
-                if inst is None or not inst.desired_running or self._worker_alive(instance_id):
+                if (inst is None or not inst.desired_running or self._worker_alive(instance_id)
+                        or inst.last_error == error[:500]):
                     return
                 inst.last_error = error[:500]
                 self.manager.store.save(inst)
@@ -222,6 +223,11 @@ class InstanceSupervisor:
                                "max_slots": self.manager.max_slots})
                 log_event(self.manager, inst, "INSTANCE_ERROR", status="blocked",
                           detail=f"no free trading slot ({self.manager.max_slots})")
+                holders = ", ".join(f"{i.symbol} {i.timeframe}" for i in trading
+                                    if self._worker_alive(i.id))
+                self._record_failure(
+                    inst.id, f"NO_FREE_SLOT: all {self.manager.max_slots} trading slots are in use "
+                    f"({holders}). It starts on its own once one is stopped.")
                 continue
             paused = inst.state == "paused"
             log_event(self.manager, inst, "INSTANCE_STARTING", status="repairing",

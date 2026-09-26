@@ -309,10 +309,20 @@ def test_supervisor_respects_the_slot_limit(tmp_path):
     second.desired_running, second.state = True, "error"
     manager.store.save(second)
 
-    report = InstanceSupervisor(manager, interval_s=60).sweep()
+    supervisor = InstanceSupervisor(manager, interval_s=60)
+    report = supervisor.sweep()
 
     assert [row["action"] for row in report] == ["no_slot"]
     assert second.id not in manager._runtime
+    # The card says why it is not running, not whatever last went wrong.
+    assert second.last_error.startswith("NO_FREE_SLOT: all 1 trading slots are in use (BTCUSDT")
+    assert "starts on its own once one is stopped" in second.last_error
+    saves = []
+    original_save = manager.store.save
+    manager.store.save = lambda inst: (saves.append(inst.id), original_save(inst))[-1]
+    supervisor.sweep()                                   # unchanged: no rewrite every sweep
+    assert second.id not in saves
+    manager.store.save = original_save
     manager.shutdown()
 
 

@@ -199,3 +199,19 @@ def test_nginx_retains_only_required_startup_capabilities():
 
     assert "cap_drop: [ALL]" in compose
     assert "cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID, NET_BIND_SERVICE]" in compose
+
+
+def test_the_app_receives_dockers_stop_signal_and_has_time_to_shut_down():
+    """``sh -c "uvicorn ..."`` left sh as PID 1 with uvicorn as its child. sh as
+    PID 1 ignores the SIGTERM ``docker stop`` sends, so every deploy ended in
+    SIGKILL: the shutdown hook never ran, entry gates were not checkpointed and
+    every worker lease stayed held for the next container."""
+    dockerfile = (ROOT / "Dockerfile").read_text()
+    compose = (ROOT / "compose.yaml").read_text()
+
+    [cmd] = [line for line in dockerfile.splitlines() if line.startswith("CMD ")]
+    assert '"exec uvicorn app:app' in cmd
+    assert "--timeout-graceful-shutdown" in cmd
+    grace = re.search(r"stop_grace_period:\s*(\d+)s", compose)
+    assert grace and int(grace.group(1)) >= 30
+

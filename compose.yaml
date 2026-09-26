@@ -29,6 +29,10 @@ services:
     volumes:
       - tradexa-data:/var/lib/tradexa
     restart: unless-stopped
+    # Docker's default is 10 s before SIGKILL. The shutdown hook closes entry
+    # gates, lets each worker checkpoint its candle (up to 15 s) and hands the
+    # worker leases back; 5 s of that go to ending open dashboard streams.
+    stop_grace_period: 40s
     expose:
       - "8000"
     healthcheck:
