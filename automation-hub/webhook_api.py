@@ -1409,12 +1409,74 @@ def _health_breakdown(history: list, blocked_by_sym) -> dict:
     return {"by_symbol": by_symbol, "by_session": _rows(sess)}
 
 
+# ── canonical journal (data/trade_record_store.py, services/journal_*.py) ──
+# One recorder projects every durable execution fact -- this ledger, the
+# adaptive lab's ledger, the PA and SMC lab brokers and the SMC agent's
+# intents -- into one record per execution. It only reads those sources.
+from data.trade_record_store import TradeRecordStore  # noqa: E402
+from services.journal_labs import PALabProjector, SMCLabProjector  # noqa: E402
+from services.journal_legacy import LegacyJournalMigration  # noqa: E402
+from services.journal_recorder import JournalRecorder, LedgerSource  # noqa: E402
+from services.journal_reviews import WeeklyReviewScheduler, review_finalized  # noqa: E402
+
+trade_records = TradeRecordStore(settings.trade_records_db)
+journal_recorder = JournalRecorder(trade_records)
+
+
+def _journal_instances(manager):
+    def meta() -> dict:
+        return {i.id: {"strategy_key": i.strategy_key, "strategy_label": i.strategy_label,
+                       "exchange": i.exchange, "instrument_type": i.instrument_type,
+                       "timeframe": i.timeframe}
+                for i in list(getattr(manager, "_instances", {}).values())}
+    return meta
+
+
+def _parked_intents(manager):
+    """Alert ids an instance still has parked, or None when it cannot be read."""
+    def parked(instance_id: str):
+        if not instance_id:
+            return None
+        try:
+            state = manager.store.market_state(instance_id) or {}
+            pending = state.get("pending_orders_json") or {}
+            if isinstance(pending, str):
+                import json as _json
+                pending = _json.loads(pending)
+            intents = pending.get("forward_paper_intents") or {}
+            return {str(i.get("alert_id")) for i in intents.values() if isinstance(i, dict)}
+        except Exception:  # noqa: BLE001 -- unknown keeps the record PENDING
+            return None
+    return parked
+
+
+journal_recorder.add_ledger(LedgerSource(
+    "MAIN", ledger, instances=_journal_instances(instance_manager),
+    pending_intents=_parked_intents(instance_manager),
+    decision_store=decision_store, cycle_store=cycle_store))
+journal_recorder.add_ledger(LedgerSource(
+    "ADAPTIVE_LAB", adaptive_lab.ledger, instances=_journal_instances(adaptive_lab.manager),
+    pending_intents=_parked_intents(adaptive_lab.manager),
+    decision_store=adaptive_lab.decisions, lab_id="adaptive_lab"))
+journal_recorder.labs = [SMCLabProjector(smc_paper, agent_journal=smc_agent_journal),
+                         PALabProjector(price_action_paper)]
+journal_recorder.legacy = LegacyJournalMigration(decision_journal_store)
+journal_recorder.after_pass.append(lambda: review_finalized(trade_records))
+weekly_review_scheduler = WeeklyReviewScheduler(
+    trade_records, interval_s=float(_os.environ.get("HUB_WEEKLY_REVIEW_INTERVAL_S", "900")))
+# Execution paths only wake the recorder; they never wait for it.
+pipeline.journal_notify = journal_recorder.notify
+instance_manager.journal_notify = journal_recorder.notify
+adaptive_lab.manager.journal_notify = journal_recorder.notify
+
+
 # ── domain routers (endpoints live in routers/<domain>.py) ──
 import routers.analytics  # noqa: E402
 import routers.bots  # noqa: E402
 import routers.engine  # noqa: E402
 import routers.health  # noqa: E402
 import routers.journal  # noqa: E402
+import routers.journal_records  # noqa: E402
 import routers.paper  # noqa: E402
 import routers.paper_v2  # noqa: E402
 import routers.risk  # noqa: E402
@@ -1440,6 +1502,8 @@ router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
 router.include_router(routers.health.router)
+# Before routers.journal: its GET /journal/{trade_id} would capture these paths.
+router.include_router(routers.journal_records.router)
 router.include_router(routers.journal.router)
 router.include_router(routers.paper.router)
 router.include_router(routers.paper_v2.router)

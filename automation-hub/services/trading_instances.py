@@ -1209,6 +1209,9 @@ class TradingInstanceManager:
         self.strategy_factory, self.live, self.live_poll_s, self.fetcher = strategy_factory, live, live_poll_s, fetcher
         self.decision_store = decision_store
         self.decision_journal = decision_journal
+        # Set by webhook_api to JournalRecorder.notify: a forward-paper fill
+        # wakes the canonical journal. Optional; the recorder also polls.
+        self.journal_notify = None
         self.trade_memory = trade_memory
         self.skipped_store = skipped_store
         self.cycle_store = cycle_store
@@ -1880,6 +1883,7 @@ class TradingInstanceManager:
             # lifecycle as the legacy pipeline, but retain immutable instance
             # provenance so evidence is never silently blended.
             pipeline.journal = self.decision_journal
+            pipeline.journal_notify = self.journal_notify
             pipeline.trade_memory = self.trade_memory
             pipeline.skipped = self.skipped_store
             # Learning evidence is scoped to this worker's ledger/history. A
@@ -1983,6 +1987,11 @@ class TradingInstanceManager:
                                 message=(f"forward-paper fill {fill.side} {fill.size:.8f} "
                                          f"@ {fill.price:.8f} from Binance USD-M quote"),
                             )
+                        if fills and self.journal_notify is not None:
+                            try:
+                                self.journal_notify()
+                            except Exception:  # noqa: BLE001 -- the recorder polls too
+                                pass
 
                     ws_feed = self.market_hub.subscription(
                         f"INSTANCE:{instance_id}", quote_sink=on_quote,

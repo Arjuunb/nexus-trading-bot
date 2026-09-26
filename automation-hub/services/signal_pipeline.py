@@ -301,6 +301,11 @@ class SignalPipeline:
         self.counterfactual = None
         # Decision journal: the full explainable record of every trade.
         self.journal = None
+        # Wakes the canonical journal recorder (services/journal_recorder.py)
+        # after an order, a fill or a close. The recorder rebuilds the record
+        # from the ledger, so this is only a nudge: it never blocks, and a
+        # missed nudge is repaired by the recorder's next pass.
+        self.journal_notify = None
         # Skipped-trade log: every rejected setup with its failed gate + snapshot.
         self.skipped = None
         # Permanent trade memory: composes the closed trade into a forever record.
@@ -557,6 +562,7 @@ class SignalPipeline:
                                   title=f"Position closed — {symbol}", detail=f"PnL {fill.pnl:+.2f}")
             self._notify("trade", f"📉 {symbol} closed", f"PnL {fill.pnl:+.2f}")
             steps.append(Step("execution", True, f"closed PnL {fill.pnl:+.2f}"))
+            self._nudge_journal()
             # A losing close may breach drawdown -> halt future entries (not exits).
             if not self._halted:
                 dd = self._drawdown_trip()
@@ -994,6 +1000,7 @@ class SignalPipeline:
                 message=(f"{symbol} {side} paper intent accepted; waiting for "
                          "the first Binance USD-M quote after decision time"),
             )
+            self._nudge_journal()
             steps.append(Step("execution", True, "forward-paper intent awaiting next quote"))
             return PipelineResult(
                 True, "execution", "paper order intent awaiting next quote",
@@ -1048,7 +1055,17 @@ class SignalPipeline:
                                           "regime": payload.get("regime", "")}
             if len(self._alert_info) > 500:
                 self._alert_info.pop(next(iter(self._alert_info)))
+        self._nudge_journal()
         return PipelineResult(True, "execution", "paper trade opened", steps, fill.__dict__)
+
+    def _nudge_journal(self) -> None:
+        notify = self.journal_notify
+        if notify is None:
+            return
+        try:
+            notify()
+        except Exception:  # noqa: BLE001 -- the recorder's own pass repairs it
+            pass
 
     # ----------------------------------------------------- auto risk guard
     @property

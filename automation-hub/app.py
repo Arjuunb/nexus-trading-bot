@@ -649,6 +649,13 @@ def _start_auto_engine() -> None:
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.econ_feed.start():
         print(f"[startup] economic calendar feed started ({', '.join(webhook_api.econ_feed.countries)}, "
               f"every {webhook_api.econ_feed.interval_s / 3600:.0f}h)", flush=True)
+    # The canonical journal recorder rebuilds trade records from execution
+    # facts; its first pass reconciles everything since the last run.
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.journal_recorder.start():
+        print(f"[startup] journal recorder started "
+              f"(reconcile every {webhook_api.journal_recorder.interval_s:.0f}s)", flush=True)
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.weekly_review_scheduler.start():
+        print("[startup] weekly review scheduler started", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
         print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
               f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)
@@ -756,6 +763,7 @@ def _shutdown_all_runtimes() -> None:
     run("status_monitor", webhook_api.status_monitor.stop)
     run("audit_exporter", webhook_api.audit_exporter.stop)
     run("outbound_webhooks", webhook_api.outbound_webhooks.stop)
+    run("weekly_review_scheduler", webhook_api.weekly_review_scheduler.stop)
     run("adaptive_lab_supervisor", webhook_api.adaptive_lab_supervisor.stop)
     run("trading_instances", webhook_api.instance_manager.shutdown)
     run("adaptive_lab", webhook_api.adaptive_lab.shutdown)
@@ -765,6 +773,9 @@ def _shutdown_all_runtimes() -> None:
     run("research_observer", webhook_api.research_observer.stop)
     run("price_action_lab", webhook_api.price_action_runtime.stop)
     run("smc_lab", webhook_api.smc_runtime.stop)
+    # Last: record what the workers did before they stopped, then stop.
+    run("journal_recorder_final_pass", webhook_api.journal_recorder.reconcile)
+    run("journal_recorder", webhook_api.journal_recorder.stop)
     if errors:
         print("[shutdown] completed with degraded acknowledgements: " + " | ".join(errors),
               flush=True)

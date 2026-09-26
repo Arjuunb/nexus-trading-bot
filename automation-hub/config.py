@@ -186,6 +186,11 @@ class Settings:
     # Decision-journal database (full explainable record of every trade)
     journal_db: str = field(default_factory=lambda: os.environ.get(
         "HUB_JOURNAL_DB", str(DATA_DIR / "journal.db")))
+    # Canonical trade and decision records, reviews and weekly reviews
+    # (data/trade_record_store.py). Built from execution facts by
+    # services/journal_recorder.py; the old journal.db stays untouched.
+    trade_records_db: str = field(default_factory=lambda: os.environ.get(
+        "HUB_TRADE_RECORDS_DB", str(DATA_DIR / "trade_records.db")))
     # Safety-gate state (when the emergency-stop kill switch was last verified)
     safety_state_path: str = field(default_factory=lambda: os.environ.get(
         "HUB_SAFETY_STATE", str(DATA_DIR / "safety_state.json")))
