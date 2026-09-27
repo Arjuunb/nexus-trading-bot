@@ -469,6 +469,10 @@ class LedgerProjector:
         execs = _query(conn, lock, "SELECT * FROM paper_executions")
         reduce_targets = {e["trade_id"] for e in execs if e["action"] == "REDUCE"}
         close_by_trade = {e["trade_id"]: e for e in execs if e["action"] == "CLOSE"}
+        # The OPEN row names the position from the fill on; the CLOSE row only
+        # exists once it is closed, so an open record read from it had none.
+        position_by_trade = {e["trade_id"]: e.get("position_id") for e in execs
+                             if e["action"] == "OPEN" and e.get("position_id")}
         # chain partial-exit remainders onto the trade they came from
         by_close: dict = {}
         for t in trades:
@@ -510,6 +514,8 @@ class LedgerProjector:
                 continue
             record = self._record(source, conn, lock, root, legs, key, decision_events,
                                   close_by_trade, close_events, instances)
+            record["position_id"] = (position_by_trade.get(root["id"])
+                                     or record.get("position_id"))
             outcome = self.store.upsert_trade(record, events=_timeline(record))
             results["lifecycles"] += 1
             results["written"] += outcome["action"] != "unchanged"

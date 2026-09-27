@@ -625,3 +625,11 @@ changed here; it is filed as its own task.
   a later pass cannot re-label it; a correction can. Both tests fail on the
   old store.
 * Harness: unchanged results, 0 discrepancies.
+
+**D18 — FIXED.**
+* Change: an instance record takes its `position_id` from the OPEN execution
+  row, so an open trade names its position from the fill on, and keeps the
+  same id at the close.
+* Test: open, then closed, through the real pipeline and forward engine, with
+  no discrepancy. It fails on the old projector.
+* Harness: all three open records carry their position id.

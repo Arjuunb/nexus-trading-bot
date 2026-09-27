@@ -583,6 +583,23 @@ def test_21b_smc_conditions_on_the_record_are_the_strategys_own(tmp_path):
     assert d["conditions_passed"] == full["setup"]["conditions_passed"]
 
 
+def test_an_open_trade_already_names_its_position(env):
+    """Traceability does not wait for the close: the OPEN execution row names
+    the position from the moment of the fill."""
+    env.entry(); env.fill()
+    rec = env.recorder()
+    rec.reconcile()
+    opened = _one(env)
+    [row] = env.ledger._c.execute(
+        "SELECT position_id FROM paper_executions WHERE action='OPEN'").fetchall()
+    assert opened["status"] == "OPEN" and opened["position_id"] == row[0]
+    env.close(102.0, reason="take-profit")
+    rec.reconcile()
+    closed = _one(env)
+    assert closed["position_id"] == row[0]
+    assert not [c for c in closed["corrections"] if c["kind"] == "DISCREPANCY"]
+
+
 def test_22_trading_instance_record_carries_frozen_decision_evidence(env):
     env.entry(); env.fill(); env.close(102.0, reason="take-profit")
     env.recorder().reconcile()
