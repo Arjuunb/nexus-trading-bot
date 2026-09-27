@@ -565,6 +565,11 @@ class TradeRecordStore:
                 f"WHERE record_source IN ({marks})", tuple(sources))}
 
     # --------------------------------------------------------- decision records
+    #: Columns whose current value in the source is the truth, including
+    #: "none": a decision that stopped being blocked must lose its blocker.
+    #: Every other column keeps what it had when a later pass does not know it.
+    _DECISION_OVERWRITE = ("blocker",)
+
     def upsert_decision(self, decision: dict) -> str:
         key = str(decision["decision_key"])
         did = decision_id_for(key)
@@ -588,7 +593,8 @@ class TradeRecordStore:
             self._c.execute(
                 f"INSERT INTO decision_records({','.join(cols)},created_at,updated_at) "
                 f"VALUES ({','.join('?' * len(cols))},?,?) ON CONFLICT(decision_key) DO UPDATE SET "
-                + ",".join(f"{c}=COALESCE(excluded.{c}, decision_records.{c})" for c in updatable)
+                + ",".join(f"{c}=excluded.{c}" if c in self._DECISION_OVERWRITE else
+                           f"{c}=COALESCE(excluded.{c}, decision_records.{c})" for c in updatable)
                 + ", updated_at=excluded.updated_at",
                 [row[c] for c in cols] + [now, now])
             self._c.commit()

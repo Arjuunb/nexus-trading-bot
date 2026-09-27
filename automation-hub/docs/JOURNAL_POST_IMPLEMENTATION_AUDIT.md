@@ -651,3 +651,18 @@ changed here; it is filed as its own task.
 * Harness: its recorder has no instance registry, so its unlinked instance
   decisions are LEGACY_MIGRATION, and those linked to trades take the
   trade's origin.
+
+**D4 — FIXED (in the journal; the decision store is unchanged).**
+* Change: a decision linked to a trade is, by that link, one whose order
+  filled. Its record says FILLED with no blocker, so it no longer shows the
+  pending order's "ORDER_PENDING". When a restart re-evaluated the candle and
+  the pipeline refused the replay, that refusal is kept as
+  `evidence.duplicate_attempt` instead of replacing the decision. The
+  upstream store still overwrites its row, because PENDING_INTENT →
+  GATE_REJECTED is also a legitimate transition there (an expired limit
+  order). `blocker` is now taken from the source as-is, so a cleared blocker
+  clears.
+* Test: a real 3-Candle Rejection trade, then a restarted worker
+  re-evaluating the same candles. It fails on the old projector.
+* Harness: all 8 traded instance decisions read FILLED with no blocker; the
+  restarted one keeps its duplicate attempt.

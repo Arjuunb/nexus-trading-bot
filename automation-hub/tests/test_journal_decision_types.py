@@ -234,3 +234,55 @@ def test_a_decision_that_opened_a_trade_takes_the_trades_origin(tmp_path):
     [trade] = env.store.query_trades()
     assert decision["journal_record_id"] == trade["journal_record_id"]
     assert decision["record_origin"] == trade["record_origin"] == "FORWARD_PAPER"
+
+
+# ──────────────── a restart re-evaluates the candle that already traded ────────────────
+def test_a_restarts_duplicate_refusal_does_not_overwrite_the_decision_that_traded(tmp_path):
+    """The decision store keeps one row per candle. A worker restarted after
+    its trade re-evaluates that candle, the pipeline refuses the replay as a
+    duplicate, and that refusal is written over the row that opened the trade.
+    The journal keeps what happened first and the refusal beside it."""
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    decisions = DecisionStore(str(tmp_path / "decisions.db"))
+    rows, i = _history()
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    series = rows + _long_pattern(i)
+    bars = [Bar(now - TF * (len(series) - k), r.open, r.high, r.low, r.close, r.volume)
+            for k, r in enumerate(series)]
+
+    def worker(intents=None):
+        scoped = InstanceLedger(ledger, "inst-1", "sess-1")
+        paper = ForwardPaperExecutionEngine(scoped, 10_000, initial_intents=intents)
+        pipe = SignalPipeline(scoped, paper, TradingControl(), equity=10_000,
+                              risk_per_trade_pct=0.01, exposure_limit_pct=0.05)
+        pipe.journal_context = {"instance_id": "inst-1", "simulation_session_id": "sess-1",
+                                "market_data_mode": "forward_paper"}
+        engine = AutoStrategyEngine(
+            pipe, paper, scoped, symbols=["BTCUSDT"], timeframe="5m", live=True,
+            strategy_factory=lambda s: make_builtin_strategy("three_candle_rejection", s),
+            fetcher=lambda *a, **k: ([], "live (test)"), entry_mode="market", instance_id="inst-1")
+        engine.decisions, engine.quality_gate_bypass = decisions, (lambda: True)
+        strategy = engine.strategy_factory("BTCUSDT")
+        strategy.bars.extend(bars[:-3])
+        for bar in bars[-3:]:
+            engine._process_bar("BTCUSDT", bar, strategy)
+        return paper
+
+    paper = worker()
+    assert paper.process_quote({"bid": 102.2, "ask": 102.22, "mark": 102.21,
+                                "received_at": datetime.now(timezone.utc).isoformat()})
+    worker()                                            # the restart sees the same candles
+    [upstream] = decisions._c.execute("SELECT gate_stage, blocker FROM decisions").fetchall()
+    assert tuple(upstream) == ("dedup", "GATE_REJECTED: DUPLICATE_SIGNAL")   # overwritten upstream
+
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    recorder = JournalRecorder(store)
+    recorder.add_ledger(LedgerSource("MAIN", ledger, decision_store=decisions))
+    recorder.reconcile()
+    [trade] = store.query_trades()
+    [decision] = store.query_decisions()
+    assert decision["journal_record_id"] == trade["journal_record_id"]
+    assert (decision["decision_type"], decision["status"], decision["blocker"]) == \
+        ("TRADE_OPENED", "FILLED", None)
+    assert "order filled" in decision["reason"]
+    assert decision["evidence"]["duplicate_attempt"]["blocker"] == "GATE_REJECTED: DUPLICATE_SIGNAL"

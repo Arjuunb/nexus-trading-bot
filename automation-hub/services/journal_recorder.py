@@ -819,8 +819,23 @@ class DecisionProjector:
             trade = linked.get((instance_id, str(row["id"])))
             dtype = classify_decision(row.get("final_state"), row.get("gate_stage"),
                                       row.get("blocker"), row.get("reason"))
+            status, blocker, reason = (row.get("final_state") or None, row.get("blocker") or None,
+                                       row.get("reason"))
+            later = None
             if trade is not None:
                 dtype = "TRADE_OPENED"
+                # A trade exists only after its order filled. The decision
+                # store keeps one row per candle, and a worker that re-evaluates
+                # that candle after a restart finalizes the SAME row with its
+                # refusal ("duplicate"), overwriting the decision that opened
+                # the trade. The trade link proves what happened first; the
+                # refused re-evaluation is kept beside it, not in its place.
+                if str(row.get("gate_stage") or "").lower() == "dedup":
+                    later = {"final_state": status, "gate_stage": row.get("gate_stage"),
+                             "blocker": blocker, "reason": reason}
+                    reason = ("Signal accepted and its order filled. A later evaluation of the same "
+                              "candle was refused as a duplicate.")
+                status, blocker = "FILLED", None
             origin = self._decision_origin(key, trade, meta.get(instance_id))
             self.store.upsert_decision({
                 "decision_key": key, "record_source": name, "record_origin": origin,
@@ -829,15 +844,15 @@ class DecisionProjector:
                 "timeframe": row.get("timeframe"), "side": _side(row.get("side")),
                 "candle_time": _ts(row.get("ts")), "decided_at": _ts(row.get("ts")),
                 "signal": (_side(row.get("side")) or "").upper() or None,
-                "decision_type": dtype, "status": row.get("final_state") or None,
-                "blocker": row.get("blocker") or None, "reason": row.get("reason"),
+                "decision_type": dtype, "status": status, "blocker": blocker, "reason": reason,
                 "conditions_passed": _json(row.get("passed_json"), []),
                 "conditions_missing": _json(row.get("failed_json"), []),
                 "evidence": {"regime": row.get("regime"), "htf_bias": row.get("htf_bias"),
                              "setup_quality_score": row.get("setup_quality_score"),
                              "rr_score": row.get("rr_score"), "confidence": row.get("confidence"),
                              "components": _json(row.get("components_json"), {}),
-                             "gate_stage": row.get("gate_stage")},
+                             "gate_stage": row.get("gate_stage"),
+                             **({"duplicate_attempt": later} if later else {})},
                 "source_ref": {"decision_store": source_name, "decision_row_id": row["id"]},
                 "journal_record_id": trade["journal_record_id"] if trade else None,
                 "trade_id": trade.get("trade_id") if trade else None,
