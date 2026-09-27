@@ -85,6 +85,8 @@ interface Props {
   /** Request one earlier exchange page only after the user reaches the left edge. */
   onHistoryNearStart?: () => void;
   historyLoading?: boolean;
+  historyError?: string | null;
+  onHistoryRetry?: () => void;
   hasMoreHistory?: boolean;
   /** True while the viewport is intentionally browsing behind the live edge. */
   historicalMode?: boolean;
@@ -451,7 +453,7 @@ function chartOption(state: NativeSMCChartState, timeframe: string, rightOffsetB
   } as EChartsOption, priceAxisRange, livePrice, liveDirection };
 }
 
-export default function NativeSMCChartOverlay({ state, timeframe = "5m", rightOffsetBars = 12, initialVisibleBars = 120, filters, selectedObjectId, highlightedObjectIds, onCandleSelect, fitContentSignal, latestSignal, centerTimestamp, priceViewport, viewport, onViewportChange, onHistoryNearStart, historyLoading = false, hasMoreHistory = true, historicalMode = false, onGoLive, prependedHistory, onPriceAxisDrag, onResetPriceScale, onChartPointerDown, lightMode = false, liveDataStale = false, modelLabel = "native SMC", tradePlan, fillMarkers = [], height = 700 }: Props) {
+export default function NativeSMCChartOverlay({ state, timeframe = "5m", rightOffsetBars = 12, initialVisibleBars = 120, filters, selectedObjectId, highlightedObjectIds, onCandleSelect, fitContentSignal, latestSignal, centerTimestamp, priceViewport, viewport, onViewportChange, onHistoryNearStart, historyLoading = false, historyError = null, onHistoryRetry, hasMoreHistory = true, historicalMode = false, onGoLive, prependedHistory, onPriceAxisDrag, onResetPriceScale, onChartPointerDown, lightMode = false, liveDataStale = false, modelLabel = "native SMC", tradePlan, fillMarkers = [], height = 700 }: Props) {
   const presentation = useMemo(() => chartOption(state, timeframe, rightOffsetBars, initialVisibleBars, filters, selectedObjectId, highlightedObjectIds, lightMode, priceViewport, viewport, liveDataStale, modelLabel, tradePlan, fillMarkers), [state, timeframe, rightOffsetBars, initialVisibleBars, filters, selectedObjectId, highlightedObjectIds, lightMode, priceViewport, viewport, liveDataStale, modelLabel, tradePlan, fillMarkers]);
   const labels = state.candles.length + (state.forming_candle ? 1 : 0) + Math.max(0, rightOffsetBars);
   const localWindowBars = Math.min(labels, Math.max(24, initialVisibleBars + rightOffsetBars));
@@ -501,6 +503,7 @@ export default function NativeSMCChartOverlay({ state, timeframe = "5m", rightOf
     <EChart option={presentation.option} height="100%" onEvents={events} preserveInteraction fitContentSignal={fitContentSignal} fitRange={fitWindow ?? { start: Math.max(0, ((labels - localWindowBars) / Math.max(1, labels)) * 100), end: 100 }} latestSignal={latestSignal} latestStart={newestWindow.start} focusWindow={focusWindow} onViewportChange={handleViewportChange} prependedData={prependedHistory ? { ...prependedHistory, total: labels } : null} onPriceAxisDrag={onPriceAxisDrag} onResetPriceScale={onResetPriceScale} onChartPointerDown={onChartPointerDown} style={{ borderRadius: 8 }} />
     {inspectedCandle ? <div className={`smc-ohlc-readout ${inspectedCandle.close >= inspectedCandle.open ? "bullish" : "bearish"}`} aria-live="polite"><b>{compactCursorTime(inspectedCandle.timestamp)}</b><span>O {formatPrice(inspectedCandle.open)}</span><span>H {formatPrice(inspectedCandle.high)}</span><span>L {formatPrice(inspectedCandle.low)}</span><span>C {formatPrice(inspectedCandle.close)}</span><span>Vol {formatVolume(inspectedCandle.volume)}</span>{hoveredIndex !== null ? <em>CURSOR</em> : <em>LATEST</em>}</div> : null}
     {historyLoading ? <span className="smc-history-loading">Loading history…</span> : null}
+    {!historyLoading && historyError ? <div className="smc-history-error" role="alert"><span>{historyError}</span><button type="button" onClick={onHistoryRetry} aria-label="Retry older candles">Retry</button></div> : null}
     {historicalMode && onGoLive ? <button type="button" className="smc-go-live" onClick={onGoLive}>→ Live</button> : null}
     {live && presentation.livePrice !== null ? <LivePriceTicker price={presentation.livePrice} range={presentation.priceAxisRange} direction={presentation.liveDirection} candleClosesAt={live.candle_closes_at} observedAt={live.observed_at} stale={liveDataStale} lightMode={lightMode} /> : null}
   </div>;
