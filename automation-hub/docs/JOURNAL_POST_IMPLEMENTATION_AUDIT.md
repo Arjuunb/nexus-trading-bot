@@ -755,3 +755,32 @@ strategy's proposals.**
 * Harness: `truth.py` and `lab_truth.py` now also check the ack time, so the
   instance truth is 34/34. On the old code they report 33/34 and a lab
   mismatch.
+
+**D14 — FIXED.**
+* Change: the decision latency now starts where the decision could first be
+  made, and each record states its basis in
+  `source_ref.decision_latency_basis`. The Trade page shows it next to the
+  value.
+  * Instance and engine trades are measured from the close of the signal
+    candle: the signal's candle open time plus the timeframe.
+  * Replay trades are not measured. Their signal time is a replayed candle
+    and their decision time is the wall clock, and the gap between two clocks
+    is not a latency. It used to read about 209 days.
+  * SMC and PA lab trades are not measured. Both labs stamp their decision
+    with the signal candle's close time by construction, so the gap was always
+    exactly one candle (SMC) or zero (PA).
+  * Other ledger trades (webhook alerts with no candle identity) keep the
+    signal time as the start.
+* Tests: `tests/test_journal_record_timing.py`, with three new tests:
+  * a real forward trade whose latency equals the decision row's time minus
+    the candle close (old code: 323 s instead of 23 s);
+  * a real replay trade with no latency and no clock-inconsistency flag;
+  * a real SMC lab trade whose signal-to-decision gap is exactly one candle
+    and whose latency is not measured.
+
+  All three fail on the old code.
+* Harness: `truth.py` recomputes the latency from the ledger's decision row
+  and the fill's signal time (35/35). `lab_truth.py` expects none. The
+  harness's instance latencies of about 58 s come from its own synthetic
+  candles, which close on the minute before the run. They are not an engine
+  delay.

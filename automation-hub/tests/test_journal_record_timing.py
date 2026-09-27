@@ -93,3 +93,56 @@ def test_a_lab_order_has_no_acknowledgement_time(tmp_path):
     [order] = [o for o in account.broker.orders() if o["id"] == record["order_id"]]
     assert record["order_submitted_at"][:19] == order["created_at"][:19]
     assert record["order_acknowledged_at"] is None
+
+
+# ---------------------------------------------------------------- D14
+def test_decision_latency_runs_from_the_signal_candles_close(tmp_path):
+    """The engine stamps the signal with its candle's open time. Nothing is
+    known until that candle closes, so the latency starts there; measured from
+    the open, it was always at least one candle long."""
+    record, _, signal_bar = _forward_trade(tmp_path)
+    close = signal_bar.timestamp + TF
+    decided = datetime.fromisoformat(record["decision_created_at"])
+    assert record["signal_detected_at"][:19] == signal_bar.timestamp.isoformat()[:19]
+    assert record["decision_latency_ms"] == round((decided - close).total_seconds() * 1000, 1)
+    assert 0 <= record["decision_latency_ms"] < TF.total_seconds() * 1000
+    assert record["source_ref"]["decision_latency_basis"] == "from the close of the 5m signal candle"
+
+
+def test_a_replayed_trade_has_no_decision_latency(tmp_path):
+    """A replay decides on replayed candle times; the decision row carries the
+    wall clock. The difference between two clocks is not a latency."""
+    from data.journal_store import JournalStore
+    from services.decision_journal import DecisionJournal
+    from tests.test_journal_legacy_provenance import _trade
+
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    journal = DecisionJournal(JournalStore(str(tmp_path / "journal.db")))
+    _trade(ledger, journal, "inst-replay", "replay", datetime(2026, 3, 2, tzinfo=timezone.utc))
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    recorder = JournalRecorder(store)
+    recorder.add_ledger(LedgerSource("MAIN", ledger))
+    recorder.reconcile()
+    [row] = store.query_trades()
+    record = store.get(row["journal_record_id"])
+    assert record["record_origin"] == "SIMULATION"
+    assert record["signal_detected_at"].startswith("2026-03-02")        # the replayed candle
+    assert record["decision_latency_ms"] is None
+    assert record["source_ref"]["decision_latency_basis"].startswith("not measured")
+    assert not [m for m in record["missing"] if "clock" in m]
+
+
+def test_a_lab_decision_has_no_latency_to_measure(tmp_path):
+    """The SMC lab stamps its decision with the signal candle's close: the
+    gap from the signal time is exactly one candle, by construction."""
+    from services.journal_recorder import _ms_between
+
+    account, _ = _real_smc_trade(tmp_path)
+    store = TradeRecordStore()
+    SMCLabProjector(account).project(store)
+    [row] = store.query_trades()
+    record = store.get(row["journal_record_id"])
+    assert _ms_between(record["signal_detected_at"], record["decision_created_at"]) \
+        == TF.total_seconds() * 1000
+    assert record["decision_latency_ms"] is None
+    assert record["source_ref"]["decision_latency_basis"].startswith("not measured")

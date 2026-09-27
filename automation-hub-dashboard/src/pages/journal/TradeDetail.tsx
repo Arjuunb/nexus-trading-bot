@@ -115,7 +115,7 @@ export default function TradeDetail({ id, onBack }: { id: string; onBack: () => 
             ["Bid", price(r.bid)], ["Ask", price(r.ask)], ["Spread", price(r.spread)],
             ["Slippage", price(r.slippage)], ["Order type", r.order_type], ["Fill model", r.fill_model],
             ["Order id", r.order_id], ["Position id", r.position_id], ["Status", r.execution_status],
-            ["Decision latency", latency(r.decision_latency_ms)], ["Execution latency", latency(r.execution_latency_ms)],
+            ["Decision latency", decisionLatency(r)], ["Execution latency", latency(r.execution_latency_ms)],
           ]} />
         </Section>
 
@@ -193,6 +193,16 @@ export default function TradeDetail({ id, onBack }: { id: string; onBack: () => 
       )}
     </>
   );
+}
+
+/** The decision latency with the basis the recorder measured it on. Engine
+ * signals carry their candle's open time, so it runs from the candle close;
+ * replay and lab records have no latency to measure and say so. */
+function decisionLatency(r: FullRecord): string {
+  const basis = r.source_ref?.decision_latency_basis;
+  const why = typeof basis === "string" ? basis : null;
+  if (r.decision_latency_ms == null) return why ?? dash;
+  return why ? `${latency(r.decision_latency_ms)} (${why})` : latency(r.decision_latency_ms);
 }
 
 function Section({ title, note, children }: { title: string; note?: string; children: ReactNode }) {

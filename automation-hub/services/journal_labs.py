@@ -28,6 +28,11 @@ from services.journal_recorder import (_f, _finish, _json, _result_fields, _rr, 
                                        _ts, classify_decision, trading_session)
 
 _CORE = ("evaluation", "planned_stop_loss", "entry_fill", "risk_amount")
+# Both labs stamp a decision with its signal candle's close time -- a candle
+# time, not the moment the lab decided -- so a "decision latency" from the
+# signal time would only restate the candle length (or zero).
+_LAB_LATENCY = (None, "not measured: the lab stamps its decision with the signal candle's "
+                      "close time, not the moment it decided")
 _OPEN_ORDER = ("new", "open", "pending", "accepted", "triggered", "partially_filled")
 
 
@@ -229,7 +234,7 @@ class V2LabProjector:
             rec["exit_filled_at"] = _ts(last.get("fill_timestamp") or last.get("timestamp"))
             rec["position_closed_at"] = rec["exit_filled_at"]
             rec["execution_status"] = "CLOSED"
-        return _finish(rec, missing, _CORE)
+        return _finish(rec, missing, _CORE, latency_from=_LAB_LATENCY)
 
     def _unfilled_orders(self, store, metas, orders, filled_entry_orders, known) -> int:
         """Placed strategy orders that never filled: PENDING, CANCELLED or REJECTED."""
@@ -282,7 +287,7 @@ class V2LabProjector:
             rec["planned_rr"] = _rr(rec["planned_entry"], rec["planned_stop_loss"],
                                     rec["planned_take_profit"])
             store.upsert_trade(_finish(rec, ["entry_fill"] if status == "PENDING" else [],
-                                       _CORE), events=_timeline(rec))
+                                       _CORE, latency_from=_LAB_LATENCY), events=_timeline(rec))
             written += 1
         return written
 

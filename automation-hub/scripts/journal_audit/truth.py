@@ -9,6 +9,7 @@ any mismatch.
 import json
 import sqlite3
 import sys
+from datetime import datetime, timedelta
 
 run, inst = sys.argv[1], sys.argv[2]
 
@@ -65,6 +66,14 @@ close_wh = [w for w in wh if w["side"] == "CLOSE"]
 cpl = json.loads(close_wh[0]["payload"]) if close_wh else {}
 d = dec[0] if dec else {}
 gross = (trade["pnl"] or 0) + (trade["fees"] or 0)
+# The engine stamps a signal with its candle's open time; the decision can
+# only follow the candle's close, which is where its latency starts.
+_tf_s = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400}
+_close = (datetime.fromisoformat(str(fev["signal_timestamp"]).replace("Z", "+00:00"))
+          + timedelta(seconds=_tf_s[r["timeframe"]])) if fev.get("signal_timestamp") else None
+_decided = datetime.fromisoformat(str(entry_wh[0]["received_at"]).replace("Z", "+00:00")) \
+    if entry_wh else None
+latency = round((_decided - _close).total_seconds() * 1000, 1) if _close and _decided else None
 risk = abs(trade["entry"] - trade["stop"]) * trade["size"] if trade.get("stop") is not None else None
 checks = [
     ("trade_id", r["trade_id"], trade["id"]),
@@ -90,6 +99,7 @@ checks = [
     ("order_submitted_at", r["order_submitted_at"], fev.get("order_timestamp")),
     # the forward engine writes no acknowledgement event, so there is no ack time
     ("order_acknowledged_at", r["order_acknowledged_at"], None),
+    ("decision_latency_ms", r["decision_latency_ms"], latency),
     ("signal_at", r["signal_detected_at"], fev.get("signal_timestamp")),
     ("exit_reason", r["exit_reason"], cpl.get("exit_reason")),
     ("decision_id", str(r["decision_id"]), str(d.get("id"))),
@@ -110,6 +120,8 @@ for name, got, want in checks:
                            and abs(got - want) <= 1e-6 * max(1, abs(want)))
     if name == "realized_r" and got is not None and want is not None:
         ok = abs(got - want) < 0.01
+    if name == "decision_latency_ms" and got is not None and want is not None:
+        ok = abs(got - want) <= 0.2                    # both rounded to 0.1 ms
     if name in ("position_opened_at", "position_closed_at", "filled_at", "order_submitted_at", "signal_at") \
             and got and want:
         ok = str(got).replace("Z", "+00:00")[:19] == str(want).replace("Z", "+00:00")[:19]

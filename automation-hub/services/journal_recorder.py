@@ -32,9 +32,10 @@ import json
 import os
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Optional
 
+from bot.data.resample import TF_SECONDS
 from data.trade_record_store import TradeRecordStore, record_id_for, utcnow
 
 #: |realized R| at or below this is a breakeven, not a win or a loss. A trade
@@ -215,9 +216,13 @@ def _timeline(rec: dict) -> list[dict]:
     return out
 
 
-def _finish(rec: dict, missing: list[str], core: Iterable[str]) -> dict:
-    rec["decision_latency_ms"] = _ms_between(rec.get("signal_detected_at"),
-                                             rec.get("decision_created_at"))
+def _finish(rec: dict, missing: list[str], core: Iterable[str], *,
+            latency_from: Optional[tuple[Optional[str], str]] = None) -> dict:
+    """Derived fields. ``latency_from`` is (start, basis) for the decision
+    latency, when it does not simply run from the signal time; a None start
+    means there is nothing to measure."""
+    start, basis = latency_from or (rec.get("signal_detected_at"), "from the signal time")
+    rec["decision_latency_ms"] = _ms_between(start, rec.get("decision_created_at"))
     rec["execution_latency_ms"] = _ms_between(
         rec.get("order_submitted_at") or rec.get("decision_created_at"),
         rec.get("entry_filled_at"))
@@ -234,6 +239,7 @@ def _finish(rec: dict, missing: list[str], core: Iterable[str]) -> dict:
     rec["missing_json"] = sorted(set(missing))
     rec["data_completeness"] = _completeness(missing, core)
     rec.setdefault("source_ref_json", {})
+    rec["source_ref_json"]["decision_latency_basis"] = basis
     rec["source_ref_json"]["outcome_basis"] = (
         f"realized R within ±{BREAKEVEN_R} is BREAKEVEN; otherwise the sign of net P&L")
     return rec
@@ -699,7 +705,8 @@ class LedgerProjector:
             rec["exit_filled_at"] = _ts(exec_row.get("created_at")) or _ts(last_leg.get("closed_at"))
             rec["position_closed_at"] = _ts(last_leg.get("closed_at"))
             rec["execution_status"] = "CLOSED"
-        return _finish(rec, missing, self.CORE)
+        return _finish(rec, missing, self.CORE,
+                       latency_from=_ledger_latency_start(origin, signal_at, rec["timeframe"], payload))
 
     def _project_pending(self, source, conn, lock, known, traded_alerts: set,
                          instances) -> int:
@@ -767,6 +774,26 @@ class LedgerProjector:
                                     events=_timeline(rec))
             written += 1
         return written
+
+
+def _ledger_latency_start(origin: str, signal_at: Optional[str], timeframe: Optional[str],
+                          payload: dict) -> tuple[Optional[str], str]:
+    """Where a ledger decision's latency starts, and why.
+
+    The engine stamps a signal with its candle's open time, but nothing about
+    that candle is known until it closes; measured from the open, every
+    decision on 5m candles looked five minutes slow. A replay decides on
+    replayed candle times while the decision row carries the wall clock, and
+    there is no latency between two different clocks.
+    """
+    if origin == "SIMULATION":
+        return None, ("not measured: the signal time is a replayed candle's and the decision "
+                      "time is the wall clock")
+    seconds, opened = TF_SECONDS.get(str(timeframe or "")), _dt(signal_at)
+    if payload.get("decision_identity") and seconds and opened is not None:
+        return ((opened + timedelta(seconds=seconds)).isoformat(),
+                f"from the close of the {timeframe} signal candle")
+    return signal_at, "from the signal time"
 
 
 def _ledger_origin(forward: bool, journal_exec: dict, payload: dict) -> tuple[str, str]:

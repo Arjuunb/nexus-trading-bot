@@ -40,6 +40,8 @@ for lab, source in (("smc", "SMC_LAB"), ("pa", "PA_LAB")):
         ("order_submitted_at", r["order_submitted_at"], entry.get("order_timestamp")),
         # the paper broker writes no acknowledgement event, so there is no ack time
         ("order_acknowledged_at", r["order_acknowledged_at"], None),
+        # the lab stamps its decision with the candle close: nothing to measure
+        ("decision_latency_ms", r["decision_latency_ms"], None),
         ("side", r["side"], "long" if entry["side"] == "buy" else "short"),
         ("risk_amount", r["risk_amount"], risk),
         ("realized_r", r["realized_r"], round(net / risk, 4) if risk else None),
