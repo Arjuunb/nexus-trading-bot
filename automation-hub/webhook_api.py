@@ -1427,7 +1427,7 @@ def _journal_instances(manager):
     def meta() -> dict:
         return {i.id: {"strategy_key": i.strategy_key, "strategy_label": i.strategy_label,
                        "exchange": i.exchange, "instrument_type": i.instrument_type,
-                       "timeframe": i.timeframe}
+                       "timeframe": i.timeframe, "mode": i.mode}
                 for i in list(getattr(manager, "_instances", {}).values())}
     return meta
 

@@ -633,3 +633,21 @@ changed here; it is filed as its own task.
 * Test: open, then closed, through the real pipeline and forward engine, with
   no discrepancy. It fails on the old projector.
 * Harness: all three open records carry their position id.
+
+**D5 — FIXED.**
+* Change: an instance decision's origin comes from what can show it.
+  * A decision that became a trade takes the trade's origin, proven from its
+    fill.
+  * Otherwise the instance's mode decides: "trading" is FORWARD_PAPER, any
+    other mode is SIMULATION. The instance metadata the recorder reads now
+    carries the mode.
+  * A decision whose instance is no longer known keeps the origin it was
+    first recorded with.
+  * One never recorded, with nothing to show its data, is LEGACY_MIGRATION,
+    not forward paper.
+* Tests: the real 3-Candle Rejection signal, blocked by the Decision Brain,
+  on a replay and a trading instance; a decision linked to a forward-filled
+  trade. The replay and no-evidence cases fail on the old code.
+* Harness: its recorder has no instance registry, so its unlinked instance
+  decisions are LEGACY_MIGRATION, and those linked to trades take the
+  trade's origin.

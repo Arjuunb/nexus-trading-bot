@@ -31,7 +31,7 @@ from tests.test_three_candle_rejection import _history, _long_pattern
 TF = timedelta(minutes=5)
 
 
-def _engine_decision(tmp_path, configure) -> dict:
+def _engine_decision(tmp_path, configure, *, mode=None) -> dict:
     """Run the real strategy over its own fixture candles in one real engine
     and return the single decision record the journal made of the signal."""
     ledger = SqliteLedger(str(tmp_path / "ledger.db"))
@@ -60,7 +60,9 @@ def _engine_decision(tmp_path, configure) -> dict:
         engine._process_bar("BTCUSDT", bar, strategy)
     store = TradeRecordStore(str(tmp_path / "trade_records.db"))
     recorder = JournalRecorder(store)
-    recorder.add_ledger(LedgerSource("MAIN", ledger, decision_store=decisions))
+    recorder.add_ledger(LedgerSource(
+        "MAIN", ledger, decision_store=decisions,
+        instances=(lambda: {"inst-1": {"mode": mode}}) if mode else None))
     recorder.reconcile()
     [decision] = store.query_decisions()
     assert store.query_trades() == []
@@ -197,3 +199,38 @@ def test_a_trade_the_quality_gate_allowed_is_plain_passed(tmp_path):
     [row] = env.store.query_trades()
     risk = env.store.get(row["journal_record_id"])["risk_check"]
     assert risk["result"] == "PASSED" and "quality_gate" not in risk
+
+
+# ──────────────── which market data a decision ran on ────────────────
+def _brain_blocked(engine, _pipe):
+    engine.quality_gate_bypass = lambda: False
+
+
+def test_a_replay_instances_decision_is_simulation(tmp_path):
+    assert _engine_decision(tmp_path, _brain_blocked, mode="replay")["record_origin"] == "SIMULATION"
+
+
+def test_a_trading_instances_decision_is_forward_paper(tmp_path):
+    assert _engine_decision(tmp_path, _brain_blocked, mode="trading")["record_origin"] == "FORWARD_PAPER"
+
+
+def test_a_decision_with_nothing_to_show_its_data_is_not_called_forward_paper(tmp_path):
+    assert _engine_decision(tmp_path, _brain_blocked)["record_origin"] == "LEGACY_MIGRATION"
+
+
+def test_a_decision_that_opened_a_trade_takes_the_trades_origin(tmp_path):
+    """The trade's origin was proven from its fill: a forward quote after the
+    decision. No instance metadata is needed, and none is given."""
+    from tests.test_journal_integrity import Env
+    env = Env(tmp_path)
+    env.decisions.record({"symbol": "BTCUSDT", "timeframe": "5m", "strategy": "3CR", "side": "long",
+                          "decision": "accepted", "reason": "", "instance_id": env.instance_id,
+                          "ts": datetime.now(timezone.utc).isoformat(), "decision_identity": "d-1",
+                          "final_state": "PENDING_INTENT", "gate_stage": "execution"})
+    env.entry()
+    env.fill()
+    env.recorder().reconcile()
+    [decision] = env.store.query_decisions()
+    [trade] = env.store.query_trades()
+    assert decision["journal_record_id"] == trade["journal_record_id"]
+    assert decision["record_origin"] == trade["record_origin"] == "FORWARD_PAPER"

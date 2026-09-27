@@ -795,7 +795,7 @@ class DecisionProjector:
         self.store = store
 
     def project(self, source_name: str, decision_store, *, lab_id: Optional[str] = None,
-                since_id: int = 0) -> dict:
+                since_id: int = 0, instances: Optional[Callable[[], dict]] = None) -> dict:
         conn = getattr(decision_store, "_c", None)
         lock = getattr(decision_store, "_lock", None)
         if conn is None:
@@ -808,6 +808,7 @@ class DecisionProjector:
             linked[(rec.get("instance_id") or "", str(rec["decision_id"]))] = rec
         written = 0
         last = since_id
+        meta = (instances() if instances else {}) or {}
         for row in rows:
             last = max(last, int(row["id"]))
             instance_id = row.get("instance_id") or ""
@@ -820,8 +821,9 @@ class DecisionProjector:
                                       row.get("blocker"), row.get("reason"))
             if trade is not None:
                 dtype = "TRADE_OPENED"
+            origin = self._decision_origin(key, trade, meta.get(instance_id))
             self.store.upsert_decision({
-                "decision_key": key, "record_source": name, "record_origin": "FORWARD_PAPER",
+                "decision_key": key, "record_source": name, "record_origin": origin,
                 "instance_id": instance_id or None, "lab_id": lab_id,
                 "strategy_name": row.get("strategy"), "symbol": row.get("symbol"),
                 "timeframe": row.get("timeframe"), "side": _side(row.get("side")),
@@ -842,6 +844,24 @@ class DecisionProjector:
             })
             written += 1
         return {"source": source_name, "written": written, "last_id": last}
+
+    def _decision_origin(self, key: str, trade: Optional[dict], instance: Optional[dict]) -> str:
+        """Which market data a decision ran on, from what can show it.
+
+        A decision that became a trade takes that trade's origin, which the
+        ledger projector proved from the fill. Otherwise the instance's mode
+        says it: a "trading" instance runs on the live forward feed, any other
+        mode replays candles. A decision whose instance is no longer known keeps
+        the origin it was first recorded with; one never recorded before, with
+        nothing to show its data, is not called forward paper.
+        """
+        if trade is not None and trade.get("record_origin"):
+            return trade["record_origin"]
+        mode = (instance or {}).get("mode")
+        if mode:
+            return "FORWARD_PAPER" if mode == "trading" else "SIMULATION"
+        existing = self.store.get_decision(key)
+        return existing["record_origin"] if existing else "LEGACY_MIGRATION"
 
     def project_outages(self, source_name: str, ledger, *, since_ts: str = "") -> dict:
         """One decision record per market-data outage of a Trading Instance.
@@ -1006,7 +1026,8 @@ class JournalRecorder:
                         # decision recorded just before its trade gets its link.
                         out = self._decisions.project(source.name, source.decision_store,
                                                       lab_id=source.lab_id,
-                                                      since_id=max(0, since - 500))
+                                                      since_id=max(0, since - 500),
+                                                      instances=source.instances)
                         self.store.set_state(key, out.get("last_id", since))
                         report["decisions"].append(out)
                     key = f"outages_watermark:{source.name}"
