@@ -138,7 +138,7 @@ ids_after = set(rv_after[0]["journal_record_ids"])
 late_id = store.by_key("AUDIT:late-arrival")["journal_record_id"]
 print(f"  review written again: {again['written']}; stored review includes the late record: {late_id in ids_after}")
 check("a late record in a reviewed week is reflected (or the review is flagged stale)", late_id in ids_after,
-      "EXPECTED FAIL if the scheduler never revisits a DONE week")
+      "the next run must write a revision that includes it")
 
 # ---------------- 15. memory and safe learning
 print("\n[15] memory")

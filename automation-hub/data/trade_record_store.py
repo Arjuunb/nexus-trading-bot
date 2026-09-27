@@ -244,7 +244,8 @@ class TradeRecordStore:
           journal_record_ids_json TEXT NOT NULL, stats_json TEXT NOT NULL,
           comparison_json TEXT, findings_json TEXT NOT NULL,
           validation_json TEXT NOT NULL,
-          UNIQUE(agent_id, strategy_id, period_start, period_end, review_version));
+          revision INTEGER NOT NULL DEFAULT 1, superseded_by TEXT, revision_reason TEXT,
+          UNIQUE(agent_id, strategy_id, period_start, period_end, review_version, revision));
 
         CREATE TABLE IF NOT EXISTS improvement_proposals(
           proposal_id TEXT PRIMARY KEY, review_id TEXT NOT NULL,
@@ -266,6 +267,31 @@ class TradeRecordStore:
         CREATE TABLE IF NOT EXISTS recorder_state(
           key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at TEXT NOT NULL);
         """)
+        if "revision" not in {row[1] for row in c.execute("PRAGMA table_info(weekly_reviews)")}:
+            # Revisions arrived after the first weekly reviews were written. The
+            # uniqueness key gains the revision, which SQLite can only change by
+            # rebuilding the table; every existing review becomes revision 1.
+            c.executescript("""
+            ALTER TABLE weekly_reviews RENAME TO weekly_reviews_before_revisions;
+            CREATE TABLE weekly_reviews(
+              review_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL,
+              strategy_id TEXT NOT NULL, scope_json TEXT NOT NULL,
+              period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+              review_version INTEGER NOT NULL, generated_at TEXT NOT NULL,
+              journal_record_ids_json TEXT NOT NULL, stats_json TEXT NOT NULL,
+              comparison_json TEXT, findings_json TEXT NOT NULL,
+              validation_json TEXT NOT NULL,
+              revision INTEGER NOT NULL DEFAULT 1, superseded_by TEXT, revision_reason TEXT,
+              UNIQUE(agent_id, strategy_id, period_start, period_end, review_version, revision));
+            INSERT INTO weekly_reviews(review_id, agent_id, strategy_id, scope_json, period_start,
+              period_end, review_version, generated_at, journal_record_ids_json, stats_json,
+              comparison_json, findings_json, validation_json)
+            SELECT review_id, agent_id, strategy_id, scope_json, period_start, period_end,
+              review_version, generated_at, journal_record_ids_json, stats_json,
+              comparison_json, findings_json, validation_json
+            FROM weekly_reviews_before_revisions;
+            DROP TABLE weekly_reviews_before_revisions;
+            """)
         existing = {row[1] for row in c.execute("PRAGMA table_info(trade_records)")}
         for name, decl in _TRADE_COLUMNS:
             if name not in existing:
@@ -637,16 +663,34 @@ class TradeRecordStore:
 
     # ---------------------------------------------------------- weekly reviews
     def save_weekly_review(self, review: dict) -> dict:
-        """Persist a weekly review once; a second save of the same key is a no-op."""
+        """Persist a weekly review once; a second save of the same key is a no-op.
+
+        A review that ``supersedes`` an earlier revision of the same week marks
+        that one superseded, and retires its proposals still awaiting a person:
+        they were drawn from evidence that has since changed. Proposals a
+        person already decided keep their decision.
+        """
         with self._lock:
             self._c.execute(
-                "INSERT OR IGNORE INTO weekly_reviews VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT OR IGNORE INTO weekly_reviews(review_id, agent_id, strategy_id, scope_json, "
+                "period_start, period_end, review_version, generated_at, journal_record_ids_json, "
+                "stats_json, comparison_json, findings_json, validation_json, revision, "
+                "revision_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (review["review_id"], review["agent_id"], review["strategy_id"],
                  _dumps(review["scope"]), review["period_start"], review["period_end"],
                  int(review["review_version"]), review["generated_at"],
                  _dumps(review["journal_record_ids"]), _dumps(review["stats"]),
                  _dumps(review.get("comparison")), _dumps(review["findings"]),
-                 _dumps(review["validation"])))
+                 _dumps(review["validation"]), int(review.get("revision") or 1),
+                 review.get("revision_reason")))
+            if review.get("supersedes"):
+                self._c.execute(
+                    "UPDATE weekly_reviews SET superseded_by=? WHERE review_id=? "
+                    "AND superseded_by IS NULL", (review["review_id"], review["supersedes"]))
+                self._c.execute(
+                    "UPDATE improvement_proposals SET status='SUPERSEDED', decision_note=? "
+                    "WHERE review_id=? AND status='PENDING_APPROVAL'",
+                    (f"superseded by review {review['review_id']}", review["supersedes"]))
             for proposal in review.get("proposals") or []:
                 self._c.execute(
                     "INSERT OR IGNORE INTO improvement_proposals VALUES "
@@ -659,22 +703,36 @@ class TradeRecordStore:
             self._c.commit()
             row = self._c.execute(
                 "SELECT * FROM weekly_reviews WHERE agent_id=? AND strategy_id=? AND "
-                "period_start=? AND period_end=? AND review_version=?",
+                "period_start=? AND period_end=? AND review_version=? AND revision=?",
                 (review["agent_id"], review["strategy_id"], review["period_start"],
-                 review["period_end"], int(review["review_version"]))).fetchone()
+                 review["period_end"], int(review["review_version"]),
+                 int(review.get("revision") or 1))).fetchone()
             return self._row(row)
 
     def weekly_reviews(self, *, agent_id: Optional[str] = None,
-                       strategy_id: Optional[str] = None, limit: int = 52) -> list[dict]:
-        cond, args = [], []
+                       strategy_id: Optional[str] = None, limit: int = 52,
+                       include_superseded: bool = False) -> list[dict]:
+        """The current revision of each weekly review, newest week first. A
+        superseded revision stays readable by id (weekly_review)."""
+        cond, args = ([] if include_superseded else ["superseded_by IS NULL"]), []
         if agent_id:
             cond.append("agent_id=?"); args.append(agent_id)
         if strategy_id:
             cond.append("strategy_id=?"); args.append(strategy_id)
         sql = "SELECT * FROM weekly_reviews" + (" WHERE " + " AND ".join(cond) if cond else "")
-        sql += " ORDER BY period_start DESC, review_version DESC LIMIT ?"
+        sql += " ORDER BY period_start DESC, review_version DESC, revision DESC LIMIT ?"
         with self._lock:
             return [self._row(r) for r in self._c.execute(sql, [*args, int(limit)])]
+
+    def current_weekly_review(self, agent_id: str, strategy_id: str, period_start: str,
+                              period_end: str) -> Optional[dict]:
+        """The revision of one agent's review of one week that is in force."""
+        with self._lock:
+            return self._row(self._c.execute(
+                "SELECT * FROM weekly_reviews WHERE agent_id=? AND strategy_id=? AND "
+                "period_start=? AND period_end=? AND superseded_by IS NULL "
+                "ORDER BY review_version DESC, revision DESC LIMIT 1",
+                (agent_id, strategy_id, period_start, period_end)).fetchone())
 
     def weekly_review(self, review_id: str) -> Optional[dict]:
         with self._lock:

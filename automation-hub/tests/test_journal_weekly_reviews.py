@@ -176,3 +176,82 @@ def test_rule_compliance_ignores_reviews_that_could_not_assess_it(store):
     s = stats.summarize(rows, reviews=reviews)
     assert s["reviewed"] == 3 and s["compliance_assessed"] == 2
     assert s["rule_compliance"] == pytest.approx(0.5)
+
+
+# ──────────── a trade that reaches the journal after its week was reviewed ────────────
+def test_a_late_trade_revises_its_weeks_review_through_the_real_pipeline(tmp_path):
+    """Two trades close in the same week through the real pipeline and the
+    forward engine; the second reaches the journal only after the week was
+    reviewed. The next run writes revision 2 with both, the first revision
+    stays readable and says what replaced it, and a further run changes
+    nothing."""
+    from tests.test_journal_integrity import Env
+
+    env = Env(tmp_path)
+    rec = env.recorder()
+    env.entry(alert="w1"); env.fill(); env.close(102.0, alert="w1c", reason="take-profit")
+    rec.reconcile()
+    after_week = datetime.now(timezone.utc) + timedelta(days=8)
+    first = run_weekly(env.store, now=after_week)
+    [rev1] = env.store.weekly_reviews()
+    assert len(first["written"]) == 1 and len(rev1["journal_record_ids"]) == 1
+
+    env.entry(alert="w2"); env.fill(); env.close(99.0, alert="w2c", reason="stop-loss")
+    rec.reconcile()                                 # the late arrival
+    late = [r["journal_record_id"] for r in env.store.query_trades()
+            if r["journal_record_id"] not in rev1["journal_record_ids"]]
+    second = run_weekly(env.store, now=after_week)
+    assert second["revised"] and second["written"] == second["revised"]
+    [rev2] = env.store.weekly_reviews()             # only the revision in force is listed
+    assert rev2["revision"] == 2 and rev2["review_id"] != rev1["review_id"]
+    assert sorted(rev2["journal_record_ids"]) == sorted(rev1["journal_record_ids"] + late)
+    assert rev2["stats"]["overall"]["trades"] == 2
+    assert late[0] in rev2["revision_reason"]
+    old = env.store.weekly_review(rev1["review_id"])
+    assert old["superseded_by"] == rev2["review_id"]            # still readable, and says so
+    assert run_weekly(env.store, now=after_week)["written"] == []   # nothing more to revise
+
+
+def test_a_revision_retires_pending_proposals_but_keeps_a_persons_decision(tmp_path):
+    s = TradeRecordStore(str(tmp_path / "p.db"))
+    for n in range(PROPOSAL_MIN_SAMPLE):                        # a consistently losing session
+        _trade(s, n, closed_at=WEEK + timedelta(days=1, minutes=n), r=-1.0, session="ASIA")
+    run_weekly(s, now=WEEK + timedelta(days=8))
+    [proposal] = s.proposals()
+    _trade(s, 99, closed_at=WEEK + timedelta(days=2), r=-1.0, session="ASIA")   # arrives late
+    run_weekly(s, now=WEEK + timedelta(days=8))
+    statuses = {p["proposal_id"]: p["status"] for p in s.proposals()}
+    assert statuses[proposal["proposal_id"]] == "SUPERSEDED"
+    [fresh] = [p for p in s.proposals() if p["status"] == "PENDING_APPROVAL"]
+    assert fresh["sample_size"] == PROPOSAL_MIN_SAMPLE + 1
+    with pytest.raises(ValueError):                             # a retired proposal cannot be approved
+        s.decide_proposal(proposal["proposal_id"], approve=True, actor="arjun")
+
+    decided = s.decide_proposal(fresh["proposal_id"], approve=False, actor="arjun")
+    _trade(s, 100, closed_at=WEEK + timedelta(days=3), r=-1.0, session="ASIA")
+    run_weekly(s, now=WEEK + timedelta(days=8))
+    kept = {p["proposal_id"]: p for p in s.proposals()}[decided["proposal_id"]]
+    assert (kept["status"], kept["decided_by"]) == ("REJECTED", "arjun")
+
+
+def test_reviews_written_before_revisions_existed_become_revision_one(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "old.db")
+    c = sqlite3.connect(path)
+    c.executescript("""
+    CREATE TABLE weekly_reviews(
+      review_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, strategy_id TEXT NOT NULL,
+      scope_json TEXT NOT NULL, period_start TEXT NOT NULL, period_end TEXT NOT NULL,
+      review_version INTEGER NOT NULL, generated_at TEXT NOT NULL,
+      journal_record_ids_json TEXT NOT NULL, stats_json TEXT NOT NULL, comparison_json TEXT,
+      findings_json TEXT NOT NULL, validation_json TEXT NOT NULL,
+      UNIQUE(agent_id, strategy_id, period_start, period_end, review_version));
+    INSERT INTO weekly_reviews VALUES ('wr_old','a','s','{}','2026-09-07','2026-09-14',1,
+      '2026-09-14T00:00:00+00:00','["tr_1"]','{}',NULL,'{}','{}');
+    """)
+    c.commit()
+    c.close()
+    s = TradeRecordStore(path)
+    [row] = s.weekly_reviews()
+    assert (row["review_id"], row["revision"], row["superseded_by"]) == ("wr_old", 1, None)
+    assert row["journal_record_ids"] == ["tr_1"]

@@ -297,7 +297,9 @@ def _findings(records: list[dict], report: dict, previous: Optional[dict],
 
 
 def build_weekly_review(store: TradeRecordStore, scope: dict, start: datetime,
-                        end: datetime, *, version: int = WEEKLY_REVIEW_VERSION) -> dict:
+                        end: datetime, *, version: int = WEEKLY_REVIEW_VERSION,
+                        revision: int = 1, supersedes: Optional[str] = None,
+                        revision_reason: Optional[str] = None) -> dict:
     records = _records(store, scope, start, end)
     validation = _validate(records)
     reviews = store.reviews_for(_ids(records))
@@ -315,9 +317,10 @@ def build_weekly_review(store: TradeRecordStore, scope: dict, start: datetime,
         comparison["previous_review_id"] = previous["review_id"]
     all_time = _records(store, scope, None, end)
     findings, proposals = _findings(records, report, previous, reviews, all_time, scope)
-    review_id = "wr_" + hashlib.sha256(
-        f"{scope['agent_id']}|{scope['strategy_id']}|{start.isoformat()}|{end.isoformat()}|{version}"
-        .encode()).hexdigest()[:24]
+    identity = f"{scope['agent_id']}|{scope['strategy_id']}|{start.isoformat()}|{end.isoformat()}|{version}"
+    if revision > 1:                     # revision 1 keeps the id it always had
+        identity += f"|r{revision}"
+    review_id = "wr_" + hashlib.sha256(identity.encode()).hexdigest()[:24]
     for p in proposals:
         p["proposal_id"] = "pp_" + hashlib.sha256(f"{review_id}|{p['title']}".encode()).hexdigest()[:24]
     return {
@@ -328,21 +331,55 @@ def build_weekly_review(store: TradeRecordStore, scope: dict, start: datetime,
         "review_version": version, "generated_at": utcnow(),
         "journal_record_ids": _ids(records), "stats": report, "comparison": comparison,
         "findings": findings, "validation": validation, "proposals": proposals,
+        "revision": revision, "supersedes": supersedes, "revision_reason": revision_reason,
     }
 
 
 def run_weekly(store: TradeRecordStore, *, now: Optional[datetime] = None,
                catch_up_weeks: int = MAX_CATCH_UP_WEEKS) -> dict:
-    """Write every missing completed-week review. Idempotent and restart-safe."""
+    """Write every missing completed-week review, and revise any whose week
+    has gained or lost records since it was written. Idempotent and
+    restart-safe.
+
+    A trade can reach the journal after its week was reviewed -- it closed in
+    the last seconds of the week, or its source was reconciled after a
+    restart. A review written once and never revisited would then leave it out
+    for good, and say nothing. Within the catch-up window, each reviewed week's
+    record ids are compared with the records it has now; a difference writes
+    the next revision, which supersedes the one before.
+    """
     now = now or datetime.now(timezone.utc)
     current_start, _ = week_bounds(now)
-    done, skipped = [], 0
+    done, skipped, revised = [], 0, []
     for scope in review_scopes(store):
         for back in range(catch_up_weeks, 0, -1):
             start = current_start - timedelta(days=7 * back)
             end = start + timedelta(days=7)
-            if not _records(store, scope, start, end):
+            records = _records(store, scope, start, end)
+            if not records:
                 continue                                 # no empty reviews
+            current = store.current_weekly_review(scope["agent_id"], scope["strategy_id"],
+                                                  start.isoformat(), end.isoformat())
+            if current is not None:
+                then, now_ids = set(current["journal_record_ids"]), set(_ids(records))
+                if then == now_ids:
+                    skipped += 1
+                    continue
+                added, gone = sorted(now_ids - then), sorted(then - now_ids)
+                reason = (f"revision {current['revision']} covered {len(then)} record(s); "
+                          f"{len(added)} closed in this week reached the journal after it was "
+                          f"written" + (f" and {len(gone)} no longer qualify" if gone else "")
+                          + f". Added: {', '.join(added) or 'none'}.")
+                review = build_weekly_review(store, scope, start, end,
+                                             revision=int(current["revision"]) + 1,
+                                             supersedes=current["review_id"],
+                                             revision_reason=reason)
+                saved = store.save_weekly_review(review)
+                store.set_state(f"memory_last_reviewed:{scope['agent_id']}:{scope['strategy_id']}",
+                                {"review_id": saved["review_id"], "at": saved["generated_at"]})
+                done.append(saved["review_id"])
+                revised.append(saved["review_id"])
+                continue
             if not store.claim_review_run(scope["agent_id"], scope["strategy_id"],
                                           start.isoformat(), end.isoformat()):
                 skipped += 1
@@ -360,7 +397,7 @@ def run_weekly(store: TradeRecordStore, *, now: Optional[datetime] = None,
                 store.finish_review_run(scope["agent_id"], scope["strategy_id"],
                                         start.isoformat(), end.isoformat(),
                                         error=f"{type(exc).__name__}: {exc}")
-    return {"written": done, "already_done": skipped}
+    return {"written": done, "already_done": skipped, "revised": revised}
 
 
 class WeeklyReviewScheduler:

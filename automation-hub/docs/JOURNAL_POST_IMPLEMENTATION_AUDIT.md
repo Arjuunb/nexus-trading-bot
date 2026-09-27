@@ -548,3 +548,23 @@ are not recorded.
   Both fail on the old projector.
 * Harness: the SMC record lists 7 passed conditions; the not-required pivot
   is excluded.
+
+**D11 — FIXED.**
+* Change: each run compares every reviewed week in the catch-up window with
+  the records that week has now. A difference writes the next revision,
+  with the reason and the added record ids. The earlier revision is marked
+  superseded and stays readable by id; lists show the revision in force.
+  Proposals of the superseded revision still awaiting a person become
+  SUPERSEDED and can no longer be approved; a decision a person already
+  made is kept.
+* Migration: existing databases are rebuilt once, with every existing
+  review as revision 1 under its old id. The Weekly tab shows the revision
+  and why it was written.
+* Tests:
+  * a late trade through the real pipeline and forward engine produces
+    revision 2 with both trades, and a third run changes nothing;
+  * proposal retirement, with a person's decision kept;
+  * migrating a pre-revision database.
+
+  All three fail on the old code.
+* Harness: weekly checks 80/80.

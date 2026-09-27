@@ -34,7 +34,8 @@ type Proposal = {
   decided_by: string | null; decided_at: string | null;
 };
 type ReviewSummary = { review_id: string; agent_id: string; strategy_id: string; period_start: string;
-  period_end: string; review_version: number; generated_at: string; journal_record_ids: string[] };
+  period_end: string; review_version: number; generated_at: string; journal_record_ids: string[];
+  revision?: number; superseded_by?: string | null; revision_reason?: string | null };
 type ReviewFull = ReviewSummary & {
   stats: Report; comparison: Record<string, { this: number | null; previous: number | null }> | null;
   findings: { facts: Finding[]; observations: Finding[]; hypotheses: Finding[]; recommendations: Finding[] };
@@ -192,7 +193,7 @@ export default function JournalWeekly() {
         </Card>
       )}
 
-      <Card title="Saved reviews" subtitle={`${reviews.length} review(s) for this scope · written once per completed week`}>
+      <Card title="Saved reviews" subtitle={`${reviews.length} review(s) for this scope · written for each completed week, revised if a late trade lands in it`}>
         {reviews.length === 0 ? <p className="dim">No completed week with trades yet for this scope.</p> : (
           <ul className="jr-review-weeks">
             {reviews.map((r) => (
@@ -200,7 +201,8 @@ export default function JournalWeekly() {
                 <button type="button" className={`jr-week-btn ${openReview === r.review_id ? "active" : ""}`}
                   onClick={() => setOpenReview(openReview === r.review_id ? null : r.review_id)}>
                   <span>{when(r.period_start).split(",")[0]} → {when(r.period_end).split(",")[0]}</span>
-                  <span className="dim">{r.journal_record_ids.length} trade(s) · v{r.review_version}</span>
+                  <span className="dim">{r.journal_record_ids.length} trade(s) · v{r.review_version}
+                    {(r.revision ?? 1) > 1 ? ` · revision ${r.revision}` : ""}</span>
                 </button>
                 {openReview === r.review_id && review.data && (
                   <ReviewBody review={review.data} onOpen={setEvidence} />
@@ -238,6 +240,12 @@ function ReviewBody({ review, onOpen }: { review: ReviewFull; onOpen: (e: { titl
     <div className="jr-review-body">
       <p className="dim">Generated {whenFull(review.generated_at)} from {v.records} record(s)
         {v.missing_realized_r.length ? ` · ${v.missing_realized_r.length} without known risk (left out of R figures)` : ""}.</p>
+      {review.revision_reason && (
+        <p className="jr-note"><Badge text={`Revision ${review.revision}`} tone="amber" /> {review.revision_reason}</p>
+      )}
+      {review.superseded_by && (
+        <p className="jr-note"><Badge text="Superseded" tone="amber" /> A later revision of this week replaces this review.</p>
+      )}
       {groups.map(([key, title, tone]) => (
         <div key={key} className="jr-findings">
           <Badge text={title} tone={tone} />
