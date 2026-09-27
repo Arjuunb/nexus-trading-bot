@@ -545,10 +545,9 @@ def test_21_smc_lab_merges_the_agent_into_the_same_record(tmp_path):
     assert d["journal_record_id"] == r["journal_record_id"]     # the decision links to its trade
 
 
-def test_21b_smc_conditions_on_the_record_are_the_strategys_own(tmp_path):
-    """Strategy, lab placement, fill and stop-out all real: the record's
-    condition lists are the frozen evaluation's, a NOT_REQUIRED condition is
-    not listed as required, and the decision record agrees."""
+def _real_smc_trade(tmp_path):
+    """The frozen SMC strategy's setup, placed by the lab in automatic mode,
+    filled on the next candle and stopped out on the one after."""
     from bot.types import Bar
     from services.smc_strategy_lab import SMCPaperAccount, SMCPaperConfig
     from services.smc_strategy_v1 import evaluate
@@ -567,6 +566,14 @@ def test_21b_smc_conditions_on_the_record_are_the_strategys_own(tmp_path):
     stop = plan["stop"]
     account.process_candle("BTCUSDT", Bar(t0 + timedelta(minutes=10), plan["entry"], plan["entry"] + 0.1,
                                           stop - 1.1, stop - 1, 10_000))
+    return account, evaluation
+
+
+def test_21b_smc_conditions_on_the_record_are_the_strategys_own(tmp_path):
+    """Strategy, lab placement, fill and stop-out all real: the record's
+    condition lists are the frozen evaluation's, a NOT_REQUIRED condition is
+    not listed as required, and the decision record agrees."""
+    account, evaluation = _real_smc_trade(tmp_path)
     store = TradeRecordStore()
     SMCLabProjector(account).project(store)
     [r] = store.query_trades()
@@ -598,6 +605,48 @@ def test_an_open_trade_already_names_its_position(env):
     closed = _one(env)
     assert closed["position_id"] == row[0]
     assert not [c for c in closed["corrections"] if c["kind"] == "DISCREPANCY"]
+
+
+def test_21c_the_agent_that_took_an_smc_trade_is_linked_even_after_it_closed(tmp_path):
+    """The agent writes its decision and trade when it acts; a recorder pass
+    can finalize the lab record first. The next pass links both ways: the
+    record names the agent and its decision, and the agent's TAKEN decision
+    opens the record."""
+    from services.smc_agent_journal import SMCAgentJournal
+
+    account, evaluation = _real_smc_trade(tmp_path)
+    journal = SMCAgentJournal(str(tmp_path / "agent.db"))
+    store = TradeRecordStore()
+    projector = SMCLabProjector(account, agent_journal=journal)
+    projector.project(store)
+    [before] = store.query_trades()
+    assert before["finalized"] == 1 and before["agent_id"] is None
+
+    # what services/smc_agent.py writes, in its order
+    proposal_id = evaluation["proposal"]["id"]
+    order_id = account._db.execute("SELECT order_id FROM smc_order_meta").fetchone()[0]
+    journal.create_execution_intent(execution_key="ek-1", symbol="BTCUSDT", timeframe="5m",
+                                    proposal_id=proposal_id, session_id=account.session()["id"],
+                                    payload={"direction": "long"})
+    journal.transition_execution("ek-1", "EXECUTED", broker_order_id=order_id)
+    decision_id = journal.record_decision(
+        symbol="BTCUSDT", timeframe="5m", smc_state="ENTRY_READY", outcome="TAKEN",
+        reason_code="ALL_GATES_PASSED", reason="all agent gates passed", proposal_id=proposal_id)
+    trade_id = journal.open_trade(decision_id=decision_id, symbol="BTCUSDT", timeframe="5m",
+                                  direction="long", entry=100.0, stop=99.0, target=102.0,
+                                  planned_rr=2.0, size=0.01, why="all agent gates passed",
+                                  proposal_id=proposal_id, order_id=order_id)
+    journal.transition_execution("ek-1", "COMPLETE", decision_id=decision_id,
+                                 broker_order_id=order_id, trade_id=trade_id)
+    projector.project(store)
+
+    after = store.get(before["journal_record_id"])
+    assert (after["agent_id"], after["decision_id"]) == ("smc_agent", decision_id)
+    assert after["facts_hash"] != before["facts_hash"]
+    assert any(c["kind"] == "ENRICH" and c["field"] == "decision_id" for c in after["corrections"])
+    [taken] = [d for d in store.query_decisions() if d["record_source"] == "AGENT"]
+    assert (taken["decision_type"], taken["journal_record_id"]) == \
+        ("TRADE_OPENED", before["journal_record_id"])
 
 
 def test_22_trading_instance_record_carries_frozen_decision_evidence(env):

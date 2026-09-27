@@ -119,6 +119,7 @@ class V2LabProjector:
             key = self._key(meta, entry)
             if known.get(key, (None, 0))[1] and life["closed"]:
                 seen += 1
+                self._late_agent_link(store, key, meta)
                 continue
             record = self._record(life, meta, orders, key)
             self._link_agent(record, meta)
@@ -287,6 +288,9 @@ class V2LabProjector:
     def _link_agent(self, record: dict, meta: dict) -> None:
         return None
 
+    def _late_agent_link(self, store, key: str, meta: dict) -> None:
+        return None
+
     def project_decisions(self, store) -> int:
         return 0
 
@@ -414,6 +418,22 @@ class SMCLabProjector(V2LabProjector):
             "risk_check": {"risk_pct": meta.get("risk_pct"), "result": "PASSED",
                            "basis": "the lab placed the order, so its risk gates passed"},
         }
+
+    def _late_agent_link(self, store: TradeRecordStore, key: str, meta: dict) -> None:
+        """A finished record whose agent row arrived after it was finalized.
+
+        The agent writes its trade when it acts, but a pass can finalize the
+        lab record first. The link is a previously unknown fact, so it fills
+        in (logged as an enrichment) and never replaces a known one."""
+        link: dict = {}
+        self._link_agent(link, meta)
+        if not link:
+            return
+        existing = store.by_key(key)
+        if existing is None or existing.get("agent_id"):
+            return
+        store.upsert_trade({"execution_key": key, "agent_id": link["agent_id"],
+                            "decision_id": link["decision_id"]})
 
     def _link_agent(self, record: dict, meta: dict) -> None:
         journal = self.agent_journal
@@ -544,14 +564,17 @@ class SMCLabProjector(V2LabProjector):
                 anchor = (f"{d.get('setup_id')}:{outcome}:{d.get('reason_code')}"
                           if outcome == "NOT_READY" and d.get("setup_id") else d["id"])
                 trade = None
-                if d.get("trade_id"):
-                    rows = _rows(jconn, jlock, "SELECT proposal_id FROM agent_trades WHERE id=?",
-                                 (d["trade_id"],))
-                    if rows and rows[0].get("proposal_id"):
-                        trade = next(iter(store.query_trades(
-                            where="record_source='SMC_LAB' AND source_ref_json LIKE ?",
-                            params=(f'%"proposal_id":"{rows[0]["proposal_id"]}"%',),
-                            limit=1)), None)
+                # The agent records the trade it took on agent_trades (keyed by
+                # this decision), not on the decision row, which it writes first.
+                rows = (_rows(jconn, jlock, "SELECT proposal_id FROM agent_trades WHERE id=?",
+                              (d["trade_id"],)) if d.get("trade_id") else
+                        _rows(jconn, jlock, "SELECT proposal_id FROM agent_trades WHERE decision_id=? "
+                                            "ORDER BY opened_at LIMIT 1", (d["id"],)))
+                if rows and rows[0].get("proposal_id"):
+                    trade = next(iter(store.query_trades(
+                        where="record_source='SMC_LAB' AND source_ref_json LIKE ?",
+                        params=(f'%"proposal_id":"{rows[0]["proposal_id"]}"%',),
+                        limit=1)), None)
                 store.upsert_decision({
                     "decision_key": f"AGENT:decision:{anchor}", "record_source": "AGENT",
                     "record_origin": "FORWARD_PAPER", "agent_id": "smc_agent",

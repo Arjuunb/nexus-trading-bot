@@ -666,3 +666,16 @@ changed here; it is filed as its own task.
   re-evaluating the same candles. It fails on the old projector.
 * Harness: all 8 traded instance decisions read FILLED with no blocker; the
   restarted one keeps its duplicate attempt.
+
+**D9 — FIXED.**
+* Change: the agent's TAKEN decision is linked through
+  `agent_trades.decision_id`, which is where the real agent records the trade
+  it took. The decision row, written first, never carries it. A finished SMC
+  record whose agent row arrived after it was finalized is linked on the next
+  pass. The agent and decision ids are previously unknown facts, so they fill
+  in and are logged as an enrichment; a known value is never replaced.
+* Test: the frozen SMC strategy's setup, placed, filled and stopped out by the
+  lab, and then the agent's writes in the real agent's order. It fails on the
+  old projector.
+* Harness: the SMC record names `smc_agent` and its decision, and the agent's
+  TAKEN decision opens the record.
