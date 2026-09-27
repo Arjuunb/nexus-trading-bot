@@ -242,45 +242,129 @@ def _finish(rec: dict, missing: list[str], core: Iterable[str]) -> dict:
 # ======================================================================
 # decision classification
 # ======================================================================
+#: What each structured code the producers write means. Looked up before
+#: anything else: a code says what happened, a reason only describes it.
+#: Sources: gate_blocker() in services/signal_pipeline.py, the engine's
+#: operating-mode and order codes (services/auto_engine.py), the SMC lab's
+#: candidate statuses (services/smc_strategy_lab.py) and the SMC agent's gate
+#: names (services/smc_agent*.py).
+_CODE_TYPES = {
+    # the Decision Brain and the market-quality gate judged the setup
+    "BRAIN": "QUALITY_BLOCKED", "QUALITY_SCORE": "QUALITY_BLOCKED",
+    "MARKET_QUALITY": "QUALITY_BLOCKED", "PATTERN_EXPECTANCY": "QUALITY_BLOCKED",
+    # the plan itself fell short
+    "INSUFFICIENT_RR": "SETUP_REJECTED", "NET_RR_TOO_LOW": "SETUP_REJECTED",
+    "MINIMUM_REWARD_TO_RISK": "SETUP_REJECTED", "NOT_AN_SMC_SIGNAL": "SETUP_REJECTED",
+    "REJECTED": "SETUP_REJECTED", "EXPIRED": "SETUP_REJECTED", "CANCELLED": "SETUP_REJECTED",
+    # market context
+    "CONTEXT": "CONTEXT_BLOCKED", "MINIMUM_VOLATILITY": "CONTEXT_BLOCKED",
+    # data
+    "STALE_CANDLE": "STALE_DATA", "STALE_CANDLES": "STALE_DATA", "WARMUP": "STALE_DATA",
+    "DATA_PAUSED": "STALE_DATA", "DATA_STALE": "STALE_DATA",
+    # risk, account and operator controls
+    "PAUSED": "RISK_BLOCKED", "INVALID_RISK": "RISK_BLOCKED", "RISK_LIMIT": "RISK_BLOCKED",
+    "DAILY_LOSS_LIMIT": "RISK_BLOCKED", "WEEKLY_LOSS_LIMIT": "RISK_BLOCKED",
+    "LOSS_COOLDOWN": "RISK_BLOCKED", "TRADE_LIMIT": "RISK_BLOCKED",
+    "CORRELATED_EXPOSURE": "RISK_BLOCKED", "PORTFOLIO_EXPOSURE": "RISK_BLOCKED",
+    "MAX_OPEN_POSITIONS": "RISK_BLOCKED", "DAILY_LOSS_CAP": "RISK_BLOCKED",
+    "CONSECUTIVE_LOSSES": "RISK_BLOCKED", "POSITION_SIZE_CAPPED": "RISK_BLOCKED",
+    "POSITION_SIZE_WITHIN_BOUNDS": "RISK_BLOCKED",
+    # when and what news
+    "OUTSIDE_SESSION": "SESSION_BLOCKED", "TRADING_DAY_DISABLED": "SESSION_BLOCKED",
+    "SESSION_HOURS": "SESSION_BLOCKED", "EVENT_BLACKOUT": "NEWS_BLACKOUT",
+    # the operating mode held the order back
+    "SIGNALS_ONLY": "SIGNALS_ONLY", "SIGNAL_ONLY": "SIGNALS_ONLY",
+    "APPROVAL_REQUIRED": "APPROVAL_REQUIRED", "PENDING_APPROVAL": "APPROVAL_REQUIRED",
+    # duplicates and execution
+    "DUPLICATE_SIGNAL": "DUPLICATE_PREVENTED", "EXECUTION": "ORDER_REJECTED",
+    "INSUFFICIENT_PAPER_CAPITAL": "ORDER_REJECTED", "PIPELINE_ERROR": "EXECUTION_FAILED",
+    "EXECUTION_FAILED": "EXECUTION_FAILED", "INTENT_PERSISTENCE_FAILED": "EXECUTION_FAILED",
+    "EXECUTION_UNCERTAIN": "EXECUTION_UNCERTAIN",
+    # an order exists (a linked trade record overrides these anyway)
+    "ORDER_PENDING": "TRADE_OPENED", "APPROVED_AUTOMATIC": "TRADE_OPENED",
+    "ORDER_CREATED": "TRADE_OPENED", "ENTERED": "TRADE_OPENED", "PLACED": "TRADE_OPENED",
+    "FILLED": "TRADE_OPENED", "COMPLETED": "TRADE_OPENED", "OPEN": "TRADE_OPENED",
+    # the SMC agent was waiting for the setup to complete
+    "SMC_NOT_READY": "WAITING_CONFIRMATION",
+}
+
+#: The gate a decision stopped at, when its code is not one of the above.
+_STAGE_TYPES = {
+    "brain": "QUALITY_BLOCKED", "quality": "QUALITY_BLOCKED", "market_quality": "QUALITY_BLOCKED",
+    "strategy": "SETUP_REJECTED", "context": "CONTEXT_BLOCKED",
+    "controls": "RISK_BLOCKED", "risk": "RISK_BLOCKED", "risk_guard": "RISK_BLOCKED",
+    "daily_loss": "RISK_BLOCKED", "weekly_loss": "RISK_BLOCKED", "cooldown": "RISK_BLOCKED",
+    "max_trades": "RISK_BLOCKED", "correlation": "RISK_BLOCKED",
+    "portfolio_exposure": "RISK_BLOCKED", "session": "SESSION_BLOCKED",
+    "trading_day": "SESSION_BLOCKED", "event_risk": "NEWS_BLACKOUT",
+    "dedup": "DUPLICATE_PREVENTED", "execution": "ORDER_REJECTED",
+}
+
+_HTF_WORDS = ("HTF", "HIGHER-TIMEFRAME", "HIGHER TIMEFRAME")
+
+
+def _code(blocker: str) -> str:
+    text = str(blocker or "").strip().upper()
+    return text.split(":", 1)[1].strip() if text.startswith("GATE_REJECTED:") else text
+
+
 def classify_decision(final_state: str, stage: str, blocker: str, reason: str) -> str:
+    """What kind of decision this was, from the codes its producer wrote.
+
+    Order: the terminal state, then the blocker code, then the gate stage.
+    Words in the free-text reason are consulted only to refine a context
+    block into an HTF block, a market-quality block into stale data, or --
+    for a code nobody has mapped yet -- as a last resort. Reading the reason
+    first labelled a Decision Brain block whose reason said "HTF context
+    unavailable" as a feed outage.
+    """
     fs = str(final_state or "").upper()
+    if fs in ("FILLED", "PENDING_INTENT"):
+        return "TRADE_OPENED"
+    if fs in ("SIGNALS_ONLY", "APPROVAL_REQUIRED"):
+        return fs
+    text = str(reason or "").upper()
+    kind = _CODE_TYPES.get(_code(blocker)) or _STAGE_TYPES.get(str(stage or "").lower())
+    if kind == "CONTEXT_BLOCKED" and any(word in text for word in _HTF_WORDS):
+        return "HTF_BLOCKED"
+    if kind == "QUALITY_BLOCKED" and str(stage or "").lower() == "market_quality" \
+            and ("STALE" in text or " AGE" in text):
+        return "STALE_DATA"
+    if kind:
+        return kind
+    return _classify_by_words(fs, stage, blocker, reason)
+
+
+def _classify_by_words(fs: str, stage: str, blocker: str, reason: str) -> str:
+    """Last resort for a code no table above knows."""
     text = f"{stage} {blocker} {reason}".upper()
-    if fs in ("FILLED",):
-        return "TRADE_OPENED"
-    if fs == "PENDING_INTENT":
-        return "TRADE_OPENED"
-    if fs == "SIGNALS_ONLY" or "SIGNALS_ONLY" in text:
-        return "SIGNALS_ONLY"
-    if fs == "APPROVAL_REQUIRED":
-        return "APPROVAL_REQUIRED"
     if "DUPLICATE" in text or "DEDUP" in text:
         return "DUPLICATE_PREVENTED"
     if "UNCERTAIN" in text:
         return "EXECUTION_UNCERTAIN"
     if "NEWS" in text or "BLACKOUT" in text or "EVENT_GUARD" in text:
         return "NEWS_BLACKOUT"
-    if "STALE" in text or "WARM" in text or "MARKET_QUALITY" in text or "DATA_" in text:
+    if "STALE" in text or "WARM" in text:
         return "STALE_DATA"
-    if "FEED" in text or "DISCONNECT" in text or "UNAVAILABLE" in text:
+    if "FEED" in text or "DISCONNECT" in text:
         return "FEED_UNAVAILABLE"
-    if "SESSION" in text or "TRADING_DAY" in text or "OUTSIDE" in text:
+    if "SESSION" in text or "TRADING_DAY" in text:
         return "SESSION_BLOCKED"
-    if "HTF" in text or "HIGHER-TIMEFRAME" in text or "HIGHER TIMEFRAME" in text:
+    if any(word in text for word in _HTF_WORDS):
         return "HTF_BLOCKED"
     if "CONTEXT" in text:
         return "CONTEXT_BLOCKED"
-    if str(stage).lower() == "execution" or "REJECTED AT FILL" in text or "ORDER" in text \
-            and "REJECT" in text:
-        return "ORDER_REJECTED"
     if "EXECUTION" in text and ("FAIL" in text or "ERROR" in text):
         return "EXECUTION_FAILED"
+    if "ORDER" in text and "REJECT" in text:
+        return "ORDER_REJECTED"
     if any(word in text for word in ("RISK", "EXPOSURE", "DRAWDOWN", "DAILY", "SIZ",
                                      "CAPITAL", "STREAK", "MAX_OPEN", "OPEN POSITION",
                                      "HALT", "PAUSE", "KILL")):
         return "RISK_BLOCKED"
     if "WAIT" in text or "CONFIRM" in text:
         return "WAITING_CONFIRMATION"
-    if str(stage).lower() in ("brain", "quality") or "SCORE" in text or "QUALITY" in text:
+    if "SCORE" in text or "QUALITY" in text:
         return "QUALITY_BLOCKED"
     if fs == "GATE_REJECTED":
         return "SETUP_REJECTED"

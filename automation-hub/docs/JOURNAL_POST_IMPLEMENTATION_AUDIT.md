@@ -502,3 +502,30 @@ strategy output, and is re-checked with `scripts/journal_audit/run_all.sh`.
   3-hour-old candles, then recovers. `test_05b` stops the worker mid-outage.
 * Harness: `inst-dec-stale` now yields STALE_DATA / RESOLVED, 2 recovery
   attempts.
+
+**D1 — FIXED.**
+* Change: `classify_decision` now reads, in order:
+  1. the terminal state;
+  2. the blocker code, through an explicit table covering every code the
+     pipeline (`gate_blocker`), the engine, the SMC and PA lab candidates and
+     the SMC agent's gates write;
+  3. the gate stage.
+
+  Reason words only refine a context block into HTF, or market quality into
+  stale data. A code nobody has mapped yet falls back to the old word
+  matching. Both labs share one candidate classifier, which also separates
+  "placement rejected" (ORDER_REJECTED) and fail-closed DATA_PAUSED
+  (EXECUTION_FAILED) from real data pauses.
+* Test: `tests/test_journal_decision_types.py` (27 cases), driven by the real
+  3-Candle Rejection signal through the engine in every operating mode, the
+  pipeline's own `gate_blocker()` codes and the real SMC strategy through the
+  lab. 8 of them fail on the old classifier.
+
+**Correction to D6.** `PALabProjector.project_decisions` does exist and reads
+`pa_candidates`. The PA lab writes a candidate only for signals-only,
+manual-approval, rejected and paused proposals. An automatic placement goes
+straight to the broker, and per-candle `pa_evaluations` are not projected.
+That is why the audit run, which was automatic mode, showed 0 PA decisions.
+D6 is narrower than first written: PA automatic placements have no decision
+record of their own (their trade record exists), and PA "waiting" evaluations
+are not recorded.

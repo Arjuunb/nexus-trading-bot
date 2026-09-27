@@ -291,6 +291,21 @@ class V2LabProjector:
         return 0
 
 
+def _candidate_type(status: str, reason, *, traded: bool) -> str:
+    """A lab candidate's decision type. Both labs write the same statuses; two
+    of them carry more than one meaning, which only the lab's reason tells
+    apart: REJECTED is also the lab refusing to place an order, and
+    DATA_PAUSED is also a fail-closed stop for a reason other than data."""
+    if traded:
+        return "TRADE_OPENED"
+    text = str(reason or "").lower()
+    if status == "REJECTED" and "placement rejected" in text:
+        return "ORDER_REJECTED"
+    if status == "DATA_PAUSED" and ("persistence" in text or "operating mode is invalid" in text):
+        return "EXECUTION_FAILED"
+    return classify_decision("", "", status, str(reason or ""))
+
+
 def _protective_reason(price: Optional[float], stop: Optional[float],
                        target: Optional[float]) -> Optional[str]:
     if price is None or (stop is None and target is None):
@@ -467,12 +482,9 @@ class SMCLabProjector(V2LabProjector):
             ev = payload.get("evaluation") or {}
             session = sessions.get(cand["session_id"]) or {}
             status = str(cand.get("status") or "").upper()
-            dtype = {"REJECTED": "SETUP_REJECTED", "DATA_PAUSED": "STALE_DATA",
-                     "EXPIRED": "SETUP_REJECTED", "CANCELLED": "SETUP_REJECTED"}.get(
-                status, "TRADE_OPENED" if status in ("PLACED", "FILLED", "COMPLETED", "OPEN")
-                else classify_decision("", "", status, cand.get("reason") or ""))
             key = f"SMC_LAB:decision:{cand['session_id']}:{cand['proposal_id']}"
             trade = store.by_key(f"SMC_LAB:{cand['session_id']}:{cand['proposal_id']}")
+            dtype = _candidate_type(status, cand.get("reason"), traded=trade is not None)
             proposal = ev.get("proposal") or {}
             store.upsert_decision({
                 "decision_key": key, "record_source": "SMC_LAB",
@@ -628,11 +640,8 @@ class PALabProjector(V2LabProjector):
             payload = _json(cand.get("payload"), {}) or {}
             status = str(cand.get("status") or "").upper()
             proposal = payload.get("proposal") or payload
-            dtype = ("TRADE_OPENED" if status in ("PLACED", "FILLED", "COMPLETED", "OPEN")
-                     else "STALE_DATA" if status == "DATA_PAUSED"
-                     else "SETUP_REJECTED" if status in ("REJECTED", "EXPIRED", "CANCELLED")
-                     else classify_decision("", "", status, payload.get("reason") or ""))
             trade = store.by_key(f"PA_LAB:{cand['session_id']}:{cand['proposal_id']}")
+            dtype = _candidate_type(status, payload.get("reason"), traded=trade is not None)
             store.upsert_decision({
                 "decision_key": f"PA_LAB:decision:{cand['session_id']}:{cand['proposal_id']}",
                 "record_source": "PA_LAB", "record_origin": "FORWARD_PAPER",
