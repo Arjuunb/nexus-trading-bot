@@ -626,8 +626,11 @@ class LedgerProjector:
             "timeframe": payload.get("timeframe") or fill.get("timeframe") or inst.get("timeframe"),
             "side": side,
             "signal_detected_at": signal_at, "decision_created_at": decision_at,
+            # The paper engine parks the intent as the order: one event, one
+            # time. Nothing acknowledges it afterwards, so no ack time exists
+            # to record (it used to repeat the intent time).
             "intent_created_at": order_at, "order_submitted_at": order_at,
-            "order_acknowledged_at": order_at if forward else None,
+            "order_acknowledged_at": None,
             "entry_filled_at": entry_fill_at,
             "position_opened_at": _ts(root.get("opened_at")),
             "exit_signal_at": _ts(last_close.get("timestamp")) if last_close else None,

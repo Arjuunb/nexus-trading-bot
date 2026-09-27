@@ -310,7 +310,7 @@ const JOURNAL_RECORD_FULL = { ...JOURNAL_RECORD_ROWS[0], decision_id: "1", signa
   intent_id: "auto:BTCUSDT:t0:buy", order_id: "auto:BTCUSDT:t0:buy", position_id: "p-1", session_id: "sess-1",
   exchange: "binance_usdm", market_type: "perpetual", htf_timeframe: null, htf_bias: "bullish",
   decision_created_at: "2026-09-20T09:00:01Z", intent_created_at: "2026-09-20T09:00:01Z",
-  order_submitted_at: "2026-09-20T09:00:01Z", order_acknowledged_at: "2026-09-20T09:00:01Z",
+  order_submitted_at: "2026-09-20T09:00:01Z", order_acknowledged_at: null,
   entry_filled_at: "2026-09-20T09:00:03Z", exit_signal_at: "2026-09-20T09:40:00Z",
   exit_submitted_at: "2026-09-20T09:40:00Z", exit_filled_at: "2026-09-20T09:40:00Z",
   journal_finalized_at: "2026-09-20T09:40:05Z", decision_latency_ms: 1000, execution_latency_ms: 2000,

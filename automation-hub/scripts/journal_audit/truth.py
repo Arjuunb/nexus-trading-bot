@@ -88,6 +88,8 @@ checks = [
     ("position_closed_at", r["position_closed_at"], trade["closed_at"]),
     ("filled_at", r["entry_filled_at"], fev.get("fill_timestamp")),
     ("order_submitted_at", r["order_submitted_at"], fev.get("order_timestamp")),
+    # the forward engine writes no acknowledgement event, so there is no ack time
+    ("order_acknowledged_at", r["order_acknowledged_at"], None),
     ("signal_at", r["signal_detected_at"], fev.get("signal_timestamp")),
     ("exit_reason", r["exit_reason"], cpl.get("exit_reason")),
     ("decision_id", str(r["decision_id"]), str(d.get("id"))),

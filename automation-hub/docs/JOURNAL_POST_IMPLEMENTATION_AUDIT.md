@@ -739,3 +739,19 @@ strategy's proposals.**
 * Harness: all 8 instance trades (7 forward paper, 1 simulation) carry the
   report. Lab and legacy records have none, since their strategies do not go
   through this engine.
+
+**D16 — FIXED.**
+* Change: no order on these paths is ever acknowledged. The forward engine
+  parks the intent as the order, and the lab's paper broker writes its order
+  row and fills it later. So `order_acknowledged_at` is now left empty on
+  instance and lab records; it used to repeat the submit time. The instance
+  path keeps `intent_id == order_id` and one time for intent and order,
+  because they are one event there.
+* Tests: `tests/test_journal_record_timing.py`. A real forward-paper
+  3-Candle Rejection trade, where the order time equals the fill event's
+  `order_timestamp` and there is no ack, and a real SMC lab trade whose
+  submit time is the broker's order-row time, again with no ack. Both fail on
+  the old code.
+* Harness: `truth.py` and `lab_truth.py` now also check the ack time, so the
+  instance truth is 34/34. On the old code they report 33/34 and a lab
+  mismatch.

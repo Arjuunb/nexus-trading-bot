@@ -171,8 +171,10 @@ class V2LabProjector:
             "signal_detected_at": signal_at,
             "decision_created_at": _ts(entry.get("decision_timestamp")),
             "intent_created_at": _ts(meta.get("created_at")) or _ts(entry.get("order_timestamp")),
+            # The fill's order time is the broker's order-row time; the paper
+            # broker sends no separate acknowledgement, so none is recorded.
             "order_submitted_at": _ts(entry.get("order_timestamp")),
-            "order_acknowledged_at": _ts(entry_order.get("created_at")),
+            "order_acknowledged_at": None,
             "entry_filled_at": _ts(entry.get("fill_timestamp") or entry.get("timestamp")),
             "position_opened_at": _ts(entry.get("fill_timestamp") or entry.get("timestamp")),
             "trading_session": trading_session(signal_at),
