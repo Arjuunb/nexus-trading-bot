@@ -120,6 +120,12 @@ export default function TradeDetail({ id, onBack }: { id: string; onBack: () => 
         </Section>
 
         <Section title="Risk">
+          {(r.risk_check?.quality_gate as { bypassed_by_owner?: boolean } | undefined)?.bypassed_by_owner && (
+            <p className="jr-why">
+              <Badge text="Quality gate off" tone="amber" /> The Decision Brain would have blocked this trade. It went
+              through because the quality gate was switched off for this instance.
+            </p>
+          )}
           {r.risk_check ? <Json value={r.risk_check} /> : <p className="dim">No risk-check receipt was recorded.</p>}
         </Section>
 

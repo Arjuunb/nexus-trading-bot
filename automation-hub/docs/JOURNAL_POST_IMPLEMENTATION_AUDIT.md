@@ -589,3 +589,18 @@ are not recorded.
   unknown data source), is corrected to LEGACY.
 * Harness: the replay-built counter reads SIMULATION ({SIMULATION: 1},
   {replay: 1}).
+
+**D13 — FIXED.**
+* Change: the risk-check receipt reads the Decision Brain verdict frozen
+  with the trade. A trade whose verdict says it was not allowed could only
+  have gone through the owner's per-instance quality-gate switch. Its record
+  now says PASSED_WITH_QUALITY_GATE_OFF, lists what the Brain would have
+  blocked it for, and no longer claims every pre-trade gate passed. The
+  trade page shows this in words in the Risk section.
+* Limit: a score below the minimum, with no hard block, is not detected. The
+  minimum is not frozen with the trade, so this is not claimed either way.
+* Tests: the real 3-Candle Rejection signal, which the Brain blocks, traded
+  with the switch off through the engine and a forward fill. This test fails
+  on the old code. An ordinary trade stays PASSED.
+* Harness: the audit trade reads PASSED_WITH_QUALITY_GATE_OFF, with the
+  Brain's two blocks.

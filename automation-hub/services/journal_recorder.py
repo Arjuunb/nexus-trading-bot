@@ -371,6 +371,36 @@ def _classify_by_words(fs: str, stage: str, blocker: str, reason: str) -> str:
     return "SIGNAL_GENERATED"
 
 
+def _risk_check(gate: dict, sizing: dict, payload: dict) -> dict:
+    """The pre-trade receipt, frozen at decision time.
+
+    An order exists only if every gate let it through, with one exception an
+    owner can choose: the per-instance switch that turns the Decision Brain
+    quality gate off (services/auto_engine.py). The Brain's verdict is frozen
+    with the payload either way, so a trade whose verdict says it was not
+    allowed was let through by that switch -- and the record says so rather
+    than claiming every gate passed. (A score below the minimum without a hard
+    block cannot be told apart here: the minimum is not frozen with the trade.)
+    """
+    bypassed = bool(gate) and gate.get("allowed") is False
+    out = {"result": "PASSED_WITH_QUALITY_GATE_OFF" if bypassed else "PASSED",
+           "sizing": sizing or None,
+           "engine_guardrails": payload.get("journal_engine"),
+           "size_factors": {"context": payload.get("context_size_factor"),
+                            "health": payload.get("health_size_factor")}}
+    if bypassed:
+        out["quality_gate"] = {"bypassed_by_owner": True, "score": gate.get("score"),
+                               "grade": gate.get("grade"),
+                               "would_have_blocked_for": gate.get("blocks") or []}
+        out["basis"] = ("the Decision Brain would have blocked this trade, and the quality gate was "
+                        "off for this instance by its owner's choice; every other pre-trade gate "
+                        "passed. Values are the sizing receipt frozen at decision time")
+    else:
+        out["basis"] = ("the order exists, so every pre-trade gate passed; "
+                        "values are the sizing receipt frozen at decision time")
+    return out
+
+
 # ======================================================================
 # ledger projector: Trading Instances, the legacy engine, the adaptive lab
 # ======================================================================
@@ -629,13 +659,7 @@ class LedgerProjector:
             "balance_before": _f(root.get("equity_before_trade")),
             "equity_before": _f(root.get("equity_before_trade")),
             "available_balance_before": _f(sizing.get("available_balance")),
-            "risk_check_json": ({"result": "PASSED", "sizing": sizing or None,
-                                 "engine_guardrails": payload.get("journal_engine"),
-                                 "size_factors": {"context": payload.get("context_size_factor"),
-                                                  "health": payload.get("health_size_factor")},
-                                 "basis": "the order exists, so every pre-trade gate passed; "
-                                          "values are the sizing receipt frozen at decision time"}
-                                if payload else None),
+            "risk_check_json": (_risk_check(gate, sizing, payload) if payload else None),
             "requested_entry": _f(fill.get("requested_price")) or entry_plan,
             "actual_entry": _f(root.get("entry")),
             "requested_quantity": _f(sizing.get("accepted_size")) or entry_size,

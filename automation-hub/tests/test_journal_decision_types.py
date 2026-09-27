@@ -142,3 +142,58 @@ def test_smc_lab_candidates_keep_their_meaning(tmp_path, mode, reliable, expecte
     SMCLabProjector(account).project(store)
     [decision] = store.query_decisions()
     assert decision["decision_type"] == expected and store.query_trades() == []
+
+
+# ──────────────── a trade the owner let through with the quality gate off ────────────────
+def test_a_trade_taken_with_the_quality_gate_off_says_so(tmp_path):
+    """The real signal is one the Decision Brain blocks. With the instance's
+    quality-gate switch off it trades anyway; its record must not claim that
+    every pre-trade gate passed."""
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    decisions = DecisionStore(str(tmp_path / "decisions.db"))
+    scoped = InstanceLedger(ledger, "inst-1", "sess-1")
+    paper = ForwardPaperExecutionEngine(scoped, 10_000)
+    pipe = SignalPipeline(scoped, paper, TradingControl(), equity=10_000,
+                          risk_per_trade_pct=0.01, exposure_limit_pct=0.05)
+    pipe.journal_context = {"instance_id": "inst-1", "simulation_session_id": "sess-1",
+                            "market_data_mode": "forward_paper"}
+    engine = AutoStrategyEngine(
+        pipe, paper, scoped, symbols=["BTCUSDT"], timeframe="5m", live=True,
+        strategy_factory=lambda s: make_builtin_strategy("three_candle_rejection", s),
+        fetcher=lambda *a, **k: ([], "live (test)"), entry_mode="market", instance_id="inst-1")
+    engine.decisions = decisions
+    engine.quality_gate_bypass = lambda: True
+    rows, i = _history()
+    now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+    series = rows + _long_pattern(i)
+    bars = [Bar(now - TF * (len(series) - k), r.open, r.high, r.low, r.close, r.volume)
+            for k, r in enumerate(series)]
+    strategy = engine.strategy_factory("BTCUSDT")
+    strategy.bars.extend(bars[:-3])
+    for bar in bars[-3:]:
+        engine._process_bar("BTCUSDT", bar, strategy)
+    assert paper.process_quote({"bid": 102.2, "ask": 102.22, "mark": 102.21,
+                                "received_at": datetime.now(timezone.utc).isoformat()})
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    recorder = JournalRecorder(store)
+    recorder.add_ledger(LedgerSource("MAIN", ledger, decision_store=decisions))
+    recorder.reconcile()
+    [row] = store.query_trades()
+    record = store.get(row["journal_record_id"])
+    risk = record["risk_check"]
+    assert record["evidence"]["quality_gate"]["allowed"] is False     # what the Brain said
+    assert risk["result"] == "PASSED_WITH_QUALITY_GATE_OFF"
+    assert risk["quality_gate"]["bypassed_by_owner"] is True
+    assert risk["quality_gate"]["would_have_blocked_for"] == record["evidence"]["quality_gate"]["blocks"]
+    assert "every pre-trade gate passed;" not in risk["basis"]
+
+
+def test_a_trade_the_quality_gate_allowed_is_plain_passed(tmp_path):
+    from tests.test_journal_integrity import Env
+    env = Env(tmp_path)
+    env.entry()
+    env.fill()
+    env.recorder().reconcile()
+    [row] = env.store.query_trades()
+    risk = env.store.get(row["journal_record_id"])["risk_check"]
+    assert risk["result"] == "PASSED" and "quality_gate" not in risk
