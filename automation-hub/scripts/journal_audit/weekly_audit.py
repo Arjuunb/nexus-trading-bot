@@ -37,6 +37,12 @@ start, end = week_bounds(now)
 print(f"week under review: {start.isoformat()} -> {end.isoformat()}")
 scopes = review_scopes(store)
 print("scopes:", [(s["agent_id"], s["strategy_id"]) for s in scopes])
+labels = [s["label"] for s in scopes]
+check("every scope has its own label", len(set(labels)) == len(labels), str(labels))
+for s in scopes:
+    if s["agent_id"].startswith("instance_agent:"):
+        check(f"{s['agent_id']} label names the whole instance id",
+              s["label"].endswith(s["agent_id"].split(":", 1)[1]), s["label"])
 
 # ---------------- 12. determinism: same inputs, same review
 print("\n[12] determinism")

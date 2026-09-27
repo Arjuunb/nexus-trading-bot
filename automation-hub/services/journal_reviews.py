@@ -144,15 +144,21 @@ def week_bounds(moment: datetime, *, dow: Optional[int] = None) -> tuple[datetim
     return start, start + timedelta(days=7)
 
 
+def _joined(values: Optional[str]) -> str:
+    return ", ".join(sorted(v for v in (values or "").split(",") if v)) or "?"
+
+
 def review_scopes(store: TradeRecordStore) -> list[dict]:
     """Each agent reviews only its own records; strategies are never pooled."""
     scopes = []
     with store._lock:
         rows = store._c.execute(
-            "SELECT DISTINCT record_source, instance_id, COALESCE(strategy_id, strategy_name, '?') "
-            "AS strategy FROM trade_records WHERE record_origin='FORWARD_PAPER' AND status='CLOSED'"
+            "SELECT record_source, instance_id, COALESCE(strategy_id, strategy_name, '?') "
+            "AS strategy, GROUP_CONCAT(DISTINCT symbol), GROUP_CONCAT(DISTINCT timeframe) "
+            "FROM trade_records WHERE record_origin='FORWARD_PAPER' AND status='CLOSED' "
+            "GROUP BY record_source, instance_id, strategy ORDER BY MIN(rowid)"
         ).fetchall()
-    for source, instance_id, strategy in rows:
+    for source, instance_id, strategy, symbols, timeframes in rows:
         if source in ("SMC_LAB", "AGENT"):
             scopes.append({"agent_id": "smc_agent", "strategy_id": strategy,
                            "where": "record_source IN ('SMC_LAB','AGENT') AND "
@@ -167,7 +173,10 @@ def review_scopes(store: TradeRecordStore) -> list[dict]:
                            "where": "record_source=? AND instance_id=? AND "
                                     "COALESCE(strategy_id, strategy_name, '?')=?",
                            "params": (source, instance_id, strategy),
-                           "label": f"Instance {instance_id[:8]} · {strategy}"})
+                           # Instances have no name. The id is kept whole: its first
+                           # characters alone can make two instances look identical.
+                           "label": f"Instance · {_joined(symbols)} {_joined(timeframes)} · "
+                                    f"{strategy} · {instance_id}"})
     seen, unique = set(), []
     for s in scopes:
         key = (s["agent_id"], s["strategy_id"])

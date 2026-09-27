@@ -368,7 +368,7 @@ const WEEK_REPORT = { overall: WEEK_STATS, long: WEEK_STATS, short: { ...WEEK_ST
   by_symbol: { BTCUSDT: WEEK_STATS }, by_timeframe: { "5m": WEEK_STATS }, by_session: { LONDON: WEEK_STATS },
   by_setup: { rejection: WEEK_STATS }, by_exit_reason: { "take-profit": WEEK_STATS }, by_strategy: {} };
 const JOURNAL_WEEKLY = { scopes: [{ agent_id: "instance_agent:inst-1a2b3c4d", strategy_id: "three_candle_rejection",
-    label: "Instance inst-1a2 · three_candle_rejection" }],
+    label: "Instance · BTCUSDT 5m · three_candle_rejection · inst-1a2b3c4d" }],
   reviews: [{ review_id: "wr_mock1", agent_id: "instance_agent:inst-1a2b3c4d", strategy_id: "three_candle_rejection",
     period_start: "2026-09-14T00:00:00+00:00", period_end: "2026-09-21T00:00:00+00:00", review_version: 1,
     generated_at: "2026-09-21T00:05:00Z", journal_record_ids: ["tr_mock1"] }],

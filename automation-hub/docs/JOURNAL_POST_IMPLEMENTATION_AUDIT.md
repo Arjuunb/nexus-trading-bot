@@ -805,3 +805,18 @@ strategy's proposals.**
 * Harness: `truth.py` checks the target and taken risk against the frozen
   sizing receipt and the ledger (37/37). `lab_truth.py` checks the SMC
   record's fraction against the lab session's configured percent.
+
+**D10 — FIXED.**
+* Change: an instance's weekly-review scope is labelled with its symbol,
+  timeframe, strategy and whole id, for example "Instance · BTCUSDT 5m ·
+  three_candle_rejection · 3f2a…". Instances have no user-given name, so the
+  id is what tells them apart. Scopes keep the order in which their first
+  record arrived.
+* Test: `tests/test_journal_risk_and_scope.py`. Two real instances whose uuid
+  ids share their first 8 characters each close a trade. The old code gave
+  both the label "Instance 3f2a9c1e · three_candle_rejection".
+* Harness: `weekly_audit.py` now checks that every scope label is unique and
+  names the whole instance id (85/85). On the old code it fails 5 of those
+  checks. The harness's own instances collide too: `inst-audit-3cr` and
+  `inst-audit-short` were both "Instance inst-aud", and `inst-crash-postsubmit`
+  and `inst-crash-writefail` were both "Instance inst-cra".
