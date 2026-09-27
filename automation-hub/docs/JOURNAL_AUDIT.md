@@ -33,9 +33,18 @@ kinds of data:
   `services/decision_journal.py:303-347`)
 * `record_exit()` is called only from `SignalPipeline`'s close path, with
   the net P&L of a **paper fill** from the execution engine. It is not
-  called by backtests, replay, research, the PA/SMC labs or the SMC agent.
+  called by backtests, research, the PA/SMC labs or the SMC agent.
   So the 112 are **paper trades executed by `SignalPipeline`**, not backtest
   or research results. (PROVEN)
+* **Correction (post-implementation audit, 2026-09-27).** An earlier version
+  of this line also excluded replay. That was wrong. A Trading Instance in
+  replay mode fills synchronously through the same `SignalPipeline` path,
+  so its trades on replayed candles also write a journal row and an
+  `evolution_memory` increment. The audit reproduced this with a
+  replay-mode 3-Candle Rejection instance. Some of the 112 may therefore be
+  simulated-candle trades. Section B3 of `scripts/journal_provenance.py`
+  prints the market data mode each surviving journal row recorded. An
+  increment whose row is gone cannot be classified. (PROVEN)
 * The strategy label is `Decision Brain` and the regime is `Trending`. That
   label is used by the retired autonomous engine (`HUB_AUTO_ENGINE`, now
   `0` in the image) and by Trading Instances running the `brain` strategy.

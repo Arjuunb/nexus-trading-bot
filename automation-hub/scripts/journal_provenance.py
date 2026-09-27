@@ -64,6 +64,20 @@ show("B1. by status / execution_mode / has instance", j.execute(
 show("B2. closed rows by strategy|regime|side", j.execute(
     "SELECT strategy, regime, side, COUNT(*), SUM(result='win'), ROUND(SUM(actual_rr),2), MIN(closed_at), MAX(closed_at) "
     "FROM trade_decision_journal WHERE status='closed' GROUP BY 1,2,3"))
+# A Trading Instance in replay mode fills synchronously through the same
+# SignalPipeline path, so its trades reach this journal and evolution_memory
+# too. The market data mode the decision recorded is in sections_json.
+modes: dict = {}
+for strategy, regime, side, sections in j.execute(
+        "SELECT strategy, regime, side, sections_json FROM trade_decision_journal WHERE status='closed'"):
+    try:
+        prov = (json.loads(sections or "{}") or {}).get("provenance") or {}
+    except ValueError:
+        prov = {}
+    key = (strategy, regime, side, str(prov.get("market_data_mode") or "<not recorded>"))
+    modes[key] = modes.get(key, 0) + 1
+show("B3. closed rows by strategy|regime|side|market_data_mode (replay = simulated candles)",
+     sorted((*k, n) for k, n in modes.items()))
 
 print("\n== C. journal events ==")
 print("   events:", j.execute("SELECT COUNT(*), COUNT(DISTINCT trade_id), MIN(ts), MAX(ts) FROM trade_decision_events").fetchone())

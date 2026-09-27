@@ -1,0 +1,487 @@
+# Journal, weekly review and agent memory: post-implementation audit (2026-09-27)
+
+Audited at `claude/focused-gates-q5nse7` @ `52af33d`, clean tree. Every
+earlier "done" claim was treated as unverified. No production behaviour was
+changed by this audit. The only repository changes are:
+
+* this document;
+* a correction to `docs/JOURNAL_AUDIT.md`. It had wrongly said replay never
+  reaches the old journal; see §2.
+* a read-only section B3 in `scripts/journal_provenance.py`;
+* the audit harness in `scripts/journal_audit/`.
+
+Defects are listed in §20 with EXPECTED / ACTUAL / ROOT CAUSE / SEVERITY /
+FILES / FIX. **None of them has been fixed.**
+
+## How the evidence was produced
+
+`scripts/journal_audit/run_all.sh` rebuilds the whole dataset from nothing in
+a scratch directory. No payload is hand-built:
+
+* **Instance path.** The real *3-Candle Rejection · EMA 9/33* strategy reads
+  deterministic candles (the fixtures from `tests/test_three_candle_rejection.py`).
+  `AutoStrategyEngine._process_bar` then does what a Trading Instance worker
+  does: it records the decision, builds the payload and routes it through
+  `SignalPipeline`. `ForwardPaperExecutionEngine` parks the intent and a later
+  quote fills it. The engine's own stop/target check on the following candles
+  closes the position. Only after that does the recorder run.
+* **SMC lab.** The frozen `smc_strategy_v1.evaluate()` runs on the seeded
+  native market-structure engine. The lab's `synchronize_candidate` places the
+  order in each operating mode, and `process_candle` fills and exits it.
+* **PA lab.** The lab's `synchronize_strategy` places, fills and exits a
+  proposal. **The PA strategy itself was not run.** The proposal is shaped as
+  the native engine emits it.
+* **Agent.** The SMC agent journal API is called in the order
+  `services/smc_agent.py` writes it.
+* **Legacy.** The old `DecisionJournal` path runs, then two ledger rows and
+  two journal rows are removed, as production lost them.
+* **Simulation.** A replay-mode instance runs on the synchronous paper engine.
+
+Every write script refuses to run unless `HUB_DATA_DIR` carries the scratch
+marker and every database path resolves inside it. Both refusals were
+demonstrated. The real backend (`uvicorn app:app`) then served that
+directory, and the built dashboard was driven with Playwright.
+
+Harness results on a fresh directory, run twice with identical outcomes:
+
+| Check | Result |
+|---|---|
+| Instance record vs ledger, field by field (long TP, short SL) | 33/33, 33/33 |
+| SMC and PA lab records vs broker v2 fills | 15/15, 15/15 |
+| Crash / restart / duplicate scenarios | 18/18 |
+| API vs independent SQL (real backend) | 42/42 |
+| Weekly / scheduler / memory / isolation | 79/80 (the failure is D11) |
+| UI (real backend): KPIs, rows, origins, decisions, notes equal the API | all equal |
+
+## 1. Safety
+
+| Item | Evidence | Verdict |
+|---|---|---|
+| Branch / commit / tree | `claude/focused-gates-q5nse7`, `52af33d`, clean before the audit | PASS |
+| Live disabled | `BrokerRegistry.live_locked()` returns `True` unconditionally (`services/broker.py:107`); `HUB_ENABLE_EXTERNAL_LIVE` defaults to `0` (`config.py:105`) | PASS |
+| Paper only | forward fills carry `paper_only: true, real_execution_allowed: false`; lab states say the same | PASS |
+| Frozen files unchanged | `git diff 8fe21ec..HEAD` is empty for `mtf_policy.py`, `price_action_lab.py`, `smc_strategy_lab.py`, `native_price_action.py`, `native_smc.py` (service and router), `smc_strategy_ladder.py`, `smc_strategy_v1.py`, `native_smc_live_visual.py`, both freeze manifests and their tests | PASS |
+| Execution-path diff | `signal_pipeline.py`: `journal_notify` attribute + three `_nudge_journal()` calls that swallow errors; `trading_instances.py`: the same nudge after fills; `config.py`: one DB path. No gate, sizing, SL/TP, RR or signal code changed | PASS |
+| Risk / fail-closed | unchanged (above); stale data still raises `MarketDataStaleError` and blocks | PASS |
+
+## 2. The original 59 / 53
+
+* **Where they come from.** Proven from code. They are running counters in
+  `journal.db:evolution_memory`, incremented only by
+  `DecisionJournal.record_exit()` from `SignalPipeline`'s close path. They
+  store no trade ids.
+* **Correction.** `JOURNAL_AUDIT.md` had said replay never reaches this path.
+  **That was wrong.** A replay-mode Trading Instance fills synchronously
+  through the same pipeline. The audit reproduced it: a replay 3-Candle
+  Rejection trade wrote a journal row with `market_data_mode: "replay"` and
+  an `evolution_memory` increment. Some of the 112 increments may therefore be
+  simulated-candle trades. The document now says so, and provenance section
+  B3 prints the recorded market data mode per surviving row. An increment
+  whose row is gone cannot be classified.
+* **Migrated?** Yes. `LegacyJournalMigration` gives each old journal row a
+  `LEGACY_JOURNAL:` record. Where the ledger still has the trade, it merges
+  into that trade's canonical record by key.
+* **Excluded from forward-paper stats?** Yes. The records API defaults to
+  `FORWARD_PAPER`. The audit dataset shows 6 legacy records outside the
+  forward KPIs; the legacy KPI view is separate (−$4.00, 6 trades).
+* **Memory shows provenance?** Yes. Counters are labelled VERIFIED, LEGACY or
+  UNVERIFIED, with "N journal rows · N ledger-verified · N with no record".
+  The label has a flaw, **D15**: a counter backed only by a SIMULATION record
+  is still labelled VERIFIED.
+* **Server rows for the real 59/53: NOT TESTED.** That needs the output of
+  `scripts/journal_provenance.py` from the production container, which this
+  sandbox cannot reach.
+
+## 3. Canonical schema
+
+`trade_records.db` holds these tables:
+
+* `trade_records`: one row per execution lifecycle. Deterministic
+  `journal_record_id = tr_ + sha256(execution_key)[:24]`; UNIQUE
+  `execution_key` and `trade_id`.
+* `trade_record_events`: 10 timeline stages.
+* `trade_record_corrections`: ENRICH, DISCREPANCY and CORRECTION entries.
+* `trade_reviews`, `trade_notes`, `decision_records`, `weekly_reviews`,
+  `improvement_proposals`, `review_runs`, `recorder_state`.
+
+Triggers: `trg_trade_records_immutable` (fact columns of a finalized record)
+and `trg_trade_records_no_delete`.
+
+Representative row: `tr_ccd361d11eb9b8b68a40a04f` (see §5). Notes live only
+in `trade_notes`. Posting a note left `facts_hash` unchanged (verified
+through the API).
+
+Raw-SQL probe on a finalized record:
+
+| Operation | Result |
+|---|---|
+| `UPDATE net_pnl` | blocked |
+| `UPDATE exit_reason` | blocked |
+| `DELETE` | blocked |
+| `UPDATE record_origin` | **allowed** |
+| `UPDATE finalized=0`, then edit or delete anything | **allowed** |
+
+See **D3**.
+
+## 4. Source and origin isolation
+
+Real backend, audit dataset:
+
+* **Sources:** INSTANCE 8, SMC_LAB 2, PA_LAB 1, LEGACY_ENGINE 6, AGENT 0,
+  MANUAL 0. Agent facts merge into the SMC record, so AGENT has no records of
+  its own.
+* **Origins:** FORWARD_PAPER 10, SIMULATION 1, LEGACY_MIGRATION 6,
+  BACKTEST 0, RESEARCH 0.
+
+Each filter returns only its own origin, and every count equals SQL.
+Backtests and research never write a ledger the recorder reads, so they
+cannot enter.
+
+* Weekly scopes are per agent and strategy (`instance_agent:<id>`,
+  `smc_agent`, `pa_agent`). Every finding cites only ids inside its own scope.
+* Memory is FORWARD_PAPER only.
+
+Two exceptions: **D5** (a replay instance's decision record is labelled
+FORWARD_PAPER) and **D15**.
+
+## 5. End-to-end trace (real strategy → memory)
+
+**Long trade (take-profit), `inst-audit-3cr`, session `sess-audit-1`:**
+
+| Link | Id |
+|---|---|
+| signal | `inst-audit-3cr:1.0.0:BTCUSDT:5m:2026-09-27T18:19:00+00:00` (the strategy's decision identity) |
+| decision | `decisions.id = 2` → `decision_record dr_d095e72c83283bb399e1ff14` |
+| execution key | `INSTANCE:inst-audit-3cr:sess-audit-1:auto:inst-audit-3cr:BTCUSDT:5m:2026-09-27T18:19:00+00:00:buy` |
+| intent = order | `auto:inst-audit-3cr:BTCUSDT:5m:2026-09-27T18:19:00+00:00:buy` (the forward engine has no separate order object, see **D16**) |
+| fill evidence | `…:buy:fill:<quote time>` webhook row |
+| trade | `6dcff66c303f4b86b6fab7ed0f83e7b7` |
+| position | `abb1560fe83a46a3a36ce2e8eb4dadd3` |
+| journal record | `tr_ccd361d11eb9b8b68a40a04f` (CLOSED, WIN, finalized) |
+| decision → record | `dr_d095e72c83283bb399e1ff14.journal_record_id = tr_ccd361d11eb9b8b68a40a04f` |
+| review | journal_reviewer v1 review on the same id |
+| weekly | `instance_agent:inst-audit-3cr` review cites `tr_ccd361d11eb9b8b68a40a04f` |
+| memory | `3-Candle Rejection · EMA 9/33 / Ranging / long` includes it |
+
+The short trade (stop-loss) is `tr_a01dac4d259746de7fb1cfa4`: trade
+`7254c4ea…`, position `c50d4bdb…`, decision 3.
+
+One lifecycle produced exactly one record in every case run.
+
+## 6. Journal vs execution truth
+
+Every field compared equal, 33/33 for each trade:
+
+* ids, instance and session;
+* side, quantity, entry fill, exit fill, SL, TP, planned entry;
+* fees, net and gross P&L, risk amount, R;
+* opened, closed, fill, order and signal timestamps;
+* exit reason, decision id, equity before, bid and ask, MFE and MAE,
+  strategy id.
+
+The lab records matched their broker fills on 15/15 fields each.
+
+Timestamp findings: **D14** (decision latency counts from the candle's open)
+and **D16** (order ack time equals intent time).
+
+## 7. Strategy evidence at decision time
+
+* **3-Candle Rejection (instance):** PARTIAL. The record freezes the
+  strategy's reason text and the Decision Brain's full evaluation.
+  `strategy_snapshot` is null because the strategy's `Signal` carries none.
+  Level, touches and EMA values are not frozen as structured data (**D17**).
+  Nothing is invented.
+* **SMC:** PARTIAL. The raw `ordered_condition_results`, MTF evidence,
+  native object ids and trade plan are frozen. The derived
+  `conditions_passed` is always empty and `conditions_required` all null,
+  because the projector reads a shape the real strategy never emits (**D8**).
+* **PA:** NOT TESTED against the real PA strategy. The lab journal evidence
+  (identity, market context, state transitions) is carried; the setup fields
+  were null for the synthetic proposal.
+
+## 8. Material non-trade decisions (real engine)
+
+| Case | Recorded as | Trade / position / P&L | Verdict |
+|---|---|---|---|
+| Signals-only mode | SIGNALS_ONLY | none | PASS |
+| Semi-auto | APPROVAL_REQUIRED | none | PASS |
+| Operator pause | RISK_BLOCKED | none | PASS |
+| Decision Brain block ("…HTF context unavailable…") | **FEED_UNAVAILABLE** | none | FAIL (**D1**) |
+| Stale candles (age 10500 s, allowed 315 s) | **nothing** | none | FAIL (**D2**) |
+| 60 no-setup candles | 0 decision records (60 cycle reports stay in the candle archive) | none | PASS (no flood) |
+| SMC signals_only / manual_approval / unreliable feed | SIGNAL_GENERATED / WAITING_CONFIRMATION / STALE_DATA | none | PARTIAL (**D1**) |
+| HTF_BLOCKED, WAITING_CONFIRMATION (instance) | not produced by the instance path; HTF text is only classified by keyword | — | NOT TESTED |
+
+The classifier was also run over the whole real blocker vocabulary. Six of
+23 real codes are mislabelled (**D1**).
+
+## 9. Crash and duplicate (real strategy path)
+
+18/18 checks passed:
+
+* **Duplicate decision across a restart:** one entry row plus one
+  `duplicate` row, 1 trade, 1 record.
+* **Duplicate fill callback:** the second delivery fills nothing; 1 record.
+* **Restart before submission:** a claimed-but-never-submitted key leaves no
+  record.
+* **Restart after submission:** the same record id goes PENDING → OPEN →
+  CLOSED.
+* **Restart after fill:** the record is rebuilt from the ledger.
+* **Journal-write failure:** the error is reported, nothing is half-written,
+  and the next pass writes the one record.
+* **Recovery:** three fresh recorder passes changed no hash and no
+  `updated_at`, and logged no discrepancy.
+* **Real server restart:** the same 17 records afterwards.
+
+Side effect found in the duplicate case: **D4**.
+
+## 10. Closure paths
+
+| Path | Evidence | Verdict |
+|---|---|---|
+| Take-profit | the same record as the open; outcome WIN; R 1.9804 = net P&L / risk from the ledger | PASS |
+| Stop-loss | the same record as the open; outcome LOSS; R −1.0 | PASS |
+| Lab stop | protective order; R −1.0189 | PASS |
+| Lab target | R 2.4835 | PASS |
+| Manual close | covered by integrity tests (pipeline close without a reason becomes `manual-close`); not re-run on the real strategy | PARTIAL |
+
+## 11. UI reads canonical data
+
+The built dashboard on the real backend:
+
+* the Trades KPIs, rows and origin chips (forward, legacy, simulation) equal
+  the API;
+* the detail page shows all 10 sections and the timeline;
+* the Decisions chips and rows equal the API;
+* Memory shows verified and legacy tables;
+* Weekly shows its scopes;
+* a Notes entry was posted by `admin`.
+
+The only journal endpoints called were `/journal/records*`,
+`/journal/decision-records*`, `/journal/memory`, `/journal/notes`,
+`/journal/weekly*` and `/journal/recorder`. No `/journal/*` request failed
+and no mocks were involved.
+
+Findings: **D10**, **D12** and **D13** are visible in the UI.
+
+## 12–16. Weekly review, evidence ids, isolation, safe learning, scheduler
+
+* **Deterministic.** Each of 6 scopes built twice gives identical output
+  apart from `generated_at`. Trades, net P&L, total R and the id set equal an
+  independent SQL computation.
+* **Evidence ids.** Every fact and observation cites ≥1 record id, all inside
+  its own review and scope.
+* **Safe learning.** Findings are split into facts, observations, hypotheses
+  and recommendations. Proposals need 20 trades over the scope's history (0
+  created on this dataset). They are PENDING_APPROVAL. A decision needs a
+  non-empty actor and changes no record. Nothing reads approved proposals to
+  change a strategy (grep: only the router).
+* **Scheduler.**
+  * A normal run writes 6 reviews.
+  * A duplicate run writes 0.
+  * A restarted scheduler writes 0.
+  * 4 concurrent runs store each review once.
+  * After three missed weeks it catches up the week with trades and writes
+    no empty weeks.
+  * A fresh RUNNING claim is respected; a stale one (>600 s) is retried.
+* **FAIL: a trade finalized after its week was reviewed is never reflected,
+  and the review is not marked stale (D11).**
+
+## 17. Test suites
+
+| Suite | Passed | Failed | Skipped | Warnings |
+|---|---|---|---|---|
+| automation-hub (`python -m pytest -q`) | 3486 | 0 | 15 | 9: anyio / FastAPI `on_event` deprecations, urllib3 SOCKS, 4 ResourceWarnings (unclosed files and sockets in `alerts.py` and two tests). None is from journal code. |
+| engine (`python -m pytest -q tests`) | 509 | 0 | 0 | 3 ResourceWarnings (unclosed sockets) |
+| dashboard e2e (Playwright, mocked API) | 159 | 0 | 0 | none reported (8.2 min) |
+
+### 17a. Dashboard e2e
+
+The e2e suite runs on mocked endpoints by design. It shows that the pages
+render and behave. It is not evidence that they show real data. That
+evidence is §11, where the same pages ran on the real backend and the real
+audit dataset.
+
+## 18. Verdict matrix
+
+| # | Area | Verdict |
+|---|---|---|
+| 1 | Safety | PASS |
+| 2 | 59/53 provenance | PARTIAL (code proven, doc corrected, D15; server rows NOT TESTED) |
+| 3 | Canonical schema | PARTIAL (D3) |
+| 4 | Source / origin isolation | PARTIAL (D5, D15) |
+| 5 | End-to-end traceability | PASS (D16, D18 noted) |
+| 6 | Journal = execution truth | PASS |
+| 7 | Strategy evidence | PARTIAL (D8, D17; PA NOT TESTED) |
+| 8 | Material non-trade decisions | FAIL (D1, D2) |
+| 9 | Crash / duplicate | PASS (D4 noted) |
+| 10 | Closure paths | PASS (manual PARTIAL) |
+| 11 | UI on canonical data | PASS (D10, D12, D13 noted) |
+| 12 | Weekly stats deterministic | PASS |
+| 13 | Findings carry record ids | PASS |
+| 14 | Agent isolation | PASS |
+| 15 | Safe learning | PASS (proposal path only by unit test) |
+| 16 | Scheduler | PARTIAL (D11) |
+| 17 | Test suites | PASS (3995 Python + 159 e2e passed; 0 failed) |
+
+## 19. Not tested
+
+* Production rows for 59/53.
+* The PA strategy producing its own proposal.
+* The SMC lab runtime loop (`tick`) and the real SMC agent deciding.
+* The Adaptive lab ledger source.
+* A Supabase ledger (the projector skips it).
+* Recorder cost on a large ledger. A pass took 0.02–0.04 s here; it
+  re-reads every lifecycle per pass.
+* Tenant scoping of the journal endpoints (not scoped).
+
+## 20. Defect register
+
+Severity: HIGH = a stated requirement is not met; MEDIUM = the record or
+view misleads; LOW = cosmetic or edge case.
+
+**D1: decision classifier mislabels real blocker codes.** MEDIUM
+* EXPECTED: a Decision Brain block is QUALITY_BLOCKED or HTF_BLOCKED;
+  LOSS_COOLDOWN and TRADE_LIMIT are RISK_BLOCKED; SMC `SIGNAL_ONLY` is
+  SIGNALS_ONLY and `PENDING_APPROVAL` is APPROVAL_REQUIRED.
+* ACTUAL: `stage=brain` with "…context unavailable" becomes FEED_UNAVAILABLE
+  (in the UI too); cooldown and trade limit become SETUP_REJECTED; SMC
+  becomes SIGNAL_GENERATED / WAITING_CONFIRMATION; SMC `ORDER_CREATED`
+  becomes SIGNAL_GENERATED while the trade is open.
+* ROOT CAUSE: `classify_decision` keyword-matches stage, blocker and reason
+  together, in a fixed order, before it looks at the structured stage.
+* FILES: `services/journal_recorder.py` (`classify_decision`),
+  `services/journal_labs.py` (SMC status map).
+* FIX: map `gate_stage` and blocker codes first, with an explicit table;
+  keywords on the reason only as a fallback; add the SMC lab statuses.
+
+**D2: stale data and feed loss never become decision records.** HIGH
+* EXPECTED: one STALE_DATA or FEED_UNAVAILABLE record per outage.
+* ACTUAL: the real engine raises `MarketDataStaleError` before any cycle
+  report or decision row, so nothing is recorded. `project_feed_incidents`
+  reads a top-level `blocker` key that `build_cycle_report` never writes.
+  `test_05` passes only on a hand-built cycle-report shape.
+* ROOT CAUSE: incidents are projected from the wrong store.
+* FILES: `services/journal_recorder.py` (`project_feed_incidents`),
+  `tests/test_journal_integrity.py::test_05`.
+* FIX: project incidents from the instance lifecycle transitions
+  (`data_stale` → `running`) recorded by `trading_instances` /
+  `instance_telemetry`, one per outage; rebuild the test on the real engine.
+
+**D3: the finalized-record guard can be bypassed; origin is mutable.** MEDIUM
+* EXPECTED: a finalized record cannot be un-finalized, deleted, or re-origined
+  outside `correct()`.
+* ACTUAL: raw SQL can set `finalized=0` and then edit or delete; it can change
+  `record_origin` directly. `upsert_trade` silently updates non-fact columns
+  (origin, source, verification) on finalized records.
+* FILES: `data/trade_record_store.py`.
+* FIX: the trigger aborts `finalized` 1→0 and changes to
+  origin/source/key/status; the upsert logs a CORRECTION for any of those.
+
+**D4: a decision record keeps only the latest upstream state.** LOW–MEDIUM
+* EXPECTED: the decision that opened a trade stays "accepted"; a later
+  duplicate attempt is a separate DUPLICATE_PREVENTED event.
+* ACTUAL: after a restart re-evaluated the candle, the record reads
+  TRADE_OPENED with status GATE_REJECTED and blocker DUPLICATE_SIGNAL.
+* ROOT CAUSE: `DecisionStore.record` returns the existing id,
+  `_finalize_decision` overwrites it (upstream, `auto_engine.py`), and the
+  projector upserts.
+* FILES: `services/journal_recorder.py` (`DecisionProjector`),
+  `services/auto_engine.py`.
+* FIX: keep the first terminal state and append later ones as events.
+
+**D5: instance decision records are always FORWARD_PAPER.** LOW
+* EXPECTED: a replay instance's decision is SIMULATION.
+* ACTUAL: FORWARD_PAPER, while its trade is SIMULATION.
+* FILES: `services/journal_recorder.py:711`.
+* FIX: take the origin from the instance's market data mode, as trades do.
+
+**D6: Price Action lab decisions are not recorded.** MEDIUM
+* EXPECTED: PA candidates that were rejected, cancelled or waiting appear
+  under Decisions.
+* ACTUAL: `PALabProjector` has no `project_decisions`, so 0 PA decisions.
+* FILES: `services/journal_labs.py`.
+* FIX: project `pa_candidates` / `pa_evaluations` material states.
+
+**D8: SMC condition summaries are always empty.** MEDIUM
+* EXPECTED: `conditions_passed` lists the passed conditions.
+* ACTUAL: `[]`, and `conditions_required` is 8 nulls. The real evaluation
+  uses `{key, label, status: "PASS"}`; the projector reads `name` /
+  `condition` / `passed`. The raw list is kept in `evidence.ordered_conditions`.
+  `test_21` uses the non-real shape.
+* FILES: `services/journal_labs.py` (~370, ~489), `tests/test_journal_integrity.py::test_21`.
+* FIX: read `label or key` and `status == "PASS"`; build the fixture from
+  `evaluate(seeded_engine())`.
+
+**D9: the agent's TAKEN decision is not linked to its record.** LOW
+* EXPECTED: the AGENT decision links to the SMC record.
+* ACTUAL: unlinked. The real agent writes `trade_id` only on the execution
+  intent and in `agent_trades.decision_id`. Also, if the agent row appears
+  after the lab record was finalized, `agent_id` and `decision_id` are never
+  filled (finalized lifecycles are skipped).
+* FILES: `services/journal_labs.py`.
+* FIX: link through `agent_trades.decision_id → proposal_id`; allow ENRICH
+  of NULL agent fields on finalized records.
+
+**D10: weekly scope labels truncate the instance id to 8 characters.** LOW
+* Two instances can look identical in the list.
+* FILES: `services/journal_reviews.py:170`.
+* FIX: show the instance name or the full id.
+
+**D11: a late record in a reviewed week is ignored.** MEDIUM
+* EXPECTED: the weekly review reflects every record closed in its week, or
+  says it is out of date.
+* ACTUAL: once DONE, a week is never revisited; the added record is missing
+  and nothing flags it.
+* FILES: `services/journal_reviews.py` (`run_weekly`).
+* FIX: for DONE weeks inside the catch-up window, compare stored ids with
+  the current ones; on a difference, write a new revision and mark the old
+  one superseded.
+
+**D12: "Risk %" shows the configured risk next to the actual risk amount.** LOW
+* 1.00% is shown beside $14.94, which is 0.15% of $10,000 (the exposure cap
+  shrank the size).
+* FILES: `TradeDetail.tsx`, `journal_recorder.py`.
+* FIX: label it configured, and add effective risk = risk amount / equity.
+
+**D13: a quality-gate bypass is not visible.** MEDIUM
+* EXPECTED: a trade the owner let through with the quality gate off says so.
+* ACTUAL: the Risk section says "every pre-trade gate passed". The frozen
+  evidence has `quality_gate.allowed: false`. The decision's bypass reason
+  was overwritten upstream by "Market intent awaits…".
+* FILES: `services/journal_recorder.py` (risk_check), `services/auto_engine.py`
+  (`_finalize_decision`).
+* FIX: derive "PASSED — quality gate bypassed by owner" from the frozen
+  evidence.
+
+**D14: decision latency starts at the candle's open.** LOW
+* It shows 5 m on 5 m candles.
+* FIX: measure from the candle close (timestamp + timeframe), or label it.
+
+**D15: a legacy counter is VERIFIED even when its backing record is SIMULATION.** MEDIUM
+* EXPECTED: VERIFIED means backed by forward-paper records.
+* ACTUAL: a counter backed only by a replay trade shows VERIFIED.
+* FILES: `services/journal_legacy.py` (`evolution_provenance`).
+* FIX: carry the backing records' origins, and use VERIFIED only for
+  FORWARD_PAPER.
+
+**D16: order submit and ack times copy the intent time.** LOW
+* The forward engine has no order-ack event; `intent_id == order_id`.
+* FIX: leave the ack time NULL when no ack exists; document intent = order
+  on this path.
+
+**D17: an instance strategy's structured evidence is not frozen.** MEDIUM (§7)
+* 3-Candle Rejection level, touches and EMA values survive only as prose.
+* ROOT CAUSE: the engine freezes `Signal.snapshot`, which this strategy does
+  not set; `strategy.decision_report()` holds the data.
+* FILES: `services/auto_engine.py` (payload). No strategy logic change is
+  needed.
+* FIX: freeze `decision_report()` into the payload at signal time.
+
+**D18: open instance records have no `position_id`.** LOW–MEDIUM
+* EXPECTED: the position id from the OPEN execution row.
+* ACTUAL: NULL until the close.
+* FILES: `services/journal_recorder.py` (ledger projector).
+* FIX: read `position_id` from `paper_executions` OPEN.
+
+(D7 was merged into D1.)
