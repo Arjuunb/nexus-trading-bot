@@ -291,6 +291,30 @@ class V2LabProjector:
         return 0
 
 
+#: SMC strategy condition outcomes (services/smc_strategy_ladder.ConditionStatus).
+_SMC_FAILED = ("MISSING", "INVALIDATED", "EXPIRED")
+
+
+def _smc_conditions(conditions: list) -> tuple[list, list, list]:
+    """Required, passed and failed condition names from the SMC strategy's
+    ordered results, which read {key, label, status, detail, object_id}.
+    A NOT_REQUIRED condition is not part of this candidate's setup."""
+    required, passed, failed = [], [], []
+    for c in conditions:
+        if not isinstance(c, dict):
+            continue
+        status = str(c.get("status") or "").upper()
+        name = c.get("label") or c.get("key")
+        if status == "NOT_REQUIRED" or not name:
+            continue
+        required.append(name)
+        if status == "PASS":
+            passed.append(name)
+        elif status in _SMC_FAILED:
+            failed.append(name)
+    return required, passed, failed
+
+
 def _candidate_type(status: str, reason, *, traded: bool) -> str:
     """A lab candidate's decision type. Both labs write the same statuses; two
     of them carry more than one meaning, which only the lab's reason tells
@@ -370,10 +394,7 @@ class SMCLabProjector(V2LabProjector):
         payload = _json(rows[0].get("payload"), {}) or {}
         ev = payload.get("evaluation") or {}
         conditions = ev.get("ordered_condition_results") or []
-        passed = [c.get("name") or c.get("condition") or c for c in conditions
-                  if isinstance(c, dict) and c.get("passed")]
-        failed = [c.get("name") or c.get("condition") or c for c in conditions
-                  if isinstance(c, dict) and c.get("passed") is False]
+        required, passed, failed = _smc_conditions(conditions)
         mtf = ev.get("mtf_evidence") or {}
         return {
             "setup_type": meta.get("model_id"),
@@ -382,8 +403,7 @@ class SMCLabProjector(V2LabProjector):
             "htf_bias": (mtf.get("primary") or {}).get("bias") if isinstance(
                 mtf.get("primary"), dict) else None,
             "setup": {"setup_type": meta.get("model_id"), "state": ev.get("state"),
-                      "conditions_required": [c.get("name") or c.get("condition")
-                                              for c in conditions if isinstance(c, dict)],
+                      "conditions_required": required,
                       "conditions_passed": passed, "conditions_failed": failed,
                       "missing_conditions": ev.get("missing_conditions") or [],
                       "trade_plan": ev.get("trade_plan")},
@@ -498,9 +518,7 @@ class SMCLabProjector(V2LabProjector):
                 "decided_at": _ts(cand.get("created_at")),
                 "signal": (_side(proposal.get("direction")) or "").upper() or None,
                 "decision_type": dtype, "status": status, "reason": cand.get("reason"),
-                "conditions_passed": [c.get("name") or c.get("condition") for c in
-                                      ev.get("ordered_condition_results") or []
-                                      if isinstance(c, dict) and c.get("passed")],
+                "conditions_passed": _smc_conditions(ev.get("ordered_condition_results") or [])[1],
                 "conditions_missing": ev.get("missing_conditions") or [],
                 "market_data_state": "UNRELIABLE" if status == "DATA_PAUSED" else "SYNCHRONIZED",
                 "evidence": {"mtf_evidence": ev.get("mtf_evidence"),

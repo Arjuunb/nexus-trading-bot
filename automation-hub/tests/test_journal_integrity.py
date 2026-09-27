@@ -502,6 +502,10 @@ def test_20_pa_lab_records_one_trade_per_lifecycle(tmp_path):
 
 
 def test_21_smc_lab_merges_the_agent_into_the_same_record(tmp_path):
+    from services.smc_strategy_v1 import evaluate
+    from tests.test_smc_strategy_ladder import seeded_engine
+    # The condition list exactly as the SMC strategy emits it.
+    conditions = evaluate(seeded_engine())["ordered_condition_results"]
     account, journal = _smc(tmp_path)
     session = account.session()["id"]
     order, exit_ = _lab_trade(account, exit_bid=98.5)          # stopped out
@@ -514,8 +518,7 @@ def test_21_smc_lab_merges_the_agent_into_the_same_record(tmp_path):
           model_id="SMC_M1_SWEEP_REVERSAL", status="PLACED", reason="entry ready",
           payload=json.dumps({"evaluation": {
               "state": "ENTRY_READY", "missing_conditions": [],
-              "ordered_condition_results": [{"name": "liquidity_sweep", "passed": True},
-                                            {"name": "choch", "passed": True}],
+              "ordered_condition_results": conditions,
               "mtf_evidence": {"primary": {"bias": "bullish"}},
               "proposal": {"symbol": "BTCUSDT", "timeframe": "5m", "direction": "long",
                            "signal_timestamp": _at(0)}}}),
@@ -534,10 +537,50 @@ def test_21_smc_lab_merges_the_agent_into_the_same_record(tmp_path):
     full = store.get(r["journal_record_id"])
     assert full["agent_id"] == "smc_agent" and full["decision_id"] == "dec-9"
     assert full["exit_reason"] == "stop-loss" and full["outcome"] == "LOSS"
-    assert full["setup"]["conditions_passed"] == ["liquidity_sweep", "choch"]
+    assert full["setup"]["conditions_passed"] == [c["label"] for c in conditions
+                                                  if c["status"] == "PASS"]
+    assert full["setup"]["conditions_passed"]
     assert full["htf_bias"] == "bullish"
     [d] = [d for d in store.query_decisions() if d["record_source"] == "SMC_LAB"]
     assert d["journal_record_id"] == r["journal_record_id"]     # the decision links to its trade
+
+
+def test_21b_smc_conditions_on_the_record_are_the_strategys_own(tmp_path):
+    """Strategy, lab placement, fill and stop-out all real: the record's
+    condition lists are the frozen evaluation's, a NOT_REQUIRED condition is
+    not listed as required, and the decision record agrees."""
+    from bot.types import Bar
+    from services.smc_strategy_lab import SMCPaperAccount, SMCPaperConfig
+    from services.smc_strategy_v1 import evaluate
+    from tests.test_smc_strategy_ladder import seeded_engine
+
+    rules = {"tick_size": 0.1, "quantity_step": 0.001, "min_quantity": 0.001,
+             "max_quantity": 100.0, "min_notional": 5.0}
+    account = SMCPaperAccount(str(tmp_path / "smc.db"))
+    account.configure(config=SMCPaperConfig(operating_mode="automatic"))
+    evaluation = evaluate(seeded_engine())
+    plan, t0 = evaluation["trade_plan"], evaluation["proposal"]["signal_timestamp"]
+    account.synchronize_candidate(evaluation, rules=rules, reference_price=plan["entry"],
+                                  feed_reliable=True)
+    account.process_candle("BTCUSDT", Bar(t0 + timedelta(minutes=5), plan["entry"],
+                                          plan["entry"] + 0.5, plan["entry"] - 0.5, plan["entry"], 10_000))
+    stop = plan["stop"]
+    account.process_candle("BTCUSDT", Bar(t0 + timedelta(minutes=10), plan["entry"], plan["entry"] + 0.1,
+                                          stop - 1.1, stop - 1, 10_000))
+    store = TradeRecordStore()
+    SMCLabProjector(account).project(store)
+    [r] = store.query_trades()
+    full = store.get(r["journal_record_id"])
+    rows = evaluation["ordered_condition_results"]
+    assert full["status"] == "CLOSED" and full["exit_reason"] == "stop-loss"
+    assert full["setup"]["conditions_passed"] == [c["label"] for c in rows if c["status"] == "PASS"]
+    assert full["setup"]["conditions_required"] == [c["label"] for c in rows
+                                                    if c["status"] != "NOT_REQUIRED"]
+    assert full["setup"]["conditions_failed"] == []          # an ENTRY_READY setup
+    assert any(c["status"] == "NOT_REQUIRED" for c in rows)  # so the exclusion is exercised
+    assert full["evidence"]["ordered_conditions"] == rows     # the raw list is kept as well
+    [d] = store.query_decisions()
+    assert d["conditions_passed"] == full["setup"]["conditions_passed"]
 
 
 def test_22_trading_instance_record_carries_frozen_decision_evidence(env):

@@ -529,3 +529,22 @@ That is why the audit run, which was automatic mode, showed 0 PA decisions.
 D6 is narrower than first written: PA automatic placements have no decision
 record of their own (their trade record exists), and PA "waiting" evaluations
 are not recorded.
+
+**D8 — FIXED.**
+* Change: the SMC projector reads the strategy's real condition shape,
+  `{key, label, status}`:
+  * **passed** is PASS;
+  * **failed** is MISSING / INVALIDATED / EXPIRED;
+  * NOT_REQUIRED is left out of **required**.
+
+  The trade record and the decision record share one reader. The raw list
+  stays in `evidence.ordered_conditions`.
+* Tests:
+  * `test_21` now feeds the strategy's own condition list; it was a shape the
+    strategy never emits.
+  * `test_21b` runs the real SMC strategy, lab placement, fill and stop-out,
+    and checks the record's lists against the evaluation.
+
+  Both fail on the old projector.
+* Harness: the SMC record lists 7 passed conditions; the not-required pivot
+  is excluded.
