@@ -604,3 +604,13 @@ are not recorded.
   on the old code. An ordinary trade stays PASSED.
 * Harness: the audit trade reads PASSED_WITH_QUALITY_GATE_OFF, with the
   Brain's two blocks.
+
+**Found while fixing, outside the journal.** In replay mode the strategy
+engine numbers execution ids with a counter that restarts at 1 for every
+engine (`auto-{symbol}-{action}-{n}`). A second replay run or instance on
+the same ledger therefore reuses an id, and its first trade fails closed.
+The cause is execution code (`services/auto_engine.py`), so it was not
+changed here; it is filed as its own task.
+
+**Still open:** D3, D4, D5, D6 (narrowed, see above), D9, D10, D12, D14, D16,
+D17 and D18.
