@@ -717,3 +717,25 @@ strategy's proposals.**
   carry no `signal_at`, such as the lab's own tests.
 * Not changed: `price_action_lab.py` is frozen. A one-line fix would compare
   `isoformat()` values. It needs the owner's decision to lift the freeze.
+
+**D17 — FIXED (level and touches; EMA values stay unrecorded).**
+* Change: when a strategy signals, the engine now also freezes the
+  strategy's `decision_report()` into the fill payload as `strategy_report`,
+  and the record keeps it as `evidence.strategy_report`. For 3-Candle
+  Rejection that is the decision, direction, level price and level touches as
+  data, not only prose. `services/auto_engine.py` was touched only to add
+  this evidence field. The report is read after the signal exists and never
+  feeds back into the order. A strategy without a report, or one whose report
+  fails, trades exactly as before and records `null`.
+* Not fixed: the strategy's report does not carry the EMA 9/33 values, only
+  their relation inside the reason text ("EMA9 > EMA33"). Recording them
+  would mean changing the strategy's report, which is strategy code, so they
+  are still absent. Nothing is filled in for them.
+* Tests: `tests/test_journal_strategy_evidence.py`. The real strategy trades
+  through the engine, the pipeline and a forward fill. The record's level
+  equals the strategy's own rejection event level (100.0, 2 touches). A report
+  that raises on the signal candle still gives an open trade, with no
+  report. Both fail on the old code.
+* Harness: all 8 instance trades (7 forward paper, 1 simulation) carry the
+  report. Lab and legacy records have none, since their strategies do not go
+  through this engine.

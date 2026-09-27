@@ -20,6 +20,7 @@ close path, so the engine and webhooks share identical execution semantics.
 from __future__ import annotations
 
 import itertools
+import json as _json
 import threading
 import time
 import traceback
@@ -1867,6 +1868,10 @@ class AutoStrategyEngine:
             "brain_score": getattr(signal, "brain_score", None),
             "snapshot": getattr(signal, "snapshot", None),
             "brain_checklist": getattr(signal, "checklist", None),
+            # The strategy's own account of this signal (its level, touches,
+            # direction...), frozen now so the journal holds it as data rather
+            # than only the prose reason. Read-only; never affects the order.
+            "strategy_report": _frozen_report(strategy),
             # The separately-scored TradeBrain verdict is the final quality
             # gate used for this entry. Preserve it with the fill so the trade
             # journal can explain the accepted setup without re-computing from
@@ -2176,6 +2181,20 @@ class AutoStrategyEngine:
             raise StrategyExecutionError(
                 f"Pipeline failed closed for {payload.get('symbol')}: {type(e).__name__}: {e}"
             ) from e
+
+
+def _frozen_report(strategy) -> Optional[dict]:
+    """A strategy's decision_report() at signal time, as plain JSON data, or
+    None. Evidence only: a strategy without one, or one that fails, changes
+    nothing about the signal it produced."""
+    report = getattr(strategy, "decision_report", None)
+    if not callable(report):
+        return None
+    try:
+        value = report()
+        return _json.loads(_json.dumps(value, default=str)) if isinstance(value, dict) else None
+    except Exception:  # noqa: BLE001 -- evidence can never stop a trade
+        return None
 
 
 # Approx seconds per candle, to judge whether a live feed has stalled.

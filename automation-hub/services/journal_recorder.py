@@ -648,6 +648,7 @@ class LedgerProjector:
             } if payload else None,
             "evidence_json": {
                 "strategy_snapshot": payload.get("snapshot"),
+                "strategy_report": payload.get("strategy_report"),
                 "quality_gate": gate or None,
                 "engine": payload.get("journal_engine"),
                 "candle_id": payload.get("decision_identity") or fill.get("candle_id"),
