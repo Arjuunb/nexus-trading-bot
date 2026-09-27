@@ -52,3 +52,17 @@ test("SMC Visual Lab and SMC Strategy Lab have separate sidebar routes and page 
   await expect(page).toHaveURL(/#\/smc-visual-lab$/);
   await expect(page.getByRole("heading", { name: "Native SMC Visual Lab" })).toBeVisible();
 });
+
+test("SMC strategy chart starts legible while full labels remain available", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/#/smc-strategy-lab");
+  await expect(page.locator(".smc-chart-canvas")).toBeVisible();
+  const display = page.locator(".pa-sidebar .pa-details");
+  await display.locator("summary").click();
+  await expect(page.getByLabel("SMC chart layer preset")).toHaveValue("strategy");
+  const labels = display.getByRole("checkbox", { name: "Labels" });
+  await expect(labels).not.toBeChecked();
+  await labels.check();
+  await expect(labels).toBeChecked();
+  await expect(page.locator(".smc-chart-canvas")).toBeVisible();
+});
