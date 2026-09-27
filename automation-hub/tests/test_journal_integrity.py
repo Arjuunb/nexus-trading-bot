@@ -644,8 +644,11 @@ def test_24_legacy_migration_verifies_what_it_can_and_labels_the_rest(tmp_path):
     assert rows[ids[1]]["record_origin"] == "LEGACY_MIGRATION"
     assert rows[ids[1]]["verification"] == "UNVERIFIED"
     assert rows[ids[1]]["planned_take_profit"] is None                   # never invented
+    # The long counter's one trade is in the ledger, but nothing recorded which
+    # market data it ran on: that is not verified forward-paper history, so the
+    # counter is LEGACY (it used to be labelled VERIFIED -- audit defect D15).
     labels = {row["side"]: row["provenance"] for row in evolution_provenance(old, store)}
-    assert labels == {"long": "VERIFIED", "short": "LEGACY"}
+    assert labels == {"long": "LEGACY", "short": "LEGACY"}
     # legacy never counts as forward-paper performance
     assert store.count_trades(where="record_origin='FORWARD_PAPER'") == 0
     # the old journal was only read

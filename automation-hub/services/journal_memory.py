@@ -73,7 +73,9 @@ def memory(store: TradeRecordStore, journal_store=None) -> dict:
             "explanation": ("VERIFIED rows are built from forward-paper trade records with ids. "
                             "LEGACY rows are counters from the old evolution memory; they are "
                             "labelled by how many of their increments still have a record behind "
-                            "them and are never mixed into verified statistics.")}
+                            "them, and by what those records are: a counter whose trades ran on "
+                            "replayed candles is SIMULATION, not VERIFIED. They are never mixed "
+                            "into verified statistics.")}
 
 
 def evidence(store: TradeRecordStore, setup_key: str, journal_store=None) -> Optional[dict]:

@@ -21,12 +21,16 @@ type Legacy = {
   setup_key: string; strategy: string; regime: string; side: string; trades: number; wins: number;
   net_r: number; stage: string; updated_at: string; provenance: string; record_origin: string;
   evidence_rows: number; verified_records: number; unbacked_increments: number;
+  backing_origins?: Record<string, number>;
   period: { start: string | null; end: string | null }; journal_record_ids: string[];
   legacy_trade_ids: string[]; note: string;
 };
 
 const stageTone = (s: string) => (s === "evidence" ? "green" : s === "building" ? "amber" : "blue");
-const provTone = (p: string) => (p === "VERIFIED" ? "green" : p === "LEGACY" ? "amber" : "red");
+const provTone = (p: string) => (p === "VERIFIED" ? "green" : p === "LEGACY" || p === "MIXED" ? "amber"
+  : p === "SIMULATION" ? "blue" : "red");
+const originsText = (o?: Record<string, number>) => Object.entries(o ?? {})
+  .map(([k, n]) => `${n} ${k.replace(/_/g, " ").toLowerCase()}`).join(", ");
 
 export default function JournalMemory() {
   const mem = useLive<{ verified: Verified[]; legacy: Legacy[]; explanation: string }>("/journal/memory", 20000);
@@ -96,6 +100,7 @@ export default function JournalMemory() {
                     <td className={m.net_r >= 0 ? "pos" : "neg"}>{rMult(m.net_r)}</td>
                     <td><Badge text={m.provenance} tone={provTone(m.provenance)} /> <Badge text="LEGACY" tone="amber" /></td>
                     <td className="dim">{m.evidence_rows} journal row(s) · {m.verified_records} ledger-verified
+                      {originsText(m.backing_origins) ? ` (${originsText(m.backing_origins)})` : ""}
                       {m.unbacked_increments ? ` · ${m.unbacked_increments} with no record` : ""}</td>
                     <td className="dim mono">{m.period.start ? `${when(m.period.start).split(",")[0]} → ${when(m.period.end).split(",")[0]}` : "Unknown"}</td>
                     <td><Badge text={m.stage} tone={stageTone(m.stage) as "green"} /></td>
@@ -105,7 +110,8 @@ export default function JournalMemory() {
             </table>
           </div>
           <p className="dim jr-note">These counts are never added to forward-paper statistics. A counter whose increments have no
-            surviving record is shown as UNVERIFIED rather than as trading history.</p>
+            surviving record is shown as UNVERIFIED, and one built on replayed candles as SIMULATION, rather than as
+            trading history.</p>
         </Card>
       )}
 

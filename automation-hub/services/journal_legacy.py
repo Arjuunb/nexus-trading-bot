@@ -131,6 +131,10 @@ class LegacyJournalMigration:
         return _finish(rec, missing, _CORE)
 
 
+#: Market data modes a decision records for candles that were not live.
+_SIMULATED_MODES = ("replay", "synthetic", "demo", "backtest")
+
+
 def evolution_provenance(journal_store, store: TradeRecordStore) -> list[dict]:
     """Label each old evolution counter by what can be proven behind it."""
     conn = getattr(journal_store, "_c", None)
@@ -140,26 +144,53 @@ def evolution_provenance(journal_store, store: TradeRecordStore) -> list[dict]:
     with lock:
         counters = [dict(r) for r in conn.execute("SELECT * FROM evolution_memory")]
         closed = [dict(r) for r in conn.execute(
-            "SELECT trade_id, strategy, regime, side, closed_at, actual_rr, result "
+            "SELECT trade_id, strategy, regime, side, closed_at, actual_rr, result, sections_json "
             "FROM trade_decision_journal WHERE status='closed'")]
     out = []
     for c in counters:
         rows = [r for r in closed if (r.get("strategy"), r.get("regime"), r.get("side")) ==
                 (c.get("strategy"), c.get("regime"), c.get("side"))]
         ids = [r["trade_id"] for r in rows]
-        verified = []
+        verified, origins = [], {}
         for trade_id in ids:
             rec = store.get(trade_id)
             if rec is not None and rec.get("verification") == "VERIFIED":
                 verified.append(rec["journal_record_id"])
+                origin = rec.get("record_origin") or "UNKNOWN"
+                origins[origin] = origins.get(origin, 0) + 1
+        # The data mode each surviving journal row recorded at decision time.
+        # A replay-mode Trading Instance fills through the same pipeline, so
+        # its trades reach this counter too (docs/JOURNAL_AUDIT.md, correction).
+        modes: dict = {}
+        for r in rows:
+            sections = _json(r.get("sections_json"), {})
+            prov = (sections.get("provenance") if isinstance(sections, dict) else None) or {}
+            mode = str(prov.get("market_data_mode") or "not recorded")
+            modes[mode] = modes.get(mode, 0) + 1
+        simulated_rows = sum(n for mode, n in modes.items() if mode in _SIMULATED_MODES)
         backed = len(rows)
         trades = int(c.get("trades") or 0)
         if trades and len(verified) == trades:
-            label = "VERIFIED"
+            # Every increment is a real ledger trade. Only forward paper is
+            # verified trading history: a counter built on replayed candles
+            # is verified to exist and is still a simulation, and a trade whose
+            # decision never recorded its market data is not proven either way.
+            label = ("VERIFIED" if set(origins) == {"FORWARD_PAPER"} else
+                     "SIMULATION" if set(origins) == {"SIMULATION"} else
+                     "MIXED" if "SIMULATION" in origins else "LEGACY")
         elif backed == trades and trades:
             label = "LEGACY"        # every increment has its journal row, not all a ledger trade
         else:
             label = "UNVERIFIED"    # increments with no surviving record at all
+        note = ("Counter from the old evolution memory. It stores no trade ids; "
+                f"{backed} of its {trades} increments have a journal row behind them"
+                + (f", {len(verified)} verified against the ledger" if backed else "")
+                + (" (" + ", ".join(f"{n} {o.replace('_', ' ').lower()}"
+                                    for o, n in sorted(origins.items())) + ")" if origins else "")
+                + ".")
+        if simulated_rows:
+            note += (f" {simulated_rows} of its journal rows recorded simulated market data "
+                     "(replay), so they are not forward-paper history.")
         out.append({
             "setup_key": c["setup_key"], "strategy": c.get("strategy"), "regime": c.get("regime"),
             "side": c.get("side"), "trades": trades, "wins": int(c.get("wins") or 0),
@@ -167,14 +198,13 @@ def evolution_provenance(journal_store, store: TradeRecordStore) -> list[dict]:
             "updated_at": c.get("updated_at"),
             "provenance": label,
             "record_origin": "LEGACY_MIGRATION",
+            "backing_origins": origins, "recorded_market_data": modes,
             "evidence_rows": backed, "verified_records": len(verified),
             "unbacked_increments": max(0, trades - backed),
             "period": {"start": min((r["closed_at"] for r in rows if r.get("closed_at")), default=None),
                        "end": max((r["closed_at"] for r in rows if r.get("closed_at")), default=None)},
             "journal_record_ids": verified,
             "legacy_trade_ids": ids,
-            "note": ("Counter from the old evolution memory. It stores no trade ids; "
-                     f"{backed} of its {trades} increments have a journal row behind them"
-                     + (f", {len(verified)} verified against the ledger." if backed else ".")),
+            "note": note,
         })
     return out

@@ -568,3 +568,24 @@ are not recorded.
 
   All three fail on the old code.
 * Harness: weekly checks 80/80.
+
+**D15 — FIXED.**
+* Change: a legacy counter is VERIFIED only when every increment is a
+  ledger-verified record and every one of those records is forward paper.
+  The other labels:
+  * all simulation → SIMULATION;
+  * forward and simulation together → MIXED;
+  * trades that exist but whose decision never recorded its market data →
+    LEGACY.
+
+  Each counter now carries `backing_origins` and the market data mode each
+  journal row recorded (`recorded_market_data`). The Memory tab shows the
+  origins next to "ledger-verified".
+* Tests: `tests/test_journal_legacy_provenance.py` runs the real 3-Candle
+  Rejection strategy through the engine and pipeline, with the decision
+  journal attached as the platform attaches it. It covers replay → SIMULATION,
+  live → VERIFIED and both → MIXED; all three fail on the old code.
+  `test_24`'s expectation, which asserted the defect (VERIFIED for a trade of
+  unknown data source), is corrected to LEGACY.
+* Harness: the replay-built counter reads SIMULATION ({SIMULATION: 1},
+  {replay: 1}).
