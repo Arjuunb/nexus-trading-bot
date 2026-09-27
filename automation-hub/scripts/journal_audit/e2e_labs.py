@@ -80,6 +80,7 @@ exit_ = smc.process_candle("BTCUSDT", Bar(t_sig + timedelta(minutes=10), entry,
                                            max(entry, far) + 0.1, min(entry, far) - 0.1, far, 10_000))
 out["smc"]["positions_after_exit"] = len(smc.broker.positions())
 out["smc"]["fills"] = smc.broker.fills()
+out["smc"]["session_risk_pct"] = smc.session()["risk_pct"]      # configured in percent
 proj = SMCLabProjector(smc, agent_journal=agent)
 out["smc"]["project"] = proj.project(store)
 out["smc"]["project_again"] = proj.project(store)

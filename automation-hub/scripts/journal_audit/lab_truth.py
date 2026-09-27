@@ -47,6 +47,9 @@ for lab, source in (("smc", "SMC_LAB"), ("pa", "PA_LAB")):
         ("realized_r", r["realized_r"], round(net / risk, 4) if risk else None),
         ("strategy_id", r["strategy_id"], entry.get("strategy")),
     ]
+    if lab == "smc":
+        # the lab configures risk in percent; the record keeps a fraction of equity
+        checks.append(("risk_percent", r["risk_percent"], d[lab]["session_risk_pct"] / 100))
     for name, got, want in checks:
         ok = got == want or (isinstance(got, (int, float)) and isinstance(want, (int, float))
                              and abs(got - want) <= max(1e-6, 1e-6 * abs(want)))

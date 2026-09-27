@@ -377,7 +377,28 @@ def _classify_by_words(fs: str, stage: str, blocker: str, reason: str) -> str:
     return "SIGNAL_GENERATED"
 
 
-def _risk_check(gate: dict, sizing: dict, payload: dict) -> dict:
+def _risk_taken(sizing: dict, risk_amount: Optional[float], equity: Optional[float]) -> dict:
+    """What the sizer aimed to risk, and what the trade risked once sized.
+
+    The sizer targets a share of equity; the exposure caps applied after it
+    can only shrink the size. A 1.00% target could leave a trade risking
+    0.15%, and the record showed the 1.00% beside the smaller dollar amount.
+    Percentages here are in percent, like the sizing receipt next to them.
+    """
+    computed, accepted = _f(sizing.get("computed_size")), _f(sizing.get("accepted_size"))
+    return {
+        "target_pct": _f(sizing.get("effective_risk_pct")),
+        "taken_pct": (round(risk_amount / equity * 100, 4)
+                      if risk_amount is not None and equity else None),
+        "reduced_after_sizing": (accepted < computed
+                                 if accepted is not None and computed is not None else None),
+        "basis": "taken = risk amount at entry / equity before the trade; a cap on the size "
+                 "applied after sizing lowers it below the target",
+    }
+
+
+def _risk_check(gate: dict, sizing: dict, payload: dict, *, risk_amount: Optional[float] = None,
+                equity: Optional[float] = None) -> dict:
     """The pre-trade receipt, frozen at decision time.
 
     An order exists only if every gate let it through, with one exception an
@@ -393,7 +414,8 @@ def _risk_check(gate: dict, sizing: dict, payload: dict) -> dict:
            "sizing": sizing or None,
            "engine_guardrails": payload.get("journal_engine"),
            "size_factors": {"context": payload.get("context_size_factor"),
-                            "health": payload.get("health_size_factor")}}
+                            "health": payload.get("health_size_factor")},
+           "risk": _risk_taken(sizing or {}, risk_amount, equity)}
     if bypassed:
         out["quality_gate"] = {"bypassed_by_owner": True, "score": gate.get("score"),
                                "grade": gate.get("grade"),
@@ -675,7 +697,9 @@ class LedgerProjector:
             "balance_before": _f(root.get("equity_before_trade")),
             "equity_before": _f(root.get("equity_before_trade")),
             "available_balance_before": _f(sizing.get("available_balance")),
-            "risk_check_json": (_risk_check(gate, sizing, payload) if payload else None),
+            "risk_check_json": (_risk_check(gate, sizing, payload, risk_amount=risk_amount,
+                                            equity=_f(root.get("equity_before_trade")))
+                                if payload else None),
             "requested_entry": _f(fill.get("requested_price")) or entry_plan,
             "actual_entry": _f(root.get("entry")),
             "requested_quantity": _f(sizing.get("accepted_size")) or entry_size,

@@ -66,6 +66,7 @@ close_wh = [w for w in wh if w["side"] == "CLOSE"]
 cpl = json.loads(close_wh[0]["payload"]) if close_wh else {}
 d = dec[0] if dec else {}
 gross = (trade["pnl"] or 0) + (trade["fees"] or 0)
+r_check = json.loads(r.get("risk_check_json") or "null") or {}
 # The engine stamps a signal with its candle's open time; the decision can
 # only follow the candle's close, which is where its latency starts.
 _tf_s = {"1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400}
@@ -92,6 +93,9 @@ checks = [
     ("net_pnl", r["net_pnl"], trade["pnl"]),
     ("gross_pnl", r["gross_pnl"], gross),
     ("risk_amount", r["risk_amount"], risk),
+    ("risk_target_pct", (r_check.get("risk") or {}).get("target_pct"), (epl.get("journal_sizing") or {}).get("effective_risk_pct")),
+    ("risk_taken_pct", (r_check.get("risk") or {}).get("taken_pct"),
+     round(risk / trade["equity_before_trade"] * 100, 4) if risk and trade.get("equity_before_trade") else None),
     ("realized_r", r["realized_r"], round(trade["pnl"] / risk, 4) if risk else None),
     ("position_opened_at", r["position_opened_at"], trade["opened_at"]),
     ("position_closed_at", r["position_closed_at"], trade["closed_at"]),

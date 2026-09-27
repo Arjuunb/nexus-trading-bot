@@ -784,3 +784,24 @@ strategy's proposals.**
   harness's instance latencies of about 58 s come from its own synthetic
   candles, which close on the minute before the run. They are not an engine
   delay.
+
+**D12 — FIXED, together with a unit error found alongside it.**
+* Change: the risk receipt on an instance record now has a `risk` block. It
+  holds the target the sizer aimed for (`target_pct`), what the trade took
+  once sized (`taken_pct`, the risk amount over the equity before the trade)
+  and whether the size was cut after sizing. The Trade page labels the stored
+  value "Risk target" and adds "Risk taken", computed from the record's own
+  risk amount and equity.
+* Also fixed: the SMC lab configures risk in percent (0.5 means 0.5%), and its
+  records stored that number as-is. Instance records store a fraction (0.01
+  means 1%), so an SMC trade showed as risking 50%. Lab records now store the
+  fraction.
+* Tests: `tests/test_journal_risk_and_scope.py`:
+  * a real forward trade with a 1% target of $10,000, cut by the 5% exposure
+    cap to about 0.15%, checked against the ledger's entry, stop and size;
+  * a real SMC lab trade that stores 0.005 and sized for 0.5% of its balance.
+
+  Both fail on the old code.
+* Harness: `truth.py` checks the target and taken risk against the frozen
+  sizing receipt and the ledger (37/37). `lab_truth.py` checks the SMC
+  record's fraction against the lab session's configured percent.

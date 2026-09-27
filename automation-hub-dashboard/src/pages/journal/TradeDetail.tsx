@@ -100,7 +100,8 @@ export default function TradeDetail({ id, onBack }: { id: string; onBack: () => 
             ["Signal price", price(r.signal_price)], ["Planned entry", price(r.planned_entry)],
             ["Stop-loss", price(r.planned_stop_loss)], ["Take-profit", price(r.planned_take_profit)],
             ["Planned R:R", r.planned_rr != null ? num(r.planned_rr) : dash],
-            ["Risk", r.risk_percent != null ? pct(r.risk_percent, 2) : dash],
+            ["Risk target", r.risk_percent != null ? pct(r.risk_percent, 2) : dash],
+            ["Risk taken", riskTaken(r)],
             ["Risk amount", r.risk_amount != null ? `$${num(r.risk_amount)}` : dash],
             ["Quantity", num(r.quantity, 8)], ["Leverage", r.leverage != null ? `${num(r.leverage)}×` : dash],
             ["Equity before", r.equity_before != null ? `$${num(r.equity_before)}` : dash],
@@ -193,6 +194,16 @@ export default function TradeDetail({ id, onBack }: { id: string; onBack: () => 
       )}
     </>
   );
+}
+
+/** The share of equity the trade risked once sized: the risk amount over the
+ * equity before it. Exposure caps and quantity rounding after sizing can make
+ * it far smaller than the target. */
+function riskTaken(r: FullRecord): string {
+  if (r.risk_amount == null || !r.equity_before) return dash;
+  const taken = r.risk_amount / r.equity_before;
+  const below = r.risk_percent != null && taken < r.risk_percent * 0.995;
+  return `${pct(taken, 2)}${below ? " (size reduced after sizing)" : ""}`;
 }
 
 /** The decision latency with the basis the recorder measured it on. Engine

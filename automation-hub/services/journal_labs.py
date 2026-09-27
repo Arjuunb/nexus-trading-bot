@@ -36,6 +36,11 @@ _LAB_LATENCY = (None, "not measured: the lab stamps its decision with the signal
 _OPEN_ORDER = ("new", "open", "pending", "accepted", "triggered", "partially_filled")
 
 
+def _pct_fraction(value) -> Optional[float]:
+    number = _f(value)
+    return round(number / 100, 10) if number is not None else None
+
+
 def _rows(conn, lock, sql: str, args=()) -> list[dict]:
     if conn is None:
         return []
@@ -191,7 +196,9 @@ class V2LabProjector:
             "signal_price": _f(entry.get("signal_price")), "planned_entry": planned_entry,
             "planned_stop_loss": stop, "planned_take_profit": target,
             "planned_rr": _rr(planned_entry or avg_entry, stop, target),
-            "risk_percent": _f(meta.get("risk_pct")), "risk_amount": risk_amount,
+            # The lab configures risk in percent (0.5 = 0.5%); the record keeps
+            # a fraction of equity, as instance records do (0.01 = 1%).
+            "risk_percent": _pct_fraction(meta.get("risk_pct")), "risk_amount": risk_amount,
             "quantity": _f(entry_order.get("quantity")) or filled_qty,
             "risk_check_json": evaluation.get("risk_check"),
             "requested_entry": _f(entry.get("requested_price")),
