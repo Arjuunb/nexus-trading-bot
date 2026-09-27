@@ -164,7 +164,7 @@ def test_audit_endpoints_list_verify_and_export(api, default_log):
     assert len(exported.text.strip().splitlines()) == 3
 
 
-def test_settings_changes_record_the_previous_and_new_value(tmp_path, default_log):
+def test_settings_changes_record_the_previous_and_new_value(tmp_path, default_log, monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -176,16 +176,19 @@ def test_settings_changes_record_the_previous_and_new_value(tmp_path, default_lo
     from services.signal_pipeline import SignalPipeline
     from services.auto_engine import AutoStrategyEngine
 
-    settings.settings_path = str(tmp_path / "runtime.json")
+    # Restore the production-wired singletons after this test. In particular,
+    # this minimal pipeline has no skipped-trade journal; leaking it breaks
+    # later health tests (and an old on-disk skip record can mask the failure).
+    monkeypatch.setattr(settings, "settings_path", str(tmp_path / "runtime.json"))
     led = SqliteLedger(":memory:")
-    webhook_api.ledger = led
-    webhook_api.controls = TradingControl()
-    webhook_api.paper = PaperExecutionEngine(led, 10_000)
-    webhook_api.pipeline = SignalPipeline(led, webhook_api.paper, webhook_api.controls,
+    monkeypatch.setattr(webhook_api, "ledger", led)
+    monkeypatch.setattr(webhook_api, "controls", TradingControl())
+    monkeypatch.setattr(webhook_api, "paper", PaperExecutionEngine(led, 10_000))
+    monkeypatch.setattr(webhook_api, "pipeline", SignalPipeline(led, webhook_api.paper, webhook_api.controls,
                                           equity=10_000, risk_per_trade_pct=0.01,
-                                          exposure_limit_pct=0.05, max_drawdown_pct=0.20)
-    webhook_api.engine = AutoStrategyEngine(webhook_api.pipeline, webhook_api.paper, led,
-                                            symbols=["BTCUSDT"], interval=0.01)
+                                          exposure_limit_pct=0.05, max_drawdown_pct=0.20))
+    monkeypatch.setattr(webhook_api, "engine", AutoStrategyEngine(webhook_api.pipeline, webhook_api.paper, led,
+                                            symbols=["BTCUSDT"], interval=0.01))
     app = FastAPI()
     app.include_router(webhook_api.router)
     try:

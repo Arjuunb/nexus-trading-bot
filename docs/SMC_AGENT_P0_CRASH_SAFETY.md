@@ -67,7 +67,7 @@ Updated validation:
 - No production restart, deployment, mode change, or history deletion.
   Publication status is tracked by Git, not proof of deployment.
 
-### Latest integration: VPS baseline 44b0258
+### Previous integration: VPS baseline 44b0258
 
 The VPS subsequently reported `44b02580357edf29fda6e709c57843704a9017d6`.
 Its six additional commits include Supabase log-write resilience, dashboard
@@ -101,7 +101,66 @@ validation and do not waive the ancestry or backup checks.
 The concurrently deployed revision adds six further commits affecting 112
 files, including security/key custody, encrypted backups, a public API,
 SDKs and signed webhooks. These changes were fetched/read for diagnosis only;
-they were not merged or modified in this validation.
+they were not merged or modified in that validation.
+
+### Current integration: deployed baseline c4299d5
+
+With operator approval, `fd5285d9e5d3d3d63eb785a6379e6f48a7b3c958`
+was integrated without conflicts. The combined Python run passed 3,773 tests
+with 15 skipped; the focused set passed 409 tests and both frontend builds
+passed. These results apply to that earlier candidate, not later revisions.
+
+A subsequent read-only VPS check on September 26 reported
+`c4299d5b19923b0b9e03e483812b5519a7dadec3`. That revision already contains
+our P0 repair via merge `98b496a4853ce2b62ad5961cf676aa7207b3195d`
+(its second parent is integration commit `01909c3`). It was then integrated
+without conflicts. The resulting production tree matches `c4299d5` exactly;
+no older candidate should replace that running release.
+
+The running branch's CI failure was reproduced with a fresh temporary
+`HUB_DATA_DIR`: running `test_audit_log.py` before `test_bot_health.py` produced
+15 passes and one failure. The audit test replaced global ledger, controls,
+paper engine, pipeline and engine objects without restoring them. Its minimal
+pipeline had no skipped-trade store, so the later health test saw no rejection.
+Existing local skip rows could mask this failure.
+
+The only additional changes are test isolation and this report:
+
+- Use pytest monkeypatch to restore the audit test's shared objects/settings.
+- Check health-test pipeline/store wiring before isolation; use an empty
+  temporary skip database, assert HTTP results and exactly one new rejection.
+- Close any paper position created by the news-switch test's initial probe
+  before testing its enabled gate. A clean full run exposed this second test
+  assumption: no-pyramiding correctly runs before the news gate when the
+  initial probe fills. Production gate order is not changed.
+- The same fresh-state reproduction now passes all 16 tests.
+- Root engine suite: **508 passed**.
+- P0 agent/broker/freeze and lab news-gate set: **294 passed**.
+- Dashboard typecheck/build and landing client/SSR build (20 pre-rendered
+  routes): passed on the integrated `c4299d5` tree.
+- Protected SMC source and P0 production files remain byte-identical to
+  `5e494b8`; no rules, parameters, strategy behavior or execution modes changed.
+
+Read-only production evidence from `c4299d5` (not a deployment by this task):
+
+- SMC `RUNNING_ARMED`, `manual_approval`, agent attached and approver.
+- Binance feed `SYNCHRONIZED`, reliable; no blockers.
+- Paper-only true; real execution allowed false; external live disabled.
+- Reconciliation `COMPLETE`, pending count zero.
+- `/var/lib/tradexa/smc_agent_journal.db`: 1,244 decisions, zero agent trades,
+  zero intents, zero duplicate execution keys.
+- `/var/lib/tradexa/smc_strategy_paper.db`: 3 orders, 5 fills, zero positions.
+- SHA-256 checks inside the running container matched the validated local
+  versions of all five P0 broker/agent modules and all five protected SMC
+  source/runtime modules. This verifies deployed file content, not just the
+  `/version` metadata.
+
+These are point-in-time counts. Zero intents is not evidence of recovery of a
+real production execution. No deliberate container restart, production write,
+account reset, historical deletion or mode change was performed. The local
+crash tests establish the crash-boundary behavior; production restart evidence
+must be recorded separately. This test-only correction does not require an
+application redeployment.
 
 ## Root cause and execution trace
 
