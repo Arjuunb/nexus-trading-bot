@@ -670,6 +670,43 @@ def test_finalized_facts_cannot_be_rewritten_even_by_raw_sql(env):
     env.store._c.rollback()
 
 
+def test_a_finalized_record_cannot_be_reopened_relabelled_or_rekeyed_by_raw_sql(env):
+    """Reopening a record used to switch the guard off, after which anything
+    could be edited or the record deleted; its origin (which decides which
+    statistics it counts in) was never guarded at all."""
+    env.entry(); env.fill(); env.close(102.0, reason="take-profit")
+    env.recorder().reconcile()
+    rid = _one(env)["journal_record_id"]
+    for sql in ("UPDATE trade_records SET finalized=0 WHERE journal_record_id=?",
+                "UPDATE trade_records SET record_origin='SIMULATION' WHERE journal_record_id=?",
+                "UPDATE trade_records SET record_source='AGENT' WHERE journal_record_id=?",
+                "UPDATE trade_records SET execution_key='x' WHERE journal_record_id=?"):
+        with pytest.raises(sqlite3.IntegrityError):
+            env.store._c.execute(sql, (rid,))
+        env.store._c.rollback()
+    record = _one(env)
+    assert (record["finalized"], record["record_origin"], record["record_source"]) == \
+        (1, "FORWARD_PAPER", "INSTANCE")
+
+
+def test_a_later_pass_cannot_relabel_a_finished_record_but_a_correction_can(env):
+    env.entry(); env.fill(); env.close(102.0, reason="take-profit")
+    env.recorder().reconcile()
+    record = _one(env)
+    env.store.upsert_trade({"execution_key": record["execution_key"], "record_origin": "SIMULATION"})
+    after = _one(env)
+    assert after["record_origin"] == "FORWARD_PAPER" and after["facts_hash"] == record["facts_hash"]
+    [flag] = [c for c in after["corrections"] if c["field"] == "record_origin"]
+    assert flag["kind"] == "DISCREPANCY"                      # logged, not applied
+    with pytest.raises(ValueError):
+        env.store.correct(record["journal_record_id"], "record_origin", "NOT_AN_ORIGIN",
+                          reason="typo", actor="arjun")
+    fixed = env.store.correct(record["journal_record_id"], "record_origin", "SIMULATION",
+                              reason="the candles were replayed", actor="arjun")
+    assert fixed["record_origin"] == "SIMULATION" and fixed["correction_seq"] == 1
+    assert any(c["kind"] == "CORRECTION" and c["actor"] == "arjun" for c in fixed["corrections"])
+
+
 def test_an_agent_review_never_changes_the_facts(env):
     env.entry(); env.fill(); env.close(99.0, reason="stop-loss")
     env.recorder().reconcile()

@@ -612,5 +612,16 @@ the same ledger therefore reuses an id, and its first trade fails closed.
 The cause is execution code (`services/auto_engine.py`), so it was not
 changed here; it is filed as its own task.
 
-**Still open:** D3, D4, D5, D6 (narrowed, see above), D9, D10, D12, D14, D16,
-D17 and D18.
+
+**D3 — FIXED.**
+* Change: once a record is finalized, its origin, source, execution key and
+  record id are guarded with its facts. A new trigger refuses to un-finalize
+  a record; that was the step that let raw SQL edit or delete one. A later
+  recorder pass that computes a different origin or source now logs a
+  DISCREPANCY and leaves the record as it is. `correct()` can change origin
+  or source to a valid value, with a reason, an actor and a logged
+  CORRECTION.
+* Tests: raw SQL can no longer reopen, re-label or re-key a finished record;
+  a later pass cannot re-label it; a correction can. Both tests fail on the
+  old store.
+* Harness: unchanged results, 0 discrepancies.

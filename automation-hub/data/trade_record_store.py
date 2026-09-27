@@ -45,6 +45,12 @@ COMPLETENESS = ("FULL", "PARTIAL", "MINIMAL")
 #: A record in one of these statuses is finished; its facts are frozen.
 TERMINAL = ("CLOSED", "CANCELLED", "REJECTED", "EXECUTION_FAILED")
 
+#: What a record is and where it came from. Frozen with the facts once the
+#: record is finalized: re-labelling a finished trade from forward paper to
+#: anything else (or back) changes which statistics it counts in, so it is a
+#: correction with a reason and an actor, never a side effect of a later pass.
+LABEL_COLUMNS = ("record_origin", "record_source")
+
 #: Columns a finalized record may not change except through correct().
 FACT_COLUMNS = (
     "trade_id", "decision_id", "signal_id", "intent_id", "order_id", "position_id",
@@ -298,7 +304,8 @@ class TradeRecordStore:
                 c.execute(f"ALTER TABLE trade_records ADD COLUMN {name} "
                           f"{decl.replace('PRIMARY KEY', '').replace('UNIQUE', '')}")
         guarded = " OR ".join(
-            f"(OLD.{col} IS NOT NULL AND NEW.{col} IS NOT OLD.{col})" for col in FACT_COLUMNS)
+            f"(OLD.{col} IS NOT NULL AND NEW.{col} IS NOT OLD.{col})"
+            for col in (*FACT_COLUMNS, *LABEL_COLUMNS, "execution_key", "journal_record_id"))
         c.execute("DROP TRIGGER IF EXISTS trg_trade_records_immutable")
         c.execute(f"""
         CREATE TRIGGER trg_trade_records_immutable
@@ -306,6 +313,17 @@ class TradeRecordStore:
         WHEN OLD.finalized = 1 AND NEW.correction_seq <= OLD.correction_seq AND ({guarded})
         BEGIN
           SELECT RAISE(ABORT, 'finalized trade record facts are immutable; use a correction');
+        END""")
+        # Un-finalizing a record would switch the guard above off, after which
+        # its facts could be edited or the record deleted. Nothing reopens a
+        # finished record, not even a correction.
+        c.execute("DROP TRIGGER IF EXISTS trg_trade_records_stay_final")
+        c.execute("""
+        CREATE TRIGGER trg_trade_records_stay_final
+        BEFORE UPDATE OF finalized ON trade_records
+        WHEN OLD.finalized = 1 AND NEW.finalized IS NOT 1
+        BEGIN
+          SELECT RAISE(ABORT, 'a finalized trade record cannot be reopened');
         END""")
         c.execute("DROP TRIGGER IF EXISTS trg_trade_records_no_delete")
         c.execute("""
@@ -400,7 +418,8 @@ class TradeRecordStore:
                         old = current.get(name)
                         if value is None or value == old:
                             continue
-                        if current["finalized"] and name in FACT_COLUMNS and old is not None:
+                        if current["finalized"] and (name in FACT_COLUMNS or name in LABEL_COLUMNS) \
+                                and old is not None:
                             if not _same(old, value):
                                 discrepancies.append((name, old, value))
                             continue
@@ -464,9 +483,13 @@ class TradeRecordStore:
 
     def correct(self, journal_record_id: str, field: str, value, *, reason: str,
                 actor: str) -> dict:
-        """The one controlled way to change a finalized fact. Logged, never silent."""
-        if field not in FACT_COLUMNS:
+        """The one controlled way to change a finalized fact or label. Logged, never silent."""
+        if field not in FACT_COLUMNS and field not in LABEL_COLUMNS:
             raise ValueError(f"{field} is not a correctable fact column")
+        if field == "record_origin" and value not in RECORD_ORIGINS:
+            raise ValueError(f"unknown record origin {value!r}")
+        if field == "record_source" and value not in RECORD_SOURCES:
+            raise ValueError(f"unknown record source {value!r}")
         if not reason.strip() or not actor.strip():
             raise ValueError("a correction needs a reason and an actor")
         with self._lock:
