@@ -679,3 +679,41 @@ changed here; it is filed as its own task.
   old projector.
 * Harness: the SMC record names `smc_agent` and its decision, and the agent's
   TAKEN decision opens the record.
+
+**D6 — FIXED.**
+* Change: the PA projector now records every material Price Action decision
+  once:
+  * candidates;
+  * orders the lab placed by itself in automatic mode, which write no
+    candidate row;
+  * one WAITING_CONFIRMATION record per setup the strategy formed. It is read
+    from the trace each closed-candle evaluation saves, with the conditions
+    passed and the next required event. It is dropped once the setup becomes
+    a proposal, whose decision covers it. WATCHING candles are never
+    recorded.
+
+  A second bug found here is also fixed. A candidate row names its proposal
+  `{session}:{proposal}` while the trade record uses the proposal id, so an
+  approved candidate never linked to the trade it became.
+* Tests: `tests/test_journal_pa_decisions.py`. The waiting-setup case runs
+  the real, frozen PA engine over deterministic candles through the lab's own
+  evaluation: 150 evaluations give exactly one record per pending setup, with
+  no trade. There are also an automatic placement and an approved candidate.
+  All three fail on the old projector.
+* Harness: the automatic PA trade now has its TRADE_OPENED decision, linked.
+
+**Found while fixing D6, in a frozen file: the PA lab never attests its
+strategy's proposals.**
+* Evidence: `PriceActionPaperAccount.record_evaluation`
+  (`services/price_action_lab.py`) only attests proposals whose
+  `str(signal_at)` equals `candle.timestamp.isoformat()`. The engine's
+  `visual_state()` gives `signal_at` as a `datetime`, whose `str()` has a
+  space where `isoformat()` has a "T". Both the live tick and the replay loop
+  pass that state straight in. Reproduced with the real engine: at the candle
+  where it created a PA1_SR_REJECTION proposal, the lab saved the evaluation
+  as WATCHING with no proposal ids, so no order could follow.
+* Consequence: the PA lab cannot place orders from its own strategy in live
+  or replay. Its orders so far could only come from states whose proposals
+  carry no `signal_at`, such as the lab's own tests.
+* Not changed: `price_action_lab.py` is frozen. A one-line fix would compare
+  `isoformat()` values. It needs the owner's decision to lift the freeze.

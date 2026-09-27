@@ -675,17 +675,37 @@ class PALabProjector(V2LabProjector):
         }
 
     def project_decisions(self, store) -> int:
+        """Every material Price Action decision, once.
+
+        * candidates: signals-only, approval, rejected and paused proposals
+          (pa_candidates);
+        * orders the lab placed by itself: in automatic mode an accepted
+          proposal goes straight to the broker and writes no candidate row;
+        * setups the strategy formed and is waiting to confirm, one record per
+          setup however many candles it waits -- a setup that became a
+          proposal is covered by that proposal's decision instead.
+
+        A candidate row names the proposal "{session}:{proposal}"; the trade
+        record is keyed on the proposal itself, so the link uses the raw id.
+        """
         written = 0
         conn, lock = self._meta()
+        sessions = {r["id"]: r for r in _rows(conn, lock, "SELECT * FROM pa_sessions")}
+        decided, setups_used = set(), set()
         for cand in _rows(conn, lock, "SELECT * FROM pa_candidates"):
             payload = _json(cand.get("payload"), {}) or {}
             status = str(cand.get("status") or "").upper()
             proposal = payload.get("proposal") or payload
-            trade = store.by_key(f"PA_LAB:{cand['session_id']}:{cand['proposal_id']}")
+            proposal_id = (cand.get("source_proposal_id")
+                           or str(cand["proposal_id"]).split(":", 1)[-1])
+            decided.add((cand["session_id"], proposal_id))
+            setups_used.add((cand["session_id"], proposal.get("setup_id")))
+            trade = store.by_key(f"PA_LAB:{cand['session_id']}:{proposal_id}")
             dtype = _candidate_type(status, payload.get("reason"), traded=trade is not None)
             store.upsert_decision({
-                "decision_key": f"PA_LAB:decision:{cand['session_id']}:{cand['proposal_id']}",
-                "record_source": "PA_LAB", "record_origin": "FORWARD_PAPER",
+                "decision_key": f"PA_LAB:decision:{cand['session_id']}:{proposal_id}",
+                "record_source": "PA_LAB",
+                "record_origin": self._session_origin(sessions.get(cand["session_id"])),
                 "lab_id": self.lab_id, "strategy_id": proposal.get("strategy_id"),
                 "strategy_name": proposal.get("strategy_id"),
                 "symbol": proposal.get("symbol"), "timeframe": proposal.get("timeframe"),
@@ -695,10 +715,95 @@ class PALabProjector(V2LabProjector):
                 "signal": (_side(proposal.get("direction")) or "").upper() or None,
                 "decision_type": dtype, "status": status, "reason": payload.get("reason"),
                 "evidence": {"proposal": {k: proposal.get(k) for k in (
-                    "entry", "stop", "target", "entry_model", "signal_at")}},
+                    "entry", "stop", "target", "entry_model", "signal_at", "setup_id")}},
                 "source_ref": {"pa_candidate": cand["proposal_id"]},
                 "journal_record_id": trade["journal_record_id"] if trade else None,
                 "trade_id": trade.get("trade_id") if trade else None,
+            })
+            written += 1
+        for meta in _rows(conn, lock, "SELECT * FROM pa_order_meta ORDER BY created_at"):
+            session_id = meta["session_id"]
+            setups_used.add((session_id, meta.get("setup_id")))
+            if (session_id, meta["proposal_id"]) in decided:
+                continue                          # its candidate already says what happened
+            decided.add((session_id, meta["proposal_id"]))
+            trade = store.by_key(f"PA_LAB:{session_id}:{meta['proposal_id']}")
+            status = str(meta.get("status") or "").upper()
+            session = sessions.get(session_id) or {}
+            store.upsert_decision({
+                "decision_key": f"PA_LAB:decision:{session_id}:{meta['proposal_id']}",
+                "record_source": "PA_LAB", "record_origin": self._session_origin(session),
+                "lab_id": self.lab_id, "strategy_id": meta.get("strategy_id"),
+                "strategy_name": meta.get("strategy_id"), "symbol": session.get("symbol"),
+                "timeframe": session.get("timeframe"), "side": _side(meta.get("direction")),
+                "decided_at": _ts(meta.get("created_at")),
+                "signal": (_side(meta.get("direction")) or "").upper() or None,
+                "decision_type": _candidate_type(status, meta.get("reason"),
+                                                 traded=trade is not None),
+                "status": status, "reason": meta.get("reason"),
+                "evidence": {"setup_id": meta.get("setup_id"), "zone_id": meta.get("zone_id"),
+                             "placed_by": "the lab's automatic mode (no candidate row)"},
+                "source_ref": {"pa_order_meta": meta["order_id"]},
+                "journal_record_id": trade["journal_record_id"] if trade else None,
+                "trade_id": trade.get("trade_id") if trade else None,
+            })
+            written += 1
+        return written + self._project_waiting_setups(store, conn, lock, sessions, setups_used)
+
+    @staticmethod
+    def _session_origin(session: Optional[dict]) -> str:
+        return "FORWARD_PAPER" if str((session or {}).get("mode") or "LIVE_PAPER").upper() == \
+            "LIVE_PAPER" else "SIMULATION"
+
+    def _project_waiting_setups(self, store, conn, lock, sessions: dict, setups_used: set) -> int:
+        """One WAITING_CONFIRMATION record per setup the strategy formed.
+
+        Each closed-candle evaluation saves the strategy trace it judged on;
+        a trace in ORDER_PENDING names a setup whose trigger has formed and is
+        waiting for a later candle to confirm it. Candles where nothing formed
+        (WATCHING, no setup) are not decisions and are never recorded.
+        """
+        runs: dict = {}
+        latest: dict = {}
+        for ev in _rows(conn, lock, "SELECT session_id, candle_time, strategy_id, payload_json "
+                                    "FROM pa_evaluations ORDER BY session_id, candle_time"):
+            trace = (_json(ev.get("payload_json"), {}) or {}).get("trace") or {}
+            setup_id = trace.get("setup_id")
+            latest[ev["session_id"]] = setup_id
+            if not setup_id or trace.get("state") != "ORDER_PENDING":
+                continue
+            run = runs.setdefault((ev["session_id"], setup_id), {
+                "first": ev["candle_time"], "candles": 0, "strategy_id": ev["strategy_id"]})
+            run.update(last=ev["candle_time"], trace=trace)
+            run["candles"] += 1
+        written = 0
+        for (session_id, setup_id), run in runs.items():
+            if (session_id, setup_id) in setups_used:
+                continue                          # it became a proposal; that decision covers it
+            trace, session = run["trace"], sessions.get(session_id) or {}
+            conditions = trace.get("conditions") or []
+            still = latest.get(session_id) == setup_id
+            store.upsert_decision({
+                "decision_key": f"PA_LAB:setup:{session_id}:{setup_id}",
+                "record_source": "PA_LAB", "record_origin": self._session_origin(session),
+                "lab_id": self.lab_id, "strategy_id": run["strategy_id"],
+                "strategy_name": run["strategy_id"], "symbol": session.get("symbol"),
+                "timeframe": session.get("timeframe"), "side": _side(trace.get("direction")),
+                "candle_time": _ts(run["first"]), "decided_at": _ts(run["first"]),
+                "decision_type": "WAITING_CONFIRMATION",
+                "status": "WAITING" if still else "NOT_SHOWN_SINCE",
+                "reason": (f"{trace.get('next_required_event') or 'Waiting for confirmation'} "
+                           f"(seen on {run['candles']} closed candle(s), {run['first']} to "
+                           f"{run['last']}" + ("" if still else "; not shown in later evaluations")
+                           + ")"),
+                "conditions_passed": [c.get("key") for c in conditions
+                                      if isinstance(c, dict) and c.get("status") == "PASS"],
+                "conditions_missing": list(trace.get("missing_conditions") or []),
+                "evidence": {"setup_id": setup_id, "first_candle": run["first"],
+                             "last_candle": run["last"], "candles": run["candles"],
+                             "conditions": conditions,
+                             "supporting_object_ids": trace.get("supporting_object_ids")},
+                "source_ref": {"pa_evaluations": {"session_id": session_id, "setup_id": setup_id}},
             })
             written += 1
         return written
