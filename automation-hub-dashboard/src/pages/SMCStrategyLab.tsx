@@ -184,7 +184,9 @@ const PRESETS: Record<ChartPreset, NativeSMCOverlayFilters> = {
   clean: { pivots: false, internal: false, swing: false, structure: false, liquidity: false, fvg: false, orderBlocks: false, mitigated: false, labels: false },
   structure: { pivots: true, internal: true, swing: true, structure: true, liquidity: true, fvg: false, orderBlocks: false, mitigated: false, labels: true },
   zones: { pivots: false, internal: false, swing: false, structure: false, liquidity: true, fvg: true, orderBlocks: true, mitigated: false, labels: true },
-  strategy: { pivots: true, internal: false, swing: true, structure: true, liquidity: true, fvg: true, orderBlocks: true, mitigated: false, labels: true },
+  // The 5m feed can return hundreds of overlapping native annotations. Keep
+  // their markers and hover evidence visible; text is opt-in via Labels/Debug.
+  strategy: { pivots: true, internal: false, swing: true, structure: true, liquidity: true, fvg: true, orderBlocks: true, mitigated: false, labels: false },
   trades: { pivots: false, internal: false, swing: false, structure: false, liquidity: false, fvg: false, orderBlocks: false, mitigated: false, labels: true },
   debug: { pivots: true, internal: true, swing: true, structure: true, liquidity: true, fvg: true, orderBlocks: true, mitigated: true, labels: true },
 };
