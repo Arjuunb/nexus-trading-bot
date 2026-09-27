@@ -485,3 +485,20 @@ view misleads; LOW = cosmetic or edge case.
 * FIX: read `position_id` from `paper_executions` OPEN.
 
 (D7 was merged into D1.)
+
+## 21. Fix log
+
+Each fix lands in its own commit, with a test built on real engine or
+strategy output, and is re-checked with `scripts/journal_audit/run_all.sh`.
+
+**D2 — FIXED.**
+* Change: outages are now projected from the instance lifecycle events the
+  manager writes to `instance_engine_logs` (MARKET_STALE, then recovery
+  attempts, until MARKET_CONNECTED, or until the worker stops or errors).
+  The result is one decision record per outage, updated in place as OPEN →
+  RESOLVED / INSTANCE_STOPPED / WORKER_STOPPED_ON_ERROR, with no trade and no
+  P&L. The dead cycle-report projector and its hand-built test are removed.
+* Tests: `test_05` runs a real `TradingInstanceManager` whose feed serves
+  3-hour-old candles, then recovers. `test_05b` stops the worker mid-outage.
+* Harness: `inst-dec-stale` now yields STALE_DATA / RESOLVED, 2 recovery
+  attempts.

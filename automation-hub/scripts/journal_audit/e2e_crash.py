@@ -32,7 +32,7 @@ def check(name, ok, detail=""):
 
 def recorder():
     rec = JournalRecorder(STORE)
-    rec.add_ledger(LedgerSource("MAIN", h.ledger, decision_store=h.decisions, cycle_store=h.cycles))
+    rec.add_ledger(LedgerSource("MAIN", h.ledger, decision_store=h.decisions))
     return rec
 
 

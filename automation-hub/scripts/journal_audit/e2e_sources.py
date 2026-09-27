@@ -139,7 +139,7 @@ out["legacy_ids"] = ids
 # ------------------------------------------------ the recorder, wired as webhook_api wires it
 store = TradeRecordStore(S.trade_records_db)
 rec = JournalRecorder(store)
-rec.add_ledger(LedgerSource("MAIN", h.ledger, decision_store=h.decisions, cycle_store=h.cycles))
+rec.add_ledger(LedgerSource("MAIN", h.ledger, decision_store=h.decisions))
 rec.labs = [SMCLabProjector(smc, agent_journal=agent), PALabProjector(PriceActionPaperAccount(S.price_action_paper_db))]
 rec.legacy = LegacyJournalMigration(old)
 from services.journal_reviews import review_finalized  # noqa: E402

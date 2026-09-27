@@ -15,7 +15,6 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from data.cycle_store import CycleStore
 from data.decision_store import DecisionStore
 from data.journal_store import JournalStore
 from data.ledger import SqliteLedger
@@ -45,7 +44,6 @@ class Env:
         self.ledger = SqliteLedger(str(tmp_path / "ledger.db"))
         self.instance_id, self.session = instance_id, session
         self.decisions = DecisionStore(str(tmp_path / "decisions.db"))
-        self.cycles = CycleStore(str(tmp_path / "cycles.db"))
         self.store = TradeRecordStore(str(tmp_path / "trade_records.db"))
         self._build(equity)
 
@@ -61,8 +59,7 @@ class Env:
 
     def recorder(self, store=None) -> JournalRecorder:
         rec = JournalRecorder(store or self.store)
-        rec.add_ledger(LedgerSource("MAIN", self.ledger, decision_store=self.decisions,
-                                    cycle_store=self.cycles))
+        rec.add_ledger(LedgerSource("MAIN", self.ledger, decision_store=self.decisions))
         return rec
 
     def entry(self, alert="a1", side="BUY", entry=100.0, stop=99.0, target=102.0, minute=0,
@@ -154,22 +151,143 @@ def test_04_risk_blocked_decision_is_recorded_and_makes_no_trade(env):
     assert d["reason"] == "max open positions reached"
 
 
-def test_05_stale_market_data_is_one_incident_not_a_row_per_candle(env):
-    _decision(env, identity="d-stale", final_state="GATE_REJECTED", gate_stage="market_quality",
-              blocker="GATE_REJECTED: DATA_STALE", reason="last candle is stale")
-    for i in range(3):
-        env.cycles.record({"symbol": "BTCUSDT", "timeframe": "5m", "decision": "SKIP",
-                           "instance_id": env.instance_id, "ts": _at(i * 5),
-                           "blocker": "GATE_REJECTED: DATA_STALE"})
-    env.cycles.record({"symbol": "BTCUSDT", "timeframe": "5m", "decision": "WAIT",
-                       "instance_id": env.instance_id, "ts": _at(20),
-                       "blocker": "GATE_REJECTED: NO_SETUP"})
-    env.recorder().reconcile()
-    types = sorted(d["decision_type"] for d in env.store.query_decisions())
-    assert types == ["STALE_DATA", "STALE_DATA"]           # the signal + one incident
-    incident = next(d for d in env.store.query_decisions() if d["status"] == "INCIDENT")
-    assert incident["evidence"]["candles"] == 3             # three candles, one record
-    assert env.records() == []
+class _StaleThenFresh:
+    """Transport double for the shared market hub. Its closed candles are three
+    hours old until ``fresh`` is set; the hub, the instance manager, the
+    engine's own freshness check and its recovery loop are all real."""
+
+    fresh = False
+
+    def __init__(self, _loader, *, bar_sink=None, quote_sink=None, event_sink=None,
+                 quotes_enabled=True, **_kw):
+        self.quotes_enabled = quotes_enabled
+        self.running = False
+        self.bars: list = []
+
+    def start(self, symbol, timeframe):
+        from bot.types import Bar
+        step = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400}[timeframe]
+        anchor = int(datetime.now(timezone.utc).timestamp()) // step * step
+        self.running, self.bars = True, [
+            Bar(datetime.fromtimestamp(anchor - i * step, tz=timezone.utc),
+                100.0, 100.5 + (i % 5) * 0.25, 99.5, 100.0 + (i % 5) * 0.25, 10.0)
+            for i in range(400, 0, -1)]
+        return True
+
+    def stop(self):
+        self.running = False
+
+    def status(self):
+        return {"state": "SYNCHRONIZED", "transport_state": "CONNECTED", "reliable": True,
+                "new_entries_paused": False, "quotes_enabled": self.quotes_enabled,
+                "reconnect_attempt": 0, "quote": {"bid": 99.9, "ask": 100.1, "mark": 100.0},
+                "health_reason": "transport double"}
+
+    def snapshot(self):
+        lag = timedelta(0) if _StaleThenFresh.fresh else timedelta(hours=3)
+        from bot.types import Bar
+        bars = [Bar(b.timestamp - lag, b.open, b.high, b.low, b.close, b.volume) for b in self.bars]
+        return {"closed_bars": bars, "forming": None, "quote": {}, "connection": self.status()}
+
+
+def _wait_for(predicate, timeout=30.0):
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def test_05_a_market_data_outage_is_one_decision_record_from_the_real_engine(tmp_path):
+    """The engine refuses stale candles before any decision or cycle report
+    exists, so the outage is recorded from the lifecycle events the instance
+    manager writes: one record per outage, updated in place from open to
+    resolved, however many recovery attempts it took -- and never a trade."""
+    from services.forward_paper_hub import ForwardPaperMarketDataHub
+    from services.trading_instances import TradingInstanceManager
+    from strategies.brain_strategy import DecisionBrain
+
+    _StaleThenFresh.fresh = False
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    hub = ForwardPaperMarketDataHub(lambda *a, **k: [], stream_factory=_StaleThenFresh)
+    hub.synchronous_delivery = True
+    manager = TradingInstanceManager(ledger, strategy_factory=lambda _k, s: DecisionBrain(s),
+                                     live=True, live_poll_s=1.0)
+    manager.market_hub = hub
+    manager.symbol_rules_provider = lambda _s: {"symbol": "X", "tick_size": 0.01, "step_size": 0.001,
+                                                "min_qty": 0.001, "min_notional": 5.0}
+    manager.configure(paper_account_capital=100_000)
+    inst = manager.create(symbol="BTCUSDT", strategy_key="brain", strategy_label="Decision Brain",
+                          strategy_version="v1", timeframe="5m", risk_per_trade_pct=0.005,
+                          capital_allocation=1_000)
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    recorder = JournalRecorder(store)
+    recorder.add_ledger(LedgerSource("MAIN", ledger))
+
+    def events():
+        return [json.loads(r["message"][len("instance_event "):])["event"]
+                for r in manager.store.engine_logs(inst.id, limit=500)
+                if r["message"].startswith("instance_event ")]
+    try:
+        manager.start(inst.id)
+        assert _wait_for(lambda: events().count("MARKET_DISCONNECTED") >= 2), events()
+        recorder.reconcile()
+        [opened] = store.query_decisions()
+        assert opened["decision_type"] == "STALE_DATA" and opened["status"] == "OPEN"
+        assert opened["instance_id"] == inst.id and opened["symbol"] == "BTCUSDT"
+        assert "market data stale" in opened["evidence"]["first_detail"]
+        assert opened["evidence"]["ended_at"] is None
+
+        _StaleThenFresh.fresh = True                       # the feed recovers
+        assert _wait_for(lambda: "MARKET_CONNECTED" in events()), events()
+        recorder.reconcile()
+        recorder.reconcile()
+    finally:
+        manager.shutdown()
+        _StaleThenFresh.fresh = False
+    [resolved] = store.query_decisions()
+    assert resolved["decision_record_id"] == opened["decision_record_id"]   # the same record
+    assert resolved["status"] == "RESOLVED"
+    evidence = resolved["evidence"]
+    assert evidence["recovery_attempts"] >= 2 and evidence["duration_s"] > 0
+    assert evidence["ended_at"] > evidence["started_at"]
+    assert store.query_trades() == []                                        # no trade, no P&L
+
+
+def test_05b_an_outage_that_outlives_the_worker_ends_with_it(tmp_path):
+    """A worker stopped mid-outage closes the record as stopped, not resolved."""
+    from services.forward_paper_hub import ForwardPaperMarketDataHub
+    from services.trading_instances import TradingInstanceManager
+    from strategies.brain_strategy import DecisionBrain
+
+    _StaleThenFresh.fresh = False
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    hub = ForwardPaperMarketDataHub(lambda *a, **k: [], stream_factory=_StaleThenFresh)
+    hub.synchronous_delivery = True
+    manager = TradingInstanceManager(ledger, strategy_factory=lambda _k, s: DecisionBrain(s),
+                                     live=True, live_poll_s=1.0)
+    manager.market_hub = hub
+    manager.symbol_rules_provider = lambda _s: {"symbol": "X", "tick_size": 0.01, "step_size": 0.001,
+                                                "min_qty": 0.001, "min_notional": 5.0}
+    manager.configure(paper_account_capital=100_000)
+    inst = manager.create(symbol="ETHUSDT", strategy_key="brain", strategy_label="Decision Brain",
+                          strategy_version="v1", timeframe="5m", risk_per_trade_pct=0.005,
+                          capital_allocation=1_000)
+    manager.start(inst.id)
+    try:
+        assert _wait_for(lambda: any("MARKET_STALE" in r["message"]
+                                     for r in manager.store.engine_logs(inst.id, limit=500)))
+    finally:
+        manager.stop(inst.id)
+        manager.shutdown()
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    recorder = JournalRecorder(store)
+    recorder.add_ledger(LedgerSource("MAIN", ledger))
+    recorder.reconcile()
+    [record] = store.query_decisions()
+    assert record["decision_type"] == "STALE_DATA" and record["status"] == "INSTANCE_STOPPED"
 
 
 def test_06_signals_only(env):

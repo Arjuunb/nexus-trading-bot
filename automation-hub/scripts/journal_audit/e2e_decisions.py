@@ -11,11 +11,10 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 import e2e_real as h  # noqa: E402
-from bot.types import Bar  # noqa: E402
 from data.trade_record_store import TradeRecordStore  # noqa: E402
 from services.approvals import ApprovalStore  # noqa: E402
 from services.journal_recorder import JournalRecorder, LedgerSource  # noqa: E402
@@ -28,7 +27,7 @@ out: dict = {}
 
 def reconcile():
     rec = JournalRecorder(STORE)
-    rec.add_ledger(LedgerSource("MAIN", h.ledger, decision_store=h.decisions, cycle_store=h.cycles))
+    rec.add_ledger(LedgerSource("MAIN", h.ledger, decision_store=h.decisions))
     return rec.reconcile()
 
 
@@ -59,7 +58,8 @@ def report(inst, blockers, paper):
            "decision_records": [{k: d.get(k) for k in ("decision_record_id", "decision_type", "status",
                                                        "blocker", "reason", "journal_record_id")} for d in decs],
            "trade_records": len(trades), "ledger_trades": len(h.ledger.get_paper_trades(instance_id=inst)),
-           "positions": len(paper.positions()), "parked_intents": len(paper.pending_intents())}
+           "positions": len(paper.positions()) if paper else None,
+           "parked_intents": len(paper.pending_intents()) if paper else None}
     out[inst] = res
     print(f"\n[{inst}]\n" + json.dumps(res, indent=2, default=str))
 
@@ -79,18 +79,41 @@ report("inst-dec-paused", b, p)
 b, p = run_case("inst-dec-brain", lambda e, _p: setattr(e, "quality_gate_bypass", lambda: False))
 report("inst-dec-brain", b, p)
 
-# 5) stale market data: the engine's own freshness check on an old candle
-inst = "inst-dec-stale"
-_, paper, pipe, engine, _ = h.build(instance_id=inst, session=f"sess-{inst}")
-old = datetime.now(timezone.utc) - timedelta(hours=3)
-try:
-    engine._record_market_snapshot(h.SYM, [Bar(old, 100, 101, 99, 100, 1.0)])
-    stale = "no error"
-except Exception as exc:  # noqa: BLE001
-    stale = f"{type(exc).__name__}: {exc}"
-print(f"\n[{inst}] engine: {stale}; last_blocker={engine.last_blocker}; status={engine.market_data_status}")
-report(inst, [engine.last_blocker], paper)
-out[inst]["engine_error"] = stale
+# 5) stale market data: a real Trading Instance whose shared feed serves
+#    3-hour-old closed candles, then recovers. The engine refuses the stale
+#    candles; the outage reaches the journal through the lifecycle events the
+#    instance manager writes (the manager shares the audit ledger).
+from services.forward_paper_hub import ForwardPaperMarketDataHub  # noqa: E402
+from services.trading_instances import TradingInstanceManager  # noqa: E402
+from strategies.brain_strategy import DecisionBrain  # noqa: E402
+from test_journal_integrity import _StaleThenFresh, _wait_for  # noqa: E402
+
+_StaleThenFresh.fresh = False
+hub = ForwardPaperMarketDataHub(lambda *a, **k: [], stream_factory=_StaleThenFresh)
+hub.synchronous_delivery = True
+manager = TradingInstanceManager(h.ledger, strategy_factory=lambda _k, s: DecisionBrain(s),
+                                 live=True, live_poll_s=1.0)
+manager.market_hub = hub
+manager.symbol_rules_provider = lambda _s: {"symbol": "X", "tick_size": 0.01, "step_size": 0.001,
+                                            "min_qty": 0.001, "min_notional": 5.0}
+manager.configure(paper_account_capital=100_000)
+stale_inst = manager.create(symbol="BTCUSDT", strategy_key="brain", strategy_label="Decision Brain",
+                            strategy_version="v1", timeframe="5m", risk_per_trade_pct=0.005,
+                            capital_allocation=1_000)
+
+
+def _events():
+    return [row["message"] for row in manager.store.engine_logs(stale_inst.id, limit=500)]
+
+
+manager.start(stale_inst.id)
+_wait_for(lambda: sum("MARKET_DISCONNECTED" in m for m in _events()) >= 2)
+_StaleThenFresh.fresh = True
+_wait_for(lambda: any("MARKET_CONNECTED" in m for m in _events()))
+manager.shutdown()
+_StaleThenFresh.fresh = False
+report(stale_inst.id, ["lifecycle: MARKET_STALE ... MARKET_CONNECTED"], None)
+out["inst-dec-stale"] = out.pop(stale_inst.id)
 
 # 6) NO_SETUP flood: 60 quiet candles
 inst = "inst-dec-quiet"

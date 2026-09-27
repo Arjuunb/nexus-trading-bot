@@ -295,13 +295,12 @@ class LedgerSource:
 
     def __init__(self, name: str, ledger, *, instances: Optional[Callable[[], dict]] = None,
                  pending_intents: Optional[Callable[[str], Optional[set]]] = None,
-                 decision_store=None, cycle_store=None, lab_id: Optional[str] = None):
+                 decision_store=None, lab_id: Optional[str] = None):
         self.name = name
         self.ledger = ledger
         self.instances = instances or (lambda: {})
         self.pending_intents = pending_intents
         self.decision_store = decision_store
-        self.cycle_store = cycle_store
         self.lab_id = lab_id
 
     def conn(self):
@@ -730,58 +729,108 @@ class DecisionProjector:
             written += 1
         return {"source": source_name, "written": written, "last_id": last}
 
-    def project_feed_incidents(self, source_name: str, cycle_store, *,
-                               since_id: int = 0) -> dict:
-        """One decision record per run of data-blocked candles, not one per candle."""
-        conn = getattr(cycle_store, "_c", None)
-        lock = getattr(cycle_store, "_lock", None)
+    def project_outages(self, source_name: str, ledger, *, since_ts: str = "") -> dict:
+        """One decision record per market-data outage of a Trading Instance.
+
+        A worker whose closed candles go stale does not evaluate a candle at
+        all: the engine raises before any decision or cycle report exists, so
+        the outage is visible only in the lifecycle events the instance
+        manager writes to ``instance_engine_logs`` (``instance_event {json}``,
+        services/instance_telemetry.py). The engine emits MARKET_STALE, then
+        MARKET_DISCONNECTED / MARKET_CONNECTING for each recovery attempt, and
+        MARKET_CONNECTED when fresh data returns -- so the outage is the span
+        from the first MARKET_STALE to MARKET_CONNECTED (or to the worker
+        stopping), and it is one record however many retries it took.
+
+        ``since_ts`` is where the previous pass left off: the start of the
+        earliest outage still open, or the last event it read.
+        """
+        conn = getattr(ledger, "_c", None)
+        lock = getattr(ledger, "_lock", None)
         if conn is None:
-            return {"source": source_name, "skipped": "no cycle store"}
-        rows = _query(conn, lock,
-                      "SELECT id, ts, symbol, timeframe, instance_id, decision, report_json "
-                      "FROM cycle_reports WHERE id > ? ORDER BY instance_id, symbol, id",
-                      (since_id,))
-        runs: dict = {}
-        last = since_id
-        written = 0
+            return {"source": source_name, "skipped": "no sqlite ledger"}
+        try:
+            rows = _query(conn, lock,
+                          "SELECT id, instance_id, ts, message FROM instance_engine_logs "
+                          "WHERE message LIKE 'instance_event %' AND ts >= ? "
+                          "ORDER BY instance_id, ts, id", (since_ts or "",))
+        except Exception as exc:  # noqa: BLE001 -- a ledger without instances
+            if "no such table" in str(exc):
+                return {"source": source_name, "skipped": "no instance_engine_logs"}
+            raise
+        name = "INSTANCE" if source_name == "MAIN" else source_name
+        open_by_instance: dict = {}
+        outages: list[dict] = []
+        last_ts = since_ts or ""
         for row in rows:
-            last = max(last, int(row["id"]))
-            report = _json(row.get("report_json"), {}) or {}
-            blocker = str(report.get("blocker") or (report.get("outcome") or {}).get("blocker")
-                          or "").upper()
-            material = next((kind for word, kind in (
-                ("STALE", "STALE_DATA"), ("WARM", "STALE_DATA"),
-                ("FEED", "FEED_UNAVAILABLE"), ("DISCONNECT", "FEED_UNAVAILABLE"),
-                ("PIPELINE_ERROR", "EXECUTION_FAILED"), ("SIGNALS_ONLY", "SIGNALS_ONLY"))
-                if word in blocker), None)
-            scope = (row.get("instance_id") or "", row["symbol"])
-            if material is None:
-                runs.pop(scope, None)
+            last_ts = max(last_ts, str(row["ts"]))
+            try:
+                event = json.loads(str(row["message"])[len("instance_event "):])
+            except ValueError:
                 continue
-            run = runs.get(scope)
-            if run is None or run["type"] != material:
-                run = runs[scope] = {"type": material, "first": row, "count": 0}
-            run["count"] += 1
-            instance_id = scope[0]
-            name = source_name if source_name != "MAIN" else (
-                "INSTANCE" if instance_id else "LEGACY_ENGINE")
-            first = run["first"]
-            self.store.upsert_decision({
-                "decision_key": f"{name}:incident:{instance_id or '-'}:{row['symbol']}:"
-                                f"{material}:{first['id']}",
-                "record_source": name, "record_origin": "FORWARD_PAPER",
-                "instance_id": instance_id or None, "symbol": row["symbol"],
-                "timeframe": row.get("timeframe"), "candle_time": _ts(first["ts"]),
-                "decided_at": _ts(first["ts"]), "decision_type": material,
-                "status": "INCIDENT", "blocker": blocker,
-                "reason": f"{run['count']} consecutive candle(s) blocked: {blocker}",
-                "market_data_state": material,
-                "evidence": {"first_cycle_id": first["id"], "last_cycle_id": row["id"],
-                             "last_candle": _ts(row["ts"]), "candles": run["count"]},
-                "source_ref": {"cycle_store": source_name},
-            })
-            written += 1
-        return {"source": source_name, "written": written, "last_id": last}
+            kind = str(event.get("event") or "")
+            instance_id = row["instance_id"]
+            current = open_by_instance.get(instance_id)
+            if kind in _OUTAGE_OPENS:
+                if current is None:
+                    current = open_by_instance[instance_id] = {
+                        "first": row, "first_event": event, "last_event": event,
+                        "attempts": 0, "end": None, "resolution": None}
+                    outages.append(current)
+                else:
+                    current["last_event"] = event
+                if kind == "MARKET_DISCONNECTED":
+                    current["attempts"] += 1
+            elif current is not None and kind in _OUTAGE_ENDS:
+                current["end"], current["resolution"] = row, _OUTAGE_ENDS[kind]
+                open_by_instance.pop(instance_id, None)
+        for outage in outages:
+            self._upsert_outage(name, outage)
+        still_open = [str(o["first"]["ts"]) for o in open_by_instance.values()]
+        return {"source": source_name, "written": len(outages), "open": len(still_open),
+                "watermark": min(still_open) if still_open else last_ts}
+
+    def _upsert_outage(self, name: str, outage: dict) -> None:
+        first, event, last = outage["first"], outage["first_event"], outage["last_event"]
+        stale = "stale" in str(event.get("detail") or "").lower()
+        dtype = "STALE_DATA" if stale else "FEED_UNAVAILABLE"
+        started = _ts(first["ts"])
+        ended = _ts(outage["end"]["ts"]) if outage["end"] is not None else None
+        seconds = round((_dt(ended) - _dt(started)).total_seconds(), 1) if ended else None
+        resolution = outage["resolution"] or "OPEN"
+        what = "Closed candles were stale" if stale else "The market data feed was unavailable"
+        if ended:
+            reason = (f"{what} from {started} to {ended} ({seconds:.0f}s, "
+                      f"{outage['attempts']} recovery attempt(s)); the worker evaluated no candle "
+                      f"in that time. Ended: {resolution.replace('_', ' ').lower()}.")
+        else:
+            reason = (f"{what} since {started} ({outage['attempts']} recovery attempt(s) so far); "
+                      "the worker evaluates no candle until fresh data returns.")
+        self.store.upsert_decision({
+            "decision_key": f"{name}:outage:{first['instance_id']}:{first['id']}",
+            "record_source": name, "record_origin": "FORWARD_PAPER",
+            "instance_id": first["instance_id"],
+            "strategy_id": event.get("strategy_id"), "strategy_name": event.get("strategy_id"),
+            "strategy_version": event.get("strategy_version"),
+            "symbol": event.get("symbol"), "timeframe": event.get("timeframe"),
+            "candle_time": started, "decided_at": started,
+            "decision_type": dtype, "status": resolution,
+            "blocker": "MARKET_STALE" if stale else "MARKET_DISCONNECTED",
+            "reason": reason, "market_data_state": "STALE" if stale else "UNAVAILABLE",
+            "evidence": {"started_at": started, "ended_at": ended, "duration_s": seconds,
+                         "resolution": resolution, "recovery_attempts": outage["attempts"],
+                         "first_detail": event.get("detail"), "last_detail": last.get("detail"),
+                         "basis": "instance lifecycle events (instance_engine_logs)"},
+            "source_ref": {"instance_engine_logs": {"first": first["id"],
+                                                    "last": (outage["end"] or {}).get("id")}},
+        })
+
+
+#: Lifecycle events that open or continue a market-data outage, and those
+#: that end one (services/trading_instances._LIFECYCLE_EVENTS).
+_OUTAGE_OPENS = ("MARKET_STALE", "MARKET_DISCONNECTED")
+_OUTAGE_ENDS = {"MARKET_CONNECTED": "RESOLVED", "INSTANCE_ERROR": "WORKER_STOPPED_ON_ERROR",
+                "INSTANCE_STOPPED": "INSTANCE_STOPPED"}
 
 
 # ======================================================================
@@ -846,13 +895,13 @@ class JournalRecorder:
                                                       since_id=max(0, since - 500))
                         self.store.set_state(key, out.get("last_id", since))
                         report["decisions"].append(out)
-                    if source.cycle_store is not None:
-                        key = f"cycles_watermark:{source.name}"
-                        since = int(self.store.state(key, 0) or 0)
-                        out = self._decisions.project_feed_incidents(
-                            source.name, source.cycle_store, since_id=since)
-                        self.store.set_state(key, out.get("last_id", since))
-                        report["decisions"].append(out)
+                    key = f"outages_watermark:{source.name}"
+                    since = str(self.store.state(key, "") or "")
+                    out = self._decisions.project_outages(source.name, source.ledger,
+                                                          since_ts=since)
+                    if "watermark" in out:
+                        self.store.set_state(key, out["watermark"])
+                    report["decisions"].append(out)
                 except Exception as exc:  # noqa: BLE001
                     errors.append(f"decisions {source.name}: {type(exc).__name__}: {exc}")
             for hook in self.after_pass:

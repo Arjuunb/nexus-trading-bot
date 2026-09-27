@@ -1453,7 +1453,7 @@ def _parked_intents(manager):
 journal_recorder.add_ledger(LedgerSource(
     "MAIN", ledger, instances=_journal_instances(instance_manager),
     pending_intents=_parked_intents(instance_manager),
-    decision_store=decision_store, cycle_store=cycle_store))
+    decision_store=decision_store))
 journal_recorder.add_ledger(LedgerSource(
     "ADAPTIVE_LAB", adaptive_lab.ledger, instances=_journal_instances(adaptive_lab.manager),
     pending_intents=_parked_intents(adaptive_lab.manager),

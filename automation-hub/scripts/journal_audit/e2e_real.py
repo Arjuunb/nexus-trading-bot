@@ -148,7 +148,7 @@ def main() -> None:
     # 3) the recorder, as webhook_api wires it
     store = TradeRecordStore(settings.trade_records_db)
     rec = JournalRecorder(store)
-    rec.add_ledger(LedgerSource("MAIN", ledger, decision_store=decisions, cycle_store=cycles))
+    rec.add_ledger(LedgerSource("MAIN", ledger, decision_store=decisions))
     out["reconcile"] = rec.reconcile()
     out["trades_ledger"] = ledger.get_paper_trades(instance_id=INST)
     json.dump(out, open(os.path.join(os.environ["HUB_DATA_DIR"], f"e2e_{MODE}_{INST}.json"), "w"),
