@@ -105,6 +105,13 @@ def test_a_running_instance_follows_the_switch_without_a_restart(tmp_path, fast_
 
     off = _entry(pipeline, 1)
     assert off.stage != "event_risk"
+    # The first probe can fill. Keep the next probe flat so no-pyramiding
+    # cannot mask the event-risk gate under test.
+    if pipeline.paper.open_position("BTCUSDT") is not None:
+        closed = pipeline.process({"alert_id": "guard-close", "symbol": "BTCUSDT",
+                                   "side": "CLOSE", "entry": 100.0})
+        assert closed.accepted
+    assert pipeline.paper.open_position("BTCUSDT") is None
 
     guard.set(inst.id, True)
     on = _entry(pipeline, 2)
