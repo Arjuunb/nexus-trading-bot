@@ -14,6 +14,7 @@ from typing import Sequence
 
 from bot.metrics import expectancy as _expectancy
 from bot.metrics import profit_factor as _profit_factor
+from risk.daily_limits import chronological
 
 
 @dataclass
@@ -121,6 +122,7 @@ class StrategyHealthMonitor:
     def evaluate(self, trades: Sequence[dict]) -> StrategyHealth:
         cfg = self.cfg
         w = cfg.window
+        trades = chronological(trades)          # "recent" means the latest closes
         recent = list(trades[-w:])
         previous = list(trades[-2 * w:-w])
         rs, ps = _stats(recent), _stats(previous)

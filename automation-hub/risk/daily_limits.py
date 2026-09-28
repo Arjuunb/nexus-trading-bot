@@ -21,10 +21,27 @@ def daily_limit_hit(pnl_today: float, equity: float, max_daily_loss_pct: float) 
     return daily_loss_used(pnl_today, equity, max_daily_loss_pct) >= 1.0
 
 
+def chronological(trades: Sequence[dict]) -> list[dict]:
+    """Closed trades, oldest close first.
+
+    A streak or a "recent" window reads the end of the list as the latest
+    trade. The paper ledger returns its history newest first, and callers
+    passed it straight in: the latest trades were read as the oldest, so a
+    run of fresh losses showed no streak while an old one never ended. When
+    every trade carries its close time, order by it; a list without close
+    times is taken to be in order already.
+    """
+    items = list(trades)
+    if items and all(t.get("closed_at") for t in items):
+        return sorted(items, key=lambda t: str(t["closed_at"]))
+    return items
+
+
 def consecutive_losses(trades: Sequence[dict]) -> int:
+    """Losses in a row up to the latest closed trade."""
     streak = 0
-    for t in reversed(list(trades)):
-        if t.get("pnl", 0) < 0:
+    for t in reversed(chronological(trades)):
+        if float(t.get("pnl") or 0) < 0:
             streak += 1
         else:
             break

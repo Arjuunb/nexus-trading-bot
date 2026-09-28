@@ -889,3 +889,33 @@ output that fails on the old code.
 * Validation: `automation-hub` tests 3,552 passed, 15 skipped; engine tests
   509 passed; the audit harness is unchanged (37/37, ALL MATCH, 18/18,
   85/85).
+
+## 23. Other bugs found and fixed after the audit
+
+**The losing streak and strategy health read the oldest trades as the latest.**
+* Bug: the paper ledger returns closed trades newest first
+  (`ORDER BY opened_at DESC`). `consecutive_losses()` and
+  `StrategyHealthMonitor.evaluate()` both read the end of their list as the
+  latest trade, and the engine, the instance status card and the
+  `/strategy/health` and health-report endpoints passed the ledger's list
+  straight in. Measured with the real 3-Candle Rejection strategy and the
+  quality gate off (the losing-streak cooldown is a safety block that applies
+  even then):
+  * **Five fresh losses after an earlier win.** The engine saw a streak of 0
+    and took the next entry; the cooldown never fired.
+  * **An old losing streak followed by a win.** The engine still saw 5 losses.
+    The latest trade was a win, so the 24-hour release could not apply either,
+    and the symbol was blocked for good.
+  * **Health on the wrong window.** Five losses then five wins read as "5
+    consecutive losses": the strategy was marked Degrading and the next
+    entry's risk was cut to 75%.
+* Change: both functions now order trades by close time before reading them
+  (`risk.daily_limits.chronological`), which fixes every caller. A list with
+  no close times, such as the bot runtime's, is taken as already in order.
+  No threshold, limit or risk setting changed; the existing cooldown and
+  health rules now see the trades they were written for.
+* Tests: `tests/test_loss_streak_order.py`, with the real strategy, engine,
+  pipeline and paper engine. The three engine cases fail on the old code, and
+  the health case fails on the old health code alone (0.75 instead of 1.0).
+* Validation: `automation-hub` tests 3,556 passed, 15 skipped; engine tests
+  509 passed; audit harness 37/37, ALL MATCH, 18/18, 85/85.
