@@ -610,7 +610,8 @@ engine numbers execution ids with a counter that restarts at 1 for every
 engine (`auto-{symbol}-{action}-{n}`). A second replay run or instance on
 the same ledger therefore reuses an id, and its first trade fails closed.
 The cause is execution code (`services/auto_engine.py`), so it was not
-changed here; it is filed as its own task.
+changed here; it is filed as its own task. (Fixed afterwards: see "Replay and
+approval execution ids" at the end of §22.)
 
 
 **D3 — FIXED.**
@@ -831,8 +832,6 @@ output that fails on the old code.
 * **The PA lab never attests its strategy's proposals** (§21, found while
   fixing D6). It is in `services/price_action_lab.py`, which is frozen; the
   owner has to decide whether to lift the freeze for the one-line fix.
-* **Replay execution ids collide** across replay runs on one ledger (§21).
-  This is execution code in `services/auto_engine.py`, not journal code.
 * **The EMA 9/33 values are not recorded as data** (D17). The strategy's
   report does not carry them, and changing that would change strategy code.
 * **Records already finalized keep what they were written with.** Finished
@@ -857,3 +856,36 @@ output that fails on the old code.
   * the SMC trade's risk target at 0.50%, not 50.00%.
 
   The weekly scope list showed four distinct instance labels.
+
+**Replay and approval execution ids — FIXED after this audit.**
+* Bug: the engine numbered replay ids (`auto-{symbol}-{action}-{n}`) and
+  approved-idea ids (`approved-{symbol}-{n}`) with a counter that restarts at
+  1 in every engine. The ledger keeps every earlier run's ids, and
+  `paper_executions.execution_id` is unique across the whole ledger. So each
+  of these reused an id:
+  * a second replay session on an instance;
+  * a restart;
+  * a second replay instance on the same ledger;
+  * the first semi-auto approval after a restart.
+
+  Within five minutes the trade was refused as a duplicate. After that, the
+  execution insert failed, and the engine raised `StrategyExecutionError`,
+  which marks the instance "Strategy execution failed" and stops it.
+* Change: ids drawn from the counter now carry a token unique to each engine
+  run. Forward candle ids (`auto:{instance}:{symbol}:{tf}:{candle}:{action}`)
+  are unchanged, so a recovered live candle is still refused rather than
+  traded twice. Strategy logic, entries, stops, targets and risk are
+  untouched.
+* Tests: `tests/test_replay_execution_ids.py`, all with the real 3-Candle
+  Rejection strategy through the engine, pipeline and paper engine:
+  * a second replay session;
+  * a later run past the duplicate window;
+  * two replay instances on one ledger;
+  * an approved idea after a restart;
+  * replay ids that differ between engines.
+
+  All fail on the old code. A guard that forward ids stay stable passes on
+  both.
+* Validation: `automation-hub` tests 3,552 passed, 15 skipped; engine tests
+  509 passed; the audit harness is unchanged (37/37, ALL MATCH, 18/18,
+  85/85).

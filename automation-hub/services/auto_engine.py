@@ -24,6 +24,7 @@ import json as _json
 import threading
 import time
 import traceback
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
@@ -256,6 +257,13 @@ class AutoStrategyEngine:
         # services.approvals.ApprovalStore — the semi-auto approval queue.
         self.approvals = None
         self._seq = itertools.count(1)
+        # The counter restarts at 1 in every engine, but the ledger keeps every
+        # earlier run's ids -- and execution ids are unique across the whole
+        # ledger. Ids drawn from the counter carry this run's own token, so a
+        # restart, a second replay session or a second replay instance never
+        # reuses one (a reused id was refused as a duplicate, or failed the
+        # execution insert and stopped the instance).
+        self._run_token = uuid.uuid4().hex[:12]
         # Activity tracking — used to explain *why* no trades are happening
         # (e.g. a stalled live feed that never delivers a new candle).
         self.last_bar_ts: Optional[str] = None      # timestamp of the last bar acted on
@@ -1487,7 +1495,7 @@ class AutoStrategyEngine:
         twice, including after the normal webhook retry window has elapsed.
         """
         if not self.live:
-            return f"auto-{sym}-{action}-{next(self._seq)}"
+            return f"auto-{sym}-{action}-{self._run_token}-{next(self._seq)}"
         stamp = timestamp.isoformat() if hasattr(timestamp, "isoformat") else str(timestamp)
         scope = getattr(self.ledger, "instance_id", "") or "legacy"
         return f"auto:{scope}:{sym}:{self.timeframe}:{stamp}:{action}"
@@ -2137,7 +2145,8 @@ class AutoStrategyEngine:
         sym = payload.get("symbol")
         if not sym:
             return {"ok": False, "reason": "idea has no symbol"}
-        payload["alert_id"] = f"approved-{sym}-{next(self._seq)}"  # fresh id (dedup)
+        # a fresh id (dedup), unique across restarts as well
+        payload["alert_id"] = f"approved-{sym}-{self._run_token}-{next(self._seq)}"
         payload["approved"] = True
         res = self._route(payload)
         if res is None:
