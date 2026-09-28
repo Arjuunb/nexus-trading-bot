@@ -73,4 +73,10 @@ def log_event(manager, instance, event: str, *, status: str = "",
                                     message=format_event(payload))
         except Exception:  # observability must not stop execution
             pass
+    try:
+        # Guardian (services/guardian): queued or dropped, never waited on.
+        from services.guardian import observe_instance_event
+        observe_instance_event(payload, lab_id=getattr(manager, "guardian_lab_id", None))
+    except Exception:  # noqa: BLE001 -- observability must not stop execution
+        pass
     return payload

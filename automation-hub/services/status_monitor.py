@@ -364,6 +364,16 @@ class StatusMonitor:
             pass
 
     # ------------------------------------------------------------ public view
+    def confirmed(self) -> dict:
+        """Read-only: each component's confirmed state and when the monitor
+        last sampled (Guardian reads this rather than probing again)."""
+        with self._lock:
+            rows = {r["component"]: {"state": r["state"], "detail": r["detail"], "since": r["since"]}
+                    for r in self._c.execute("SELECT component, state, detail, since FROM current")}
+            last = self._meta("last_sample_at")
+        return {"components": rows, "last_sample_at": float(last) if last is not None else None,
+                "interval_s": self.interval_s}
+
     def public_view(self, *, days: int = 90, cache_s: float = 30.0) -> dict:
         now = self.clock()
         if self._cache and now - self._cache[0] < cache_s:

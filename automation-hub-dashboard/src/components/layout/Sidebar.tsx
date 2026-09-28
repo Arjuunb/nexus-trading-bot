@@ -3,6 +3,7 @@ import {
   LayoutDashboard, CandlestickChart, Search, Layers, FlaskConical, RefreshCw, PlayCircle,
   NotebookPen, Rocket, Wallet, BarChart3, ShieldAlert, Brain,
   BookOpen, Activity, BadgeCheck, Settings, Lock, Blocks, SquareTerminal, SlidersHorizontal, GitCompareArrows, CalendarDays,
+  ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
 import { NAV_GROUPS } from "../../app-context";
@@ -10,6 +11,7 @@ import { NAV_GROUPS } from "../../app-context";
 // Real icons (lucide), one per page — gold when active, sky on hover.
 const NAV_LUCIDE: Record<string, LucideIcon> = {
   Dashboard: LayoutDashboard,
+  Guardian: ShieldCheck,
   Markets: CandlestickChart,
   "Market Data": Activity,
   Symbols: Search,

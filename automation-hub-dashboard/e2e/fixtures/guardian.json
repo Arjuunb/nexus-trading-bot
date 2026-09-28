@@ -1,0 +1,822 @@
+{
+ "actions": {
+  "actions": []
+ },
+ "events": {
+  "events": [
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "0d33330504bf4509a44d3c5196e3e18f",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "1 of 2 live consumers receiving data",
+     "raw": "DEGRADED"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "1 of 2 live consumers receiving data",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 15,
+    "session_id": null,
+    "severity": "WATCH",
+    "source_component": "binance_usdm",
+    "source_service": "guardian",
+    "state_after": "DEGRADED",
+    "state_before": "HEALTHY",
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.494729+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "da57d847bfe74a1da658e54209cba879",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [
+      "feed:instance:a3f9c2d1e8b74c0f"
+     ],
+     "depends_on": [
+      "feed:instance:a3f9c2d1e8b74c0f",
+      "database"
+     ],
+     "detail": "waiting on market data (data_stale)",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": "a3f9c2d1e8b74c0f",
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "blocked by feed:instance:a3f9c2d1e8b74c0f",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 14,
+    "session_id": null,
+    "severity": "WARNING",
+    "source_component": "instance:a3f9c2d1e8b74c0f",
+    "source_service": "guardian",
+    "state_after": "BLOCKED",
+    "state_before": "HEALTHY",
+    "strategy_id": "three_candle_rejection",
+    "strategy_version": null,
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-28T22:54:32.494642+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "0a6e9c0373c04808b099c115c915dfef",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "candles are late; the worker stands down until they catch up",
+     "raw": "FAILED"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "candles are late; the worker stands down until they catch up",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 13,
+    "session_id": null,
+    "severity": "HIGH",
+    "source_component": "feed:instance:a3f9c2d1e8b74c0f",
+    "source_service": "guardian",
+    "state_after": "FAILED",
+    "state_before": "HEALTHY",
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.494564+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "09bdaaa0c25448c29f937f9363175ca0",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "all 2 live consumers receiving data",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "all 2 live consumers receiving data",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 12,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "binance_usdm",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": "DEGRADED",
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.494180+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "ef70dd8139b64613a7c229aa6e073f24",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [
+      "feed:instance:a3f9c2d1e8b74c0f",
+      "database"
+     ],
+     "detail": "running",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": "a3f9c2d1e8b74c0f",
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "running",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 11,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "instance:a3f9c2d1e8b74c0f",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": "BLOCKED",
+    "strategy_id": "three_candle_rejection",
+    "strategy_version": null,
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-28T22:54:32.494129+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "d184734e06bc462591d6f7f9ac0a20ed",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "closed candles arriving on time",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "closed candles arriving on time",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 10,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "feed:instance:a3f9c2d1e8b74c0f",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": "FAILED",
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.494050+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "19505a3b1da24057832b2c9ea9868427",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "observing; evidence being written",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "observing; evidence being written",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 9,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "guardian",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.493378+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "4fd99ef682b9444a8e888dfd37887777",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "1 of 2 live consumers receiving data",
+     "raw": "DEGRADED"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "1 of 2 live consumers receiving data",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 8,
+    "session_id": null,
+    "severity": "WATCH",
+    "source_component": "binance_usdm",
+    "source_service": "guardian",
+    "state_after": "DEGRADED",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.493321+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "f50a7c52656040ee82788e12da39040d",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [
+      "database"
+     ],
+     "detail": "not journalling: MAIN: ledger is not a local SQLite ledger",
+     "raw": "DEGRADED"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "not journalling: MAIN: ledger is not a local SQLite ledger",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 7,
+    "session_id": null,
+    "severity": "WATCH",
+    "source_component": "journal",
+    "source_service": "guardian",
+    "state_after": "DEGRADED",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.493257+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "3dd2df6d68ff48edb31cc1e7e26ad7a1",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "Recording decisions and fills",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "Recording decisions and fills",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 6,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "database",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.493197+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "dd63661d562b48db9609bfef3dc33a9f",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "idle: no active session",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "idle: no active session",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 5,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.493144+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "1b877cdcc0d24d3d8f5f4defed57c50a",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [
+      "feed:lab:smc"
+     ],
+     "detail": "running",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "smc",
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "running",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 4,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "lab:smc",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.493084+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "8330332681cf4e30bc7df04088db6046",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "candles, quotes and mark price reconciled and fresh",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "candles, quotes and mark price reconciled and fresh",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 3,
+    "session_id": null,
+    "severity": "INFO",
+    "source_component": "feed:lab:smc",
+    "source_service": "guardian",
+    "state_after": "HEALTHY",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-28T22:54:32.493023+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "8186db6a2e534da5904f08929dea869b",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [
+      "feed:instance:a3f9c2d1e8b74c0f"
+     ],
+     "depends_on": [
+      "feed:instance:a3f9c2d1e8b74c0f",
+      "database"
+     ],
+     "detail": "waiting on market data (data_stale)",
+     "raw": "HEALTHY"
+    },
+    "execution_id": null,
+    "instance_id": "a3f9c2d1e8b74c0f",
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "blocked by feed:instance:a3f9c2d1e8b74c0f",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 2,
+    "session_id": null,
+    "severity": "WARNING",
+    "source_component": "instance:a3f9c2d1e8b74c0f",
+    "source_service": "guardian",
+    "state_after": "BLOCKED",
+    "state_before": null,
+    "strategy_id": "three_candle_rejection",
+    "strategy_version": null,
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-28T22:54:32.492952+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "guardian",
+    "correlation_id": null,
+    "decision": null,
+    "event_id": "da48b772d9794a70aee5edef34b91a36",
+    "event_type": "health_changed",
+    "evidence": {
+     "blocked_by": [],
+     "depends_on": [],
+     "detail": "candles are late; the worker stands down until they catch up",
+     "raw": "FAILED"
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": null,
+    "latency_ms": null,
+    "metadata": null,
+    "order_id": null,
+    "position_id": null,
+    "reason": "candles are late; the worker stands down until they catch up",
+    "received_at": "2026-09-28T22:54:32.495018+00:00",
+    "seq": 1,
+    "session_id": null,
+    "severity": "HIGH",
+    "source_component": "feed:instance:a3f9c2d1e8b74c0f",
+    "source_service": "guardian",
+    "state_after": "FAILED",
+    "state_before": null,
+    "strategy_id": null,
+    "strategy_version": null,
+    "symbol": null,
+    "timeframe": null,
+    "timestamp": "2026-09-28T22:54:32.492802+00:00"
+   }
+  ],
+  "next_before": null
+ },
+ "status": {
+  "boundary": {
+   "may_change": [],
+   "mode": "read-only",
+   "never_changes": [
+    "strategy rules or parameters",
+    "risk limits or leverage",
+    "stop-loss / take-profit / RR rules",
+    "positions or orders",
+    "paper to live",
+    "API credentials",
+    "trading history, journals or incidents"
+   ]
+  },
+  "components": [
+   {
+    "blocked_by": [],
+    "depends_on": [],
+    "detail": "Recording decisions and fills",
+    "effective": "HEALTHY",
+    "facts": {
+     "status_monitor": {
+      "detail": "Recording decisions and fills",
+      "state": "operational"
+     }
+    },
+    "id": "database",
+    "kind": "database",
+    "label": "Ledger database",
+    "observed_at": "2026-09-28T22:54:32.494471+00:00",
+    "raw": "HEALTHY"
+   },
+   {
+    "blocked_by": [],
+    "depends_on": [],
+    "detail": "candles are late; the worker stands down until they catch up",
+    "effective": "FAILED",
+    "facts": {
+     "consumer": "instance:a3f9c2d1e8b74c0f",
+     "live": true,
+     "market_data_status": "stale"
+    },
+    "id": "feed:instance:a3f9c2d1e8b74c0f",
+    "kind": "feed",
+    "label": "Feed \u00b7 BTCUSDT 5m \u00b7 3-Candle Rejection \u00b7 EMA 9/33",
+    "observed_at": "2026-09-28T22:54:32.494442+00:00",
+    "raw": "FAILED"
+   },
+   {
+    "blocked_by": [],
+    "depends_on": [],
+    "detail": "candles, quotes and mark price reconciled and fresh",
+    "effective": "HEALTHY",
+    "facts": {
+     "consumer": "lab:smc",
+     "failing_dependency": null,
+     "live": true,
+     "reliable": true,
+     "state": "SYNCHRONIZED",
+     "symbol": "BTCUSDT",
+     "timeframe": "5m"
+    },
+    "id": "feed:lab:smc",
+    "kind": "feed",
+    "label": "Feed \u00b7 SMC Lab",
+    "observed_at": "2026-09-28T22:54:32.494456+00:00",
+    "raw": "HEALTHY"
+   },
+   {
+    "blocked_by": [],
+    "depends_on": [],
+    "detail": "observing; evidence being written",
+    "effective": "HEALTHY",
+    "facts": {
+     "bus": {
+      "backlog": 12,
+      "capacity": 10000,
+      "dropped": 0,
+      "last_delay_ms": 0.0,
+      "last_store_error": null,
+      "last_stored_at": null,
+      "max_delay_ms": 0.0,
+      "published": 12,
+      "rejected": 0,
+      "running": true,
+      "store_failures": 0,
+      "stored": 0
+     }
+    },
+    "id": "guardian",
+    "kind": "guardian",
+    "label": "Guardian",
+    "observed_at": "2026-09-28T22:54:32.494490+00:00",
+    "raw": "HEALTHY"
+   },
+   {
+    "blocked_by": [
+     "feed:instance:a3f9c2d1e8b74c0f"
+    ],
+    "depends_on": [
+     "feed:instance:a3f9c2d1e8b74c0f",
+     "database"
+    ],
+    "detail": "waiting on market data (data_stale)",
+    "effective": "BLOCKED",
+    "facts": {
+     "alive": true,
+     "id": "a3f9c2d1e8b74c0f",
+     "lab_id": null,
+     "last_error": null,
+     "last_heartbeat": null,
+     "lifecycle_state": "data_stale",
+     "mode": "trading",
+     "source": "main",
+     "state": "running",
+     "strategy_id": "three_candle_rejection",
+     "strategy_version": null,
+     "symbol": "BTCUSDT",
+     "timeframe": "5m"
+    },
+    "id": "instance:a3f9c2d1e8b74c0f",
+    "kind": "instance",
+    "label": "BTCUSDT 5m \u00b7 3-Candle Rejection \u00b7 EMA 9/33",
+    "observed_at": "2026-09-28T22:54:32.494442+00:00",
+    "raw": "HEALTHY"
+   },
+   {
+    "blocked_by": [],
+    "depends_on": [
+     "database"
+    ],
+    "detail": "not journalling: MAIN: ledger is not a local SQLite ledger",
+    "effective": "DEGRADED",
+    "facts": {
+     "last_error": null,
+     "last_pass_at": "2026-09-28T22:00:00+00:00",
+     "passes": 12,
+     "running": true,
+     "skipped": [
+      "MAIN: ledger is not a local SQLite ledger"
+     ]
+    },
+    "id": "journal",
+    "kind": "journal",
+    "label": "Trade journal",
+    "observed_at": "2026-09-28T22:54:32.494475+00:00",
+    "raw": "DEGRADED"
+   },
+   {
+    "blocked_by": [],
+    "depends_on": [],
+    "detail": "idle: no active session",
+    "effective": "HEALTHY",
+    "facts": {
+     "session_active": false,
+     "thread_alive": true
+    },
+    "id": "lab:pa",
+    "kind": "lab",
+    "label": "Price Action Lab",
+    "observed_at": "2026-09-28T22:54:32.494463+00:00",
+    "raw": "HEALTHY"
+   },
+   {
+    "blocked_by": [],
+    "depends_on": [
+     "feed:lab:smc"
+    ],
+    "detail": "running",
+    "effective": "HEALTHY",
+    "facts": {
+     "session_active": true,
+     "thread_alive": true
+    },
+    "id": "lab:smc",
+    "kind": "lab",
+    "label": "SMC Lab",
+    "observed_at": "2026-09-28T22:54:32.494456+00:00",
+    "raw": "HEALTHY"
+   },
+   {
+    "blocked_by": [],
+    "depends_on": [],
+    "detail": "1 of 2 live consumers receiving data",
+    "effective": "DEGRADED",
+    "facts": {
+     "feeds": 2
+    },
+    "id": "binance_usdm",
+    "kind": "upstream",
+    "label": "Binance USD-M public data",
+    "observed_at": "2026-09-28T22:54:32.494483+00:00",
+    "raw": "DEGRADED"
+   }
+  ],
+  "events_24h": {
+   "total": 15,
+   "warning_or_worse": 4
+  },
+  "generated_at": "2026-09-28T22:54:32.495987+00:00",
+  "self": {
+   "bus": {
+    "backlog": 0,
+    "capacity": 10000,
+    "dropped": 0,
+    "last_delay_ms": 3.0,
+    "last_store_error": null,
+    "last_stored_at": "2026-09-28T22:54:32.495809+00:00",
+    "max_delay_ms": 3.0,
+    "published": 15,
+    "rejected": 0,
+    "running": true,
+    "store_failures": 0,
+    "stored": 15
+   },
+   "collectors_failing": {},
+   "cycles": 3,
+   "heartbeat_age_s": 0.0,
+   "interval_s": 15.0,
+   "last_cycle_ms": 2.1,
+   "running": true
+  },
+  "summary": {
+   "counts": {
+    "BLOCKED": 1,
+    "DEGRADED": 2,
+    "FAILED": 1,
+    "HEALTHY": 5,
+    "UNKNOWN": 0
+   },
+   "groups": {
+    "database": {
+     "healthy": 1,
+     "state": "HEALTHY",
+     "total": 1
+    },
+    "feed": {
+     "healthy": 1,
+     "state": "FAILED",
+     "total": 2
+    },
+    "guardian": {
+     "healthy": 1,
+     "state": "HEALTHY",
+     "total": 1
+    },
+    "instance": {
+     "healthy": 0,
+     "state": "BLOCKED",
+     "total": 1
+    },
+    "journal": {
+     "healthy": 0,
+     "state": "DEGRADED",
+     "total": 1
+    },
+    "lab": {
+     "healthy": 2,
+     "state": "HEALTHY",
+     "total": 2
+    },
+    "upstream": {
+     "healthy": 0,
+     "state": "DEGRADED",
+     "total": 1
+    }
+   },
+   "state": "FAILED"
+  }
+ }
+}

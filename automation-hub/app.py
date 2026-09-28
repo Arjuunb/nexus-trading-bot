@@ -656,6 +656,13 @@ def _start_auto_engine() -> None:
               f"(reconcile every {webhook_api.journal_recorder.interval_s:.0f}s)", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.weekly_review_scheduler.start():
         print("[startup] weekly review scheduler started", flush=True)
+    # Guardian (services/guardian) observes read-only on its own threads. Its
+    # bus is installed only once it runs, so no event is queued unread.
+    if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.guardian.start():
+        from services import guardian as _guardian
+        _guardian.install(webhook_api.guardian_bus)
+        print(f"[startup] guardian started (read-only, every "
+              f"{webhook_api.guardian.interval_s:.0f}s)", flush=True)
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
         print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
               f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)
@@ -776,6 +783,13 @@ def _shutdown_all_runtimes() -> None:
     # Last: record what the workers did before they stopped, then stop.
     run("journal_recorder_final_pass", webhook_api.journal_recorder.reconcile)
     run("journal_recorder", webhook_api.journal_recorder.stop)
+
+    def _stop_guardian():
+        from services import guardian as _guardian
+        webhook_api.guardian.stop()
+        _guardian.uninstall()
+    # After everything else, so the workers' own stop events are observed.
+    run("guardian", _stop_guardian)
     if errors:
         print("[shutdown] completed with degraded acknowledgements: " + " | ".join(errors),
               flush=True)

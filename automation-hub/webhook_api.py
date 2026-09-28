@@ -1469,6 +1469,31 @@ pipeline.journal_notify = journal_recorder.notify
 instance_manager.journal_notify = journal_recorder.notify
 adaptive_lab.manager.journal_notify = journal_recorder.notify
 
+# Guardian (services/guardian): the independent, read-only observer. It is
+# handed callables over in-memory state, never the managers or runtimes
+# themselves -- it can read the platform but holds nothing it could change it
+# with. Its evidence lives in its own database. Started in app.py.
+from services.guardian import sources as _guardian_sources  # noqa: E402
+from services.guardian.bus import EventBus as _GuardianBus  # noqa: E402
+from services.guardian.service import GuardianService  # noqa: E402
+from services.guardian.store import GuardianStore  # noqa: E402
+guardian_store = GuardianStore(_os.environ.get(
+    "HUB_GUARDIAN_DB", _os.path.join(_os.path.dirname(settings.audit_path), "guardian.db")))
+guardian_bus = _GuardianBus(guardian_store)
+adaptive_lab.manager.guardian_lab_id = "adaptive"
+guardian = GuardianService(
+    guardian_store, guardian_bus,
+    instances={"main": lambda: _guardian_sources.instance_rows(instance_manager),
+               "adaptive": lambda: _guardian_sources.instance_rows(adaptive_lab.manager,
+                                                                   lab_id="adaptive")},
+    labs={"smc": lambda: _guardian_sources.lab_row("smc", "SMC Lab", smc_runtime,
+                                                   session=smc_paper.session),
+          "pa": lambda: _guardian_sources.lab_row("pa", "Price Action Lab", price_action_runtime,
+                                                  session=price_action_paper.session)},
+    database=lambda: status_monitor.confirmed(),
+    journal=lambda: _guardian_sources.journal_row(journal_recorder),
+    interval_s=float(_os.environ.get("HUB_GUARDIAN_INTERVAL", "15")))
+
 
 # ── domain routers (endpoints live in routers/<domain>.py) ──
 import routers.analytics  # noqa: E402
@@ -1498,6 +1523,7 @@ import routers.security  # noqa: E402
 import routers.status  # noqa: E402
 import routers.lab_event_guard  # noqa: E402
 import routers.calendar  # noqa: E402
+import routers.guardian  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
@@ -1526,6 +1552,7 @@ router.include_router(routers.security.router)
 router.include_router(routers.status.router)
 router.include_router(routers.lab_event_guard.router)
 router.include_router(routers.calendar.router)
+router.include_router(routers.guardian.router)
 
 
 # ───────────────────────────── server-side grid (paper, 24/7) ─────────────────

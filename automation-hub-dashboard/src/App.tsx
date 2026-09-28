@@ -8,6 +8,7 @@ import { API_BASE } from "./lib/api";
 // Pages are code-split (lazy) so the initial bundle is just the shell + the
 // first page, not all ~25 pages and their chart libraries.
 const Overview = lazy(() => import("./pages/Overview"));
+const GuardianPage = lazy(() => import("./pages/GuardianHub"));
 const StrategiesPage = lazy(() => import("./pages/Strategies"));
 const PaperTradingPage = lazy(() => import("./pages/PaperTrading"));
 const BotTerminalPage = lazy(() => import("./pages/BotTerminal"));
@@ -142,6 +143,7 @@ export default function App() {
       case "AI Assistant": return <AIAssistantPage />;
       case "Risk & Health": return <RiskHealthPage tab={route.tab} />;
       case "Evolution": return <EvolutionPage />;
+      case "Guardian": return <GuardianPage tab={route.tab} />;
       case "Calendar": return <CalendarPage />;
       case "Journal": return <JournalPage focusId={route.focusId} tab={route.tab} />;
       case "Settings": return <SettingsPage />;

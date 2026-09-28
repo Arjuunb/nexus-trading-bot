@@ -30,7 +30,8 @@ export const useApp = () => useContext(AppContext);
 // Grouped sections keep the platform feeling like one operating system
 // instead of a flat list of pages.
 export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
-  { title: null, items: ["Dashboard"] },
+  // Guardian: the read-only observer over everything below it (one entry).
+  { title: null, items: ["Dashboard", "Guardian"] },
   { title: "Trading", items: ["Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading"] },
   { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },

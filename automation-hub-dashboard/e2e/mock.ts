@@ -383,7 +383,14 @@ const JOURNAL_WEEKLY_OVERVIEW = { scope: JOURNAL_WEEKLY.scopes[0],
   previous_week: { period_start: "2026-09-14T00:00:00+00:00", period_end: "2026-09-21T00:00:00+00:00", in_progress: false, stats: WEEK_REPORT },
   trend: [0, 1, 2, 3].map((i) => ({ period_start: `2026-0${i < 2 ? 8 : 9}-0${i + 1}T00:00:00+00:00`, period_end: "", in_progress: i === 3, stats: WEEK_REPORT })) };
 
+// /guardian/* responses produced by the real Guardian service over a fixed
+// scene (see e2e/fixtures/generate_guardian_fixture.py).
+export const GUARDIAN = JSON.parse(readFileSync(new URL("./fixtures/guardian.json", import.meta.url), "utf8"));
+
 const SHAPES: [string, unknown][] = [
+  ["/guardian/status", GUARDIAN.status],
+  ["/guardian/events", GUARDIAN.events],
+  ["/guardian/actions", GUARDIAN.actions],
   ["/security/status", SECURITY_STATUS],
   ["/security/checkup", { checked_at: "2026-09-24T12:00:00+00:00", counts: { pass: 2, warn: 1, fail: 1 }, total: 4, checks: [
     { id: "master_key", title: "Master key for secrets", status: "pass", detail: "Exchange keys, webhook secrets and backups are sealed with AES-256-GCM (master key 1a2b3c4d).", fix: "" },
