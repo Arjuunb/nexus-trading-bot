@@ -9,7 +9,7 @@ class QualityScorer:
               pullback: StageAssessment, confirmation: StageAssessment,
               rr: float, minimum_rr: float) -> tuple[float, dict[str, float]]:
         components = {
-            "4h_regime_alignment": 20 * min(1, regime.confidence / 100),
+            "1h_regime_alignment": 20 * min(1, regime.confidence / 100),
             "1h_trend_alignment": 20 * min(1, trend.score / 100),
             "15m_pullback_quality": 15 * min(1, pullback.score / 100),
             "location_quality": 10 if pullback.location else 0,

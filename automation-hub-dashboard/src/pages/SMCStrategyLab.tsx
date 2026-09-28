@@ -16,6 +16,7 @@ import { apiDownload, apiGet, apiPostJson, useLive } from "../lib/api";
 import ResearchComparisonPanel from "../components/research/ResearchComparisonPanel";
 
 type ChartFeed = "checkpoint" | "binance_usdm";
+const HISTORY_REQUEST_TIMEOUT_MS = 20_000;
 type ChartPreset = "clean" | "structure" | "zones" | "strategy" | "trades" | "debug";
 type BottomTab = "positions" | "orders" | "trades" | "setups" | "rejected" | "journal" | "analysis" | "session" | "connection";
 
@@ -184,7 +185,9 @@ const PRESETS: Record<ChartPreset, NativeSMCOverlayFilters> = {
   clean: { pivots: false, internal: false, swing: false, structure: false, liquidity: false, fvg: false, orderBlocks: false, mitigated: false, labels: false },
   structure: { pivots: true, internal: true, swing: true, structure: true, liquidity: true, fvg: false, orderBlocks: false, mitigated: false, labels: true },
   zones: { pivots: false, internal: false, swing: false, structure: false, liquidity: true, fvg: true, orderBlocks: true, mitigated: false, labels: true },
-  strategy: { pivots: true, internal: false, swing: true, structure: true, liquidity: true, fvg: true, orderBlocks: true, mitigated: false, labels: true },
+  // The 5m feed can return hundreds of overlapping native annotations. Keep
+  // their markers and hover evidence visible; text is opt-in via Labels/Debug.
+  strategy: { pivots: true, internal: false, swing: true, structure: true, liquidity: true, fvg: true, orderBlocks: true, mitigated: false, labels: false },
   trades: { pivots: false, internal: false, swing: false, structure: false, liquidity: false, fvg: false, orderBlocks: false, mitigated: false, labels: true },
   debug: { pivots: true, internal: true, swing: true, structure: true, liquidity: true, fvg: true, orderBlocks: true, mitigated: true, labels: true },
 };
@@ -272,9 +275,12 @@ export default function SMCStrategyLabPage() {
   const [autoFollowLatest, setAutoFollowLatest] = useState(true);
   const [olderCandles, setOlderCandles] = useState<NativeCandle[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [hasMoreHistory, setHasMoreHistory] = useState(true);
   const [historyPrepend, setHistoryPrepend] = useState({ version: 0, count: 0 });
   const historyRequestRef = useRef(false);
+  const historyAbortRef = useRef<AbortController | null>(null);
+  const historyFailedRef = useRef(false);
 
   const sourceModels = useLive<SMCSourceModelsResponse>("/research/smc/strategy-models", 600_000);
   const identity = useLive<{ session: SMCPaperState["session"] }>("/research/smc/session", 5_000);
@@ -315,13 +321,22 @@ export default function SMCStrategyLabPage() {
   }, [paper.data?.account.leverage, savedSession?.id, savedSession?.symbol, savedSession?.timeframe, savedSession?.operating_mode, savedSession?.risk_pct, savedSession?.model_id]);
 
   useEffect(() => {
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = null;
     historyRequestRef.current = false;
+    historyFailedRef.current = false;
     setOlderCandles([]);
     setHasMoreHistory(true);
     setHistoryLoading(false);
+    setHistoryError(null);
     setTimeViewport(null);
     setHistoryPrepend((current) => ({ version: current.version + 1, count: 0 }));
   }, [symbol, timeframe, chartFeed]);
+
+  useEffect(() => () => {
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = null;
+  }, []);
 
   const feedReliable = chartFeed === "checkpoint"
     ? Boolean(data?.candles.length)
@@ -441,22 +456,39 @@ export default function SMCStrategyLabPage() {
   }, { "Idempotency-Key": `smc-manual-${Date.now()}` }), "SMC paper order accepted");
   const resetPaper = () => runAction(() => apiPostJson("/research/smc/paper/reset", { confirmation: resetPhrase }), "SMC paper account reset");
 
-  const requestOlderHistory = useCallback(async () => {
-    if (chartFeed === "checkpoint" || historyRequestRef.current || historyLoading || !hasMoreHistory || !chartData?.candles.length) return;
+  const requestOlderHistory = useCallback(async (retry = false) => {
+    if (chartFeed === "checkpoint" || !chartIdentityReady || historyRequestRef.current || historyLoading || !hasMoreHistory || !chartData?.candles.length || (historyFailedRef.current && !retry)) return;
+    historyFailedRef.current = false;
     historyRequestRef.current = true;
+    setHistoryError(null);
     setHistoryLoading(true);
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), HISTORY_REQUEST_TIMEOUT_MS);
     try {
-      const page = await apiGet<LiveHistoryPage>(`/research/smc/live-history?symbol=${symbol}&timeframe=${timeframe}&venue=binance_usdm&before=${encodeURIComponent(chartData.candles[0].timestamp)}&limit=400`);
-      setOlderCandles((current) => mergeCandles(page.candles, current));
-      setHasMoreHistory(page.has_more_history && page.candles.length > 0);
-      if (page.candles.length) setHistoryPrepend((current) => ({ version: current.version + 1, count: page.candles.length }));
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "Unable to load older SMC candles", "error");
+      const oldest = chartData.candles[0].timestamp;
+      const page = await apiGet<LiveHistoryPage>(`/research/smc/live-history?symbol=${symbol}&timeframe=${timeframe}&venue=binance_usdm&before=${encodeURIComponent(oldest)}&limit=400`, controller.signal);
+      if (historyAbortRef.current !== controller) return;
+      if (!Array.isArray(page.candles)) throw new Error("Invalid SMC history response");
+      const older = page.candles.filter((candle) => Date.parse(candle.timestamp) < Date.parse(oldest));
+      setOlderCandles((current) => mergeCandles(older, current));
+      setHasMoreHistory(page.has_more_history && older.length > 0);
+      if (older.length) setHistoryPrepend((current) => ({ version: current.version + 1, count: older.length }));
+    } catch {
+      if (historyAbortRef.current !== controller) return;
+      historyFailedRef.current = true;
+      const message = controller.signal.aborted ? "Older candles timed out." : "Older candles unavailable.";
+      setHistoryError(message);
+      toast(`${message} Select Retry to try again.`, "error");
     } finally {
-      historyRequestRef.current = false;
-      setHistoryLoading(false);
+      window.clearTimeout(timeout);
+      if (historyAbortRef.current === controller) {
+        historyAbortRef.current = null;
+        historyRequestRef.current = false;
+        setHistoryLoading(false);
+      }
     }
-  }, [chartData?.candles, chartFeed, hasMoreHistory, historyLoading, symbol, timeframe, toast]);
+  }, [chartData?.candles, chartFeed, chartIdentityReady, hasMoreHistory, historyLoading, symbol, timeframe, toast]);
 
   const onViewportChange = useCallback((range: ChartTimeViewport) => {
     setTimeViewport(range);
@@ -523,7 +555,7 @@ export default function SMCStrategyLabPage() {
           <div className="pa-chart-head"><div><b>{symbol} · {timeframe}</b><span>{data?.mtf_policy?.label ?? "Native MTF context loading"}</span><span>{data?.data_provenance?.venue ?? "Binance USDⓈ-M Futures"} · session {savedSession?.id?.slice(0, 8) ?? "loading"}</span></div><div><span>{evaluation ? `${evaluation.model.label} · ${evaluation.state} · ${evaluation.next_required_event}` : "SMC strategy evidence loading"}</span><span>{data?.snapshot?.swing_bias === 1 ? "BULLISH" : data?.snapshot?.swing_bias === -1 ? "BEARISH" : "NEUTRAL"}</span><b>{evaluation?.state === "ENTRY_READY" ? "READY" : "WAIT"}</b></div></div>
           <div className="pa-metric-scope"><b>Selected SMC model shown above</b><span>Candidate {evaluation?.selected_candidate_id ?? selectedCandidate?.strategy_id ?? "watching"}</span><span>{evaluation?.missing_conditions.length ?? 0} missing conditions</span><span>Version {evaluation?.version ?? "—"} · execution PAPER ONLY</span></div>
           {chartState.error ? <div className="pa-error"><b>Market data unavailable</b><span>{chartState.error}</span><button type="button" onClick={() => void chartState.refetch()}>Retry</button></div> : null}
-          {!chartData ? <div className="pa-loading">Loading and reconciling Binance market streams…</div> : <NativeSMCChartOverlay state={chartData} timeframe={timeframe} rightOffsetBars={8} initialVisibleBars={visibleBars} filters={filters} selectedObjectId={selectedId || undefined} highlightedObjectIds={highlightedObjectIds} onCandleSelect={setSelectedCandle} fitContentSignal={fitSignal} latestSignal={latestSignal} centerTimestamp={selectedCandle || undefined} priceViewport={priceViewport} viewport={timeViewport} onViewportChange={onViewportChange} onHistoryNearStart={requestOlderHistory} historyLoading={historyLoading} hasMoreHistory={hasMoreHistory} historicalMode={!autoFollowLatest} onGoLive={onGoLatest} prependedHistory={historyPrepend} onPriceAxisDrag={onPriceAxisDrag} onResetPriceScale={() => setPriceViewport({ auto: true, scale: 1, offset: 0 })} liveDataStale={!feedReliable} tradePlan={evaluation?.trade_plan ?? null} fillMarkers={fillMarkers} modelLabel="native SMC strategy" height="clamp(520px, 58vh, 680px)" />}
+          {!chartData ? <div className="pa-loading">Loading and reconciling Binance market streams…</div> : <NativeSMCChartOverlay state={chartData} timeframe={timeframe} rightOffsetBars={8} initialVisibleBars={visibleBars} filters={filters} selectedObjectId={selectedId || undefined} highlightedObjectIds={highlightedObjectIds} onCandleSelect={setSelectedCandle} fitContentSignal={fitSignal} latestSignal={latestSignal} centerTimestamp={selectedCandle || undefined} priceViewport={priceViewport} viewport={timeViewport} onViewportChange={onViewportChange} onHistoryNearStart={requestOlderHistory} historyLoading={historyLoading} historyError={historyError} onHistoryRetry={() => void requestOlderHistory(true)} hasMoreHistory={hasMoreHistory} historicalMode={!autoFollowLatest} onGoLive={onGoLatest} prependedHistory={historyPrepend} onPriceAxisDrag={onPriceAxisDrag} onResetPriceScale={() => setPriceViewport({ auto: true, scale: 1, offset: 0 })} liveDataStale={!feedReliable} tradePlan={evaluation?.trade_plan ?? null} fillMarkers={fillMarkers} modelLabel="native SMC strategy" height="clamp(520px, 58vh, 680px)" />}
           <div className={`pa-stream-truth ${feedReliable ? "is-healthy" : "is-stale"}`}><b>{healthState}</b><span>{chartFeed === "checkpoint" ? "Frozen checkpoint is isolated from live paper execution" : data?.live_display?.health_reason ?? "Waiting for reconciled Binance candles, quote and mark"}</span><span>Transport {data?.live_display?.connection_state ?? (chartFeed === "checkpoint" ? "ISOLATED" : "CONNECTING")} · entries {feedReliable && chartFeed !== "checkpoint" ? "ELIGIBLE ON CLOSED BARS" : "PAUSED"}</span></div>
           <div className="pa-market-readout"><span>Last completed candle<b>{lastClosed ? `${stamp(lastClosed.timestamp)} · C ${lastClosed.close.toLocaleString()}` : "—"}</b><small>{data?.data_provenance?.closed_candles_loaded ?? data?.candles.length ?? 0} closed candles loaded</small></span><span>Forming candle · display only<b>{data?.forming_candle ? `${stamp(data.forming_candle.timestamp)} · O ${data.forming_candle.open.toLocaleString()} H ${data.forming_candle.high.toLocaleString()} L ${data.forming_candle.low.toLocaleString()} C ${data.forming_candle.close.toLocaleString()}` : "Not available"}</b><small>Excluded from SMC decisions: {data?.forming_candle ? "YES" : "N/A"}</small></span><span>Live bid / ask<b>{data?.live_display?.bid?.toLocaleString() ?? "—"} / {data?.live_display?.ask?.toLocaleString() ?? "—"}</b><small>Age {age(data?.live_display?.quote_age_seconds)}</small></span><span>Mark price<b>{data?.live_display?.mark?.toLocaleString() ?? "—"}</b><small>Age {age(data?.live_display?.mark_age_seconds)} · deviation {data?.live_display?.candle_quote_deviation_bps?.toFixed(2) ?? "—"} bps</small></span></div>
           <div className="pa-chart-foot"><span><i className={feedReliable ? "live" : "stale"} />{chartFeed === "checkpoint" ? "Verified frozen checkpoint" : `Binance · ${healthState}`}</span><span>Updated {stamp(data?.live_display?.observed_at ?? data?.data_provenance?.observed_at)}</span><span>Quote source {data?.live_display?.quote_source ?? "—"}</span><span>Closed candles used: {String(data?.data_provenance?.closed_candles_visible ?? data?.candles.length ?? 0)}</span><span>Forming candle excluded from strategy: {data?.forming_candle ? "YES" : "N/A"}</span><b>PAPER · NO LIVE EXECUTION PATH</b></div>

@@ -77,47 +77,57 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
         missing = [timeframe for timeframe in self.required_timeframes
                    if len(self._context.get(timeframe, ())) < self.config.minimum_bars[timeframe]]
         if missing:
-            self._block(f"Insufficient completed candles: {', '.join(missing)}")
+            self._block(f"Insufficient completed candles: {', '.join(missing)}",
+                        blocker_code="WARMUP")
             return None
 
         regime = self.regime_engine.assess(self._context["1h"])
         if regime.regime not in (MarketRegime.BULL_TREND, MarketRegime.BEAR_TREND):
-            self._block(f"1H primary regime {regime.regime.value} blocks trend entries", regime=regime)
+            self._block(f"1H primary regime {regime.regime.value} blocks trend entries",
+                        regime=regime, blocker_code="REGIME_NOT_ALIGNED")
             return None
         direction = "LONG" if regime.regime == MarketRegime.BULL_TREND else "SHORT"
         trend = self.trend_engine.assess(self._context["1h"], direction)
         if not trend.valid:
-            self._block("1H trend confirmation failed", direction, regime, trend)
+            detail = ", ".join(trend.failed) or trend.label
+            self._block(f"1H trend confirmation failed: {detail}", direction, regime, trend,
+                        blocker_code="ATP_TREND_NOT_ALIGNED")
             return None
         self.lifecycle_state = SetupState.SETUP_FOUND
         self.lifecycle_state = SetupState.WAITING_FOR_PULLBACK
         pullback = self.pullback_detector.assess(self._context["15m"], direction)
         if not pullback.valid:
+            detail = ", ".join(pullback.failed) or pullback.label
             self.last_decision = StrategyDecision(
                 SetupState.WAITING_FOR_PULLBACK, "WAIT", direction,
-                "15M pullback is not at a valid corrective location",
-                regime=regime, trend=trend, pullback=pullback)
+                f"15M pullback not ready: {detail}",
+                regime=regime, trend=trend, pullback=pullback,
+                blocker_code="PULLBACK_NOT_READY")
             return None
         self.lifecycle_state = SetupState.WAITING_FOR_CONFIRMATION
         confirmation = self.confirmation_engine.assess(self._context["5m"], direction)
         if not confirmation.valid:
+            detail = ", ".join(confirmation.failed) or confirmation.label
             self.last_decision = StrategyDecision(
                 SetupState.WAITING_FOR_CONFIRMATION, "REJECT", direction,
-                "No completed 5M candle plus structure-break confirmation",
-                regime=regime, trend=trend, pullback=pullback, confirmation=confirmation)
+                f"5M confirmation not ready: {detail}",
+                regime=regime, trend=trend, pullback=pullback, confirmation=confirmation,
+                blocker_code="CONFIRMATION_NOT_READY")
             return None
 
         entry = bar.close
         entry_atr = atr(self._context["5m"], self.config.atr_period)
         if entry_atr <= 0:
-            self._block("5M ATR is unavailable", direction, regime, trend)
+            self._block("5M ATR is unavailable", direction, regime, trend,
+                        blocker_code="ATR_UNAVAILABLE")
             return None
         stop = ((pullback.swing_low or bar.low) - entry_atr * self.config.stop_atr_buffer
                 if direction == "LONG" else
                 (pullback.swing_high or bar.high) + entry_atr * self.config.stop_atr_buffer)
         risk = abs(entry - stop)
         if risk <= 0 or (direction == "LONG" and stop >= entry) or (direction == "SHORT" and stop <= entry):
-            self._block("Structure stop is invalid relative to entry", direction, regime, trend)
+            self._block("Structure stop is invalid relative to entry", direction, regime, trend,
+                        blocker_code="STOP_DISTANCE_INVALID")
             return None
         sign = 1 if direction == "LONG" else -1
         target = entry + sign * risk * self.config.target_rr
@@ -126,7 +136,8 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
             candidates = ([level for level in highs if level > entry] if direction == "LONG"
                           else [level for level in lows if level < entry])
             if not candidates:
-                self._block("No valid next 1H structure target", direction, regime, trend)
+                self._block("No valid next 1H structure target", direction, regime, trend,
+                            blocker_code="TARGET_UNAVAILABLE")
                 return None
             target = min(candidates) if direction == "LONG" else max(candidates)
         rr = abs(target - entry) / risk
@@ -134,11 +145,15 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
             regime=regime, trend=trend, pullback=pullback,
             confirmation=confirmation, rr=rr, minimum_rr=self.config.minimum_rr)
         if rr < self.config.minimum_rr or quality < self.config.quality_minimum:
+            reason = (f"R:R {rr:.2f} below minimum {self.config.minimum_rr:.2f}"
+                      if rr < self.config.minimum_rr else
+                      f"Quality {quality:.1f} below minimum {self.config.quality_minimum:.1f}")
             self.last_decision = StrategyDecision(
-                SetupState.BLOCKED, "REJECT", direction,
-                f"Quality {quality:.1f} or R:R {rr:.2f} below configured minimum",
+                SetupState.BLOCKED, "REJECT", direction, reason,
                 quality, regime, trend, pullback, confirmation, components,
-                entry, stop, target, rr)
+                entry, stop, target, rr,
+                blocker_code=("INSUFFICIENT_RR" if rr < self.config.minimum_rr
+                              else "QUALITY_TOO_LOW"))
             self.lifecycle_state = SetupState.BLOCKED
             return None
 
@@ -180,16 +195,18 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
         from bot.data.resample import TF_SECONDS
         return {
             timeframe: (
-                self._context[timeframe][-1].timestamp
+                bars[-1].timestamp
                 + timedelta(seconds=TF_SECONDS[timeframe])
             ).isoformat()
-            for timeframe in self._context
+            for timeframe, bars in self._context.items() if bars
         }
 
-    def _block(self, reason: str, direction=None, regime=None, trend=None) -> None:
+    def _block(self, reason: str, direction=None, regime=None, trend=None,
+               *, blocker_code: str) -> None:
         self.lifecycle_state = SetupState.BLOCKED
         self.last_decision = StrategyDecision(SetupState.BLOCKED, "NO TRADE", direction,
-                                              reason, regime=regime, trend=trend)
+                                              reason, regime=regime, trend=trend,
+                                              blocker_code=blocker_code)
 
     @staticmethod
     def _checklist(regime, trend, pullback, confirmation, quality, rr) -> list[dict]:

@@ -131,6 +131,24 @@ def test_multi_timeframe_strategy_requires_its_five_minute_decision_clock():
         engine._refresh_multi_timeframe_context("BTCUSDT", strategy, entry_bars=[])
 
 
+def test_adaptive_range_blocker_reaches_the_instance_without_an_order():
+    engine = _engine()
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    start = datetime(2026, 9, 27, tzinfo=timezone.utc)
+    context = {
+        timeframe: [_bar(start + timedelta(minutes=minutes * index))
+                    for index in range(70)]
+        for timeframe, minutes in (("1h", 60), ("15m", 15), ("5m", 5))
+    }
+    context["4h"] = []
+    strategy.set_timeframe_context(context)
+
+    engine._process_bar("BTCUSDT", context["5m"][-1], strategy)
+
+    assert engine.last_blocker == "GATE_REJECTED: REGIME_NOT_ALIGNED"
+    assert engine.paper.open_position("BTCUSDT") is None
+
+
 def test_stale_live_data_is_fail_closed_before_any_strategy_processing():
     engine = _engine()
     stale = _bar(datetime.now(timezone.utc) - timedelta(minutes=20))

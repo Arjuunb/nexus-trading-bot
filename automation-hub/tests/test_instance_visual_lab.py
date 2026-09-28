@@ -187,6 +187,33 @@ def test_the_page_says_what_is_needed_next(lab):
     assert body["current_stage"] == "SETUP"
 
 
+@pytest.mark.parametrize("blocker,gate_id,label", [
+    ("REGIME_NOT_ALIGNED", "regime_gate", "1H regime permits this direction"),
+    ("ATP_TREND_NOT_ALIGNED", "trend_gate", "1H trend confirmed"),
+    ("PULLBACK_NOT_READY", "pullback", "Pullback into trend support"),
+    ("CONFIRMATION_NOT_READY", "resume", "Trend resumption confirmed"),
+    ("STOP_DISTANCE_INVALID", "trade_geometry", "Stop and target valid"),
+    ("QUALITY_TOO_LOW", "quality", "Setup quality sufficient"),
+])
+def test_adaptive_lab_names_the_failed_gate_before_later_waiting_gates(
+        lab, blocker, gate_id, label):
+    client = lab([_instance(strategy_key="adaptive_trend_pullback",
+                            blocker=f"GATE_REJECTED: {blocker}")])
+    body = client.get("/research/instance-visual/state?instance_id=inst-1").json()
+
+    assert body["blocker"] == blocker
+    assert body["required_next"] == label
+    assert [gate["id"] for gate in body["gates"] if gate["state"] == "FAIL"] == [gate_id]
+
+
+def test_adaptive_optional_four_hour_bias_is_not_claimed_as_an_entry_gate(lab):
+    client = lab([_instance(strategy_key="adaptive_trend_pullback",
+                            blocker="GATE_REJECTED: REGIME_NOT_ALIGNED")])
+    body = client.get("/research/instance-visual/state?instance_id=inst-1").json()
+    htf = next(gate for gate in body["gates"] if gate["id"] == "htf_bias")
+    assert "4H bias optional" in htf["label"]
+
+
 # ------------------------------------------------------------------- timeline
 
 def _decision_row(**kw):

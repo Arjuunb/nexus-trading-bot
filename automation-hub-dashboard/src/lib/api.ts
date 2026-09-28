@@ -26,10 +26,10 @@ async function requestError(res: Response, path: string): Promise<Error> {
   return new Error(prefix);
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
+export async function apiGet<T>(path: string, signal?: AbortSignal): Promise<T> {
   // session cookie authenticates same-origin; the secret header keeps
   // cross-origin dev (Vite -> localhost API) working behind the auth wall
-  const res = await fetch(`${API_BASE}${path}`, requestOptions);
+  const res = await fetch(`${API_BASE}${path}`, { ...requestOptions, signal });
   if (!res.ok) throw await requestError(res, `GET ${path}`);
   return res.json() as Promise<T>;
 }

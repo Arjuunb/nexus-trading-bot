@@ -77,6 +77,7 @@ class StrategyDecision:
     stop: Optional[float] = None
     target: Optional[float] = None
     rr: Optional[float] = None
+    blocker_code: Optional[str] = None
 
     def public(self) -> dict:
         return {
@@ -89,5 +90,5 @@ class StrategyDecision:
             "confirmation": self.confirmation.public() if self.confirmation else None,
             "components": {k: round(v, 2) for k, v in self.components.items()},
             "entry": self.entry, "stop": self.stop, "target": self.target,
-            "rr": self.rr,
+            "rr": self.rr, "blocker_code": self.blocker_code,
         }

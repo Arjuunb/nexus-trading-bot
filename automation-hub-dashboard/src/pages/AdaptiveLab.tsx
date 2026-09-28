@@ -172,8 +172,15 @@ export default function AdaptiveLab() {
     void save({ risk_pct: value }, `risk ${value}% per trade`);
   };
 
-  const decision = bot?.last_decision ?? null;
-  const waiting = state.data?.required_next || decision?.reason || bot?.strategy_status_reason || "—";
+  // The decision store retains the last accepted/rejected signal, which can
+  // be hours older than the strategy's most recent closed-candle evaluation.
+  // This chart describes the latest journaled candle, never that old signal.
+  const latestCandleDecision = journal.data?.entries?.[0] ?? null;
+  const decisionLabel = latestCandleDecision?.strategy_decision
+    ?? latestCandleDecision?.engine_decision
+    ?? (journal.error ? "JOURNAL UNAVAILABLE" : "AWAITING CANDLE");
+  const waiting = latestCandleDecision?.reason
+    || state.data?.required_next || bot?.strategy_status_reason || "—";
   const metrics = bot?.metrics ?? {};
   const bottom = (() => {
     if (!bot) return <div className="pa-empty">Choose a mode to start the bot.</div>;
@@ -264,7 +271,7 @@ export default function AdaptiveLab() {
           <span className={`pa-feed-badge ${reliable ? "is-live" : isOff ? "is-off" : "is-stale"}`}>{health}</span></div>
         <div className="pa-chart-shell" aria-label="Adaptive MTF chart workspace">
           <div className="pa-chart-head"><div><b>{view?.symbol ?? lab?.symbol ?? "—"} · {timeframe}</b><span>1h regime · 15m pullback · 5m confirmation</span><span>Binance USDⓈ-M Futures · {isInstance ? "instance" : "bot"} {(view?.bot_id ?? lab?.bot_id)?.slice(0, 8) ?? "—"}</span></div>
-            <div><span>{decision?.decision ?? "—"}</span><b>{decision?.state === "ORDER_PENDING" || paper.data?.positions.length ? "IN PLAY" : "WAIT"}</b></div></div>
+            <div><span title={latestCandleDecision ? `Closed candle ${stamp(latestCandleDecision.candle_time)}` : undefined}>{decisionLabel}</span><b>{paper.data?.positions.length || orders.length ? "IN PLAY" : "WAIT"}</b></div></div>
           <div className="pa-metric-scope" data-testid="adaptive-waiting"><b>Waiting for</b><span>{waiting}</span>
             {state.data?.gates?.length ? <span className="adaptive-gates">{state.data.gates.map((gate) => <em key={gate.id} title={gate.explanation || gate.detail} className={`gate-${gate.state.toLowerCase()}`}>{MARK[gate.state] ?? "·"} {gate.label}</em>)}</span> : null}</div>
           {live.error && !isOff ? <div className="pa-error"><b>Live feed unavailable</b><span>{live.error}</span><button type="button" onClick={() => void live.refetch()}>Retry</button></div> : null}
