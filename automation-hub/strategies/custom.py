@@ -721,7 +721,8 @@ def simulate_strategy(strat, bars, *, fee: float = 0.0004, slippage: float = 0.0
                       manager=None,
                       entry_mode: str = "market", limit_ttl_bars: int = 3,
                       entry_delay_bars: int = 0,
-                      retain_all: bool = False) -> dict:
+                      retain_all: bool = False,
+                      native_context=None) -> dict:
     """Run a built-in HubStrategy object over historical bars and return results
     in the SAME shape as ``simulate()`` (metrics, equity curve, trades).
 
@@ -740,6 +741,13 @@ def simulate_strategy(strat, bars, *, fee: float = 0.0004, slippage: float = 0.0
     """
     from bot.types import SignalType
     from services.trade_manager import ManagedTrade, TradeManager
+    timeline = None
+    if native_context is not None:
+        from services.native_research_context import NativeResearchTimeline
+        timeline = NativeResearchTimeline(
+            getattr(strat, "symbol", ""), getattr(strat, "decision_timeframe", ""),
+            native_context, required=getattr(strat, "required_timeframes", ()),
+            minimum_bars=getattr(getattr(strat, "config", None), "minimum_bars", {}))
     cost = fee + slippage
     mgr = (manager or TradeManager()) if manage else None
     pos = None
@@ -874,6 +882,8 @@ def simulate_strategy(strat, bars, *, fee: float = 0.0004, slippage: float = 0.0
                 _record_close(pos, exit_px, exit_reason, bar, i)
                 pos = None
 
+        if timeline is not None:
+            timeline.apply(strat, bars, i)
         sig = strat.on_bar(bar)  # always feed: runtime strategies see every closed bar
         if pos is not None and sig is not None:
             desired = "long" if sig.type == SignalType.LONG else "short"
@@ -901,10 +911,16 @@ def simulate_strategy(strat, bars, *, fee: float = 0.0004, slippage: float = 0.0
                     # history. Using the full research array changed HTF bucket
                     # alignment and made the two decision gates diverge.
                     causal = list(getattr(strat, "bars", []) or bars[:i + 1])
+                    native_brain = ({"native_htf_bars": strat._native_mtf_context.get(
+                                         timeline.primary_timeframe, ()),
+                                     "require_native_htf": True,
+                                     "allow_legacy_htf_resample": False}
+                                    if timeline is not None else {})
                     v = brain.evaluate(causal, len(causal) - 1,
                                        side=side, entry=entry, stop=stop,
                                        target=sig.take_profit,
-                                       recent_losses=_brain_streak(gate, bar.timestamp))
+                                       recent_losses=_brain_streak(gate, bar.timestamp),
+                                       **native_brain)
                     if enforce_brain and (not v.allowed or v.score < min_score):
                         blocked.append({"time": bar.timestamp.isoformat(), "side": side,
                                         "score": v.score, "regime": v.regime, "htf_bias": v.htf_bias,

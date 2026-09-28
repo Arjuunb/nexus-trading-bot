@@ -132,11 +132,13 @@ def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 25
     daily: dict[str, dict[str, float]] = {}
     for strat in strategies:
         agg_trades: list[dict] = []
+        unavailable: list[str] = []
         wins = total = 0
         net = dd = 0.0
         for sym, (rows, _src) in data.items():
             res = _run_on(strat, sym, timeframe, {}, None, rows)
             if "error" in res:
+                unavailable.append(f"{sym}: {res['error']}")
                 continue
             trades = res.get("trades", [])
             agg_trades.extend(trades)
@@ -145,6 +147,15 @@ def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 25
             wins += round(res.get("win_rate", 0) / 100 * n)
             net += res.get("net_r", 0.0)
             dd = max(dd, res.get("max_drawdown_pct", 0.0) or 0.0)
+        if unavailable:
+            # Do not rank a partial multi-symbol sample, or represent missing
+            # native context as a genuine zero-trade strategy result.
+            table.append({"strategy": strat, "trades": None, "win_rate": None,
+                          "expectancy_r": None, "net_r": None, "profit_factor": None,
+                          "max_drawdown_pct": None, "verdict": "unavailable",
+                          "error": "; ".join(unavailable)})
+            daily[strat] = {}
+            continue
         # Profit factor comes from the trades themselves. It used to read
         # gross_profit_r / gross_loss_r off the simulator result, and the
         # simulator has never produced either key -- so the column rendered a
@@ -170,12 +181,12 @@ def league(symbols=("BTCUSDT", "ETHUSDT"), timeframe: str = "1h", bars: int = 25
         daily[strat] = _daily_r(agg_trades)
 
     # rank by what pays: expectancy (with enough sample), then net R
-    table.sort(key=lambda r: (r["verdict"] != "insufficient-sample",
+    table.sort(key=lambda r: (r["verdict"] not in ("insufficient-sample", "unavailable"),
                               r["expectancy_r"] if r["expectancy_r"] is not None else -9),
                reverse=True)
 
     # pairwise correlation of daily R streams (union of active days)
-    judged = [r["strategy"] for r in table if r["verdict"] != "insufficient-sample"]
+    judged = [r["strategy"] for r in table if r["verdict"] not in ("insufficient-sample", "unavailable")]
     correlations = []
     for i, a in enumerate(judged):
         for b in judged[i + 1:]:

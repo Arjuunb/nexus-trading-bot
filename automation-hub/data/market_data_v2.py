@@ -287,6 +287,8 @@ class MarketDataService:
             meta = self._meta(c)
             integrity = self._integrity_conn(c, timeframe, asset)
             last = c.execute("SELECT MAX(open_time) FROM candles WHERE timeframe=?", (timeframe,)).fetchone()[0]
+            providers = [row[0] for row in c.execute(
+                "SELECT DISTINCT provider FROM candles WHERE timeframe=?", (timeframe,))]
             checksum = self._checksum_conn(c, timeframe)
             timeframe_count = c.execute(
                 "SELECT COUNT(DISTINCT timeframe) FROM candles").fetchone()[0]
@@ -311,6 +313,7 @@ class MarketDataService:
         stale = fresh is not None and fresh > TF_MS.get(timeframe, 0) * 2 / 1000
         return {"available": integrity["candles"] > 0 and checksum_ok, "symbol": normalize_symbol(symbol),
                 "asset_class": asset, "timeframe": timeframe, "last_candle": _iso(last),
+                "providers": providers,
                 "freshness_seconds": fresh, "stale": stale, "checksum_ok": checksum_ok,
                 "quarantined_cache": quarantined, "needs_download": not checksum_ok,
                 "quality_score": 100 if checksum_ok and not stale and integrity["status"] == "healthy" else 60 if checksum_ok else 0,
