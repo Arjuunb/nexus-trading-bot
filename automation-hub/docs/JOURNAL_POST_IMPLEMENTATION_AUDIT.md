@@ -820,3 +820,40 @@ strategy's proposals.**
   checks. The harness's own instances collide too: `inst-audit-3cr` and
   `inst-audit-short` were both "Instance inst-aud", and `inst-crash-postsubmit`
   and `inst-crash-writefail` were both "Instance inst-cra".
+
+## 22. Status after the fixes
+
+All 17 defects in the register are fixed (D1–D6, D8–D18; D7 was merged into
+D1). Each fix has its own commit and a test on real engine or strategy
+output that fails on the old code.
+
+**Still open, not changed here:**
+* **The PA lab never attests its strategy's proposals** (§21, found while
+  fixing D6). It is in `services/price_action_lab.py`, which is frozen; the
+  owner has to decide whether to lift the freeze for the one-line fix.
+* **Replay execution ids collide** across replay runs on one ledger (§21).
+  This is execution code in `services/auto_engine.py`, not journal code.
+* **The EMA 9/33 values are not recorded as data** (D17). The strategy's
+  report does not carry them, and changing that would change strategy code.
+* **Records already finalized keep what they were written with.** Finished
+  records are immutable by design, so these fixes apply to records written
+  after deployment. An existing record can only change through a logged
+  correction.
+
+**Final validation on this branch:**
+* `automation-hub` tests: 3,545 passed, 15 skipped, 0 failed. Engine tests:
+  509 passed. Dashboard e2e (production build, mocked API): 159 passed.
+* `scripts/journal_audit/run_all.sh`:
+  * instance truth 37/37 on both trades;
+  * lab truth ALL MATCH;
+  * crash and duplicate 18/18;
+  * weekly 85/85.
+* The dashboard build was also checked against the real API serving the
+  harness data. The Trade page showed:
+  * the instance trade with "Risk target 1.00%", "Risk taken 0.15% (size
+    reduced after sizing)" and "$14.94", equal to the database;
+  * its decision latency "59s (from the close of the 5m signal candle)";
+  * the replay and SMC trades with a latency "not measured", with the reason;
+  * the SMC trade's risk target at 0.50%, not 50.00%.
+
+  The weekly scope list showed four distinct instance labels.
