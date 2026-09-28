@@ -81,6 +81,49 @@ def test_long_and_short_use_real_stage_logic_structure_stop_and_symmetric_target
         assert abs(signal.take_profit - signal.entry) / abs(signal.entry - signal.stop_loss) >= 2.0
         assert strategy.lifecycle_state == SetupState.ORDER_PENDING
         assert signal.snapshot["timeframe_closes"].keys() == {"4h", "1h", "15m", "5m"}
+        components = strategy.decision_report()["components"]
+        assert "1h_regime_alignment" in components
+        assert "4h_regime_alignment" not in components
+
+
+def test_missing_optional_4h_bias_does_not_crash_an_eligible_5m_signal():
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    context = _context(1)
+    context["4h"] = []  # A missing secondary bias is not an entry veto.
+    strategy.set_timeframe_context(context)
+
+    signal = strategy.on_bar(context["5m"][-1])
+
+    assert signal is not None
+    assert set(signal.snapshot["timeframe_closes"]) == {"1h", "15m", "5m"}
+    assert "4H bias NEUTRAL" in signal.reason
+
+
+def test_adaptive_blocker_codes_name_the_stage_without_changing_signals(monkeypatch):
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    context = _context(1)
+    context["1h"] = [Bar(bar.timestamp, 100, 101, 99, 100, 100)
+                     for bar in context["1h"]]
+    strategy.set_timeframe_context(context)
+    assert strategy.on_bar(context["5m"][-1]) is None
+    assert strategy.decision_report()["blocker_code"] == "REGIME_NOT_ALIGNED"
+
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    context = _context(1)
+    strategy.set_timeframe_context(context)
+    monkeypatch.setattr(strategy.pullback_detector, "assess",
+                        lambda *_: StageAssessment(False, 0, "INVALID",
+                                                   failed=("not at pullback location",)))
+    assert strategy.on_bar(context["5m"][-1]) is None
+    assert strategy.decision_report()["blocker_code"] == "PULLBACK_NOT_READY"
+    assert "not at pullback location" in strategy.decision_report()["reason"]
+
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    strategy.set_timeframe_context(context)
+    monkeypatch.setattr(strategy.confirmation_engine, "assess",
+                        lambda *_: StageAssessment(False, 0, "NONE"))
+    assert strategy.on_bar(context["5m"][-1]) is None
+    assert strategy.decision_report()["blocker_code"] == "CONFIRMATION_NOT_READY"
 
 
 def test_quality_threshold_is_a_hard_gate(monkeypatch):
@@ -92,6 +135,8 @@ def test_quality_threshold_is_a_hard_gate(monkeypatch):
     monkeypatch.setattr(strategy.confirmation_engine, "assess", lambda *_: StageAssessment(True, 70, "CONFIRMED"))
     assert strategy.on_bar(context["5m"][-1]) is None
     assert strategy.decision_report()["decision"] == "REJECT"
+    assert strategy.decision_report()["blocker_code"] == "QUALITY_TOO_LOW"
+    assert strategy.decision_report()["reason"].startswith("Quality ")
 
 
 def test_position_lifecycle_is_explicit_and_reported():

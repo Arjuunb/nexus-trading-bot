@@ -46,7 +46,7 @@ type Instance = { running: boolean } | null;
 
 function labBot(session: Session) {
   return { id: "bot-1", symbol: session.symbol, state: "running", market_status: "LIVE",
-           last_decision: { decision: "ENTER LONG", state: "ORDER_PENDING", reason: "LONG | 1H BULL_TREND 72% | quality 78/100 | RR 2.40" },
+           last_decision: { ts: CANDLES[110].timestamp, decision: "accepted", state: "ORDER_PENDING", reason: "LONG | 1H BULL_TREND 72% | quality 78/100 | RR 2.40" },
            metrics: { balance: 10_042.5, realized_pnl: 42.5, trades: 3, win_rate: 66.7 } };
 }
 
@@ -77,7 +77,8 @@ function statusFor(session: Session, source = "lab", instance: Instance = null) 
   };
 }
 
-async function labServer(page: Page, { refuse = "", mode = "automatic", instance = null as Instance } = {}) {
+async function labServer(page: Page, { refuse = "", mode = "automatic", instance = null as Instance,
+  journalData = JOURNAL } = {}) {
   let session = { symbol: "XRPUSDT", mode, risk_pct: 0.5 };
   const saves: any[] = [];
   const feedCalls: string[] = [];
@@ -144,7 +145,7 @@ async function labServer(page: Page, { refuse = "", mode = "automatic", instance
       if (session.mode === "off") return route.fulfill({ status: 503, json: { detail: `the ${session.symbol} bot is off, so it has no live feed to show` } });
       return route.fulfill({ json: { ...LIVE_CHART, symbol: session.symbol } });
     }
-    if (path === "/journal") return route.fulfill({ json: JOURNAL });
+    if (path === "/journal") return route.fulfill({ json: journalData });
     return route.fallback();
   });
   return { saves, feedCalls, reads };
@@ -157,7 +158,7 @@ test("Adaptive MTF Lab shows its bot, orders and journal, and saves each change 
   const saved = page.getByTestId("adaptive-saved-configuration");
   await expect(saved).toContainText("Adaptive MTF Trend Pullback");
   await expect(saved).toContainText("XRPUSDT 5m · Automatic paper · risk 0.5%");
-  await expect(page.getByTestId("adaptive-waiting")).toContainText("Trend resumption confirmed");
+  await expect(page.getByTestId("adaptive-waiting")).toContainText("Managing open long toward 0.5448");
   // The chart is the SMC lab's live chart on the bot's own feed: closed
   // candles, the forming candle (display only) and bid/ask/mark.
   await expect(page.locator(".smc-chart-canvas canvas").first()).toBeVisible();
@@ -197,6 +198,20 @@ test("Adaptive MTF Lab shows its bot, orders and journal, and saves each change 
   await expect.poll(() => server.saves.length).toBe(3);
   expect(server.saves[2]).toEqual({ risk_pct: 0.8 });
   await expect(saved).toContainText("risk 0.8%");
+});
+
+test("latest closed-candle decision replaces an older accepted signal in the chart header", async ({ page }) => {
+  const noTrade = {
+    ...JOURNAL,
+    entries: [{ ...JOURNAL.entries[0], strategy_state: "BLOCKED", strategy_decision: "NO TRADE",
+      reason: "1H primary regime RANGE blocks trend entries" }, ...JOURNAL.entries.slice(1)],
+  };
+  await labServer(page, { journalData: noTrade });
+  await page.goto("/#/adaptive-mtf-lab");
+
+  await expect(page.locator(".pa-chart-head")).toContainText("NO TRADE");
+  await expect(page.locator(".pa-chart-head")).not.toContainText("accepted");
+  await expect(page.getByTestId("adaptive-waiting")).toContainText("1H primary regime RANGE blocks trend entries");
 });
 
 test("Adaptive MTF Lab refused change says why and keeps what is saved", async ({ page }) => {

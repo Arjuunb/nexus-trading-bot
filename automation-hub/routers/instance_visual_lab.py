@@ -168,8 +168,8 @@ def state_payload(instance_id: str, *, manager=None) -> dict:
         "blocker": blocker or None,
         "blocker_explanation": explain(blocker) if blocker else "",
         "blocker_at": engine.get("last_blocker_timestamp"),
-        "required_next": (waiting.gate.label if waiting else
-                          (failing.gate.label if failing else None)),
+        "required_next": (failing.gate.label if failing else
+                          (waiting.gate.label if waiting else None)),
         "gates": [gate.public() for gate in gates],
         "pipeline": [stage_.value for stage_ in PIPELINE],
         "current_stage": stage.value,
