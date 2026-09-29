@@ -1,4 +1,4 @@
-"""Guardian's read-only API (PRD "Nexus Guardian", Phases 1-2).
+"""Guardian's read-only API (PRD "Nexus Guardian", Phases 1-8).
 
 Every route here is a GET. Guardian has no endpoint that starts, stops,
 configures or trades anything, and none that edits its own evidence: what it
@@ -108,6 +108,54 @@ def guardian_integrity() -> dict:
     if monitor is None:
         raise HTTPException(503, "integrity monitoring is not configured")
     return monitor.last or monitor.run(now=time.time())
+
+
+@router.get("/guardian/research")
+def guardian_research() -> dict:
+    """Research hypotheses and where each is in the pipeline (PRD §13-14).
+    A hypothesis is an idea under test, never a change to a strategy."""
+    return _wa.guardian.research.view()
+
+
+@router.get("/guardian/research/analyst")
+def guardian_research_analyst() -> dict:
+    """Per strategy version: finished forward-paper trades cut by side,
+    session, regime, HTF bias, symbol, timeframe and setup type (PRD §12)."""
+    try:
+        return {"strategies": _wa.guardian.research.analyst(), "error": None}
+    except Exception as exc:  # noqa: BLE001 -- say it could not be read, never invent it
+        return {"strategies": [], "error": f"{type(exc).__name__}: {exc}"[:300]}
+
+
+@router.get("/guardian/research/{hypothesis_id}")
+def guardian_hypothesis(hypothesis_id: int) -> dict:
+    """One hypothesis with every stage's evidence and its append-only log."""
+    row = _wa.guardian.research.get(hypothesis_id)
+    if row is None:
+        raise HTTPException(404, "no such hypothesis")
+    return row
+
+
+@router.get("/guardian/recovery")
+def guardian_recovery() -> dict:
+    """What Guardian may do operationally, which policies the owner enabled,
+    and every recovery decision it has recorded (PRD §39-40)."""
+    return _wa.guardian.recovery_view()
+
+
+@router.get("/guardian/reports")
+def guardian_reports(kind: Optional[str] = None, limit: int = 20) -> dict:
+    """Issued daily and weekly reports, kept as issued (PRD §30-31)."""
+    if kind and kind not in ("daily", "weekly"):
+        raise HTTPException(400, "kind must be daily or weekly")
+    return _wa.guardian.reports.view(kind, limit)
+
+
+@router.get("/guardian/reasoning")
+def guardian_reasoning_status() -> dict:
+    """Whether the evidence-reasoning layer is on, and the questions asked."""
+    import services.guardian_reasoning as reasoning
+    return reasoning.status(_wa.guardian)
 
 
 @router.get("/guardian/actions")

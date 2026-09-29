@@ -464,6 +464,7 @@ def strategy_overview(store, *, since_day: str, performance: Optional[list[dict]
     out.sort(key=lambda c: (c["scope"], c["strategy_id"] or "", c["symbol"] or ""))
     return {"since_day": since_day, "strategies": out, "telemetry": telemetry or {},
             "almost_trades_total": len(almost_rows),
-            "research": {"built": False,
-                         "note": "Research hypotheses, research versions and forward-paper "
-                                 "experiments arrive with Phase 5. Nothing is shown until then."}}
+            "research": {"built": True,
+                         "note": "Research hypotheses from finished forward-paper trades are on the "
+                                 "Research tab. A hypothesis is an idea under test: it never changes "
+                                 "a strategy."}}

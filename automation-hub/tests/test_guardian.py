@@ -225,7 +225,7 @@ def test_emit_never_blocks_and_a_failed_write_is_retried():
 
 # ----------------------------------------- 13, 14, 15: no write authority
 _ALLOWED_IMPORTS = {"__future__", "json", "queue", "sqlite3", "threading", "time", "uuid",
-                    "dataclasses", "datetime", "pathlib", "typing", "math", "statistics",
+                    "dataclasses", "datetime", "pathlib", "typing", "math", "statistics", "random", "hashlib",
                     "services.redaction"}
 
 
@@ -262,7 +262,9 @@ def test_the_guardian_api_is_read_only_and_live_trading_stays_locked():
                                          "/guardian/events/{event_id}", "/guardian/strategies",
                                          "/guardian/almost-trades", "/guardian/incidents",
                                          "/guardian/incidents/{incident_id}", "/guardian/anomalies",
-                                         "/guardian/integrity",
+                                         "/guardian/integrity", "/guardian/research",
+                                         "/guardian/research/analyst", "/guardian/research/{hypothesis_id}",
+                                         "/guardian/recovery", "/guardian/reports", "/guardian/reasoning",
                                          "/guardian/actions", "/guardian/catalogue"}
     assert all(r.methods == {"GET"} for r in routes)
     app = FastAPI()

@@ -1490,6 +1490,7 @@ from services.guardian.service import GuardianService  # noqa: E402
 from services.guardian.integrity import (  # noqa: E402
     IntegrityMonitor as _GuardianIntegrity, Source as _GuardianSource,
 )
+from services.guardian.recovery import RecoveryController as _GuardianRecovery  # noqa: E402
 from services.guardian.store import GuardianStore  # noqa: E402
 from services.guardian.strategy import (  # noqa: E402
     PAEvaluationReader as _GuardianPAReader, SMCDecisionReader as _GuardianSMCReader,
@@ -1499,6 +1500,32 @@ guardian_store = GuardianStore(_os.environ.get(
     "HUB_GUARDIAN_DB", _os.path.join(_os.path.dirname(settings.audit_path), "guardian.db")))
 guardian_bus = _GuardianBus(guardian_store)
 adaptive_lab.manager.guardian_lab_id = "adaptive"
+
+
+def _guardian_restarter(managers: dict):
+    """The one trading-adjacent action Guardian may be given (PRD §39-40):
+    the instance manager's own staged Full Bot Reboot, for an instance its
+    owner wants running. Guardian never starts a stopped instance, and the
+    reboot's validation and fail-closed checks stay the manager's."""
+    def restart(instance_id: str) -> dict:
+        for name, manager in managers.items():
+            try:
+                inst = manager.instance_for(instance_id)
+            except KeyError:
+                continue
+            if not inst.desired_running:
+                raise RuntimeError("its owner has not asked for it to run; Guardian never starts an instance")
+            manager.restart(instance_id)
+            return {"instance_id": instance_id, "manager": name}
+        raise LookupError(f"no instance {instance_id}")
+    return restart
+
+
+def _guardian_notify(text: str):
+    """True when delivered, None when no Telegram channel is configured."""
+    return notifier.send(text) if notifier.configured else None
+
+
 guardian = GuardianService(
     guardian_store, guardian_bus,
     instances={"main": lambda: _guardian_sources.instance_rows(instance_manager),
@@ -1525,6 +1552,13 @@ guardian = GuardianService(
         _GuardianSource("PA_LAB", settings.price_action_paper_db, kind="lab_broker", journal_source="PA_LAB")],
         journal_path=settings.trade_records_db,
         live_status=lambda: {"locked": bool(broker_registry.live_locked())}),
+    # Recovery (Phase 7): nothing automatic unless the owner lists the policy
+    # in HUB_GUARDIAN_RECOVERY (e.g. RESTART_INSTANCE_WORKER). Diagnostics only.
+    recovery=_GuardianRecovery(guardian_store, restart_instance=_guardian_restarter(
+        {"main": instance_manager, "adaptive": adaptive_lab.manager}), enabled={
+        a.strip().upper() for a in _os.environ.get("HUB_GUARDIAN_RECOVERY", "").split(",") if a.strip()}),
+    # Reports and incident notifications (Phase 8) through the existing channel.
+    notify=_guardian_notify,
     interval_s=float(_os.environ.get("HUB_GUARDIAN_INTERVAL", "15")))
 
 
@@ -1557,6 +1591,7 @@ import routers.status  # noqa: E402
 import routers.lab_event_guard  # noqa: E402
 import routers.calendar  # noqa: E402
 import routers.guardian  # noqa: E402
+import routers.guardian_research  # noqa: E402
 router.include_router(routers.analytics.router)
 router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
@@ -1586,6 +1621,7 @@ router.include_router(routers.status.router)
 router.include_router(routers.lab_event_guard.router)
 router.include_router(routers.calendar.router)
 router.include_router(routers.guardian.router)
+router.include_router(routers.guardian_research.router)
 
 
 # ───────────────────────────── server-side grid (paper, 24/7) ─────────────────

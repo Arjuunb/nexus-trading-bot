@@ -26,6 +26,8 @@ from typing import Callable, Optional
 from services.guardian import health as h
 from services.guardian.anomalies import AnomalyDetector
 from services.guardian.incidents import IncidentEngine
+from services.guardian.reports import Reporter
+from services.guardian.research import ResearchEngine
 from services.guardian.schema import InvalidEvent, make_event, utcnow
 
 SERVICE = "guardian"
@@ -41,7 +43,8 @@ class GuardianService:
                  journal: Optional[Callable[[], dict]] = None,
                  telemetry=None, performance_path: Optional[str] = None,
                  incident_verify_s: float = 60.0, degraded_grace_s: float = 300.0,
-                 integrity=None,
+                 integrity=None, recovery=None, notify: Optional[Callable[[str], object]] = None,
+                 research_every_s: float = 3600.0,
                  interval_s: float = 15.0, clock: Callable[[], float] = time.time):
         self.store, self.bus = store, bus
         self.instances = dict(instances or {})    # name -> read-only rows
@@ -57,6 +60,13 @@ class GuardianService:
                                         degraded_grace_s=degraded_grace_s)
         self.anomalies = AnomalyDetector(store)
         self.integrity = integrity                # Phase 4: integrity.IntegrityMonitor
+        # Phase 5: research from the journal's finished trades (never production).
+        self.research = ResearchEngine(store, journal_path=performance_path, clock=clock)
+        self.research_every_s = float(research_every_s)
+        self.recovery = recovery                  # Phase 7: recovery.RecoveryController
+        # Phase 8: reports and owner notifications.
+        self.reports = Reporter(store, incidents=self.incidents, integrity=integrity,
+                                research=self.research, journal_path=performance_path, notify=notify)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._previous: dict[str, str] = {}
@@ -262,9 +272,13 @@ class GuardianService:
                           reason="no longer observed: stopped or removed by its owner")
         self._previous = {cid: n.effective for cid, n in nodes.items()}
         self.store.save_components({cid: n.to_dict() for cid, n in nodes.items()})
-        steps = [("incidents", self.incidents.cycle), ("anomalies", self.anomalies.cycle)]
+        steps = [("coverage", lambda nodes, *, now, publish: self.reports.observed(now)),
+                 ("incidents", self.incidents.cycle), ("anomalies", self.anomalies.cycle)]
         if self.integrity is not None:
-            steps.insert(0, ("integrity", self.integrity.cycle))
+            steps.insert(1, ("integrity", self.integrity.cycle))
+        if self.recovery is not None:
+            steps.append(("recovery", self._recovery_step))
+        steps += [("research", self._research_step), ("reports", self._reports_step)]
         for name, step in steps:
             try:
                 step(nodes, now=self.clock(), publish=self._publish)
@@ -283,6 +297,32 @@ class GuardianService:
                                           "interval_s": self.interval_s,
                                           "last_cycle_ms": self.last_cycle_ms})
         return nodes
+
+    def _recovery_step(self, nodes, *, now: float, publish) -> None:
+        self.recovery.cycle(self.incidents.list(state="active", limit=50), nodes, publish=publish)
+
+    def _research_step(self, nodes, *, now: float, publish) -> None:
+        """At most once per ``research_every_s``: new hypotheses and the next
+        stage of each open one. Never touches a strategy."""
+        last = self.store.meta("research.last_run") or {}
+        if last.get("at") is not None and 0 <= now - float(last["at"]) < self.research_every_s:
+            return                                # a clock that stepped back never stalls research
+        result = self.research.cycle()
+        self.store.set_meta("research.last_run", {"at": now, "trades": result["trades"],
+                                                  "created": len(result["created"]),
+                                                  "advanced": result["advanced"]})
+        for hid in result["created"]:
+            h = self.research.get(hid)
+            publish("hypothesis_created", source_component="guardian.research", severity="INFO",
+                    strategy_id=h["strategy_id"] or None, strategy_version=h["strategy_version"] or None,
+                    reason=h["hypothesis"][:500],
+                    evidence={"hypothesis_id": hid, "status": h["status"], "observation": h["observation"]})
+
+    def _reports_step(self, nodes, *, now: float, publish) -> None:
+        for kind in self.reports.cycle(now=now):
+            publish("report_issued", source_component="guardian.reports", severity="INFO",
+                    reason=f"{kind} report issued")
+        self.reports.notify_incidents()
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -354,6 +394,26 @@ class GuardianService:
                 "live_positions": report["exposure"]["live"]["positions"],
                 "live_routing_locked": report["exposure"]["live"]["routing_locked"]}
 
+    def _may_change(self) -> list[str]:
+        """What Guardian can change, stated from the policies actually on."""
+        enabled = getattr(self.recovery, "enabled", set()) or set()
+        return (["restart an instance worker its owner wants running (the manager's staged reboot)"]
+                if "RESTART_INSTANCE_WORKER" in enabled and "RESTART_INSTANCE_WORKER" in self.recovery.handlers
+                else [])
+
+    def recovery_view(self) -> dict:
+        """What /guardian/recovery shows: the policies and every decision."""
+        from services.guardian.recovery import ACTIONS
+        return {"configured": self.recovery is not None,
+                **(self.recovery.status() if self.recovery is not None else {}),
+                "history": [a for a in self.store.actions(500) if a["action"] in ACTIONS][:100]}
+
+    def _research_summary(self) -> dict:
+        counts: dict[str, int] = {}
+        for row in self.research.list():
+            counts[row["status"]] = counts.get(row["status"], 0) + 1
+        return {"hypotheses": counts, "last_run": self.store.meta("research.last_run")}
+
     def snapshot(self) -> dict:
         """Everything the Command Center shows, judged at read time."""
         nodes = {cid: h.Component(**{**data, "depends_on": tuple(data.get("depends_on") or ())})
@@ -383,8 +443,10 @@ class GuardianService:
                           "active": self.incidents.list(state="active", limit=10)},
             "anomalies": self.anomalies.active(),
             "integrity": self._integrity_summary(),
-            "boundary": {"mode": "read-only",
-                         "may_change": [],
+            "research": self._research_summary(),
+            "recovery": ({"enabled": sorted(self.recovery.enabled)} if self.recovery is not None else None),
+            "boundary": {"mode": "read-only" if not self._may_change() else "read-only + owner-enabled recovery",
+                         "may_change": self._may_change(),
                          "never_changes": ["strategy rules or parameters", "risk limits or leverage",
                                            "stop-loss / take-profit / RR rules", "positions or orders",
                                            "paper to live", "API credentials",

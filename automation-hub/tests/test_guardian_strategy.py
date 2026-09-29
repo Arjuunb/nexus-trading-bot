@@ -382,7 +382,8 @@ def test_the_strategy_view_counts_outcomes_reasons_and_real_results(tmp_path, g)
     assert (perf["trades"], perf["wins"], perf["losses"]) == (1, 1, 0)
     [closed] = records.query_trades()
     assert perf["net_pnl"] == pytest.approx(closed["net_pnl"], abs=0.01)
-    assert view["research"]["built"] is False             # Phase 5 is not pretended
+    assert view["research"]["built"] is True
+    assert "never changes a strategy" in view["research"]["note"]
 
 
 def test_a_lab_that_cannot_be_read_is_reported_not_guessed(tmp_path):

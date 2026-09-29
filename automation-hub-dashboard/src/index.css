@@ -2691,3 +2691,21 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
   .gd-map { grid-template-columns: 1fr; }
   .gd-strategies { grid-template-columns: 1fr; }
 }
+/* Guardian Phases 5-8: research pipeline, owner controls, reasoning, reports */
+.gd-input { background: #121214; border: 1px solid var(--card-border); color: var(--text); border-radius: 8px;
+  padding: 9px 11px; font-size: 13px; width: 100%; font-family: inherit; }
+.gd-input:focus { border-color: var(--sky); outline: none; }
+.gd-question { resize: vertical; }
+.gd-owner { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.gd-owner-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; font-size: 12px; }
+.gd-hypotheses, .gd-reports { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.gd-hypothesis { padding: 12px; border: 1px solid var(--card-border-soft); border-radius: var(--radius-sm); background: #121214; }
+.gd-hypothesis p, .gd-answer p { margin: 4px 0; overflow-wrap: anywhere; }
+.gd-pipeline { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.gd-pipeline li { display: flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 3px 6px;
+  border: 1px solid var(--card-border-soft); border-radius: 6px; }
+.gd-pipeline li.gd-stage-here { border-color: var(--sky); }
+.gd-answer { margin-top: 12px; padding: 12px; border: 1px solid var(--card-border-soft); border-radius: var(--radius-sm); }
+.gd-answer code { font-size: 11.5px; }
+.gd-report-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; background: #121214; padding: 10px;
+  border-radius: var(--radius-sm); margin: 6px 0 0; }

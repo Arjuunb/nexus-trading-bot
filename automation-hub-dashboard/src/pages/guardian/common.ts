@@ -31,6 +31,8 @@ export interface GuardianStatus {
   anomalies?: Anomaly[];
   integrity?: { at: string; findings: number; worst: Severity | null; paper_open_risk: number;
     paper_positions: number; live_positions: number; live_routing_locked: boolean | null } | null;
+  research?: { hypotheses: Record<string, number>; last_run: { at: number; trades: number } | null };
+  recovery?: { enabled: string[] } | null;
   boundary: { mode: string; may_change: string[]; never_changes: string[] };
 }
 
@@ -192,3 +194,68 @@ export interface IntegrityReport {
   exposure: { paper: ExposureTotals; live: ExposureTotals & { routing_locked: boolean | null }; note: string;
     positions: Record<string, unknown>[] };
 }
+
+// ---- Phase 5: research (hypotheses are ideas under test, never changes)
+
+export interface StageResult {
+  state: "PENDING" | "PASS" | "FAIL"; at?: string; why?: string; method?: string; evidence?: unknown;
+}
+
+export interface Hypothesis {
+  id: number; created_at: string; record_source: string; strategy_id: string; strategy_version: string;
+  dimension: string; value: string; observation: string; hypothesis: string; status: string; stage: string;
+  stages: Record<string, StageResult>; discovery_cutoff: string; sample: number;
+  owner_notes: { at: string; action: string; note: string }[]; updated_at: string;
+  log?: { seq: number; at: string; actor: string; entry: string; detail: string; evidence: unknown }[];
+}
+
+export interface ResearchView {
+  hypotheses: Hypothesis[]; stages: string[]; method: string; owner_actions: string[];
+  last_run: { at: number; trades: number; created: number; advanced: number } | null;
+}
+
+export interface TradeSummary {
+  trades: number; win_rate?: number; average_r?: number; total_r?: number;
+  mae_r?: number | null; mfe_r?: number | null; slippage?: number | null; decision_latency_ms?: number | null;
+}
+
+export interface AnalystView {
+  error: string | null;
+  strategies: ({ record_source: string; strategy_id: string | null; strategy_version: string | null;
+    overall: TradeSummary; winners: TradeSummary; losers: TradeSummary;
+    cohorts: (TradeSummary & { dimension: string; value: string;
+      versus_rest?: { diff: number; p: number; n_a: number; n_b: number } })[] })[];
+}
+
+export const HYPOTHESIS_TONE: Record<string, Tone> = {
+  UNPROVEN: "default", TESTING: "blue", RECOMMENDED: "gold", APPROVED_FOR_DEVELOPMENT: "green",
+  REJECTED_BY_EVIDENCE: "red", REJECTED_BY_OWNER: "default",
+};
+
+// ---- Phases 6-8: actions, reasoning, recovery, reports
+
+export interface GuardianAction {
+  seq?: number; action_id: string; at: string; action: string; reason: string; policy: string;
+  result: string; evidence: Record<string, unknown> | null;
+}
+
+export interface ReasoningStatus { available: boolean; model: string; history: GuardianAction[] }
+
+export interface ReasoningAnswer {
+  available: boolean; outcome?: "ANSWERED" | "REFUSED" | "INCOMPLETE" | "FAILED"; answer: string | null;
+  confidence?: string; claimed_confidence?: string; citations?: string[]; unverified_citations?: string[];
+  limitations?: string[]; reason?: string; model?: string; served_by?: string; pack_sha256?: string;
+}
+
+export interface RecoveryView {
+  configured: boolean; max_per_hour?: number; cooldown_s?: number; never?: string[];
+  actions?: Record<string, { auto: boolean; effect: string; enabled: boolean; available: boolean }>;
+  history: GuardianAction[];
+}
+
+export interface GuardianReport {
+  seq: number; kind: "daily" | "weekly"; period_start: string; period_end: string; created_at: string;
+  text: string; body: { guardian_coverage: number } & Record<string, unknown>;
+}
+
+export interface ReportsView { reports: GuardianReport[]; notifications: GuardianAction[] }

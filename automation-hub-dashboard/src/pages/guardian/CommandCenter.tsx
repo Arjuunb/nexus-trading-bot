@@ -81,6 +81,9 @@ export default function CommandCenter({ status }: { status: GuardianStatus }) {
         <StatCard label="Integrity findings" value={status.integrity ? String(status.integrity.findings) : "—"}
           sub={status.integrity ? `paper open risk ${status.integrity.paper_open_risk}` : "not checked yet"}
           tone={status.integrity?.findings ? "red" : "default"} />
+        <StatCard label="Research hypotheses"
+          value={status.research ? String(Object.values(status.research.hypotheses).reduce((a, b) => a + b, 0)) : "—"}
+          sub={status.research?.hypotheses.RECOMMENDED ? `${status.research.hypotheses.RECOMMENDED} awaiting the owner` : "ideas under test, never changes"} />
         <StatCard label="Events dropped" value={String(bus.dropped)} sub="queue full; counted, never hidden"
           tone={bus.dropped ? "red" : "default"} />
         <StatCard label="Ingest delay" value={`${bus.last_delay_ms} ms`} sub={`worst ${bus.max_delay_ms} ms`} />
@@ -111,7 +114,10 @@ export default function CommandCenter({ status }: { status: GuardianStatus }) {
             <li><span>Collectors failing</span><b>{Object.keys(self.collectors_failing).length ? Object.keys(self.collectors_failing).join(", ") : "none"}</b></li>
           </ul>
           <p className="gd-boundary">
-            <Badge text="READ-ONLY" tone="blue" /> Guardian observes only. It never changes {status.boundary.never_changes.join(", ")}.
+            {status.boundary.may_change.length ? (
+              <><Badge text="OWNER-ENABLED RECOVERY" tone="amber" /> Guardian may {status.boundary.may_change.join(", ")}, because the owner enabled it.</>
+            ) : <><Badge text="READ-ONLY" tone="blue" /> Guardian observes only.</>}{" "}
+            It never changes {status.boundary.never_changes.join(", ")}.
           </p>
         </Card>
       </div>

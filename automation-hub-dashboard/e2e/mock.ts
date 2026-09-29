@@ -830,6 +830,21 @@ export async function mockApi(page: Page) {
       }
       if (url.pathname === "/guardian/anomalies") return route.fulfill({ json: GUARDIAN.anomalies });
       if (url.pathname === "/guardian/integrity") return route.fulfill({ json: GUARDIAN.integrity });
+      // Phases 5-8. Owner actions and questions are POSTs; the mock answers
+      // with what the real service produced for the fixture scene.
+      if (url.pathname === "/guardian/research") return route.fulfill({ json: GUARDIAN.research });
+      if (url.pathname === "/guardian/research/analyst") return route.fulfill({ json: GUARDIAN.research_analyst });
+      const ownerAction = url.pathname.match(/^\/guardian\/research\/(\d+)\/action$/);
+      if (ownerAction && route.request().method() === "POST") {
+        const h = (GUARDIAN.research.hypotheses as { id: number }[]).find((x) => x.id === Number(ownerAction[1]));
+        return h ? route.fulfill({ json: h }) : route.fulfill({ status: 404, json: { detail: "no such hypothesis" } });
+      }
+      if (url.pathname === "/guardian/recovery") return route.fulfill({ json: GUARDIAN.recovery });
+      if (url.pathname === "/guardian/reports") return route.fulfill({ json: GUARDIAN.reports });
+      if (url.pathname === "/guardian/reasoning") return route.fulfill({ json: GUARDIAN.reasoning_on });
+      if (url.pathname === "/guardian/reasoning/ask" && route.request().method() === "POST") {
+        return route.fulfill({ json: GUARDIAN.reasoning_answer });
+      }
       if (url.pathname === "/guardian/almost-trades") {
         return route.fulfill({ json: { almost_trades: byComponent(GUARDIAN.almost_trades.almost_trades) } });
       }

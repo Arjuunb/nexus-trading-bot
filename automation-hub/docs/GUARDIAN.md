@@ -1,9 +1,14 @@
 # Nexus Guardian
 
-Guardian is the platform's independent, read-only observer. Built so far:
-Phase 1 (foundation), Phase 2 (deep strategy telemetry), Phase 3
-(incident intelligence) and Phase 4 (execution and risk intelligence).
-Phases 5–8 are not built yet, and the UI does not pretend they are.
+Guardian is the platform's independent observer. All eight phases are built:
+Phase 1 (foundation), Phase 2 (deep strategy telemetry), Phase 3 (incident
+intelligence), Phase 4 (execution and risk intelligence), Phase 5 (strategy
+research), Phase 6 (evidence reasoning), Phase 7 (controlled recovery) and
+Phase 8 (reports and remote awareness).
+
+It reads the platform and never trades. Its research changes no strategy,
+its reasoning is advice, and its only operational action (restarting an
+instance worker) is off unless the owner turns it on.
 
 ## Phase 1: Foundation
 
@@ -59,17 +64,23 @@ AI. First make the platform observable"):
 ## Isolation and authority
 
 * Guardian runs on its own daemon threads. A worker crash cannot stop it,
-  and nothing in Guardian can stop a worker.
+  and nothing in Guardian can stop a worker. The one exception is the
+  owner-enabled restart (Phase 7), which is off by default.
 * Trading never waits on Guardian. `emit()` queues or drops. With Guardian
   not started, nothing is installed and `emit()` returns immediately.
 * Guardian is built from read-only callables, never from the managers or
   runtimes themselves. It holds no method it could use to start, stop,
-  reconfigure or trade anything.
+  reconfigure or trade anything. The exception is one restart callable the
+  app hands the recovery controller. It refuses any instance whose owner
+  has not asked it to run, and it acts only when the owner enables its
+  policy.
 * Tests enforce this boundary:
   * the Guardian package may import only the standard library and the
     redaction helper;
   * `sources.py` may call only read methods;
-  * the API is GET-only;
+  * the `/guardian/*` read API is GET-only. The only POSTs are the owner's
+    research controls and questions (`routers/guardian_research.py`), which
+    need the control credential;
   * live routing stays locked.
 * Every Guardian action is recorded append-only in `guardian_actions`. In
   Phase 1 the only actions are `GUARDIAN_STARTED` and `GUARDIAN_STOPPED`;
@@ -139,9 +150,9 @@ reads it to change a rule. Examples:
 A two-condition strategy with one condition met is not an almost-trade: one
 of two is not "most".
 
-How far the market moved afterwards (the "+2.7R" in PRD §9) is not measured
-yet. That needs candles after the setup, and it belongs to the research
-pipeline (Phase 5).
+How far the market moved afterwards (the "+2.7R" in PRD §9) is still not
+measured. That needs candles after the setup. The Phase 5 research pipeline
+works from finished trades, not from setups that were never taken.
 
 ### Storage
 
@@ -166,8 +177,8 @@ strategy:
   trades, wins/losses, net P&L, expectancy, average R, profit factor and
   maximum drawdown in R.
 
-Research hypotheses, research versions and forward-paper experiments are
-Phase 5 and are shown as not built. `GET /guardian/events/{id}` returns one
+Research hypotheses and their pipeline are on the Research tab (Phase 5).
+`GET /guardian/events/{id}` returns one
 trace and `GET /guardian/almost-trades` the register.
 
 ### Cost to trading
@@ -324,7 +335,165 @@ routing is locked (the broker registry's own answer), that is CRITICAL.
 API: `GET /guardian/integrity`. UI: a **Risk & Integrity** tab. The Command
 Center shows the finding count and paper open risk.
 
-## PRD §44 acceptance tests: status after Phase 4
+## Phase 5: Strategy research (PRD §12–16, §26, §38)
+
+`services/guardian/research.py`. Observations become hypotheses, never
+changes. The engine reads the journal's finished trades read-only. It writes
+only to Guardian's own tables, `guardian_hypotheses` and
+`guardian_hypothesis_log`.
+
+**Evidence.** Only `FORWARD_PAPER` records with a measured R are used.
+Simulated, backtested, research and migrated records never enter. Results
+are grouped by record source, strategy *and version* (§16), so two versions
+are never combined.
+
+**Strategy analyst (§12).** Each version's trades are split by:
+* side, session, regime and HTF bias;
+* symbol, timeframe and setup type;
+* winners against losers.
+
+A cohort is compared with the rest only when both have at least 20 trades
+(Welch's test).
+
+**Hypotheses (§13).** A cohort that loses (mean R below 0) and is
+significantly worse than the rest (p < 0.05) becomes a filter hypothesis:
+"skipping X may improve expectancy". Its status is UNPROVEN. It is found on
+the first 60% of trades by close time only, which leaves a true hold-out. A
+hypothesis is never deleted (a trigger refuses it). A rejected idea is
+therefore never rediscovered (§26). A p-value too small to print reads
+`p<0.00001`, never `p=0`.
+
+**Pipeline (§14).** The stages run in order, and none is skipped:
+
+| Stage | What passes it |
+|---|---|
+| Historical backtest | The filter raises expectancy on the discovery trades. |
+| Out of sample | The held-out trades (never seen at discovery) show the same effect. It waits for 10 cohort trades. |
+| Walk forward | The effect holds in all but at most one of four chronological folds. |
+| Stress test | 95%+ of 1,000 bootstrap resamples improve, and the effect survives removing the best 5% of trades. |
+| Forward paper | Trades closed *after* the hypothesis was created show the effect. It waits for 20 cohort trades. |
+| Statistical comparison | Over every recorded trade the cohort is worse than the rest at p < 0.01. |
+| Recommendation | Every evidence stage passed. |
+| Owner approval | The owner's alone. |
+
+A failed stage ends the idea as REJECTED_BY_EVIDENCE and it is kept.
+Each test replays the filter over recorded trades, and every stage says so.
+That is exact for a filter, but it is not a candle-level backtest: it cannot
+see trades the strategy would have taken instead.
+
+**Owner controls (§38).** These are `POST /guardian/research/{id}/action`,
+behind the control credential:
+* REVIEW;
+* REJECT;
+* SEND_TO_BACKTEST (only at that stage);
+* SEND_TO_FORWARD_PAPER (only once every earlier stage passed);
+* APPROVE_FOR_DEVELOPMENT (only when Guardian recommends it).
+
+Approval means "approved for a person to develop". Production code is
+unchanged until a person implements, tests and deploys it. There is no
+"optimize production" control, and a test checks that no route resembles
+one.
+
+Research runs in Guardian's own loop at most once an hour. It publishes
+`hypothesis_created` and appears on a **Research** tab. A journal Guardian
+cannot read is a failing collector, never an empty answer.
+
+## Phase 6: Evidence reasoning (PRD §20, §27, §43)
+
+`services/guardian/evidence.py` builds the evidence pack:
+* Guardian's own findings, each with a citable id: platform state,
+  incidents, anomalies, integrity findings, strategies, almost-trades,
+  hypotheses, recent warnings and Guardian's actions;
+* bounded, saying what was left out;
+* run through the platform's secret redaction.
+
+The model never sees a database, a ledger or a credential.
+
+`services/guardian_reasoning.py` sends the pack and the owner's question to
+Claude.
+* The question is scrubbed of secrets too.
+* The request uses a JSON schema: answer, confidence, citations,
+  limitations.
+* The system prompt forbids recommending any production, risk, SL/TP, RR,
+  position, credential or live change. It says a correlation is not a proven
+  improvement.
+* Every citation is checked against the pack. Ids that do not exist are
+  listed as ignored. An answer citing nothing real is UNKNOWN, whatever
+  confidence the model claimed.
+* Refusals and API failures are recorded, never raised.
+* Every question is recorded in the append-only action audit with the
+  pack's SHA-256, so what the model was shown can be verified later.
+
+It is **off until a key is configured** (`HUB_LLM_API_KEY` or
+`ANTHROPIC_API_KEY`, as the Strategy Studio uses). With no key nothing is
+sent. The model defaults to `claude-opus-5-5` and can be changed with
+`HUB_GUARDIAN_LLM_MODEL`. API: `GET /guardian/reasoning`, and
+`POST /guardian/reasoning/ask` (control credential). UI: **Ask Guardian**.
+
+## Phase 7: Controlled recovery (PRD §39, §40)
+
+`services/guardian/recovery.py`. Guardian may take two operational actions,
+and never a trading one:
+
+| Action | Automatic? | What it does |
+|---|---|---|
+| `GATHER_DIAGNOSTICS` | Yes, for HIGH/CRITICAL incidents | Records the incident, component states and recent warnings. Changes nothing. |
+| `RESTART_INSTANCE_WORKER` | **Off by default.** On only when the owner lists it in `HUB_GUARDIAN_RECOVERY` | The instance manager's own staged Full Bot Reboot. |
+
+A restart also requires:
+* a CONFIRMED or HIGH CONFIDENCE diagnosis;
+* a worker that is not alive;
+* an instance its owner wants running. Guardian never starts a stopped
+  instance.
+
+The reboot's validation and fail-closed checks stay the manager's. There
+are at most 3 restarts an hour and a 15-minute cooldown per target.
+
+Every decision is recorded, whether taken or not. When the evidence
+supports a restart but the policy is off, it is recorded once as
+`NOT_TAKEN_POLICY_DISABLED`. The Command Center's boundary line follows the
+policies actually on: "Guardian observes only" becomes "may restart an
+instance worker…" only when the owner enabled it.
+
+API: `GET /guardian/recovery`. UI: **Reports & Recovery**.
+
+## Phase 8: Reports and remote awareness (PRD §28–31)
+
+`services/guardian/reports.py`. A daily and a weekly report are issued once
+per finished period. They are kept append-only (a trigger refuses edits) and
+published as `report_issued`.
+
+* **Coverage.** Every report states how much of its period Guardian actually
+  observed. This is measured from Guardian's own cycles, so a crash or a
+  stopped container is never counted as watched. A period Guardian never
+  observed gets no report.
+* **Numbers.** Every figure has a source. Trades are forward-paper journal
+  records. Incident-free time counts only the time Guardian observed. What
+  could not be measured says "not measured" or "not checked", never 0.
+* **Weekly report.** It covers:
+  * reliability by incident kind;
+  * strategy performance;
+  * evaluation latency and slippage;
+  * refused setups and journal integrity;
+  * recurring rejection reasons;
+  * missed-opportunity candidates (research only);
+  * hypotheses;
+  * unresolved incidents and engineering priorities.
+* **Notifications** go through the platform's Telegram notifier:
+  * one message when a HIGH or CRITICAL incident opens and one when it
+    closes, however many updates it gets (§29);
+  * one per report;
+  * never for strategy inactivity;
+  * never for incidents from before notifications began: deploying this
+    sends none of Guardian's history.
+
+  Each message is scrubbed of secrets and recorded as a `NOTIFY` action.
+  With no channel configured it is recorded as `NO_CHANNEL`, not dropped
+  silently.
+
+API: `GET /guardian/reports`. UI: **Reports & Recovery**.
+
+## PRD §44 acceptance tests: status after Phase 8
 
 | # | Test | Status |
 |---|---|---|
@@ -341,17 +510,27 @@ Center shows the finding count and paper open risk.
 | 11 | Survives trading-worker failure | **Done.** |
 | 12 | Trading survives Guardian failure | **Done.** A real trade with Guardian's store failing and its queue full. |
 | 13–15 | Cannot modify strategy, raise risk or enable live | **Done by construction and tested.** |
-| 16 | Research strategies isolated | Phase 5. |
+| 16 | Research strategies isolated | **Done.** Research reads forward-paper journal records only, writes only Guardian's research tables, never combines versions, and approval changes no strategy (the journal's hash is unchanged). |
 | 17 | Paper/live ledgers isolated | **Done.** Paper totals hold only paper-labelled accounts; any other account with a position while live is locked is CRITICAL. |
 | 18 | Every Guardian action audited | **Done.** Append-only. |
-| 19 | Duplicate alerts grouped | **Done** for incidents: one `incident_opened` per outage, engine events attached. Notification sending is Phase 8. |
-| 20 | Only evidence-backed conclusions | **Done** for health. A blind collector reports UNKNOWN, and one socket is not called a Binance outage. |
+| 19 | Duplicate alerts grouped | **Done.** One incident per outage, and one notification when it opens and one when it closes, however many updates. |
+| 20 | Only evidence-backed conclusions | **Done.** A blind collector reports UNKNOWN; one socket is not called a Binance outage; a reasoning answer's citations are checked against the evidence and an uncited answer is UNKNOWN. |
 
-Tests: `tests/test_guardian.py` (16), `tests/test_guardian_strategy.py` (15),
-`tests/test_guardian_incidents.py` (13), `tests/test_guardian_integrity.py` (10)
-and `automation-hub-dashboard/e2e/guardian.spec.ts` (9). The UI's mock data
-is the real service's output over real strategies
-(`e2e/fixtures/generate_guardian_fixture.py`).
+Tests:
+* `tests/test_guardian.py` (16), `tests/test_guardian_strategy.py` (15),
+  `tests/test_guardian_incidents.py` (13), `tests/test_guardian_integrity.py` (10);
+* `tests/test_guardian_research.py` (11), `tests/test_guardian_reasoning.py` (8),
+  `tests/test_guardian_recovery.py` (10), `tests/test_guardian_reports.py` (12);
+* `automation-hub-dashboard/e2e/guardian.spec.ts` (13).
+
+The UI's mock data is the real service's output
+(`e2e/fixtures/generate_guardian_fixture.py`):
+* strategy telemetry comes from real strategies;
+* research runs over journal records seeded through the journal's store, on
+  a simulated clock;
+* the reasoning answer is the real `ask()` with a stub model reply.
+
+The reasoning tests never call the API: a stub records the exact request.
 
 ## Known limits
 
@@ -369,6 +548,14 @@ is the real service's output over real strategies
 * The database state comes from the status monitor, which confirms a change
   only after two samples. Guardian can therefore lag the ledger by up to two
   minutes.
+* Research is a filter replay over recorded trades, not a candle-level
+  backtest. It needs at least 40 finished forward-paper trades per strategy
+  version before it can say anything, so on a new deployment it will be
+  quiet for a while, correctly. Many cohorts are tested at once, which is
+  why an idea must also pass the hold-out, walk-forward, stress and forward
+  stages before Guardian recommends it.
+* Report coverage is measured from the deployment of Phase 8. Periods before
+  it get no report.
 * Instances appear only while their owner wants them running. A lab's feed
   counts only while the lab has an active session, so an idle lab is never
   blamed for a feed it is not using.
