@@ -818,6 +818,17 @@ export async function mockApi(page: Page) {
       if (url.pathname === "/guardian/events" && url.searchParams.get("category") === "strategy") {
         return route.fulfill({ json: { ...GUARDIAN.strategy_events, events: byComponent(GUARDIAN.strategy_events.events) } });
       }
+      if (url.pathname === "/guardian/incidents") {
+        const state = url.searchParams.get("state");
+        const rows = (GUARDIAN.incidents.incidents as { state: string }[]).filter((i) =>
+          !state || (state === "active" ? i.state !== "CLOSED" : i.state === state));
+        return route.fulfill({ json: { incidents: rows, counts: GUARDIAN.incidents.counts } });
+      }
+      if (url.pathname.startsWith("/guardian/incidents/")) {
+        const one = GUARDIAN.incident_details[url.pathname.slice("/guardian/incidents/".length)];
+        return one ? route.fulfill({ json: one }) : route.fulfill({ status: 404, json: { detail: "no such incident" } });
+      }
+      if (url.pathname === "/guardian/anomalies") return route.fulfill({ json: GUARDIAN.anomalies });
       if (url.pathname === "/guardian/almost-trades") {
         return route.fulfill({ json: { almost_trades: byComponent(GUARDIAN.almost_trades.almost_trades) } });
       }

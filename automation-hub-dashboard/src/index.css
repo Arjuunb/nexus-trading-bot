@@ -2676,6 +2676,15 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .gd-trace td { vertical-align: top; }
 .gd-trace-own td:first-child { font-weight: 600; }
 .gd-quality { font-size: 12px; margin-top: 8px; }
+/* Guardian Phase 3: incidents */
+.gd-chain { list-style: none; margin: 8px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.gd-chain > li { display: grid; grid-template-columns: 190px 1fr; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--card-border-soft); }
+.gd-chain > li > span { color: var(--dim); }
+.gd-chain ul { margin: 0; padding-left: 16px; }
+.gd-incident-times { margin-bottom: 10px; }
+.gd-sub { margin: 12px 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+.gd-more { display: inline-block; margin-top: 8px; font-size: 12px; }
+@media (max-width: 900px) { .gd-chain > li { grid-template-columns: 1fr; gap: 2px; } }
 @media (max-width: 900px) {
   .gd-hero { flex-direction: column; } .gd-hero-meta { text-align: left; }
   .gd-map { grid-template-columns: 1fr; }

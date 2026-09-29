@@ -33,20 +33,22 @@ function TraceView({ eventId, onClose }: { eventId: string; onClose: () => void 
             {trace.data === "replay" && <Badge text="REPLAY DATA" tone="purple" />}
           </div>
           {trace.reason && <p className="gd-reason">{trace.reason}</p>}
-          <table className="data-table gd-trace">
-            <thead><tr><th>Condition</th><th>Stage</th><th>Result</th><th>Detail</th></tr></thead>
-            <tbody>
-              {trace.conditions.map((c, i) => (
-                <tr key={`${c.id}-${i}`} className={c.kind === "strategy" ? "gd-trace-own" : ""}>
-                  <td>{c.label ?? c.id}</td>
-                  <td className="mono dim">{c.stage}</td>
-                  <td><Badge text={c.state.replace(/_/g, " ")} tone={CONDITION_TONE[c.state] ?? "default"} />
-                    {c.code && <span className="mono dim"> {c.code}</span>}</td>
-                  <td className="gd-reason dim">{c.detail ?? ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="tablewrap">
+            <table className="data-table gd-trace">
+              <thead><tr><th>Condition</th><th>Stage</th><th>Result</th><th>Detail</th></tr></thead>
+              <tbody>
+                {trace.conditions.map((c, i) => (
+                  <tr key={`${c.id}-${i}`} className={c.kind === "strategy" ? "gd-trace-own" : ""}>
+                    <td>{c.label ?? c.id}</td>
+                    <td className="mono dim">{c.stage}</td>
+                    <td><Badge text={c.state.replace(/_/g, " ")} tone={CONDITION_TONE[c.state] ?? "default"} />
+                      {c.code && <span className="mono dim"> {c.code}</span>}</td>
+                    <td className="gd-reason dim">{c.detail ?? ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {trace.quality && (
             <p className="dim gd-quality">
               Decision Brain score {trace.quality.score ?? "—"} (minimum {trace.quality.min_score ?? "—"})

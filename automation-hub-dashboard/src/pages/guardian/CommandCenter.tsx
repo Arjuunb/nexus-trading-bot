@@ -1,7 +1,10 @@
 import Card from "../../components/common/Card";
 import { Badge, StatCard } from "../../components/common/ui";
 import { useLive } from "../../lib/api";
-import { ago, clock, type GEvent, type GuardianStatus, HEALTH_TONE, KIND_LABEL, SEVERITY_TONE, verdict } from "./common";
+import {
+  ago, clock, CONFIDENCE_TONE, type GEvent, type GuardianStatus, HEALTH_TONE, INCIDENT_TONE, KIND_LABEL,
+  SEVERITY_TONE, verdict,
+} from "./common";
 
 const GROUP_ORDER = ["instance", "lab", "feed", "upstream", "database", "journal", "guardian"];
 
@@ -40,6 +43,36 @@ export default function CommandCenter({ status }: { status: GuardianStatus }) {
           })}
         </div>
       </Card>
+
+      <div className="grid-2-eq">
+        <Card title="Open incidents" subtitle="One per outage, grouped by root cause">
+          {status.incidents?.active.length ? (
+            <ul className="gd-list" data-testid="guardian-open-incidents">
+              {status.incidents.active.map((i) => (
+                <li key={i.id}>
+                  <Badge text={i.state} tone={INCIDENT_TONE[i.state] ?? "default"} />
+                  <span className="mono dim">#{i.id} · {ago(i.started_at)}</span>
+                  <span><b>{i.title}</b> · <Badge text={i.diagnosis.confidence} tone={CONFIDENCE_TONE[i.diagnosis.confidence] ?? "default"} /></span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="dim">No open incidents.</p>}
+          <a className="gd-more" href="#/guardian?tab=incidents">All incidents</a>
+        </Card>
+        <Card title="Anomalies" subtitle="Deviations from a stream's own normal — not failures">
+          {status.anomalies?.length ? (
+            <ul className="gd-list" data-testid="guardian-anomalies">
+              {status.anomalies.map((a) => (
+                <li key={a.key}>
+                  <Badge text="WATCH" tone="blue" />
+                  <span className="mono dim">{a.scope}</span>
+                  <span><b>{a.detector.replace(/_/g, " ")}</b> — {a.detail} <span className="dim">(normal: {a.baseline})</span></span>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="dim">Nothing outside its normal range, or not enough history yet to judge.</p>}
+        </Card>
+      </div>
 
       <div className="stat-row">
         <StatCard label="Events (24h)" value={String(day.total)} sub="everything Guardian recorded" />

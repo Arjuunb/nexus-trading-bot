@@ -51,7 +51,9 @@ _CATALOGUE = {
     # Guardian's own observations about the platform and about itself.
     "guardian": (
         "health_changed", "heartbeat_missed", "collector_failed", "collector_recovered",
-        "guardian_started", "guardian_stopped"),
+        "guardian_started", "guardian_stopped",
+        "incident_opened", "incident_updated", "incident_recovered", "incident_closed",
+        "anomaly_detected", "anomaly_cleared"),
 }
 EVENT_TYPES: dict[str, str] = {t: cat for cat, types in _CATALOGUE.items() for t in types}
 

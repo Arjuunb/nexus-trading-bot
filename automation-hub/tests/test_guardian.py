@@ -225,7 +225,8 @@ def test_emit_never_blocks_and_a_failed_write_is_retried():
 
 # ----------------------------------------- 13, 14, 15: no write authority
 _ALLOWED_IMPORTS = {"__future__", "json", "queue", "sqlite3", "threading", "time", "uuid",
-                    "dataclasses", "datetime", "pathlib", "typing", "services.redaction"}
+                    "dataclasses", "datetime", "pathlib", "typing", "math", "statistics",
+                    "services.redaction"}
 
 
 def test_guardian_code_imports_nothing_that_can_trade():
@@ -259,8 +260,9 @@ def test_the_guardian_api_is_read_only_and_live_trading_stays_locked():
     routes = routers.guardian.router.routes
     assert {r.path for r in routes} == {"/guardian/status", "/guardian/events",
                                          "/guardian/events/{event_id}", "/guardian/strategies",
-                                         "/guardian/almost-trades", "/guardian/actions",
-                                         "/guardian/catalogue"}
+                                         "/guardian/almost-trades", "/guardian/incidents",
+                                         "/guardian/incidents/{incident_id}", "/guardian/anomalies",
+                                         "/guardian/actions", "/guardian/catalogue"}
     assert all(r.methods == {"GET"} for r in routes)
     app = FastAPI()
     app.include_router(webhook_api.router)

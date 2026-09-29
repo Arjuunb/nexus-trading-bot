@@ -1,8 +1,9 @@
 # Nexus Guardian
 
 Guardian is the platform's independent, read-only observer. Built so far:
-Phase 1 (foundation) and Phase 2 (deep strategy telemetry). Phases 3–8 are
-not built yet, and the UI does not pretend they are.
+Phase 1 (foundation), Phase 2 (deep strategy telemetry) and Phase 3
+(incident intelligence). Phases 4–8 are not built yet, and the UI does not
+pretend they are.
 
 ## Phase 1: Foundation
 
@@ -28,9 +29,11 @@ AI. First make the platform observable"):
 | Service | `services/guardian/service.py` | Runs a cycle every 15 s (`HUB_GUARDIAN_INTERVAL`). Emits `health_changed` only on a transition, monitors itself and audits its own actions. |
 | Entry point | `services/guardian/__init__.py` | `emit()`, the one call trading code makes, and the instance lifecycle mapping. `emit_deferred()` builds the event on Guardian's thread instead (Phase 2). |
 | Strategy telemetry | `services/guardian/strategy.py` | Phase 2: SMC and PA trace mapping, the read-only lab readers, the almost-trade rules, the strategy view and closed-trade results. |
+| Incidents | `services/guardian/incidents.py` | Phase 3: grouping by root, diagnosis with confidence, lifecycle, timeline, correlation. |
+| Anomalies | `services/guardian/anomalies.py` | Phase 3: deviations from each stream's own baseline. |
 | Instance traces | `services/strategy_trace.py` | Phase 2: the per-candle trace from the engine's own outcome. Outside the Guardian package because it reads the strategy gate registry. |
-| API | `routers/guardian.py` | `GET /guardian/status`, `/events`, `/events/{id}`, `/strategies`, `/almost-trades`, `/actions`, `/catalogue`. GET only. |
-| UI | `automation-hub-dashboard/src/pages/GuardianHub.tsx` | One sidebar entry, "Guardian", with four tabs: Command Center, System Map, Strategies and Activity. |
+| API | `routers/guardian.py` | `GET /guardian/status`, `/events`, `/events/{id}`, `/strategies`, `/almost-trades`, `/incidents`, `/incidents/{id}`, `/anomalies`, `/actions`, `/catalogue`. GET only. |
+| UI | `automation-hub-dashboard/src/pages/GuardianHub.tsx` | One sidebar entry, "Guardian", with five tabs: Command Center, Incidents, System Map, Strategies and Activity. |
 
 ## What it observes today
 
@@ -174,7 +177,98 @@ thread (`emit_deferred`). A full queue drops the trace and counts it. A
 broken trace builder is caught. Tests trade the same with Guardian's queue
 full and with the builder raising.
 
-## PRD §44 acceptance tests: status after Phase 2
+## Phase 3: Incident intelligence
+
+### One outage, one incident (PRD §29)
+
+Grouping follows the dependency graph Guardian already resolves. Each
+unhealthy component is traced to the component whose own failure explains
+it (its *root*). Every component with the same root belongs to one incident.
+When two or more independent live feeds fail together, the root is Binance
+USD-M itself. So an outage that stalls three instances and both labs is one
+incident with every component listed, not a dozen alerts.
+
+Engine events that happen between Guardian's cycles are attached to the
+incident key the component's health would use, so an event and a health
+state never open two incidents for one fault:
+* `stale_candle`, `websocket_disconnected`, `worker_crashed`,
+  `missing_htf_candle` and `collector_failed` open a signal;
+* their counterparts clear it.
+
+A component that is only DEGRADED (starting, warming up) opens an incident
+only after staying so for 5 minutes (`degraded_grace_s`).
+
+### Lifecycle and history (PRD §36)
+
+OPEN → RECOVERED (every affected component healthy again) → CLOSED once
+recovery has held for the verification period (`incident_verify_s`, 60 s).
+Failing again before that reopens the same incident. Every step is appended
+to `guardian_incident_log`, which refuses UPDATE and DELETE. The incidents
+table refuses DELETE: a closed incident is kept as history.
+
+### Root cause with honest confidence (PRD §11)
+
+Each incident states, in order:
+* the symptom;
+* the affected components;
+* the upstream (root) component;
+* the root-cause candidate;
+* the supporting evidence;
+* a confidence level;
+* why it has that confidence;
+* a recommended action. This is advice only; Guardian takes no action.
+
+| Situation | Confidence |
+|---|---|
+| Two or more live feeds fail together | HIGH CONFIDENCE (Binance's side is not visible, so not CONFIRMED) |
+| One feed fails while others receive data | HIGH CONFIDENCE that it is local to that consumer |
+| The only live feed fails | POSSIBLE: one consumer cannot tell its connection from Binance |
+| A worker stopped and recorded its error | CONFIRMED (its own report) |
+| A worker stopped without an error | UNKNOWN cause |
+| Missing higher timeframe | CONFIRMED (the engine's own check) |
+| Database, journal, lab thread, Guardian itself | CONFIRMED (the component's own report) |
+| A Guardian collector cannot read something | UNKNOWN |
+
+### Timeline and correlation (PRD §10, §22)
+
+An incident's timeline is rebuilt from the evidence. It covers everything
+the affected components, their feeds and the root reported from 10 minutes
+before the start until the close, with the incident's own log entries
+interleaved.
+
+Open incidents that overlap are *related*:
+* PROBABLE when they share an instance or component (for example a stale
+  feed and a missing higher timeframe on the same instance);
+* POSSIBLE when they only overlap in time.
+
+### Anomalies (PRD §21)
+
+Each detector judges a stream against its own history, and every anomaly
+says it is not a failure:
+* **evaluations_stopped**: a stream that evaluates every candle has been
+  silent for three candle intervals while its component and feed report
+  healthy.
+* **evaluation_latency**: candle close to evaluation, against the stream's
+  7-day 95th percentile (at least 50 samples).
+* **setup_drought**: no setups today where the stream's 7-day rate makes
+  that improbable (Poisson p < 0.01 at today's evaluation count; needs all
+  7 days of history).
+* **rejection_mix**: a rejection reason's share moved by more than 20
+  points and 3 standard errors (at least 50 evaluations in each window).
+
+Without the history a detector needs, it reports nothing. Each anomaly is
+reported once when it appears and once when it clears.
+
+### API and UI
+
+API: `GET /guardian/incidents?state=active|OPEN|RECOVERED|CLOSED`,
+`/guardian/incidents/{id}` (diagnosis, log, timeline, related) and
+`/guardian/anomalies`.
+
+UI: a new **Incidents** tab. The Command Center shows open incidents and
+anomalies.
+
+## PRD §44 acceptance tests: status after Phase 3
 
 | # | Test | Status |
 |---|---|---|
@@ -187,18 +281,19 @@ full and with the builder raising.
 | 7 | Detects worker crashes | **Done.** A real crash inside the worker thread. |
 | 8 | Detects journal failures | **Partly.** A journal that cannot read its ledger is DEGRADED; per-trade journal checks are Phase 4. |
 | 9 | Order/journal inconsistency | Phase 4. |
-| 10 | Correlates related incidents | Phase 3. |
+| 10 | Correlates related incidents | **Done.** A Binance outage across two instances and a lab is one incident; overlapping incidents on one instance are linked. |
 | 11 | Survives trading-worker failure | **Done.** |
 | 12 | Trading survives Guardian failure | **Done.** A real trade with Guardian's store failing and its queue full. |
 | 13–15 | Cannot modify strategy, raise risk or enable live | **Done by construction and tested.** |
 | 16 | Research strategies isolated | Phase 5. |
 | 17 | Paper/live ledgers isolated | Phase 4 (global risk observer). |
 | 18 | Every Guardian action audited | **Done.** Append-only. |
-| 19 | Duplicate alerts grouped | **Partly.** A state is reported once per change; incident grouping is Phase 3. |
+| 19 | Duplicate alerts grouped | **Done** for incidents: one `incident_opened` per outage, engine events attached. Notification sending is Phase 8. |
 | 20 | Only evidence-backed conclusions | **Done** for health. A blind collector reports UNKNOWN, and one socket is not called a Binance outage. |
 
-Tests: `tests/test_guardian.py` (16), `tests/test_guardian_strategy.py` (15)
-and `automation-hub-dashboard/e2e/guardian.spec.ts` (5). The UI's mock data
+Tests: `tests/test_guardian.py` (16), `tests/test_guardian_strategy.py` (15),
+`tests/test_guardian_incidents.py` (13) and
+`automation-hub-dashboard/e2e/guardian.spec.ts` (7). The UI's mock data
 is the real service's output over real strategies
 (`e2e/fixtures/generate_guardian_fixture.py`).
 

@@ -3,16 +3,18 @@ import { PageHeader } from "../components/common/ui";
 import { useLive } from "../lib/api";
 import Activity from "./guardian/Activity";
 import CommandCenter from "./guardian/CommandCenter";
+import Incidents from "./guardian/Incidents";
 import Strategies from "./guardian/Strategies";
 import SystemMap from "./guardian/SystemMap";
 import type { GuardianStatus } from "./guardian/common";
 
 /** Guardian: the platform's independent, read-only observer. Only what is
- *  built is shown -- incidents, risk and research come in later phases and
- *  get their tabs when they exist. */
+ *  built is shown -- risk and research come in later phases and get their
+ *  tabs when they exist. */
 const tabs = [
-  { id: "command", label: "Command Center" }, { id: "map", label: "System Map" },
-  { id: "strategies", label: "Strategies" }, { id: "activity", label: "Activity" },
+  { id: "command", label: "Command Center" }, { id: "incidents", label: "Incidents" },
+  { id: "map", label: "System Map" }, { id: "strategies", label: "Strategies" },
+  { id: "activity", label: "Activity" },
 ];
 
 export default function GuardianHub({ tab }: { tab?: string }) {
@@ -27,6 +29,7 @@ export default function GuardianHub({ tab }: { tab?: string }) {
       {!status.data ? (!status.error && <p className="dim">Loading…</p>)
         : active === "map" ? <SystemMap status={status.data} />
           : active === "strategies" ? <Strategies />
+          : active === "incidents" ? <Incidents />
           : active === "activity" ? <Activity status={status.data} />
             : <CommandCenter status={status.data} />}
     </>

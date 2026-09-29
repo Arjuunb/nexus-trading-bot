@@ -71,6 +71,33 @@ def guardian_almost_trades(strategy_id: Optional[str] = None, component: Optiona
         limit=limit, strategy_id=strategy_id, source_component=component)}
 
 
+@router.get("/guardian/incidents")
+def guardian_incidents(state: Optional[str] = None, limit: int = 100) -> dict:
+    """Incidents, open first (PRD §29, §36). ``state``: active, OPEN,
+    RECOVERED or CLOSED. Closed incidents are kept as history."""
+    if state and state not in ("active", "OPEN", "RECOVERED", "CLOSED"):
+        raise HTTPException(400, "state must be active, OPEN, RECOVERED or CLOSED")
+    return {"incidents": _wa.guardian.incidents.list(state=state, limit=limit),
+            "counts": _wa.guardian.incidents.counts()}
+
+
+@router.get("/guardian/incidents/{incident_id}")
+def guardian_incident(incident_id: int) -> dict:
+    """One incident: its diagnosis with confidence, what it affected, its
+    append-only log and the reconstructed event timeline (PRD §10, §11)."""
+    row = _wa.guardian.incidents.get(incident_id)
+    if row is None:
+        raise HTTPException(404, "no such incident")
+    return row
+
+
+@router.get("/guardian/anomalies")
+def guardian_anomalies() -> dict:
+    """Deviations from each stream's own normal (PRD §21). Not failures."""
+    return {"active": _wa.guardian.anomalies.active(),
+            "recent": _wa.guardian_store.events(event_type="anomaly_detected", limit=50)}
+
+
 @router.get("/guardian/actions")
 def guardian_actions(limit: int = 100) -> dict:
     """Everything Guardian itself has done, append-only (PRD §39)."""

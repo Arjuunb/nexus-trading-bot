@@ -116,18 +116,44 @@ def strategy_scene(tmp: Path) -> list:
 
 tmpdir = Path(tempfile.mkdtemp())
 readers = strategy_scene(tmpdir)
-svc = GuardianService(store, bus, instances={"main": lambda: [instance]},
+second = {"id": "7e1d4b09c2a35f86", "symbol": "ETHUSDT", "timeframe": "15m",
+          "strategy_id": "three_candle_rejection", "strategy_label": "3-Candle Rejection · EMA 9/33",
+          "mode": "trading", "live_feed": True, "state": "running", "paused": False, "alive": True,
+          "lifecycle_state": "running", "market_data_status": "healthy"}
+svc = GuardianService(store, bus, instances={"main": lambda: [instance, second]},
                       labs={k: (lambda v=v: v) for k, v in labs.items()},
                       database=lambda: {"components": {"database": {"state": "operational",
                                                                     "detail": "Recording decisions and fills"}},
                                         "last_sample_at": time.time(), "interval_s": 60},
                       journal=lambda: journal, telemetry=StrategyTelemetry(store, readers),
                       interval_s=15)
+# Phase 3 scene. A Binance outage stalls both instances and the SMC lab at
+# once: one incident, recovered and verified. Then one instance's own feed
+# goes stale, recovers, and fails again before its recovery is verified.
+healthy = dict(lifecycle_state="running", market_data_status="healthy")
+stale = dict(lifecycle_state="data_stale", market_data_status="stale")
+instance.update(healthy)
+second.update(healthy)
+svc.cycle()                                   # all healthy
+instance.update(stale)
+second.update(stale)
+labs["smc"]["stream"]["state"] = "DISCONNECTED"
+svc.cycle()
+bus.flush()
+svc.cycle()                                   # one incident, five components
+instance.update(healthy)
+second.update(healthy)
+labs["smc"]["stream"]["state"] = "SYNCHRONIZED"
+svc.cycle()                                   # recovered
+svc.incidents.verify_s = 0
+svc.cycle()                                   # verified and closed
+svc.incidents.verify_s = 3600
+instance.update(stale)
 svc.cycle()                                   # the instance's feed is stale: instance BLOCKED
-instance.update(lifecycle_state="running", market_data_status="healthy")
+instance.update(healthy)
 svc.cycle()                                   # the feed caught up
-instance.update(lifecycle_state="data_stale", market_data_status="stale")
-svc.cycle()                                   # and fell behind again
+instance.update(stale)
+svc.cycle()                                   # and fell behind again: the same incident reopens
 bus.flush()
 store.set_meta("heartbeat", {"at": time.time(), "cycles": svc.cycles, "interval_s": 15, "last_cycle_ms": 2.1})
 svc._thread = type("Alive", (), {"is_alive": lambda self: True})()   # snapshot reads it as running
@@ -145,9 +171,13 @@ out = {"status": status,
        "strategies": strategies,
        "almost_trades": {"almost_trades": almost},
        "strategy_events": {"events": strategy_events, "next_before": None},
-       "traces": {event_id: store.event(event_id) for event_id in sorted(wanted)}}
+       "traces": {event_id: store.event(event_id) for event_id in sorted(wanted)},
+       "incidents": {"incidents": svc.incidents.list(), "counts": svc.incidents.counts()},
+       "incident_details": {str(i["id"]): svc.incidents.get(i["id"]) for i in svc.incidents.list()},
+       "anomalies": {"active": svc.anomalies.active(),
+                     "recent": store.events(event_type="anomaly_detected", limit=50)}}
 shutil.rmtree(tmpdir, ignore_errors=True)
 (HERE / "guardian.json").write_text(json.dumps(out, indent=1, sort_keys=True, default=str) + "\n")
 print("wrote", HERE / "guardian.json", "state:", status["summary"]["state"],
       "events:", len(out["events"]["events"]), "strategies:", len(strategies["strategies"]),
-      "almost-trades:", len(almost))
+      "almost-trades:", len(almost), "incidents:", svc.incidents.counts())

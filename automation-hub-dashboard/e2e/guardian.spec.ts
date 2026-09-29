@@ -20,7 +20,10 @@ test("Guardian is one sidebar entry and opens on the Command Center", async ({ p
   await expect(page.getByTestId("guardian-group-journal")).toContainText("DEGRADED");
   await expect(page.getByText("READ-ONLY", { exact: true })).toBeVisible();
   // Only built tabs are offered.
-  await expect(page.getByRole("tab")).toHaveText(["Command Center", "System Map", "Strategies", "Activity"]);
+  await expect(page.getByRole("tab")).toHaveText(["Command Center", "Incidents", "System Map", "Strategies", "Activity"]);
+  // The open incident is on the Command Center; anomalies say when there is no baseline yet.
+  await expect(page.getByTestId("guardian-open-incidents")).toContainText(GUARDIAN.incidents.incidents[0].title);
+  await expect(page.getByText("not enough history yet to judge")).toBeVisible();
 });
 
 test("the system map says an instance is blocked by its feed, not broken", async ({ page }) => {
@@ -81,4 +84,39 @@ test("a decision trace shows every condition, the one that stopped it, and what 
   await expect(row("EMA 9 on the trade's side of EMA 33")).toContainText("EMA_TREND_NOT_ALIGNED");
   await expect(row("Decision Brain quality gate")).toContainText("NOT REACHED");
   await expect(trace).toContainText("NO_SETUP");
+});
+
+// Phase 3. The fixture's incidents come from the real incident engine over the
+// scene: a Binance outage that stalled both instances and the SMC lab (one
+// incident, closed after verification), then one instance's own feed failing,
+// recovering and failing again before its recovery was verified.
+test("one outage is one incident, and a closed incident is kept with its diagnosis and timeline", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/#/guardian?tab=incidents");
+  const list = page.getByTestId("guardian-incidents");
+  await expect(list.locator("li")).toHaveCount(1);                       // open only
+  await expect(list).toContainText("HIGH CONFIDENCE");
+  await page.getByRole("button", { name: "All" }).click();
+  await expect(list.locator("li")).toHaveCount(2);
+  const outage = list.locator("li", { hasText: "Binance USD-M market data not reaching the platform" });
+  await expect(outage).toContainText("CLOSED");
+  await expect(outage).toContainText("7 affected");
+  await outage.getByRole("button", { name: "Details" }).click();
+  const diagnosis = page.getByTestId("guardian-diagnosis");
+  await expect(diagnosis).toContainText("independent consumers failed together");
+  await expect(diagnosis).toContainText("advice only — Guardian takes no action");
+  const timeline = page.getByTestId("guardian-timeline");
+  for (const entry of ["incident opened", "incident recovered", "incident verified", "incident closed"]) {
+    await expect(timeline).toContainText(entry);
+  }
+  await expect(timeline).toContainText("feed:lab:smc");
+});
+
+test("a fault that returns before recovery is verified reopens the same incident", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/#/guardian?tab=incidents");
+  const open = page.getByTestId("guardian-incidents").locator("li").first();
+  await expect(open).toContainText("OPEN");
+  await open.getByRole("button", { name: "Details" }).click();
+  await expect(page.getByTestId("guardian-timeline")).toContainText("incident reopened");
 });

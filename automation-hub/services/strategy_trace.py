@@ -265,6 +265,21 @@ def htf_problem(trace: dict) -> Optional[tuple[str, str]]:
     return None
 
 
+def _latency_ms(candle_open: str, timeframe: Optional[str]) -> Optional[float]:
+    """Milliseconds from the candle's close to this evaluation."""
+    from datetime import datetime, timezone
+
+    from bot.data.resample import TF_SECONDS
+    seconds = TF_SECONDS.get(timeframe or "")
+    try:
+        opened = datetime.fromisoformat(str(candle_open))
+    except ValueError:
+        return None
+    if not seconds:
+        return None
+    return round((datetime.now(timezone.utc) - opened).total_seconds() * 1000 - seconds * 1000, 1)
+
+
 def _source_component(engine) -> str:
     instance_id = getattr(engine, "instance_id", None)
     return f"instance:{instance_id}" if instance_id else "engine:main"
@@ -301,6 +316,9 @@ def publish_instance_trace(engine, *, symbol: str, candle_time: str, blocker: Op
                       symbol=symbol, timeframe=getattr(engine, "timeframe", None),
                       correlation_id=decision_identity or None)
         final = trace["final"]
+        latency = _latency_ms(candle_time, getattr(engine, "timeframe", None))
+        if latency is not None:
+            common["latency_ms"] = latency
         sent = guardian.emit_deferred(EVENT_FOR_FINAL.get(final, "evaluation_completed"),
                              severity="WARNING" if final == "ERROR" else "INFO",
                              decision=final, reason=trace["reason"] or trace["blocker_code"],
@@ -330,12 +348,12 @@ def _publish_htf_transition(engine, symbol: str, trace: dict, common: dict) -> N
         guardian.emit(problem[0], severity="WARNING", reason=problem[1],
                       state_before=before, state_after=problem[0], evidence={
                           "candle_time": trace.get("candle_time"), "final": trace["final"]},
-                      **{k: v for k, v in common.items() if k != "correlation_id"})
+                      **{k: v for k, v in common.items() if k not in ("correlation_id", "latency_ms")})
     elif before is not None:
         guardian.emit("htf_candle_recovered", severity="INFO",
                       reason="the higher timeframe is available and current again",
                       state_before=before, state_after="available",
-                      **{k: v for k, v in common.items() if k != "correlation_id"})
+                      **{k: v for k, v in common.items() if k not in ("correlation_id", "latency_ms")})
 
 
 def publish_htf_context_failure(engine, *, symbol: str, timeframe: str, code: str,

@@ -27,6 +27,8 @@ export interface GuardianStatus {
     last_cycle_ms: number | null; bus: BusStats; collectors_failing: Record<string, string>;
   };
   events_24h: { total: number; warning_or_worse: number };
+  incidents?: { counts: Record<string, number>; active: Incident[] };
+  anomalies?: Anomaly[];
   boundary: { mode: string; may_change: string[]; never_changes: string[] };
 }
 
@@ -137,4 +139,37 @@ export const FINAL_TONE: Record<string, Tone> = {
   ENTERED: "green", ORDER_PENDING: "blue", APPROVAL_REQUIRED: "blue", SIGNAL_ONLY: "blue",
   SIGNAL: "blue", SETUP_PENDING: "blue", REJECTED: "amber", MISSED: "amber", NO_SETUP: "default",
   ERROR: "red", EXECUTION_UNCERTAIN: "red",
+};
+
+// ---- Phase 3: incidents and anomalies
+
+export interface Diagnosis {
+  kind: string; symptom: string; root_cause: string; confidence: string;
+  why_this_confidence: string; evidence: string[]; recommended_action: string;
+}
+
+export interface Incident {
+  id: number; key: string; title: string; kind: string; state: "OPEN" | "RECOVERED" | "CLOSED";
+  severity: Severity; root_component: string; diagnosis: Diagnosis; affected: string[];
+  signals: Record<string, { event_type: string; timestamp: string; reason: string | null }>;
+  related: { incident_id: number; title: string; confidence: string; why: string }[];
+  started_at: string; detected_at: string; recovered_at: string | null; verified_at: string | null;
+  closed_at: string | null; updates: number; last_update_at: string;
+}
+
+export interface IncidentDetail extends Incident {
+  log: { seq: number; at: string; entry: string; detail: string }[];
+  timeline: { at: string; source: string; what: string; severity: string; state: string | null;
+    detail: string | null; event_id: string | null }[];
+}
+
+export interface Anomaly {
+  key: string; detector: string; scope: string; value: number; unit: string; baseline: string;
+  detail: string; note: string; since: string;
+}
+
+export const INCIDENT_TONE: Record<string, Tone> = { OPEN: "red", RECOVERED: "amber", CLOSED: "green" };
+
+export const CONFIDENCE_TONE: Record<string, Tone> = {
+  CONFIRMED: "green", "HIGH CONFIDENCE": "blue", PROBABLE: "amber", POSSIBLE: "purple", UNKNOWN: "default",
 };

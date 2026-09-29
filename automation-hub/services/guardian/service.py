@@ -24,6 +24,8 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from services.guardian import health as h
+from services.guardian.anomalies import AnomalyDetector
+from services.guardian.incidents import IncidentEngine
 from services.guardian.schema import InvalidEvent, make_event, utcnow
 
 SERVICE = "guardian"
@@ -38,6 +40,7 @@ class GuardianService:
                  database: Optional[Callable[[], dict]] = None,
                  journal: Optional[Callable[[], dict]] = None,
                  telemetry=None, performance_path: Optional[str] = None,
+                 incident_verify_s: float = 60.0, degraded_grace_s: float = 300.0,
                  interval_s: float = 15.0, clock: Callable[[], float] = time.time):
         self.store, self.bus = store, bus
         self.instances = dict(instances or {})    # name -> read-only rows
@@ -48,6 +51,10 @@ class GuardianService:
         self.performance_path = performance_path  # the journal's trade records, read-only
         self.interval_s = max(1.0, float(interval_s))
         self.clock = clock
+        # Phase 3: incidents and anomalies, from the same observations.
+        self.incidents = IncidentEngine(store, verify_s=incident_verify_s,
+                                        degraded_grace_s=degraded_grace_s)
+        self.anomalies = AnomalyDetector(store)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._previous: dict[str, str] = {}
@@ -253,6 +260,18 @@ class GuardianService:
                           reason="no longer observed: stopped or removed by its owner")
         self._previous = {cid: n.effective for cid, n in nodes.items()}
         self.store.save_components({cid: n.to_dict() for cid, n in nodes.items()})
+        for name, step in (("incidents", self.incidents.cycle), ("anomalies", self.anomalies.cycle)):
+            try:
+                step(nodes, now=self.clock(), publish=self._publish)
+                if name in self._collector_errors:
+                    self._publish("collector_recovered", source_component=f"guardian.{name}",
+                                  severity="INFO", reason=self._collector_errors.pop(name))
+            except Exception as exc:  # noqa: BLE001 -- analysis never stops observation
+                error = f"{type(exc).__name__}: {exc}"[:300]
+                if self._collector_errors.get(name) != error:
+                    self._publish("collector_failed", source_component=f"guardian.{name}",
+                                  severity="WARNING", reason=error)
+                self._collector_errors[name] = error
         self.cycles += 1
         self.last_cycle_ms = round((time.monotonic() - started) * 1000, 1)
         self.store.set_meta("heartbeat", {"at": self.clock(), "cycles": self.cycles,
@@ -342,6 +361,9 @@ class GuardianService:
                      "collectors_failing": dict(self._collector_errors)},
             "events_24h": {"total": self.store.count_events(since=since),
                            "warning_or_worse": self.store.count_events(since=since, min_severity="WARNING")},
+            "incidents": {"counts": self.incidents.counts(),
+                          "active": self.incidents.list(state="active", limit=10)},
+            "anomalies": self.anomalies.active(),
             "boundary": {"mode": "read-only",
                          "may_change": [],
                          "never_changes": ["strategy rules or parameters", "risk limits or leverage",
