@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from services.guardian.schema import FIELDS, SEVERITY_RANK, GuardianEvent, utcnow
+from services.guardian.strategy import almost_trade, setup_identity
 
 _EVENT_COLUMNS = tuple(f for f in FIELDS)
 _SCHEMA = """
@@ -73,9 +74,45 @@ CREATE TABLE IF NOT EXISTS guardian_components (
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS guardian_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+-- Derived from strategy events as they are stored (PRD §41: high-volume
+-- telemetry is aggregated). Rebuildable from guardian_events; not evidence.
+CREATE TABLE IF NOT EXISTS guardian_strategy_rollup (
+    day TEXT NOT NULL,
+    source_component TEXT NOT NULL,
+    strategy_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    timeframe TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    blocker_code TEXT NOT NULL,
+    lab_id TEXT, instance_id TEXT, strategy_version TEXT,
+    count INTEGER NOT NULL,
+    last_at TEXT NOT NULL,
+    PRIMARY KEY (day, source_component, strategy_id, symbol, timeframe, decision, blocker_code)
+);
+-- One row per near-valid setup (PRD §9), however many candles it stayed one
+-- condition away. Links to the first and latest trace in guardian_events.
+CREATE TABLE IF NOT EXISTS guardian_almost_trades (
+    identity TEXT PRIMARY KEY,
+    first_event_id TEXT NOT NULL,
+    last_event_id TEXT NOT NULL,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    sightings INTEGER NOT NULL,
+    source_component TEXT NOT NULL,
+    lab_id TEXT, instance_id TEXT, strategy_id TEXT, strategy_version TEXT,
+    symbol TEXT, timeframe TEXT, direction TEXT,
+    kind TEXT NOT NULL,
+    classification TEXT NOT NULL,
+    passed INTEGER, evaluated INTEGER,
+    prevented_by TEXT,
+    conditions TEXT,
+    note TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_gat_seen ON guardian_almost_trades(last_seen);
 """
 _FILTERS = ("source_component", "instance_id", "lab_id", "symbol", "timeframe",
-            "event_type", "category", "strategy_id")
+            "event_type", "category", "strategy_id", "decision")
 
 
 def _dump(value: Any) -> Optional[str]:
@@ -116,15 +153,93 @@ class GuardianStore:
         cols = (*_EVENT_COLUMNS, "severity_rank")
         sql = (f"INSERT OR IGNORE INTO guardian_events({','.join(cols)}) "
                f"VALUES ({','.join(':' + c for c in cols)})")
+        plain = [r for r in rows if r["category"] != "strategy"]
+        strategy = [r for r in rows if r["category"] == "strategy"]
         with self._lock:
             try:
-                before = self._c.total_changes
-                self._c.executemany(sql, rows)
+                inserted = self._c.executemany(sql, plain).rowcount if plain else 0
+                for row in strategy:
+                    # One at a time: only a trace seen for the first time may
+                    # count, or a re-read after a restart would count twice.
+                    if self._c.execute(sql, row).rowcount == 1:
+                        inserted += 1
+                        self._index_strategy(row)
                 self._c.commit()
-                return self._c.total_changes - before
+                return max(0, inserted)
             except Exception:
                 self._c.rollback()
                 raise
+
+    def _index_strategy(self, row: dict) -> None:
+        trace = _load(row["evidence"]) or {}
+        meta = _load(row["metadata"]) or {}
+        blocker = str(meta.get("blocker_code") or trace.get("blocker_code") or "")
+        self._c.execute(
+            "INSERT INTO guardian_strategy_rollup(day,source_component,strategy_id,symbol,timeframe,"
+            "decision,blocker_code,lab_id,instance_id,strategy_version,count,last_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,1,?) ON CONFLICT(day,source_component,strategy_id,symbol,"
+            "timeframe,decision,blocker_code) DO UPDATE SET count=count+1, "
+            "last_at=MAX(last_at, excluded.last_at), strategy_version=excluded.strategy_version",
+            (str(row["timestamp"])[:10], row["source_component"], row["strategy_id"] or "",
+             row["symbol"] or "", row["timeframe"] or "", row["decision"] or "", blocker,
+             row["lab_id"], row["instance_id"], row["strategy_version"], row["timestamp"]))
+        almost = almost_trade(trace)
+        if almost is None:
+            return
+        identity = setup_identity(row, trace)
+        self._c.execute(
+            "INSERT INTO guardian_almost_trades(identity,first_event_id,last_event_id,first_seen,"
+            "last_seen,sightings,source_component,lab_id,instance_id,strategy_id,strategy_version,"
+            "symbol,timeframe,direction,kind,classification,passed,evaluated,prevented_by,conditions,"
+            "note) VALUES (?,?,?,?,?,1,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(identity) DO UPDATE "
+            "SET sightings=sightings+1, last_seen=MAX(last_seen, excluded.last_seen), "
+            "last_event_id=excluded.last_event_id",
+            (identity, row["event_id"], row["event_id"], row["timestamp"], row["timestamp"],
+             row["source_component"], row["lab_id"], row["instance_id"], row["strategy_id"],
+             row["strategy_version"], row["symbol"], row["timeframe"], trace.get("direction"),
+             almost["kind"], almost["classification"], almost["passed"], almost["evaluated"],
+             _dump(almost["prevented_by"]), _dump(trace.get("conditions")), almost["note"]))
+
+    # ------------------------------------------------------------ strategy
+    def strategy_rollup(self, *, since_day: str) -> list[dict]:
+        with self._lock:
+            return [dict(r) for r in self._c.execute(
+                "SELECT * FROM guardian_strategy_rollup WHERE day>=? ORDER BY day", (since_day,))]
+
+    def almost_trades(self, *, limit: int = 100, since: Optional[str] = None,
+                      strategy_id: Optional[str] = None,
+                      source_component: Optional[str] = None) -> list[dict]:
+        where, args = [], []
+        for name, value in (("last_seen>=?", since), ("strategy_id=?", strategy_id),
+                            ("source_component=?", source_component)):
+            if value:
+                where.append(name)
+                args.append(value)
+        sql = ("SELECT * FROM guardian_almost_trades" + (f" WHERE {' AND '.join(where)}" if where else "")
+               + " ORDER BY last_seen DESC LIMIT ?")
+        args.append(max(1, min(int(limit), 500)))
+        with self._lock:
+            rows = [dict(r) for r in self._c.execute(sql, args)]
+        for row in rows:
+            row["prevented_by"] = _load(row["prevented_by"])
+            row["conditions"] = _load(row["conditions"])
+        return rows
+
+    def count_almost_trades(self, *, since: Optional[str] = None) -> int:
+        with self._lock:
+            return int(self._c.execute(
+                "SELECT COUNT(*) FROM guardian_almost_trades" + (" WHERE last_seen>=?" if since else ""),
+                (since,) if since else ()).fetchone()[0])
+
+    def event(self, event_id: str) -> Optional[dict]:
+        with self._lock:
+            row = self._c.execute("SELECT * FROM guardian_events WHERE event_id=?", (event_id,)).fetchone()
+        if row is None:
+            return None
+        out = dict(row)
+        out["evidence"], out["metadata"] = _load(out["evidence"]), _load(out["metadata"])
+        out.pop("severity_rank", None)
+        return out
 
     def events(self, *, limit: int = 200, before_seq: Optional[int] = None,
                after_seq: Optional[int] = None, min_severity: Optional[str] = None,

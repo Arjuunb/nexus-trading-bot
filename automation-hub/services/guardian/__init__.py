@@ -41,6 +41,19 @@ def emit(event_type: str, **fields: Any) -> bool:
     return bus.publish(event)
 
 
+def emit_deferred(event_type: str, **fields: Any) -> bool:
+    """Like :func:`emit`, but the event is validated and stripped of secrets
+    on Guardian's bus thread instead of the caller's. For high-volume
+    publishers on a trading thread (the per-candle decision trace)."""
+    bus = _bus
+    if bus is None:
+        return False
+    try:
+        return bus.publish_deferred(lambda: make_event(event_type, **fields))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 # Instance lifecycle events (services/instance_telemetry.py) in Guardian's
 # vocabulary. Anything not listed is kept as ``instance_lifecycle`` with its
 # original name, never dropped and never renamed into something it is not.
@@ -85,4 +98,4 @@ def observe_instance_event(payload: dict, *, lab_id: Optional[str] = None) -> bo
         return False
 
 
-__all__ = ["emit", "install", "uninstall", "installed", "observe_instance_event"]
+__all__ = ["emit", "emit_deferred", "install", "uninstall", "installed", "observe_instance_event"]

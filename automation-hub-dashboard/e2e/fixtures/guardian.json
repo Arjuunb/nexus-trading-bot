@@ -2,6 +2,786 @@
  "actions": {
   "actions": []
  },
+ "almost_trades": {
+  "almost_trades": [
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "f76e240b4d115f98b6fe3d7b845b7821",
+    "first_seen": "2026-09-29T16:18:53.239897+00:00",
+    "identity": "071f2aea761d5458a00014f966659a56",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "8768c3ee41b85c6eb5265da1923112e4",
+    "last_seen": "2026-09-29T16:18:53.420313+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 4,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "81516dbc53e65cf2857018edb9f67887",
+    "first_seen": "2026-09-29T16:18:53.182546+00:00",
+    "identity": "5161e155503c509e876ee3317762ae58",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "81516dbc53e65cf2857018edb9f67887",
+    "last_seen": "2026-09-29T16:18:53.182546+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 1,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "fbc17fb9460b5f7ba74801bd0de1165a",
+    "first_seen": "2026-09-29T16:18:53.099068+00:00",
+    "identity": "3f61150e43ba54aaa221ecbd1f009e96",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "fbc17fb9460b5f7ba74801bd0de1165a",
+    "last_seen": "2026-09-29T16:18:53.099068+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 1,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "0f2afb4f665c5c4c84f45f22ee090d33",
+    "first_seen": "2026-09-29T16:18:52.961479+00:00",
+    "identity": "c2753a884f7e5f2991462ca464164609",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "11cd60d375be5ae6a4c5b9e111be54ce",
+    "last_seen": "2026-09-29T16:18:53.020085+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 2,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "ee6a8416b2f65d5784fdb2b9168e04a4",
+    "first_seen": "2026-09-29T16:18:52.913896+00:00",
+    "identity": "0f6066f32114505086fb24e1388a6e51",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "ee6a8416b2f65d5784fdb2b9168e04a4",
+    "last_seen": "2026-09-29T16:18:52.913896+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 1,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "4510ef14af9855fa85e59f1e0ca02198",
+    "first_seen": "2026-09-29T16:18:52.777473+00:00",
+    "identity": "9cb5e7217fe8551d9a05a478de89cfb6",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "52bd47157e455efaabcc26b9e24d00ad",
+    "last_seen": "2026-09-29T16:18:52.867178+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 3,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "490fb071e1305b13b232252512f6f149",
+    "first_seen": "2026-09-29T16:18:52.708681+00:00",
+    "identity": "3651a75d301d5ac6af5174417a12c35b",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "490fb071e1305b13b232252512f6f149",
+    "last_seen": "2026-09-29T16:18:52.708681+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 1,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "4f72fe68b0e05cb9b97ab5c8aa6c548c",
+    "first_seen": "2026-09-29T16:18:51.936631+00:00",
+    "identity": "4087acae45c65f70ac27d6f4af194871",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "8a5d0a0eddd358b4aa19be273c7e51b7",
+    "last_seen": "2026-09-29T16:18:52.110718+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 4,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "evaluated": 3,
+    "first_event_id": "efbb4fd1f1ee5bf88a08435e5df773a5",
+    "first_seen": "2026-09-29T16:18:51.873949+00:00",
+    "identity": "d0a0426d091f5653bb228462d9a48f5f",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "pa",
+    "last_event_id": "efbb4fd1f1ee5bf88a08435e5df773a5",
+    "last_seen": "2026-09-29T16:18:51.873949+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 2,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "pin bar only",
+     "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar"
+    },
+    "sightings": 1,
+    "source_component": "lab:pa",
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "The instance's own feed reports a synchronized, real provider.",
+      "id": "feed_synchronized",
+      "kind": "market_data",
+      "label": "Feed synchronized",
+      "stage": "MARKET_DATA",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "Enough closed candles for the strategy's declared warm-up.",
+      "id": "closed_candle",
+      "kind": "market_data",
+      "label": "Closed candle available",
+      "stage": "MARKET_DATA",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "not verified: replay data, the higher timeframe is fetched live only",
+      "id": "htf_available",
+      "kind": "market_data",
+      "label": "Higher timeframe available",
+      "stage": "MARKET_DATA",
+      "state": "NOT_APPLICABLE"
+     },
+     {
+      "code": null,
+      "detail": "not verified: replay data, the higher timeframe is fetched live only",
+      "id": "htf_fresh",
+      "kind": "market_data",
+      "label": "Higher timeframe fresh",
+      "stage": "MARKET_DATA",
+      "state": "NOT_APPLICABLE"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "levels_ready",
+      "kind": "strategy",
+      "label": "Swing levels, EMA 9/33 and ATR formed",
+      "stage": "FEATURES",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "at_level",
+      "kind": "strategy",
+      "label": "Candle 1 pushed into a level touched 2+ times",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "Candle 2 wicked through the level and closed back",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "confirmation",
+      "kind": "strategy",
+      "label": "Candle 3 closed beyond the rejection candle",
+      "stage": "CONFIRMATION",
+      "state": "PASS"
+     },
+     {
+      "code": "EMA_TREND_NOT_ALIGNED",
+      "detail": "3-candle rejection at support 100, but EMA 9 is below EMA 33; filtered",
+      "id": "ema_trend",
+      "kind": "strategy",
+      "label": "EMA 9 on the trade's side of EMA 33",
+      "stage": "CONFIRMATION",
+      "state": "FAIL"
+     },
+     {
+      "code": null,
+      "detail": "No hard block, and the quality score is at or above the instance minimum.",
+      "id": "decision_brain",
+      "kind": "gate",
+      "label": "Decision Brain quality gate",
+      "stage": "STRATEGY_ACCEPT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The market-context filter (for example BTC's own trend) does not oppose it.",
+      "id": "cross_asset_context",
+      "kind": "gate",
+      "label": "Cross-asset context gate",
+      "stage": "STRATEGY_ACCEPT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The risk engine can size this entry inside the instance's risk budget.",
+      "id": "risk_sizing",
+      "kind": "gate",
+      "label": "Position sizeable within risk",
+      "stage": "RISK_CHECK",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "Open positions, correlation and portfolio caps all allow another.",
+      "id": "exposure_limits",
+      "kind": "gate",
+      "label": "Exposure limits clear",
+      "stage": "RISK_CHECK",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "No daily/weekly loss limit or cooldown is currently holding entries.",
+      "id": "loss_limits",
+      "kind": "gate",
+      "label": "Loss limits and cooldown clear",
+      "stage": "RISK_CHECK",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The instance is armed to create orders, not paused or signals-only.",
+      "id": "execution_mode",
+      "kind": "gate",
+      "label": "Execution permitted",
+      "stage": "ORDER_INTENT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "This candle's decision has not already produced an order.",
+      "id": "idempotent",
+      "kind": "gate",
+      "label": "Not a duplicate of a live decision",
+      "stage": "ORDER_INTENT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The isolated paper broker accepted the order intent.",
+      "id": "broker_accepts",
+      "kind": "gate",
+      "label": "Paper broker accepts the order",
+      "stage": "PAPER_BROKER",
+      "state": "NOT_REACHED"
+     }
+    ],
+    "direction": "long",
+    "evaluated": 5,
+    "first_event_id": "c525c210ba034c0a9879d8b46e82d67b",
+    "first_seen": "2026-09-29T16:18:51.487268+00:00",
+    "identity": "2a9a165a3cd351eca14699dbdb41f115",
+    "instance_id": "a3f9c2d1e8b74c0f",
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": null,
+    "last_event_id": "c525c210ba034c0a9879d8b46e82d67b",
+    "last_seen": "2026-09-29T16:18:51.487268+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 4,
+    "prevented_by": {
+     "code": "EMA_TREND_NOT_ALIGNED",
+     "condition": "EMA 9 on the trade's side of EMA 33",
+     "detail": "3-candle rejection at support 100, but EMA 9 is below EMA 33; filtered"
+    },
+    "sightings": 1,
+    "source_component": "instance:a3f9c2d1e8b74c0f",
+    "strategy_id": "three_candle_rejection",
+    "strategy_version": "v1",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   },
+   {
+    "classification": "MISSED_OPPORTUNITY_CANDIDATE",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "native HTF bias is BULLISH",
+      "id": "htf_context",
+      "kind": "strategy",
+      "label": "Completed HTF direction",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "native dealing-range area is discount",
+      "id": "location",
+      "kind": "strategy",
+      "label": "Premium / discount location",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "not required by this candidate",
+      "id": "pivot",
+      "kind": "strategy",
+      "label": "Pivot low",
+      "stage": "SETUP",
+      "state": "NOT_REQUIRED"
+     },
+     {
+      "code": null,
+      "detail": "native liquidity sweep",
+      "id": "sweep",
+      "kind": "strategy",
+      "label": "Sell-side sweep",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "native structure is after the prior sequence event",
+      "id": "structure",
+      "kind": "strategy",
+      "label": "Bullish BOS / CHoCH",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "native POI created after qualifying structure",
+      "id": "poi",
+      "kind": "strategy",
+      "label": "Bullish OB",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "current closed bar overlaps the exact native POI",
+      "id": "retest",
+      "kind": "strategy",
+      "label": "Exact POI retest",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "awaiting same-bar native rejection",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "Bullish rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": null,
+    "evaluated": 7,
+    "first_event_id": "8f495d0ca3f05c1ba27e0e258b974a1b",
+    "first_seen": "2026-09-29T16:18:51.372617+00:00",
+    "identity": "1468b263b2d558efa98f54a987e20c93",
+    "instance_id": null,
+    "kind": "ONE_CONDITION_SHORT",
+    "lab_id": "smc",
+    "last_event_id": "8f495d0ca3f05c1ba27e0e258b974a1b",
+    "last_seen": "2026-09-29T16:18:51.372617+00:00",
+    "note": "Most conditions passed and one prevented the trade. This does NOT mean the rule was wrong. It is a candidate for research analysis only; production rules are never changed from it.",
+    "passed": 6,
+    "prevented_by": {
+     "code": "MISSING",
+     "condition": "Bullish rejection",
+     "detail": "awaiting same-bar native rejection"
+    },
+    "sightings": 1,
+    "source_component": "lab:smc",
+    "strategy_id": "SMC_SOURCE_V1",
+    "strategy_version": "758a65018fa70471",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m"
+   }
+  ]
+ },
  "events": {
   "events": [
    {
@@ -9,7 +789,7 @@
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "0d33330504bf4509a44d3c5196e3e18f",
+    "event_id": "05c4398838ca43649330e03d09f699b4",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -25,8 +805,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "1 of 2 live consumers receiving data",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 15,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 73,
     "session_id": null,
     "severity": "WATCH",
     "source_component": "binance_usdm",
@@ -37,14 +817,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.494729+00:00"
+    "timestamp": "2026-09-29T16:18:54.441948+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "da57d847bfe74a1da658e54209cba879",
+    "event_id": "75fbfd6b085f4ad0b44128faeeb300b2",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [
@@ -65,8 +845,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "blocked by feed:instance:a3f9c2d1e8b74c0f",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 14,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 72,
     "session_id": null,
     "severity": "WARNING",
     "source_component": "instance:a3f9c2d1e8b74c0f",
@@ -77,14 +857,14 @@
     "strategy_version": null,
     "symbol": "BTCUSDT",
     "timeframe": "5m",
-    "timestamp": "2026-09-28T22:54:32.494642+00:00"
+    "timestamp": "2026-09-29T16:18:54.441893+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "0a6e9c0373c04808b099c115c915dfef",
+    "event_id": "4d890f18b21840f6a94a6de49a648cf1",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -100,8 +880,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "candles are late; the worker stands down until they catch up",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 13,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 71,
     "session_id": null,
     "severity": "HIGH",
     "source_component": "feed:instance:a3f9c2d1e8b74c0f",
@@ -112,14 +892,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.494564+00:00"
+    "timestamp": "2026-09-29T16:18:54.441798+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "09bdaaa0c25448c29f937f9363175ca0",
+    "event_id": "9691f66ae228468780cd114d074b06c8",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -135,8 +915,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "all 2 live consumers receiving data",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 12,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 70,
     "session_id": null,
     "severity": "INFO",
     "source_component": "binance_usdm",
@@ -147,14 +927,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.494180+00:00"
+    "timestamp": "2026-09-29T16:18:54.440343+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "ef70dd8139b64613a7c229aa6e073f24",
+    "event_id": "5461a3db32c74acd9aa2364ddd16e50c",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -173,8 +953,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "running",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 11,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 69,
     "session_id": null,
     "severity": "INFO",
     "source_component": "instance:a3f9c2d1e8b74c0f",
@@ -185,14 +965,14 @@
     "strategy_version": null,
     "symbol": "BTCUSDT",
     "timeframe": "5m",
-    "timestamp": "2026-09-28T22:54:32.494129+00:00"
+    "timestamp": "2026-09-29T16:18:54.440289+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "d184734e06bc462591d6f7f9ac0a20ed",
+    "event_id": "eea64e8898bf41dba0501618d5ac3cdf",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -208,8 +988,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "closed candles arriving on time",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 10,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 68,
     "session_id": null,
     "severity": "INFO",
     "source_component": "feed:instance:a3f9c2d1e8b74c0f",
@@ -220,14 +1000,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.494050+00:00"
+    "timestamp": "2026-09-29T16:18:54.440202+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "19505a3b1da24057832b2c9ea9868427",
+    "event_id": "5741b5f3e2544438ab826d851a1a9b09",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -243,8 +1023,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "observing; evidence being written",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 9,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 67,
     "session_id": null,
     "severity": "INFO",
     "source_component": "guardian",
@@ -255,14 +1035,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.493378+00:00"
+    "timestamp": "2026-09-29T16:18:54.438637+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "4fd99ef682b9444a8e888dfd37887777",
+    "event_id": "76c38511c0d94dc6b5eb63764caaa69f",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -278,8 +1058,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "1 of 2 live consumers receiving data",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 8,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 66,
     "session_id": null,
     "severity": "WATCH",
     "source_component": "binance_usdm",
@@ -290,14 +1070,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.493321+00:00"
+    "timestamp": "2026-09-29T16:18:54.438578+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "f50a7c52656040ee82788e12da39040d",
+    "event_id": "502a788a0cf54e77a203175562c571ad",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -315,8 +1095,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "not journalling: MAIN: ledger is not a local SQLite ledger",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 7,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 65,
     "session_id": null,
     "severity": "WATCH",
     "source_component": "journal",
@@ -327,14 +1107,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.493257+00:00"
+    "timestamp": "2026-09-29T16:18:54.438522+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "3dd2df6d68ff48edb31cc1e7e26ad7a1",
+    "event_id": "554bc8bb0dcf4d32a798777d6fd41b33",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -350,8 +1130,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "Recording decisions and fills",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 6,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 64,
     "session_id": null,
     "severity": "INFO",
     "source_component": "database",
@@ -362,14 +1142,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.493197+00:00"
+    "timestamp": "2026-09-29T16:18:54.438463+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "dd63661d562b48db9609bfef3dc33a9f",
+    "event_id": "d623505e12ae4c428f6371e2b7e2a068",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -385,8 +1165,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "idle: no active session",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 5,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 63,
     "session_id": null,
     "severity": "INFO",
     "source_component": "lab:pa",
@@ -397,14 +1177,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.493144+00:00"
+    "timestamp": "2026-09-29T16:18:54.438409+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "1b877cdcc0d24d3d8f5f4defed57c50a",
+    "event_id": "d7b8fc836d134b0f85508d37c50459b3",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -422,8 +1202,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "running",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 4,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 62,
     "session_id": null,
     "severity": "INFO",
     "source_component": "lab:smc",
@@ -434,14 +1214,14 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.493084+00:00"
+    "timestamp": "2026-09-29T16:18:54.438315+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "8330332681cf4e30bc7df04088db6046",
+    "event_id": "706e9a78c79c40788ecc63796dfcd979",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -457,8 +1237,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "candles, quotes and mark price reconciled and fresh",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 3,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 61,
     "session_id": null,
     "severity": "INFO",
     "source_component": "feed:lab:smc",
@@ -469,14 +1249,14 @@
     "strategy_version": null,
     "symbol": "BTCUSDT",
     "timeframe": "5m",
-    "timestamp": "2026-09-28T22:54:32.493023+00:00"
+    "timestamp": "2026-09-29T16:18:54.438258+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "8186db6a2e534da5904f08929dea869b",
+    "event_id": "f49a814132b144f5807b307ccd578553",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [
@@ -497,8 +1277,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "blocked by feed:instance:a3f9c2d1e8b74c0f",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 2,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 60,
     "session_id": null,
     "severity": "WARNING",
     "source_component": "instance:a3f9c2d1e8b74c0f",
@@ -509,14 +1289,14 @@
     "strategy_version": null,
     "symbol": "BTCUSDT",
     "timeframe": "5m",
-    "timestamp": "2026-09-28T22:54:32.492952+00:00"
+    "timestamp": "2026-09-29T16:18:54.438196+00:00"
    },
    {
     "agent_id": null,
     "category": "guardian",
     "correlation_id": null,
     "decision": null,
-    "event_id": "da48b772d9794a70aee5edef34b91a36",
+    "event_id": "c46f46226f154b6cb41dc1a9a7bba080",
     "event_type": "health_changed",
     "evidence": {
      "blocked_by": [],
@@ -532,8 +1312,8 @@
     "order_id": null,
     "position_id": null,
     "reason": "candles are late; the worker stands down until they catch up",
-    "received_at": "2026-09-28T22:54:32.495018+00:00",
-    "seq": 1,
+    "received_at": "2026-09-29T16:18:54.442268+00:00",
+    "seq": 59,
     "session_id": null,
     "severity": "HIGH",
     "source_component": "feed:instance:a3f9c2d1e8b74c0f",
@@ -544,7 +1324,7 @@
     "strategy_version": null,
     "symbol": null,
     "timeframe": null,
-    "timestamp": "2026-09-28T22:54:32.492802+00:00"
+    "timestamp": "2026-09-29T16:18:54.438092+00:00"
    }
   ],
   "next_before": null
@@ -578,7 +1358,7 @@
     "id": "database",
     "kind": "database",
     "label": "Ledger database",
-    "observed_at": "2026-09-28T22:54:32.494471+00:00",
+    "observed_at": "2026-09-29T16:18:54.441622+00:00",
     "raw": "HEALTHY"
    },
    {
@@ -594,7 +1374,7 @@
     "id": "feed:instance:a3f9c2d1e8b74c0f",
     "kind": "feed",
     "label": "Feed \u00b7 BTCUSDT 5m \u00b7 3-Candle Rejection \u00b7 EMA 9/33",
-    "observed_at": "2026-09-28T22:54:32.494442+00:00",
+    "observed_at": "2026-09-29T16:18:54.441568+00:00",
     "raw": "FAILED"
    },
    {
@@ -614,7 +1394,7 @@
     "id": "feed:lab:smc",
     "kind": "feed",
     "label": "Feed \u00b7 SMC Lab",
-    "observed_at": "2026-09-28T22:54:32.494456+00:00",
+    "observed_at": "2026-09-29T16:18:54.441591+00:00",
     "raw": "HEALTHY"
    },
    {
@@ -627,21 +1407,21 @@
       "backlog": 12,
       "capacity": 10000,
       "dropped": 0,
-      "last_delay_ms": 0.0,
+      "last_delay_ms": 282.3,
       "last_store_error": null,
-      "last_stored_at": null,
-      "max_delay_ms": 0.0,
-      "published": 12,
+      "last_stored_at": "2026-09-29T16:18:51.522567+00:00",
+      "max_delay_ms": 282.3,
+      "published": 18,
       "rejected": 0,
       "running": true,
       "store_failures": 0,
-      "stored": 0
+      "stored": 6
      }
     },
     "id": "guardian",
     "kind": "guardian",
     "label": "Guardian",
-    "observed_at": "2026-09-28T22:54:32.494490+00:00",
+    "observed_at": "2026-09-29T16:18:54.441656+00:00",
     "raw": "HEALTHY"
    },
    {
@@ -672,7 +1452,7 @@
     "id": "instance:a3f9c2d1e8b74c0f",
     "kind": "instance",
     "label": "BTCUSDT 5m \u00b7 3-Candle Rejection \u00b7 EMA 9/33",
-    "observed_at": "2026-09-28T22:54:32.494442+00:00",
+    "observed_at": "2026-09-29T16:18:54.441568+00:00",
     "raw": "HEALTHY"
    },
    {
@@ -694,7 +1474,7 @@
     "id": "journal",
     "kind": "journal",
     "label": "Trade journal",
-    "observed_at": "2026-09-28T22:54:32.494475+00:00",
+    "observed_at": "2026-09-29T16:18:54.441627+00:00",
     "raw": "DEGRADED"
    },
    {
@@ -709,7 +1489,7 @@
     "id": "lab:pa",
     "kind": "lab",
     "label": "Price Action Lab",
-    "observed_at": "2026-09-28T22:54:32.494463+00:00",
+    "observed_at": "2026-09-29T16:18:54.441600+00:00",
     "raw": "HEALTHY"
    },
    {
@@ -726,7 +1506,7 @@
     "id": "lab:smc",
     "kind": "lab",
     "label": "SMC Lab",
-    "observed_at": "2026-09-28T22:54:32.494456+00:00",
+    "observed_at": "2026-09-29T16:18:54.441591+00:00",
     "raw": "HEALTHY"
    },
    {
@@ -740,29 +1520,29 @@
     "id": "binance_usdm",
     "kind": "upstream",
     "label": "Binance USD-M public data",
-    "observed_at": "2026-09-28T22:54:32.494483+00:00",
+    "observed_at": "2026-09-29T16:18:54.441638+00:00",
     "raw": "DEGRADED"
    }
   ],
   "events_24h": {
-   "total": 15,
+   "total": 73,
    "warning_or_worse": 4
   },
-  "generated_at": "2026-09-28T22:54:32.495987+00:00",
+  "generated_at": "2026-09-29T16:18:54.443151+00:00",
   "self": {
    "bus": {
     "backlog": 0,
     "capacity": 10000,
     "dropped": 0,
-    "last_delay_ms": 3.0,
+    "last_delay_ms": 4.9,
     "last_store_error": null,
-    "last_stored_at": "2026-09-28T22:54:32.495809+00:00",
-    "max_delay_ms": 3.0,
-    "published": 15,
+    "last_stored_at": "2026-09-29T16:18:54.442981+00:00",
+    "max_delay_ms": 282.3,
+    "published": 21,
     "rejected": 0,
     "running": true,
     "store_failures": 0,
-    "stored": 15
+    "stored": 21
    },
    "collectors_failing": {},
    "cycles": 3,
@@ -817,6 +1597,4813 @@
     }
    },
    "state": "FAILED"
+  }
+ },
+ "strategies": {
+  "almost_trades_total": 11,
+  "days": 7,
+  "performance": [],
+  "performance_error": null,
+  "research": {
+   "built": false,
+   "note": "Research hypotheses, research versions and forward-paper experiments arrive with Phase 5. Nothing is shown until then."
+  },
+  "since_day": "2026-09-23",
+  "strategies": [
+   {
+    "almost_trades": 1,
+    "decisions": {
+     "ENTERED": 1,
+     "NO_SETUP": 5
+    },
+    "entries": 1,
+    "evaluations": 6,
+    "instance_id": "a3f9c2d1e8b74c0f",
+    "lab_id": null,
+    "last_evaluation_at": "2026-09-29T16:18:51.489431+00:00",
+    "no_setup": 5,
+    "performance": [],
+    "refused": 0,
+    "scope": "instance:a3f9c2d1e8b74c0f",
+    "setups": 1,
+    "strategy_id": "three_candle_rejection",
+    "strategy_version": "v1",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "top_rejection_reasons": [
+     {
+      "code": "NO_ELIGIBLE_ZONE",
+      "count": 4,
+      "decision": "NO_SETUP"
+     },
+     {
+      "code": "EMA_TREND_NOT_ALIGNED",
+      "count": 1,
+      "decision": "NO_SETUP"
+     }
+    ]
+   },
+   {
+    "almost_trades": 9,
+    "decisions": {
+     "NO_SETUP": 50
+    },
+    "entries": 0,
+    "evaluations": 50,
+    "instance_id": null,
+    "lab_id": "pa",
+    "last_evaluation_at": "2026-09-29T16:18:54.405325+00:00",
+    "no_setup": 50,
+    "performance": [],
+    "refused": 0,
+    "scope": "lab:pa",
+    "setups": 0,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "top_rejection_reasons": [
+     {
+      "code": "MISSING_ZONE",
+      "count": 32,
+      "decision": "NO_SETUP"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "count": 18,
+      "decision": "NO_SETUP"
+     }
+    ]
+   },
+   {
+    "almost_trades": 1,
+    "decisions": {
+     "ENTERED": 1,
+     "NO_SETUP": 1
+    },
+    "entries": 1,
+    "evaluations": 2,
+    "instance_id": null,
+    "lab_id": "smc",
+    "last_evaluation_at": "2026-09-29T16:18:51.387200+00:00",
+    "no_setup": 1,
+    "performance": [],
+    "refused": 0,
+    "scope": "lab:smc",
+    "setups": 1,
+    "strategy_id": "SMC_SOURCE_V1",
+    "strategy_version": "758a65018fa70471",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "top_rejection_reasons": [
+     {
+      "code": "MISSING_REJECTION",
+      "count": 1,
+      "decision": "NO_SETUP"
+     }
+    ]
+   }
+  ],
+  "telemetry": {
+   "pa": {
+    "at": "2026-09-29T16:18:54.441552+00:00",
+    "backlog": false,
+    "ok": true,
+    "read": 0,
+    "written": 0
+   },
+   "smc": {
+    "at": "2026-09-29T16:18:54.441061+00:00",
+    "backlog": false,
+    "ok": true,
+    "read": 0,
+    "written": 0
+   }
+  }
+ },
+ "strategy_events": {
+  "events": [
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-93d97b022ff59375cb555ef8792d9041",
+    "decision": "NO_SETUP",
+    "event_id": "7fdab017c68250d285ba9a94278532c8",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:35:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-93d97b022ff59375cb555ef8792d9041",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 58,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:54.405325+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-b5eb0183c40c035dbcd10bc25b4d242c",
+    "decision": "NO_SETUP",
+    "event_id": "b871db1626b95d27ba85ca4a249103ec",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:30:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-b5eb0183c40c035dbcd10bc25b4d242c",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 57,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:54.328944+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-f2582d66f8ddf34349e7acb3d7b8607e",
+    "decision": "NO_SETUP",
+    "event_id": "1a4dbf60fc495fe9ac665f6516c1725f",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:25:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-f2582d66f8ddf34349e7acb3d7b8607e",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 56,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:54.251584+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-147729ec9cb8f37393e2b9fc3349403a",
+    "decision": "NO_SETUP",
+    "event_id": "d26ad43d5ce458d8a12e12955e8ce9bb",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:20:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-147729ec9cb8f37393e2b9fc3349403a",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 55,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:54.190676+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-c4537f336e59796a935503cfd5b069e8",
+    "decision": "NO_SETUP",
+    "event_id": "6e69c4d15a3b5724a6b36f9d329e3dcb",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:15:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-c4537f336e59796a935503cfd5b069e8",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 54,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:54.122789+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-dbd16720b9f28ab7843855e6aa809a82",
+    "decision": "NO_SETUP",
+    "event_id": "b74cdfc09f42568b819b7ac632c718dd",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:10:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-dbd16720b9f28ab7843855e6aa809a82",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 53,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:54.058827+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-95ef91a225a28cde832bac605dde83fd",
+    "decision": "NO_SETUP",
+    "event_id": "a2d4ad8723ce50b89fc81954370d1374",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:05:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-95ef91a225a28cde832bac605dde83fd",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 52,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.995541+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-296c5697d285a16d3e030f7cb2cec4ef",
+    "decision": "NO_SETUP",
+    "event_id": "85a505bb89115e9096b33dc603537607",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T16:00:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-296c5697d285a16d3e030f7cb2cec4ef",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 51,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.918597+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-c6a198ab3c077f0bd290a2801c8250ea",
+    "decision": "NO_SETUP",
+    "event_id": "af1337224cc159c98a9408e79bacc58b",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:55:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-c6a198ab3c077f0bd290a2801c8250ea",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 50,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.863060+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-f2d8758a256b62fe23e07fd20b444b78",
+    "decision": "NO_SETUP",
+    "event_id": "89ff8d8bab595e09a22a06c85a5ba921",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:50:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-f2d8758a256b62fe23e07fd20b444b78",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 49,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.797011+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-ac96669e5b17de5c97d5128ca82dfe8d",
+    "decision": "NO_SETUP",
+    "event_id": "dd6d8806a5675f4bbce1ddd4d997bb1d",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:45:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-ac96669e5b17de5c97d5128ca82dfe8d",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 48,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.726145+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-64f13f6e774dd1b2347b5620c35c5ef5",
+    "decision": "NO_SETUP",
+    "event_id": "13d2b7b8bc085f9e8f11fdf343540105",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:40:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-64f13f6e774dd1b2347b5620c35c5ef5",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 47,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.656721+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-3a4dcb786bb860ac045539f191806bcf",
+    "decision": "NO_SETUP",
+    "event_id": "c5f9ecdb5ea85503a1bf933eb65112da",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:35:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-3a4dcb786bb860ac045539f191806bcf",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 46,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.596400+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-8e610d55430283a3d3d52baf3fc25d9a",
+    "decision": "NO_SETUP",
+    "event_id": "414a928252775f27b6096e02ec9e8296",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:30:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-8e610d55430283a3d3d52baf3fc25d9a",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 45,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.541417+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-fbcfd597399aebb44dc7997ac1b846be",
+    "decision": "NO_SETUP",
+    "event_id": "0fcbbb00eb24587fa242582af70ea963",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_ZONE",
+     "blocking": [
+      {
+       "code": "MISSING_ZONE",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone"
+      },
+      {
+       "code": "MISSING_REJECTION",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection"
+      },
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:25:00+00:00",
+     "conditions": [
+      {
+       "code": "MISSING",
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "FAIL"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bullish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+     "source": {
+      "correlation_id": "pa-fbcfd597399aebb44dc7997ac1b846be",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_ZONE",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 44,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.475224+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-afb8130308549f1f782f8bec5e0b178f",
+    "decision": "NO_SETUP",
+    "event_id": "8768c3ee41b85c6eb5265da1923112e4",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "blocking": [
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:20:00+00:00",
+     "conditions": [
+      {
+       "code": null,
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": null,
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bearish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+     "source": {
+      "correlation_id": "pa-afb8130308549f1f782f8bec5e0b178f",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 43,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.420313+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-94a9ae808c467b3f3e339a5225086fd3",
+    "decision": "NO_SETUP",
+    "event_id": "b3c67495e99a5dcb8652903c1c5540d4",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "blocking": [
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:15:00+00:00",
+     "conditions": [
+      {
+       "code": null,
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": null,
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bearish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+     "source": {
+      "correlation_id": "pa-94a9ae808c467b3f3e339a5225086fd3",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 42,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.364412+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-d6c83d5d715be93b7a934df2d96030e4",
+    "decision": "NO_SETUP",
+    "event_id": "b150870d9dca5c908791a5fb5ece575d",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "blocking": [
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:10:00+00:00",
+     "conditions": [
+      {
+       "code": null,
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": null,
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bearish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+     "source": {
+      "correlation_id": "pa-d6c83d5d715be93b7a934df2d96030e4",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 41,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.309781+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-ab3555ff12a15d7c69adfa39e56cdee6",
+    "decision": "NO_SETUP",
+    "event_id": "f76e240b4d115f98b6fe3d7b845b7821",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "blocking": [
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:05:00+00:00",
+     "conditions": [
+      {
+       "code": null,
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": null,
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bearish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+     "source": {
+      "correlation_id": "pa-ab3555ff12a15d7c69adfa39e56cdee6",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 40,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.239897+00:00"
+   },
+   {
+    "agent_id": null,
+    "category": "strategy",
+    "correlation_id": "pa-fed477ca31934c10ccd1f60f32076fd9",
+    "decision": "NO_SETUP",
+    "event_id": "81516dbc53e65cf2857018edb9f67887",
+    "event_type": "evaluation_completed",
+    "evidence": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "blocking": [
+      {
+       "code": "MISSING_PIN_BAR_ONLY",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only"
+      }
+     ],
+     "candle_time": "2026-03-02T15:00:00+00:00",
+     "conditions": [
+      {
+       "code": null,
+       "detail": "confirmed directional support/resistance zone is present",
+       "id": "zone",
+       "kind": "strategy",
+       "label": "zone",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": null,
+       "detail": "closed-candle rejection is required",
+       "id": "rejection",
+       "kind": "strategy",
+       "label": "rejection",
+       "stage": "SETUP",
+       "state": "PASS"
+      },
+      {
+       "code": "MISSING",
+       "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+       "id": "pin_bar_only",
+       "kind": "strategy",
+       "label": "pin bar only",
+       "stage": "SETUP",
+       "state": "FAIL"
+      }
+     ],
+     "direction": "bearish",
+     "feed_state": "SYNCHRONIZED",
+     "final": "NO_SETUP",
+     "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "pa_trace_state": "WATCHING",
+     "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+     "setup_ref": "3da30c4cd6605080a91b1b2f8fa960b9",
+     "source": {
+      "correlation_id": "pa-fed477ca31934c10ccd1f60f32076fd9",
+      "kind": "pa_evaluations",
+      "proposal_ids": []
+     },
+     "state": "WATCHING",
+     "v": 1
+    },
+    "execution_id": null,
+    "instance_id": null,
+    "lab_id": "pa",
+    "latency_ms": null,
+    "metadata": {
+     "blocker_code": "MISSING_PIN_BAR_ONLY",
+     "trace_source": "pa_evaluations"
+    },
+    "order_id": null,
+    "position_id": null,
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "received_at": "2026-09-29T16:18:54.430754+00:00",
+    "seq": 39,
+    "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+    "severity": "INFO",
+    "source_component": "lab:pa",
+    "source_service": "price_action_lab",
+    "state_after": null,
+    "state_before": null,
+    "strategy_id": "PA1_SR_REJECTION",
+    "strategy_version": "1.1.0",
+    "symbol": "BTCUSDT",
+    "timeframe": "5m",
+    "timestamp": "2026-09-29T16:18:53.182546+00:00"
+   }
+  ],
+  "next_before": null
+ },
+ "traces": {
+  "0f2afb4f665c5c4c84f45f22ee090d33": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-c6d62e5f4505f047ddd1294788b02a88",
+   "decision": "NO_SETUP",
+   "event_id": "0f2afb4f665c5c4c84f45f22ee090d33",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T14:45:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "9349fdfadbe15ed9a2cf22027075a337",
+    "source": {
+     "correlation_id": "pa-c6d62e5f4505f047ddd1294788b02a88",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 36,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:52.961479+00:00"
+  },
+  "0fcbbb00eb24587fa242582af70ea963": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-fbcfd597399aebb44dc7997ac1b846be",
+   "decision": "NO_SETUP",
+   "event_id": "0fcbbb00eb24587fa242582af70ea963",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:25:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-fbcfd597399aebb44dc7997ac1b846be",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 44,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.475224+00:00"
+  },
+  "13d2b7b8bc085f9e8f11fdf343540105": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-64f13f6e774dd1b2347b5620c35c5ef5",
+   "decision": "NO_SETUP",
+   "event_id": "13d2b7b8bc085f9e8f11fdf343540105",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:40:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-64f13f6e774dd1b2347b5620c35c5ef5",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 47,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.656721+00:00"
+  },
+  "1a4dbf60fc495fe9ac665f6516c1725f": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-f2582d66f8ddf34349e7acb3d7b8607e",
+   "decision": "NO_SETUP",
+   "event_id": "1a4dbf60fc495fe9ac665f6516c1725f",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:25:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-f2582d66f8ddf34349e7acb3d7b8607e",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 56,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:54.251584+00:00"
+  },
+  "414a928252775f27b6096e02ec9e8296": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-8e610d55430283a3d3d52baf3fc25d9a",
+   "decision": "NO_SETUP",
+   "event_id": "414a928252775f27b6096e02ec9e8296",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:30:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-8e610d55430283a3d3d52baf3fc25d9a",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 45,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.541417+00:00"
+  },
+  "4510ef14af9855fa85e59f1e0ca02198": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-c5f5d9cc77eb1106160f30b56d663a6a",
+   "decision": "NO_SETUP",
+   "event_id": "4510ef14af9855fa85e59f1e0ca02198",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T14:25:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "8ec824a6c4f3509f8b98fe9cfd31cc95",
+    "source": {
+     "correlation_id": "pa-c5f5d9cc77eb1106160f30b56d663a6a",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 32,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:52.777473+00:00"
+  },
+  "490fb071e1305b13b232252512f6f149": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-bc28a1e68176154dbdf17015bf02ccc1",
+   "decision": "NO_SETUP",
+   "event_id": "490fb071e1305b13b232252512f6f149",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T14:20:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "154a6af6f97258e9bbdd7f87b236d47e",
+    "source": {
+     "correlation_id": "pa-bc28a1e68176154dbdf17015bf02ccc1",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 31,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:52.708681+00:00"
+  },
+  "4f72fe68b0e05cb9b97ab5c8aa6c548c": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-a9a3d634ff8c1c33f242eef6fe263948",
+   "decision": "NO_SETUP",
+   "event_id": "4f72fe68b0e05cb9b97ab5c8aa6c548c",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T13:05:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "dbdfee967d205bcb9b703178def46c01",
+    "source": {
+     "correlation_id": "pa-a9a3d634ff8c1c33f242eef6fe263948",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 16,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:51.936631+00:00"
+  },
+  "6e69c4d15a3b5724a6b36f9d329e3dcb": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-c4537f336e59796a935503cfd5b069e8",
+   "decision": "NO_SETUP",
+   "event_id": "6e69c4d15a3b5724a6b36f9d329e3dcb",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:15:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-c4537f336e59796a935503cfd5b069e8",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 54,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:54.122789+00:00"
+  },
+  "7fdab017c68250d285ba9a94278532c8": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-93d97b022ff59375cb555ef8792d9041",
+   "decision": "NO_SETUP",
+   "event_id": "7fdab017c68250d285ba9a94278532c8",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:35:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-93d97b022ff59375cb555ef8792d9041",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 58,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:54.405325+00:00"
+  },
+  "81516dbc53e65cf2857018edb9f67887": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-fed477ca31934c10ccd1f60f32076fd9",
+   "decision": "NO_SETUP",
+   "event_id": "81516dbc53e65cf2857018edb9f67887",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:00:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "3da30c4cd6605080a91b1b2f8fa960b9",
+    "source": {
+     "correlation_id": "pa-fed477ca31934c10ccd1f60f32076fd9",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 39,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.182546+00:00"
+  },
+  "85a505bb89115e9096b33dc603537607": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-296c5697d285a16d3e030f7cb2cec4ef",
+   "decision": "NO_SETUP",
+   "event_id": "85a505bb89115e9096b33dc603537607",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:00:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-296c5697d285a16d3e030f7cb2cec4ef",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 51,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.918597+00:00"
+  },
+  "8768c3ee41b85c6eb5265da1923112e4": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-afb8130308549f1f782f8bec5e0b178f",
+   "decision": "NO_SETUP",
+   "event_id": "8768c3ee41b85c6eb5265da1923112e4",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:20:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+    "source": {
+     "correlation_id": "pa-afb8130308549f1f782f8bec5e0b178f",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 43,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.420313+00:00"
+  },
+  "89ff8d8bab595e09a22a06c85a5ba921": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-f2d8758a256b62fe23e07fd20b444b78",
+   "decision": "NO_SETUP",
+   "event_id": "89ff8d8bab595e09a22a06c85a5ba921",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:50:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-f2d8758a256b62fe23e07fd20b444b78",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 49,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.797011+00:00"
+  },
+  "8f495d0ca3f05c1ba27e0e258b974a1b": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "684dc93e3ba5403aa9ba281ece9bfaf8",
+   "decision": "NO_SETUP",
+   "event_id": "8f495d0ca3f05c1ba27e0e258b974a1b",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_REJECTION",
+    "blocking": [
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "awaiting same-bar native rejection",
+      "id": "rejection"
+     }
+    ],
+    "candle_time": "2026-09-28T21:55:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "native HTF bias is BULLISH",
+      "id": "htf_context",
+      "kind": "strategy",
+      "label": "Completed HTF direction",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "native dealing-range area is discount",
+      "id": "location",
+      "kind": "strategy",
+      "label": "Premium / discount location",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "not required by this candidate",
+      "id": "pivot",
+      "kind": "strategy",
+      "label": "Pivot low",
+      "stage": "SETUP",
+      "state": "NOT_REQUIRED"
+     },
+     {
+      "code": null,
+      "detail": "native liquidity sweep",
+      "id": "sweep",
+      "kind": "strategy",
+      "label": "Sell-side sweep",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "native structure is after the prior sequence event",
+      "id": "structure",
+      "kind": "strategy",
+      "label": "Bullish BOS / CHoCH",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "native POI created after qualifying structure",
+      "id": "poi",
+      "kind": "strategy",
+      "label": "Bullish OB",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "current closed bar overlaps the exact native POI",
+      "id": "retest",
+      "kind": "strategy",
+      "label": "Exact POI retest",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "awaiting same-bar native rejection",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "Bullish rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": null,
+    "final": "NO_SETUP",
+    "reason": "SMC is WATCHING; still missing: Bullish rejection",
+    "setup_ref": "SMC_S5_ORDER_BLOCK_RETEST-BTCUSDT-5M-BULLISH-20250301T052000",
+    "smc_state": "WATCHING",
+    "source": {
+     "decision_id": "684dc93e3ba5403aa9ba281ece9bfaf8",
+     "kind": "smc_agent_journal",
+     "trade_id": null
+    },
+    "strategy_fingerprint": "758a65018fa70471",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "smc",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_REJECTION",
+    "trace_source": "smc_agent_journal"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "SMC is WATCHING; still missing: Bullish rejection",
+   "received_at": "2026-09-29T16:18:54.410538+00:00",
+   "seq": 7,
+   "session_id": null,
+   "severity": "INFO",
+   "source_component": "lab:smc",
+   "source_service": "smc_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "SMC_SOURCE_V1",
+   "strategy_version": "758a65018fa70471",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:51.372617+00:00"
+  },
+  "a2d4ad8723ce50b89fc81954370d1374": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-95ef91a225a28cde832bac605dde83fd",
+   "decision": "NO_SETUP",
+   "event_id": "a2d4ad8723ce50b89fc81954370d1374",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:05:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-95ef91a225a28cde832bac605dde83fd",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 52,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.995541+00:00"
+  },
+  "af1337224cc159c98a9408e79bacc58b": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-c6a198ab3c077f0bd290a2801c8250ea",
+   "decision": "NO_SETUP",
+   "event_id": "af1337224cc159c98a9408e79bacc58b",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:55:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-c6a198ab3c077f0bd290a2801c8250ea",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 50,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.863060+00:00"
+  },
+  "b150870d9dca5c908791a5fb5ece575d": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-d6c83d5d715be93b7a934df2d96030e4",
+   "decision": "NO_SETUP",
+   "event_id": "b150870d9dca5c908791a5fb5ece575d",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:10:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+    "source": {
+     "correlation_id": "pa-d6c83d5d715be93b7a934df2d96030e4",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 41,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.309781+00:00"
+  },
+  "b3c67495e99a5dcb8652903c1c5540d4": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-94a9ae808c467b3f3e339a5225086fd3",
+   "decision": "NO_SETUP",
+   "event_id": "b3c67495e99a5dcb8652903c1c5540d4",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:15:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+    "source": {
+     "correlation_id": "pa-94a9ae808c467b3f3e339a5225086fd3",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 42,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.364412+00:00"
+  },
+  "b74cdfc09f42568b819b7ac632c718dd": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-dbd16720b9f28ab7843855e6aa809a82",
+   "decision": "NO_SETUP",
+   "event_id": "b74cdfc09f42568b819b7ac632c718dd",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:10:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-dbd16720b9f28ab7843855e6aa809a82",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 53,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:54.058827+00:00"
+  },
+  "b871db1626b95d27ba85ca4a249103ec": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-b5eb0183c40c035dbcd10bc25b4d242c",
+   "decision": "NO_SETUP",
+   "event_id": "b871db1626b95d27ba85ca4a249103ec",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:30:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-b5eb0183c40c035dbcd10bc25b4d242c",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 57,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:54.328944+00:00"
+  },
+  "c525c210ba034c0a9879d8b46e82d67b": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "a3f9c2d1e8b74c0f:v1:BTCUSDT:5m:2026-09-29T16:13:00+00:00",
+   "decision": "NO_SETUP",
+   "event_id": "c525c210ba034c0a9879d8b46e82d67b",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "EMA_TREND_NOT_ALIGNED",
+    "blocking": [
+     {
+      "code": "EMA_TREND_NOT_ALIGNED",
+      "detail": "3-candle rejection at support 100, but EMA 9 is below EMA 33; filtered",
+      "id": "ema_trend"
+     }
+    ],
+    "candle_time": "2026-09-29T16:13:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "The instance's own feed reports a synchronized, real provider.",
+      "id": "feed_synchronized",
+      "kind": "market_data",
+      "label": "Feed synchronized",
+      "stage": "MARKET_DATA",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "Enough closed candles for the strategy's declared warm-up.",
+      "id": "closed_candle",
+      "kind": "market_data",
+      "label": "Closed candle available",
+      "stage": "MARKET_DATA",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "not verified: replay data, the higher timeframe is fetched live only",
+      "id": "htf_available",
+      "kind": "market_data",
+      "label": "Higher timeframe available",
+      "stage": "MARKET_DATA",
+      "state": "NOT_APPLICABLE"
+     },
+     {
+      "code": null,
+      "detail": "not verified: replay data, the higher timeframe is fetched live only",
+      "id": "htf_fresh",
+      "kind": "market_data",
+      "label": "Higher timeframe fresh",
+      "stage": "MARKET_DATA",
+      "state": "NOT_APPLICABLE"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "levels_ready",
+      "kind": "strategy",
+      "label": "Swing levels, EMA 9/33 and ATR formed",
+      "stage": "FEATURES",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "at_level",
+      "kind": "strategy",
+      "label": "Candle 1 pushed into a level touched 2+ times",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "Candle 2 wicked through the level and closed back",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": null,
+      "id": "confirmation",
+      "kind": "strategy",
+      "label": "Candle 3 closed beyond the rejection candle",
+      "stage": "CONFIRMATION",
+      "state": "PASS"
+     },
+     {
+      "code": "EMA_TREND_NOT_ALIGNED",
+      "detail": "3-candle rejection at support 100, but EMA 9 is below EMA 33; filtered",
+      "id": "ema_trend",
+      "kind": "strategy",
+      "label": "EMA 9 on the trade's side of EMA 33",
+      "stage": "CONFIRMATION",
+      "state": "FAIL"
+     },
+     {
+      "code": null,
+      "detail": "No hard block, and the quality score is at or above the instance minimum.",
+      "id": "decision_brain",
+      "kind": "gate",
+      "label": "Decision Brain quality gate",
+      "stage": "STRATEGY_ACCEPT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The market-context filter (for example BTC's own trend) does not oppose it.",
+      "id": "cross_asset_context",
+      "kind": "gate",
+      "label": "Cross-asset context gate",
+      "stage": "STRATEGY_ACCEPT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The risk engine can size this entry inside the instance's risk budget.",
+      "id": "risk_sizing",
+      "kind": "gate",
+      "label": "Position sizeable within risk",
+      "stage": "RISK_CHECK",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "Open positions, correlation and portfolio caps all allow another.",
+      "id": "exposure_limits",
+      "kind": "gate",
+      "label": "Exposure limits clear",
+      "stage": "RISK_CHECK",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "No daily/weekly loss limit or cooldown is currently holding entries.",
+      "id": "loss_limits",
+      "kind": "gate",
+      "label": "Loss limits and cooldown clear",
+      "stage": "RISK_CHECK",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The instance is armed to create orders, not paused or signals-only.",
+      "id": "execution_mode",
+      "kind": "gate",
+      "label": "Execution permitted",
+      "stage": "ORDER_INTENT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "This candle's decision has not already produced an order.",
+      "id": "idempotent",
+      "kind": "gate",
+      "label": "Not a duplicate of a live decision",
+      "stage": "ORDER_INTENT",
+      "state": "NOT_REACHED"
+     },
+     {
+      "code": null,
+      "detail": "The isolated paper broker accepted the order intent.",
+      "id": "broker_accepts",
+      "kind": "gate",
+      "label": "Paper broker accepts the order",
+      "stage": "PAPER_BROKER",
+      "state": "NOT_REACHED"
+     }
+    ],
+    "data": "replay",
+    "direction": "long",
+    "final": "NO_SETUP",
+    "quality": null,
+    "reason": "3-candle rejection at support 100, but EMA 9 is below EMA 33; filtered",
+    "stage_reached": "CONFIRMATION",
+    "strategy_registered": true,
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": "a3f9c2d1e8b74c0f",
+   "lab_id": null,
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "EMA_TREND_NOT_ALIGNED",
+    "source_ref": "a3f9c2d1e8b74c0f:v1:BTCUSDT:5m:2026-09-29T16:13:00+00:00",
+    "trace_source": "instance_engine"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "3-candle rejection at support 100, but EMA 9 is below EMA 33; filtered",
+   "received_at": "2026-09-29T16:18:51.489470+00:00",
+   "seq": 3,
+   "session_id": null,
+   "severity": "INFO",
+   "source_component": "instance:a3f9c2d1e8b74c0f",
+   "source_service": "trading_instances",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "three_candle_rejection",
+   "strategy_version": "v1",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:51.487268+00:00"
+  },
+  "c5f9ecdb5ea85503a1bf933eb65112da": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-3a4dcb786bb860ac045539f191806bcf",
+   "decision": "NO_SETUP",
+   "event_id": "c5f9ecdb5ea85503a1bf933eb65112da",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:35:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-3a4dcb786bb860ac045539f191806bcf",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 46,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.596400+00:00"
+  },
+  "d26ad43d5ce458d8a12e12955e8ce9bb": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-147729ec9cb8f37393e2b9fc3349403a",
+   "decision": "NO_SETUP",
+   "event_id": "d26ad43d5ce458d8a12e12955e8ce9bb",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T16:20:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-147729ec9cb8f37393e2b9fc3349403a",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 55,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:54.190676+00:00"
+  },
+  "dd6d8806a5675f4bbce1ddd4d997bb1d": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-ac96669e5b17de5c97d5128ca82dfe8d",
+   "decision": "NO_SETUP",
+   "event_id": "dd6d8806a5675f4bbce1ddd4d997bb1d",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_ZONE",
+    "blocking": [
+     {
+      "code": "MISSING_ZONE",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone"
+     },
+     {
+      "code": "MISSING_REJECTION",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection"
+     },
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:45:00+00:00",
+    "conditions": [
+     {
+      "code": "MISSING",
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "FAIL"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bullish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "68979fe8ca145629998caeb36b97edb4",
+    "source": {
+     "correlation_id": "pa-ac96669e5b17de5c97d5128ca82dfe8d",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_ZONE",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 48,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.726145+00:00"
+  },
+  "ee6a8416b2f65d5784fdb2b9168e04a4": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-c9abc26b2113a0b03e63d3d37dde6d90",
+   "decision": "NO_SETUP",
+   "event_id": "ee6a8416b2f65d5784fdb2b9168e04a4",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T14:40:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "ccc4987039035b669bdc754bbd332f85",
+    "source": {
+     "correlation_id": "pa-c9abc26b2113a0b03e63d3d37dde6d90",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 35,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:52.913896+00:00"
+  },
+  "efbb4fd1f1ee5bf88a08435e5df773a5": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-b6ae169a465df727643704a8ad48b50b",
+   "decision": "NO_SETUP",
+   "event_id": "efbb4fd1f1ee5bf88a08435e5df773a5",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T13:00:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "1dd61032b96550c9abc43b8083684c81",
+    "source": {
+     "correlation_id": "pa-b6ae169a465df727643704a8ad48b50b",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 15,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:51.873949+00:00"
+  },
+  "f76e240b4d115f98b6fe3d7b845b7821": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-ab3555ff12a15d7c69adfa39e56cdee6",
+   "decision": "NO_SETUP",
+   "event_id": "f76e240b4d115f98b6fe3d7b845b7821",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T15:05:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "639d90c8c9f3582c93478421fbd868d5",
+    "source": {
+     "correlation_id": "pa-ab3555ff12a15d7c69adfa39e56cdee6",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 40,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.239897+00:00"
+  },
+  "fbc17fb9460b5f7ba74801bd0de1165a": {
+   "agent_id": null,
+   "category": "strategy",
+   "correlation_id": "pa-777f969112dc30333644a1461d10bf66",
+   "decision": "NO_SETUP",
+   "event_id": "fbc17fb9460b5f7ba74801bd0de1165a",
+   "event_type": "evaluation_completed",
+   "evidence": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "blocking": [
+     {
+      "code": "MISSING_PIN_BAR_ONLY",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only"
+     }
+    ],
+    "candle_time": "2026-03-02T14:55:00+00:00",
+    "conditions": [
+     {
+      "code": null,
+      "detail": "confirmed directional support/resistance zone is present",
+      "id": "zone",
+      "kind": "strategy",
+      "label": "zone",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": null,
+      "detail": "closed-candle rejection is required",
+      "id": "rejection",
+      "kind": "strategy",
+      "label": "rejection",
+      "stage": "SETUP",
+      "state": "PASS"
+     },
+     {
+      "code": "MISSING",
+      "detail": "isolated experiment requires the generic rejection candle to classify as a directional pin bar",
+      "id": "pin_bar_only",
+      "kind": "strategy",
+      "label": "pin bar only",
+      "stage": "SETUP",
+      "state": "FAIL"
+     }
+    ],
+    "direction": "bearish",
+    "feed_state": "SYNCHRONIZED",
+    "final": "NO_SETUP",
+    "next_required_event": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "pa_trace_state": "WATCHING",
+    "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+    "setup_ref": "42cddc265df15125843bd4b01899cbbc",
+    "source": {
+     "correlation_id": "pa-777f969112dc30333644a1461d10bf66",
+     "kind": "pa_evaluations",
+     "proposal_ids": []
+    },
+    "state": "WATCHING",
+    "v": 1
+   },
+   "execution_id": null,
+   "instance_id": null,
+   "lab_id": "pa",
+   "latency_ms": null,
+   "metadata": {
+    "blocker_code": "MISSING_PIN_BAR_ONLY",
+    "trace_source": "pa_evaluations"
+   },
+   "order_id": null,
+   "position_id": null,
+   "reason": "Wait for a directional closed-candle rejection at a confirmed zone",
+   "received_at": "2026-09-29T16:18:54.430754+00:00",
+   "seq": 38,
+   "session_id": "bece9129f1bd4e5e93356a0c7c378f91",
+   "severity": "INFO",
+   "source_component": "lab:pa",
+   "source_service": "price_action_lab",
+   "state_after": null,
+   "state_before": null,
+   "strategy_id": "PA1_SR_REJECTION",
+   "strategy_version": "1.1.0",
+   "symbol": "BTCUSDT",
+   "timeframe": "5m",
+   "timestamp": "2026-09-29T16:18:53.099068+00:00"
   }
  }
 }

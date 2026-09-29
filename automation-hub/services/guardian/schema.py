@@ -26,8 +26,8 @@ _CATALOGUE = {
     "market_data": (
         "websocket_connected", "websocket_disconnected", "websocket_reconnected",
         "candle_received", "candle_closed", "candle_missing", "stale_candle",
-        "stale_htf_candle", "quote_received", "mark_price_received",
-        "abnormal_latency", "sequence_gap"),
+        "stale_htf_candle", "missing_htf_candle", "htf_candle_recovered",
+        "quote_received", "mark_price_received", "abnormal_latency", "sequence_gap"),
     "strategy": (
         "evaluation_started", "evaluation_completed", "condition_passed",
         "condition_failed", "setup_detected", "setup_rejected", "setup_expired",

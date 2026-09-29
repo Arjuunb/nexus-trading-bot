@@ -389,6 +389,8 @@ export const GUARDIAN = JSON.parse(readFileSync(new URL("./fixtures/guardian.jso
 
 const SHAPES: [string, unknown][] = [
   ["/guardian/status", GUARDIAN.status],
+  ["/guardian/strategies", GUARDIAN.strategies],
+  ["/guardian/almost-trades", GUARDIAN.almost_trades],
   ["/guardian/events", GUARDIAN.events],
   ["/guardian/actions", GUARDIAN.actions],
   ["/security/status", SECURITY_STATUS],
@@ -807,6 +809,22 @@ export async function mockApi(page: Page) {
     (url) => url.host === "localhost:8000",
     async (route: Route) => {
       const url = new URL(route.request().url());
+      // Guardian's strategy traces: the events list filtered to the strategy
+      // category, and one event with its whole trace.
+      // Filtered by component the way routers/guardian.py filters.
+      const component = url.searchParams.get("component");
+      const byComponent = (rows: { source_component: string }[]) =>
+        component ? rows.filter((r) => r.source_component === component) : rows;
+      if (url.pathname === "/guardian/events" && url.searchParams.get("category") === "strategy") {
+        return route.fulfill({ json: { ...GUARDIAN.strategy_events, events: byComponent(GUARDIAN.strategy_events.events) } });
+      }
+      if (url.pathname === "/guardian/almost-trades") {
+        return route.fulfill({ json: { almost_trades: byComponent(GUARDIAN.almost_trades.almost_trades) } });
+      }
+      if (url.pathname.startsWith("/guardian/events/")) {
+        const trace = GUARDIAN.traces[decodeURIComponent(url.pathname.slice("/guardian/events/".length))];
+        return trace ? route.fulfill({ json: trace }) : route.fulfill({ status: 404, json: { detail: "no such event" } });
+      }
       if (url.pathname === "/forward-validation") {
         return route.fulfill({ json: {
           stage_status: "BLOCKED", verdict: "NO_ELIGIBLE_CANDIDATES", validation_started_at: null,

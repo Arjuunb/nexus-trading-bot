@@ -1,4 +1,4 @@
-"""Guardian's read-only API (PRD "Nexus Guardian", Phase 1).
+"""Guardian's read-only API (PRD "Nexus Guardian", Phases 1-2).
 
 Every route here is a GET. Guardian has no endpoint that starts, stops,
 configures or trades anything, and none that edits its own evidence: what it
@@ -29,6 +29,7 @@ def guardian_events(component: Optional[str] = None, instance_id: Optional[str] 
                     lab_id: Optional[str] = None, symbol: Optional[str] = None,
                     timeframe: Optional[str] = None, event_type: Optional[str] = None,
                     category: Optional[str] = None, min_severity: Optional[str] = None,
+                    strategy_id: Optional[str] = None, decision: Optional[str] = None,
                     before: Optional[int] = None, limit: int = 200) -> dict:
     """The activity stream, newest first. ``before`` pages back by sequence."""
     if min_severity and min_severity not in SEVERITIES:
@@ -38,8 +39,36 @@ def guardian_events(component: Optional[str] = None, instance_id: Optional[str] 
     rows = _wa.guardian_store.events(
         limit=limit, before_seq=before, min_severity=min_severity,
         source_component=component, instance_id=instance_id, lab_id=lab_id, symbol=symbol,
-        timeframe=timeframe, event_type=event_type, category=category)
+        timeframe=timeframe, event_type=event_type, category=category,
+        strategy_id=strategy_id, decision=decision)
     return {"events": rows, "next_before": rows[-1]["seq"] if len(rows) == max(1, min(limit, 1000)) else None}
+
+
+@router.get("/guardian/events/{event_id}")
+def guardian_event(event_id: str) -> dict:
+    """One event with its full evidence -- for a strategy event, the whole
+    decision trace (PRD §8)."""
+    row = _wa.guardian_store.event(event_id)
+    if row is None:
+        raise HTTPException(404, "no such event")
+    return row
+
+
+@router.get("/guardian/strategies")
+def guardian_strategies(days: int = 7) -> dict:
+    """What each strategy evaluated, set up, entered and was refused, its top
+    rejection reasons, its almost-trades and its closed-trade results
+    (PRD §37). Observation only: nothing here changes a strategy."""
+    return _wa.guardian.strategies(days=days)
+
+
+@router.get("/guardian/almost-trades")
+def guardian_almost_trades(strategy_id: Optional[str] = None, component: Optional[str] = None,
+                           limit: int = 100) -> dict:
+    """Near-valid setups (PRD §9). Each is a MISSED OPPORTUNITY CANDIDATE for
+    research, never a verdict that a rule is wrong."""
+    return {"almost_trades": _wa.guardian_store.almost_trades(
+        limit=limit, strategy_id=strategy_id, source_component=component)}
 
 
 @router.get("/guardian/actions")

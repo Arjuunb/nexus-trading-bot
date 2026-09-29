@@ -34,7 +34,7 @@ export interface GEvent {
   seq: number; event_id: string; timestamp: string; received_at: string;
   source_service: string; source_component: string; instance_id: string | null; lab_id: string | null;
   strategy_id: string | null; symbol: string | null; timeframe: string | null;
-  event_type: string; category: string; severity: Severity;
+  event_type: string; category: string; severity: Severity; decision?: string | null;
   state_before: string | null; state_after: string | null; reason: string | null;
   evidence: unknown; metadata: unknown;
 }
@@ -82,3 +82,59 @@ export function clock(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString([], {
     month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
+
+// ---- Phase 2: strategy telemetry (routers/guardian.py /guardian/strategies)
+
+export interface TraceCondition {
+  id: string | null; label: string | null; stage: string; kind: "market_data" | "strategy" | "gate";
+  state: string; code: string | null; detail: string | null;
+}
+
+export interface Trace {
+  final: string; direction: string | null; blocker_code: string | null; reason: string | null;
+  candle_time?: string | null; stage_reached?: string; data?: string;
+  conditions: TraceCondition[]; blocking: { id: string | null; code: string | null; detail: string | null }[];
+  quality?: { score: number | null; min_score: number | null; hard_blocks: string[]; passed: string[]; weak: string[] } | null;
+}
+
+export interface StrategyPerformance {
+  record_source: string; record_origin: string; strategy_id: string | null; instance_id: string | null;
+  lab_id: string | null; trades: number; wins: number; losses: number; net_pnl: number | null;
+  expectancy: number | null; average_r: number | null; profit_factor: number | null;
+  max_drawdown_r: number | null; r_measured: number; last_closed_at: string | null;
+}
+
+export interface StrategyCard {
+  scope: string; lab_id: string | null; instance_id: string | null; strategy_id: string | null;
+  strategy_version: string | null; symbol: string | null; timeframe: string | null;
+  evaluations: number; setups: number; entries: number; refused: number; no_setup: number;
+  decisions: Record<string, number>; top_rejection_reasons: { decision: string; code: string; count: number }[];
+  almost_trades: number; last_evaluation_at: string | null; performance: StrategyPerformance[];
+}
+
+export interface StrategiesView {
+  days: number; since_day: string; strategies: StrategyCard[]; almost_trades_total: number;
+  telemetry: Record<string, { ok: boolean; read?: number; written?: number; error?: string; at: string }>;
+  performance: StrategyPerformance[]; performance_error: string | null;
+  research: { built: boolean; note: string };
+}
+
+export interface AlmostTrade {
+  identity: string; first_event_id: string; last_event_id: string; first_seen: string; last_seen: string;
+  sightings: number; source_component: string; strategy_id: string | null; strategy_version: string | null;
+  symbol: string | null; timeframe: string | null; direction: string | null; kind: string;
+  classification: string; passed: number; evaluated: number;
+  prevented_by: { condition: string | null; code: string | null; detail: string | null };
+  conditions: TraceCondition[] | null; note: string;
+}
+
+export const CONDITION_TONE: Record<string, Tone> = {
+  PASS: "green", FAIL: "red", HELD: "amber", BYPASSED: "amber", NOT_REACHED: "default",
+  NOT_APPLICABLE: "default", NOT_REQUIRED: "default", UNATTRIBUTED: "purple",
+};
+
+export const FINAL_TONE: Record<string, Tone> = {
+  ENTERED: "green", ORDER_PENDING: "blue", APPROVAL_REQUIRED: "blue", SIGNAL_ONLY: "blue",
+  SIGNAL: "blue", SETUP_PENDING: "blue", REJECTED: "amber", MISSED: "amber", NO_SETUP: "default",
+  ERROR: "red", EXECUTION_UNCERTAIN: "red",
+};

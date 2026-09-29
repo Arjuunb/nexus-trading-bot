@@ -25,7 +25,8 @@ class EventBus:
         self.capacity = int(capacity)
         self.batch = int(batch)
         self.flush_interval_s = float(flush_interval_s)
-        self._q: "queue.Queue[tuple[GuardianEvent, float]]" = queue.Queue(maxsize=self.capacity)
+        # An event, or a callable that builds one on this thread (publish_deferred).
+        self._q: "queue.Queue[tuple[object, float]]" = queue.Queue(maxsize=self.capacity)
         self._pending: list[tuple[GuardianEvent, float]] = []
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -54,6 +55,15 @@ class EventBus:
                 self.dropped += 1
             return False
 
+    def publish_deferred(self, build) -> bool:
+        """Queue a callable that builds the event on the bus's own thread.
+
+        Validating an event and removing secrets from it walks its whole
+        evidence; for a per-candle decision trace that is most of the cost.
+        Deferred, the publishing thread pays only for the queue put. A
+        builder that fails is counted as rejected when it is drained."""
+        return self.publish(build)
+
     def reject(self) -> None:
         """Count an event that failed validation before it reached the bus."""
         with self._lock:
@@ -64,9 +74,19 @@ class EventBus:
         """Write everything queued so far. Returns the number stored."""
         while len(self._pending) < self.capacity:
             try:
-                self._pending.append(self._q.get_nowait())
+                item, queued_at = self._q.get_nowait()
             except queue.Empty:
                 break
+            if not isinstance(item, GuardianEvent):
+                try:
+                    item = item()
+                except Exception:  # noqa: BLE001 -- an unbuildable event is counted, not stored
+                    item = None
+                if not isinstance(item, GuardianEvent):
+                    with self._lock:
+                        self.rejected += 1
+                    continue
+            self._pending.append((item, queued_at))
         stored = 0
         while self._pending:
             chunk = self._pending[:self.batch]

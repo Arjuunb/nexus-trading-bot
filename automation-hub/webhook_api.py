@@ -1488,6 +1488,10 @@ from services.guardian import sources as _guardian_sources  # noqa: E402
 from services.guardian.bus import EventBus as _GuardianBus  # noqa: E402
 from services.guardian.service import GuardianService  # noqa: E402
 from services.guardian.store import GuardianStore  # noqa: E402
+from services.guardian.strategy import (  # noqa: E402
+    PAEvaluationReader as _GuardianPAReader, SMCDecisionReader as _GuardianSMCReader,
+    StrategyTelemetry as _GuardianTelemetry,
+)
 guardian_store = GuardianStore(_os.environ.get(
     "HUB_GUARDIAN_DB", _os.path.join(_os.path.dirname(settings.audit_path), "guardian.db")))
 guardian_bus = _GuardianBus(guardian_store)
@@ -1503,6 +1507,12 @@ guardian = GuardianService(
                                                   session=price_action_paper.session)},
     database=lambda: status_monitor.confirmed(),
     journal=lambda: _guardian_sources.journal_row(journal_recorder),
+    # Strategy telemetry (Phase 2): the labs' own decision tables, read through
+    # read-only connections. Instances publish their traces from the engine.
+    telemetry=_GuardianTelemetry(guardian_store, [
+        _GuardianSMCReader(settings.smc_agent_journal_db, lab_id="smc"),
+        _GuardianPAReader(settings.price_action_paper_db, lab_id="pa")]),
+    performance_path=settings.trade_records_db,
     interval_s=float(_os.environ.get("HUB_GUARDIAN_INTERVAL", "15")))
 
 

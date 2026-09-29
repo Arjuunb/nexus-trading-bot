@@ -37,6 +37,7 @@ from services.market_data_freshness import (
 from services.quality_gate import SAFETY_BLOCKS as QUALITY_GATE_SAFETY_BLOCKS, safety_blocks  # noqa: F401
 from services.quality_gate import STREAK_BLOCK_AT as QUALITY_GATE_STREAK_BLOCK_AT, streak_for_gate, streak_resumes_at
 from services.signal_pipeline import SignalPipeline, gate_blocker
+from services.strategy_trace import publish_htf_context_failure, publish_instance_trace
 
 
 class EngineFeedError(RuntimeError):
@@ -908,17 +909,27 @@ class AutoStrategyEngine:
             else:
                 try:
                     bars, source = self._forward_fetch_for_timeframe(symbol, timeframe, limit)
-                except (EngineFeedError, RuntimeError):
+                except (EngineFeedError, RuntimeError) as exc:
                     if mandatory:
+                        publish_htf_context_failure(
+                            self, symbol=symbol, timeframe=timeframe, code="MISSING_HTF_CANDLE",
+                            detail=f"{symbol} {timeframe} context could not be loaded: {exc}")
                         raise
                     context[timeframe] = []
                     sources.append(f"{timeframe}:unavailable optional bias")
                     continue
                 if not str(source or "").startswith("live"):
+                    publish_htf_context_failure(
+                        self, symbol=symbol, timeframe=timeframe, code="MISSING_HTF_CANDLE",
+                        detail=f"{symbol} {timeframe} live context unavailable")
                     raise EngineFeedError(f"{symbol} {timeframe} live context unavailable")
                 closed = self._closed_bars(bars, timeframe)
             if len(closed) < required_bars:
                 if mandatory:
+                    publish_htf_context_failure(
+                        self, symbol=symbol, timeframe=timeframe, code="MISSING_HTF_CANDLE",
+                        detail=(f"{symbol} {timeframe} returned {len(closed)} completed candles; "
+                                f"requires {required_bars}"))
                     raise EngineFeedError(
                         f"{symbol} {timeframe} returned {len(closed)} completed candles; "
                         f"requires {required_bars}")
@@ -935,6 +946,9 @@ class AutoStrategyEngine:
             age = htf.age_seconds if htf and htf.age_seconds is not None else 0.0
             if htf is None or not htf.fresh:
                 if mandatory:
+                    publish_htf_context_failure(
+                        self, symbol=symbol, timeframe=timeframe, code="STALE_HTF_CANDLE",
+                        detail=f"{symbol} {timeframe} context stale: age={max(0.0, age):.0f}s")
                     raise EngineFeedError(
                         f"{symbol} {timeframe} context stale: age={max(0.0, age):.0f}s")
                 context[timeframe] = []
@@ -1331,6 +1345,16 @@ class AutoStrategyEngine:
             outcome = {"kind": "no_trade", "blocker": blocker}
         else:
             outcome["blocker"] = blocker
+        # Guardian's decision trace for this candle (services/strategy_trace.py).
+        # Queued or dropped, never waited on; nothing is built when Guardian is
+        # not running.
+        publish_instance_trace(
+            self, symbol=sym, candle_time=self.last_blocker_timestamp, blocker=blocker,
+            outcome=outcome,
+            signal_side=(None if signal is None else
+                         "long" if signal.type == SignalType.LONG else "short"),
+            strategy_decision=strategy_decision, position_managed=skip_entry_scan,
+            decision_identity=decision_identity)
         if self.core_v2_observer is not None:
             try:
                 self.core_v2_observer.observe(

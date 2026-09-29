@@ -20,7 +20,7 @@ test("Guardian is one sidebar entry and opens on the Command Center", async ({ p
   await expect(page.getByTestId("guardian-group-journal")).toContainText("DEGRADED");
   await expect(page.getByText("READ-ONLY", { exact: true })).toBeVisible();
   // Only built tabs are offered.
-  await expect(page.getByRole("tab")).toHaveText(["Command Center", "System Map", "Activity"]);
+  await expect(page.getByRole("tab")).toHaveText(["Command Center", "System Map", "Strategies", "Activity"]);
 });
 
 test("the system map says an instance is blocked by its feed, not broken", async ({ page }) => {
@@ -44,4 +44,41 @@ test("activity lists the recorded events with their state changes", async ({ pag
   await expect(table).toContainText("health changed");
   await expect(table).toContainText("HEALTHY → BLOCKED");
   await expect(table).toContainText(`instance:${INSTANCE}`);
+});
+
+// Phase 2. The strategy fixture is real strategy output: the 3-Candle Rejection
+// strategy through the engine, the frozen SMC strategy through its agent and
+// the frozen Price Action engine through its lab (pin-bar experiment on).
+test("the Strategies tab shows what each strategy attempted and why it did not trade", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/#/guardian?tab=strategies");
+  const tiles = page.getByTestId("guardian-strategies");
+  for (const card of GUARDIAN.strategies.strategies) await expect(tiles).toContainText(card.strategy_id);
+  const instance = page.getByTestId(`guardian-strategy-instance:${INSTANCE}`);
+  await expect(instance).toContainText("EMA_TREND_NOT_ALIGNED");
+  await expect(instance).toContainText("1 entries");
+  await expect(page.getByTestId("guardian-strategy-lab:pa")).toContainText("MISSING_PIN_BAR_ONLY");
+  // Near-valid setups are never presented as a verdict on a rule.
+  await expect(page.getByTestId("guardian-almost-note")).toContainText("does not mean the rule was wrong");
+  const almost = page.getByTestId("guardian-almost-trades");
+  await expect(almost).toContainText("Bullish rejection");
+  await expect(almost).toContainText("6/7");
+  // Research is Phase 5 and says so.
+  await expect(page.getByText(GUARDIAN.strategies.research.note)).toBeVisible();
+});
+
+test("a decision trace shows every condition, the one that stopped it, and what was never reached", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/#/guardian?tab=strategies");
+  await page.getByTestId(`guardian-strategy-instance:${INSTANCE}`).click();       // filter to the instance
+  const almost = page.getByTestId("guardian-almost-trades");
+  await expect(almost.locator("li")).toHaveCount(1);
+  await almost.getByRole("button", { name: "Trace" }).click();
+  const trace = page.getByTestId("guardian-trace");
+  const row = (label: string) => trace.locator("tr", { hasText: label });
+  await expect(row("Candle 3 closed beyond the rejection candle")).toContainText("PASS");
+  await expect(row("EMA 9 on the trade's side of EMA 33")).toContainText("FAIL");
+  await expect(row("EMA 9 on the trade's side of EMA 33")).toContainText("EMA_TREND_NOT_ALIGNED");
+  await expect(row("Decision Brain quality gate")).toContainText("NOT REACHED");
+  await expect(trace).toContainText("NO_SETUP");
 });

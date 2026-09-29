@@ -37,12 +37,15 @@ class GuardianService:
                  labs: Optional[dict[str, Callable[[], dict]]] = None,
                  database: Optional[Callable[[], dict]] = None,
                  journal: Optional[Callable[[], dict]] = None,
+                 telemetry=None, performance_path: Optional[str] = None,
                  interval_s: float = 15.0, clock: Callable[[], float] = time.time):
         self.store, self.bus = store, bus
         self.instances = dict(instances or {})    # name -> read-only rows
         self.labs = dict(labs or {})              # lab id -> read-only row
         self.database = database
         self.journal = journal
+        self.telemetry = telemetry                # strategy.StrategyTelemetry (read-only)
+        self.performance_path = performance_path  # the journal's trade records, read-only
         self.interval_s = max(1.0, float(interval_s))
         self.clock = clock
         self._stop = threading.Event()
@@ -204,14 +207,32 @@ class GuardianService:
         if self._collector_errors:
             problems.append(f"{len(self._collector_errors)} collector(s) failing: "
                             + ", ".join(sorted(self._collector_errors)))
+        unread = sorted(lab for lab, r in (getattr(self.telemetry, "last", None) or {}).items()
+                        if not r.get("ok"))
+        if unread:
+            problems.append("cannot read strategy decisions from: " + ", ".join(unread))
         state = h.DEGRADED if problems else h.HEALTHY
         return h.Component(id="guardian", label="Guardian", kind="guardian", raw=state,
                            detail="; ".join(problems) or "observing; evidence being written",
                            observed_at=utcnow(), facts={"bus": stats})
 
     # ------------------------------------------------------------- cycle
+    def _poll_telemetry(self) -> None:
+        if self.telemetry is None:
+            return
+        before = {lab: r.get("ok") for lab, r in (self.telemetry.last or {}).items()}
+        for lab, result in self.telemetry.poll().items():
+            if result.get("ok") is False and before.get(lab) is not False:
+                self._publish("collector_failed", source_component=f"guardian.telemetry.{lab}",
+                              severity="WARNING", lab_id=lab, reason=result.get("error"))
+            elif result.get("ok") and before.get(lab) is False:
+                self._publish("collector_recovered", source_component=f"guardian.telemetry.{lab}",
+                              severity="INFO", lab_id=lab,
+                              reason="strategy decisions readable again")
+
     def cycle(self) -> dict[str, h.Component]:
         started = time.monotonic()
+        self._poll_telemetry()
         nodes = self.observe()
         for cid, node in nodes.items():
             before = self._previous.get(cid)
@@ -279,6 +300,23 @@ class GuardianService:
         return self._thread is not None and self._thread.is_alive()
 
     # ------------------------------------------------------------- read
+    def strategies(self, *, days: int = 7) -> dict:
+        """Per-strategy evaluations, outcomes, rejection reasons, almost-trades
+        and closed-trade performance (PRD §37)."""
+        from services.guardian.strategy import strategy_overview, strategy_performance
+        days = max(1, min(int(days), 90))
+        since_day = datetime.fromtimestamp(self.clock() - (days - 1) * 86_400, timezone.utc).date().isoformat()
+        try:
+            performance, perf_error = strategy_performance(self.performance_path), None
+        except Exception as exc:  # noqa: BLE001 -- say it could not be read, never invent it
+            performance, perf_error = [], f"{type(exc).__name__}: {exc}"[:300]
+        view = strategy_overview(self.store, since_day=since_day, performance=performance,
+                                 telemetry=getattr(self.telemetry, "last", None))
+        view["days"] = days
+        view["performance"] = performance
+        view["performance_error"] = perf_error
+        return view
+
     def snapshot(self) -> dict:
         """Everything the Command Center shows, judged at read time."""
         nodes = {cid: h.Component(**{**data, "depends_on": tuple(data.get("depends_on") or ())})

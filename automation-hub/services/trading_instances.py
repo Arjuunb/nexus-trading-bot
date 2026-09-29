@@ -2151,6 +2151,7 @@ class TradingInstanceManager:
             engine.worker_id = self._worker_id
             engine.strategy_label = f"{inst.strategy_label} {inst.strategy_version}"
             engine.strategy_key = inst.strategy_key
+            engine.guardian_lab_id = getattr(self, "guardian_lab_id", None)
             engine.strategy_version = inst.strategy_version
             engine.decisions = self.decision_store
             engine.reports = self.cycle_store

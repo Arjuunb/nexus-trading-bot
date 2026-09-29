@@ -258,7 +258,9 @@ def test_the_guardian_api_is_read_only_and_live_trading_stays_locked():
     import routers.guardian
     routes = routers.guardian.router.routes
     assert {r.path for r in routes} == {"/guardian/status", "/guardian/events",
-                                         "/guardian/actions", "/guardian/catalogue"}
+                                         "/guardian/events/{event_id}", "/guardian/strategies",
+                                         "/guardian/almost-trades", "/guardian/actions",
+                                         "/guardian/catalogue"}
     assert all(r.methods == {"GET"} for r in routes)
     app = FastAPI()
     app.include_router(webhook_api.router)
