@@ -148,6 +148,8 @@ app.include_router(create_core_v2_router(core_v2_store))
 from routers import public_api as _public_api  # noqa: E402
 app.include_router(_public_api.router)
 app.add_exception_handler(_public_api.PublicApiError, _public_api.public_api_error_handler)
+from routers.guardian_observer import router as _guardian_observer_router  # noqa: E402
+app.include_router(_guardian_observer_router)
 
 
 @app.get("/api/" + API_VERSION)
@@ -329,6 +331,10 @@ async def _require_auth(request: Request, call_next):
         # and must stay session-gated. The landing serves only "/settings/{path}".
         exempt = exempt + ("/settings/", "/app")
     hdr = request.headers.get("x-webhook-secret")
+    observer_key = request.headers.get("x-guardian-observer-key", "")
+    guardian_read = (path == "/guardian/observations" and request.method == "GET"
+                     and bool(settings.guardian_observer_key) and
+                     hmac.compare_digest(observer_key, settings.guardian_observer_key))
     # The retained SQLite engine is deployment-wide legacy state. While the
     # per-user execution stores are migrated to the RLS-backed Supabase tables,
     # never let a regular SaaS user read or control that owner's account. Their
@@ -347,6 +353,7 @@ async def _require_auth(request: Request, call_next):
             # public marketing pages, matched exactly — see _LANDING_PAGE_PATHS
             or (_LANDING_READY and path in _LANDING_PAGE_PATHS)
             or any(path.startswith(p) for p in exempt)
+            or guardian_read
             or _user(request)
             or hdr == settings.admin_key):
         # A browser session is an authenticated operator.  Supply the internal

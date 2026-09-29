@@ -71,6 +71,10 @@ class Settings:
     # key and made the exchange identifier a full application-control secret.
     admin_key: str = field(default_factory=lambda: os.environ.get(
         "HUB_CONTROL_KEY", "dev-control-key"))
+    # Optional, GET-only Guardian observation credential. It has no control,
+    # webhook, exchange, or trading execution authority.
+    guardian_observer_key: str = field(default_factory=lambda: os.environ.get(
+        "HUB_GUARDIAN_OBSERVER_KEY", ""))
     # Compatibility attribute for status/tests. Webhook credentials are now
     # unconditionally scoped to webhook ingestion.
     scope_webhook_secret: bool = True
@@ -235,7 +239,12 @@ def validate_credential_separation(*, production: bool = False) -> None:
         "HUB_WEBHOOK_SECRET": settings.webhook_secret,
         "HUB_EXCHANGE_API_KEY": os.environ.get("HUB_EXCHANGE_API_KEY", ""),
         "HUB_EXCHANGE_API_SECRET": os.environ.get("HUB_EXCHANGE_API_SECRET", ""),
+        "HUB_GUARDIAN_OBSERVER_KEY": settings.guardian_observer_key,
     }
+    if settings.guardian_observer_key and len(settings.guardian_observer_key) < 24:
+        raise RuntimeError("REFUSING TO BOOT: HUB_GUARDIAN_OBSERVER_KEY must be at least 24 characters")
+    if settings.guardian_observer_key and settings.guardian_observer_key == settings.secret_key:
+        raise RuntimeError("REFUSING TO BOOT: HUB_GUARDIAN_OBSERVER_KEY must differ from HUB_SECRET")
     present = [(name, value) for name, value in values.items() if value]
     for index, (left_name, left_value) in enumerate(present):
         for right_name, right_value in present[index + 1:]:

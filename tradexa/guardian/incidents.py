@@ -43,7 +43,8 @@ def classify_incident(event: dict) -> IncidentSignal | None:
                 "candle_missing", "sequence_gap", "websocket_reconnected",
                 "feed_synchronized"}:
         venue = _scope(event, "venue", source)
-        key = f"market_data:{venue}"
+        scope = _scope(event, "scope", "shared")
+        key = f"market_data:{venue}:{scope}"
         if kind == "feed_synchronized":
             verified = (event.get("evidence") or {}).get("closed_candle_continuity_verified") is True
             return IncidentSignal(key, "Market data disruption", "market_data",

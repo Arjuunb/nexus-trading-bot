@@ -17,6 +17,8 @@ from wsgiref.simple_server import make_server
 from .events import GuardianEvent, GuardianEventError, MAX_EVENT_BYTES
 from .health import component_health
 from .incidents import GuardianIncidentEngine
+from .lab_observer import GuardianLabObserver
+from .public_status import GuardianPublicStatusCollector
 from .store import GuardianStore
 
 _STATUSES = {
@@ -236,19 +238,59 @@ def _incident_monitor(store: GuardianStore, engine: GuardianIncidentEngine,
         stopped.wait(0.25 if processed == 500 else 5)
 
 
+def _public_status_monitor(store: GuardianStore, collector: GuardianPublicStatusCollector,
+                           stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            # A failed probe cannot declare trading unhealthy or healthy.
+            # Its own heartbeat explains why downstream evidence may go stale.
+            try:
+                store.record_heartbeat("guardian_public_probe", "FAILED",
+                                       reason="PUBLIC_STATUS_PROBE_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _lab_observation_monitor(store: GuardianStore, collector: GuardianLabObserver,
+                             stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_probe", "FAILED",
+                                       reason="LAB_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
 def main() -> None:
     """Run separately: python -m tradexa.guardian.service (loopback by default)."""
     source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
     if not isinstance(source_keys, dict):
         raise ValueError("GUARDIAN_SOURCE_KEYS_JSON must be an object")
     read_key = os.environ["GUARDIAN_READ_KEY"]
+    lab_observer_key = os.environ.get("GUARDIAN_LAB_OBSERVER_KEY", "")
     hub_key = os.environ.get("HUB_CONTROL_KEY")
-    if hub_key and hub_key in (read_key, *source_keys.values()):
+    if hub_key and hub_key in (read_key, lab_observer_key, *source_keys.values()):
         raise ValueError("Guardian credentials must not reuse HUB_CONTROL_KEY")
+    if lab_observer_key and lab_observer_key in (read_key, *source_keys.values()):
+        raise ValueError("Guardian lab observation credential must be independent")
     required = tuple(part.strip() for part in os.environ.get(
         "GUARDIAN_REQUIRED_COMPONENTS",
-        "guardian,guardian_incident_engine,market_data,trading_instances,pa_lab,smc_lab"
+        "guardian,guardian_incident_engine,api,instance_ledger,instance_market_data,"
+        "trading_instances,pa_lab,smc_lab"
     ).split(",") if part.strip())
+    public_url = os.environ.get("GUARDIAN_PUBLIC_STATUS_URL", "").strip()
+    if public_url and "guardian_public_probe" not in required:
+        required += ("guardian_public_probe",)
+    lab_url = os.environ.get("GUARDIAN_LAB_OBSERVER_URL", "").strip()
+    if lab_url and "guardian_lab_probe" not in required:
+        required += ("guardian_lab_probe",)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required)
@@ -256,8 +298,22 @@ def main() -> None:
     monitor = Thread(target=_self_heartbeat, args=(store, stopped), daemon=True)
     incident_monitor = Thread(target=_incident_monitor,
                               args=(store, app.incidents, stopped), daemon=True)
+    public_collector = (GuardianPublicStatusCollector(store, public_url)
+                        if public_url else None)
+    public_monitor = (Thread(target=_public_status_monitor,
+                             args=(store, public_collector, stopped), daemon=True)
+                      if public_collector else None)
+    lab_collector = (GuardianLabObserver(store, lab_url, lab_observer_key)
+                     if lab_url else None)
+    lab_monitor = (Thread(target=_lab_observation_monitor,
+                          args=(store, lab_collector, stopped), daemon=True)
+                   if lab_collector else None)
     monitor.start()
     incident_monitor.start()
+    if public_monitor:
+        public_monitor.start()
+    if lab_monitor:
+        lab_monitor.start()
     try:
         with make_server(os.environ.get("GUARDIAN_BIND_HOST", "127.0.0.1"),
                          int(os.environ.get("GUARDIAN_PORT", "8765")), app) as server:
@@ -266,6 +322,10 @@ def main() -> None:
         stopped.set()
         monitor.join(timeout=2)
         incident_monitor.join(timeout=2)
+        if public_monitor:
+            public_monitor.join(timeout=2)
+        if lab_monitor:
+            lab_monitor.join(timeout=2)
 
 
 if __name__ == "__main__":
