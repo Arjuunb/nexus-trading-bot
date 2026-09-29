@@ -1,0 +1,156 @@
+"""Guardian-owned SQLite evidence store, separate from every trading ledger."""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import stat
+from contextlib import closing
+from datetime import datetime, timezone
+from pathlib import Path
+
+from .events import GuardianEvent, GuardianEventError, _NAME, _safe_json
+
+
+class GuardianStore:
+    def __init__(self, path: str | Path):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if self.path.is_symlink():
+            raise PermissionError("Guardian evidence database cannot be a symlink")
+        try:
+            descriptor = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(descriptor)
+        file_stat = self.path.stat()
+        if not stat.S_ISREG(file_stat.st_mode) or file_stat.st_nlink != 1:
+            raise PermissionError("Guardian evidence database must be a regular unlinked file")
+        if file_stat.st_mode & 0o077:
+            raise PermissionError("Guardian evidence database must be owner-only")
+        with closing(self._connect()) as conn:
+            mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+            if mode.lower() != "wal":
+                raise RuntimeError("Guardian evidence database requires WAL")
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS events (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_id TEXT NOT NULL UNIQUE,
+                    timestamp TEXT NOT NULL,
+                    received_at TEXT NOT NULL,
+                    source_service TEXT NOT NULL,
+                    source_component TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    payload_json TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp);
+                CREATE INDEX IF NOT EXISTS events_source ON events(source_service, source_component);
+                CREATE TRIGGER IF NOT EXISTS events_no_update
+                  BEFORE UPDATE ON events BEGIN
+                    SELECT RAISE(ABORT, 'Guardian evidence is immutable');
+                  END;
+                CREATE TRIGGER IF NOT EXISTS events_no_delete
+                  BEFORE DELETE ON events BEGIN
+                    SELECT RAISE(ABORT, 'Guardian evidence is immutable');
+                  END;
+                CREATE TABLE IF NOT EXISTS heartbeats (
+                    component TEXT PRIMARY KEY,
+                    state TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    observed_at TEXT NOT NULL
+                );
+            """)
+            conn.commit()
+
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.path, timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA synchronous=FULL")
+        return conn
+
+    def append(self, event: GuardianEvent) -> bool:
+        """Append immutable evidence; an identical retried ID is idempotent.
+
+        Returns False for an identical retry. An ID collision with different
+        content is an error, never a silent overwrite. No trading DB is used.
+        """
+        payload = event.canonical_json()
+        received_at = datetime.now(timezone.utc).isoformat()
+        with closing(self._connect()) as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                existing = conn.execute(
+                    "SELECT payload_json FROM events WHERE event_id=?", (event.event_id,)
+                ).fetchone()
+                if existing is not None:
+                    if existing["payload_json"] != payload:
+                        raise GuardianEventError("event_id collision with different evidence")
+                    conn.commit()
+                    return False
+                conn.execute(
+                    """INSERT INTO events
+                       (event_id, timestamp, received_at, source_service,
+                        source_component, event_type, severity, payload_json)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (event.event_id, event.timestamp.astimezone(timezone.utc).isoformat(),
+                     received_at, event.source_service, event.source_component,
+                     event.event_type, event.severity, payload),
+                )
+                conn.commit()
+                return True
+            except Exception:
+                conn.rollback()
+                raise
+
+    def recent(self, limit: int = 50, *, source_service: str | None = None) -> list[dict]:
+        limit = max(1, min(int(limit), 500))
+        with closing(self._connect()) as conn:
+            if source_service is None:
+                rows = conn.execute(
+                    "SELECT received_at, payload_json FROM events ORDER BY sequence DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT received_at, payload_json FROM events
+                       WHERE source_service=? ORDER BY sequence DESC LIMIT ?""",
+                    (source_service, limit),
+                ).fetchall()
+        return [{**json.loads(row["payload_json"]), "received_at": row["received_at"]}
+                for row in rows]
+
+    def count(self) -> int:
+        with closing(self._connect()) as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+
+    def record_heartbeat(self, component: str, state: str, *, reason: str = "",
+                         observed_at: datetime | None = None) -> None:
+        """Keep only the current heartbeat; lifecycle evidence stays append-only."""
+        if not _NAME.fullmatch(component or "") or state not in (
+                "HEALTHY", "DEGRADED", "BLOCKED", "FAILED", "UNKNOWN"):
+            raise ValueError("invalid Guardian heartbeat")
+        when = observed_at or datetime.now(timezone.utc)
+        if when.tzinfo is None or when.utcoffset() is None:
+            raise ValueError("heartbeat timestamp must include a timezone")
+        if not isinstance(reason, str) or len(reason) > 500:
+            raise ValueError("heartbeat reason is too long")
+        _safe_json(reason)
+        with closing(self._connect()) as conn:
+            conn.execute(
+                """INSERT INTO heartbeats(component, state, reason, observed_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(component) DO UPDATE SET
+                     state=excluded.state, reason=excluded.reason,
+                     observed_at=excluded.observed_at""",
+                (component, state, reason, when.astimezone(timezone.utc).isoformat()),
+            )
+            conn.commit()
+
+    def heartbeats(self) -> dict[str, dict]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT component, state, reason, observed_at FROM heartbeats").fetchall()
+        return {row["component"]: dict(row) for row in rows}

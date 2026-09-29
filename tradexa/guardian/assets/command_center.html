@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <title>Guardian Command Center · Tradexa</title>
+  <link rel="stylesheet" href="/assets/command-center.css">
+  <script src="/assets/command-center.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">TRADEXA / GUARDIAN</p>
+        <h1>Command Center</h1>
+        <p class="subtitle">Read-only operational evidence. Guardian cannot change trading state.</p>
+      </div>
+      <div class="overall">
+        <span class="metric-label">Configured evidence state</span>
+        <span id="overall-state" class="state state-unknown" aria-live="polite">UNKNOWN</span>
+      </div>
+    </header>
+
+    <section class="notice" aria-label="Evidence scope">
+      This view shows only evidence received by Guardian. A missing heartbeat or event is
+      <strong>UNKNOWN</strong>—never proof that a strategy, feed, or broker is healthy.
+    </section>
+
+    <section class="panel access" aria-labelledby="access-title">
+      <div>
+        <h2 id="access-title">Observer access</h2>
+        <p>The read key stays in this tab's memory. It is not saved in browser storage.</p>
+      </div>
+      <div class="access-controls">
+        <label for="read-key">Guardian read key</label>
+        <div class="key-row">
+          <input id="read-key" type="password" autocomplete="off" spellcheck="false" aria-describedby="connection-message">
+          <button id="connect" type="button">Connect</button>
+          <button id="disconnect" type="button" class="secondary" disabled>Disconnect</button>
+        </div>
+        <p id="connection-message" class="helper" role="status" aria-live="polite">Not connected. No evidence loaded.</p>
+      </div>
+    </section>
+
+    <section class="summary" aria-label="Guardian evidence summary">
+      <article class="panel metric">
+        <span class="metric-label">Evidence coverage</span>
+        <strong id="coverage">—</strong>
+        <span id="coverage-detail" class="metric-detail">Awaiting authenticated read</span>
+      </article>
+      <article class="panel metric">
+        <span class="metric-label">Recent events</span>
+        <strong id="event-count">—</strong>
+        <span class="metric-detail">Most recent 50; not a lifetime total</span>
+      </article>
+      <article class="panel metric">
+        <span class="metric-label">Observed open incidents</span>
+        <strong id="incident-count">—</strong>
+        <span class="metric-detail">Most recent 50 incidents; not a lifetime total</span>
+      </article>
+      <article class="panel metric">
+        <span class="metric-label">Last checked</span>
+        <strong id="last-checked">—</strong>
+        <span class="metric-detail">Refreshes every 15 seconds while connected</span>
+      </article>
+    </section>
+
+    <section class="panel" aria-labelledby="components-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">REQUIRED SOURCES</p>
+          <h2 id="components-title">Component health</h2>
+        </div>
+        <span class="section-hint">State is based on fresh heartbeats only</span>
+      </div>
+      <div id="components" class="component-grid" aria-live="polite">
+        <p class="empty">Connect to view Guardian's observed components.</p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="incidents-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CORRELATED EVIDENCE</p>
+          <h2 id="incidents-title">Incidents</h2>
+        </div>
+        <span class="section-hint">An observed failure, not a strategy's ordinary no-trade decision</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Last observed</th><th scope="col">State</th><th scope="col">Incident</th><th scope="col">Root cause / confidence</th><th scope="col">Evidence</th><th scope="col">Timeline</th></tr></thead>
+          <tbody id="incidents"><tr><td colspan="6" class="empty">Connect to load incidents.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="events-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">IMMUTABLE EVIDENCE</p>
+          <h2 id="events-title">Recent events</h2>
+        </div>
+        <span class="section-hint">Newest received first</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Observed</th><th scope="col">Source</th><th scope="col">Event</th><th scope="col">Severity</th><th scope="col">Reason</th><th scope="col">Evidence ID</th></tr></thead>
+          <tbody id="events"><tr><td colspan="6" class="empty">Connect to load evidence.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <footer>Guardian foundation · Local read-only surface · No trading authority</footer>
+  </main>
+</body>
+</html>
