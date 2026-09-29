@@ -78,6 +78,9 @@ export default function CommandCenter({ status }: { status: GuardianStatus }) {
         <StatCard label="Events (24h)" value={String(day.total)} sub="everything Guardian recorded" />
         <StatCard label="Warning or worse (24h)" value={String(day.warning_or_worse)}
           tone={day.warning_or_worse ? "amber" : "default"} />
+        <StatCard label="Integrity findings" value={status.integrity ? String(status.integrity.findings) : "—"}
+          sub={status.integrity ? `paper open risk ${status.integrity.paper_open_risk}` : "not checked yet"}
+          tone={status.integrity?.findings ? "red" : "default"} />
         <StatCard label="Events dropped" value={String(bus.dropped)} sub="queue full; counted, never hidden"
           tone={bus.dropped ? "red" : "default"} />
         <StatCard label="Ingest delay" value={`${bus.last_delay_ms} ms`} sub={`worst ${bus.max_delay_ms} ms`} />

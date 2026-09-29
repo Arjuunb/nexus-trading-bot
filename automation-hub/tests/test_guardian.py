@@ -262,6 +262,7 @@ def test_the_guardian_api_is_read_only_and_live_trading_stays_locked():
                                          "/guardian/events/{event_id}", "/guardian/strategies",
                                          "/guardian/almost-trades", "/guardian/incidents",
                                          "/guardian/incidents/{incident_id}", "/guardian/anomalies",
+                                         "/guardian/integrity",
                                          "/guardian/actions", "/guardian/catalogue"}
     assert all(r.methods == {"GET"} for r in routes)
     app = FastAPI()

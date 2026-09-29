@@ -829,6 +829,7 @@ export async function mockApi(page: Page) {
         return one ? route.fulfill({ json: one }) : route.fulfill({ status: 404, json: { detail: "no such incident" } });
       }
       if (url.pathname === "/guardian/anomalies") return route.fulfill({ json: GUARDIAN.anomalies });
+      if (url.pathname === "/guardian/integrity") return route.fulfill({ json: GUARDIAN.integrity });
       if (url.pathname === "/guardian/almost-trades") {
         return route.fulfill({ json: { almost_trades: byComponent(GUARDIAN.almost_trades.almost_trades) } });
       }

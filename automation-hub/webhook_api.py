@@ -1487,6 +1487,9 @@ adaptive_lab.manager.journal_notify = journal_recorder.notify
 from services.guardian import sources as _guardian_sources  # noqa: E402
 from services.guardian.bus import EventBus as _GuardianBus  # noqa: E402
 from services.guardian.service import GuardianService  # noqa: E402
+from services.guardian.integrity import (  # noqa: E402
+    IntegrityMonitor as _GuardianIntegrity, Source as _GuardianSource,
+)
 from services.guardian.store import GuardianStore  # noqa: E402
 from services.guardian.strategy import (  # noqa: E402
     PAEvaluationReader as _GuardianPAReader, SMCDecisionReader as _GuardianSMCReader,
@@ -1513,6 +1516,15 @@ guardian = GuardianService(
         _GuardianSMCReader(settings.smc_agent_journal_db, lab_id="smc"),
         _GuardianPAReader(settings.price_action_paper_db, lab_id="pa")]),
     performance_path=settings.trade_records_db,
+    # Execution integrity and global exposure (Phase 4): each account's own
+    # records, read-only; the live lock is the broker registry's own answer.
+    integrity=_GuardianIntegrity(guardian_store, [
+        _GuardianSource("MAIN", getattr(_journal_main_ledger, "path", None), kind="ledger"),
+        _GuardianSource("ADAPTIVE_LAB", settings.adaptive_lab_db, kind="ledger"),
+        _GuardianSource("SMC_LAB", settings.smc_paper_db, kind="lab_broker", journal_source="SMC_LAB"),
+        _GuardianSource("PA_LAB", settings.price_action_paper_db, kind="lab_broker", journal_source="PA_LAB")],
+        journal_path=settings.trade_records_db,
+        live_status=lambda: {"locked": bool(broker_registry.live_locked())}),
     interval_s=float(_os.environ.get("HUB_GUARDIAN_INTERVAL", "15")))
 
 

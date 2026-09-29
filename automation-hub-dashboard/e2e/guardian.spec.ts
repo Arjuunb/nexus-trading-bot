@@ -20,7 +20,8 @@ test("Guardian is one sidebar entry and opens on the Command Center", async ({ p
   await expect(page.getByTestId("guardian-group-journal")).toContainText("DEGRADED");
   await expect(page.getByText("READ-ONLY", { exact: true })).toBeVisible();
   // Only built tabs are offered.
-  await expect(page.getByRole("tab")).toHaveText(["Command Center", "Incidents", "System Map", "Strategies", "Activity"]);
+  await expect(page.getByRole("tab")).toHaveText(["Command Center", "Incidents", "System Map", "Strategies",
+    "Risk & Integrity", "Activity"]);
   // The open incident is on the Command Center; anomalies say when there is no baseline yet.
   await expect(page.getByTestId("guardian-open-incidents")).toContainText(GUARDIAN.incidents.incidents[0].title);
   await expect(page.getByText("not enough history yet to judge")).toBeVisible();
@@ -119,4 +120,30 @@ test("a fault that returns before recovery is verified reopens the same incident
   await expect(open).toContainText("OPEN");
   await open.getByRole("button", { name: "Details" }).click();
   await expect(page.getByTestId("guardian-timeline")).toContainText("incident reopened");
+});
+
+// Phase 4. The fixture's reports come from the real integrity monitor over the
+// scene: the strategy's open trade, an SMC-lab paper position and the real
+// journal -- and, for the findings view, a copy of the ledger with its
+// position row deleted.
+test("exposure is added up across instance and lab, and live stays apart", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/#/guardian?tab=integrity");
+  await expect(page.getByTestId("guardian-integrity-clean")).toContainText("Every stage reconciles across 2 account(s)");
+  const exposure = page.getByTestId("guardian-exposure");
+  await expect(exposure).toContainText("BTCUSDT");
+  await expect(exposure).toContainText("MAIN, SMC_LAB");
+  await expect(page.getByText("one bet, not 2")).toBeVisible();
+  await expect(page.getByTestId("guardian-live-exposure")).toContainText("LIVE ROUTING LOCKED");
+  await expect(page.getByTestId("guardian-live-exposure")).toContainText("No live positions.");
+});
+
+test("a fill without its position is shown as a HIGH finding", async ({ page }) => {
+  await mockApi(page);
+  await page.route((url) => url.pathname === "/guardian/integrity",
+    (route) => route.fulfill({ json: GUARDIAN.integrity_with_findings }));
+  await page.goto("/#/guardian?tab=integrity");
+  const findings = page.getByTestId("guardian-integrity-findings");
+  await expect(findings).toContainText("a fill whose position or trade record does not exist");
+  await expect(findings).toContainText("HIGH");
 });

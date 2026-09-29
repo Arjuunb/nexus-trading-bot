@@ -58,6 +58,8 @@ _SIGNALS: tuple[tuple[frozenset, frozenset, Callable[[dict], Optional[str]]], ..
      lambda e: f"htf:{e['source_component']}"),
     (frozenset({"collector_failed"}), frozenset({"collector_recovered"}),
      lambda e: f"collector:{e['source_component']}"),
+    (frozenset({"integrity_violation"}), frozenset({"integrity_resolved"}),
+     lambda e: e["source_component"] if str(e["source_component"]).startswith("integrity:") else None),
 )
 _WATCHED = frozenset().union(*(o | c for o, c, _ in _SIGNALS))
 
@@ -214,6 +216,17 @@ def diagnose(key: str, nodes: dict[str, h.Component], signals: dict[str, dict]) 
                 "why_this_confidence": "reported by the engine from its own higher-timeframe check",
                 "evidence": evidence,
                 "recommended_action": "None needed to stay safe: the instance does not enter without it."}
+    if key.startswith("integrity:"):
+        _, source, rule = (key.split(":", 2) + ["", ""])[:3]
+        evidence = [f"{s['timestamp']}: {s.get('reason') or ''}" for s in signals.values()]
+        return {"kind": EXECUTION, "symptom": f"{source}: {rule.replace('_', ' ')}",
+                "root_cause": "; ".join(s.get("reason") or "" for s in signals.values()) or rule,
+                "confidence": "CONFIRMED",
+                "why_this_confidence": "both records were read directly; one has no counterpart at the next stage",
+                "evidence": evidence,
+                "recommended_action": "Inspect the listed records in Guardian's integrity view. A journal gap is "
+                                      "repaired by the journal recorder's next pass if the ledger is intact; "
+                                      "Guardian changes nothing."}
     if key.startswith("collector:"):
         evidence = [f"{s.get('reason') or ''}" for s in signals.values()]
         return {"kind": INFRA, "symptom": "Guardian cannot read part of the platform",
@@ -272,6 +285,9 @@ def _title(key: str, nodes: dict[str, h.Component], diagnosis: dict) -> str:
         return f"Higher timeframe missing · {key[4:]}"
     if key.startswith("collector:"):
         return f"Guardian cannot read {key[len('collector:'):]}"
+    if key.startswith("integrity:"):
+        _, source, rule = (key.split(":", 2) + ["", ""])[:3]
+        return f"Integrity · {source}: {rule.replace('_', ' ')}"
     label = node.label if node else key
     return f"{label}: {diagnosis['symptom']}"[:200]
 

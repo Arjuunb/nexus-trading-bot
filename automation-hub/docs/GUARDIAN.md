@@ -1,9 +1,9 @@
 # Nexus Guardian
 
 Guardian is the platform's independent, read-only observer. Built so far:
-Phase 1 (foundation), Phase 2 (deep strategy telemetry) and Phase 3
-(incident intelligence). Phases 4–8 are not built yet, and the UI does not
-pretend they are.
+Phase 1 (foundation), Phase 2 (deep strategy telemetry), Phase 3
+(incident intelligence) and Phase 4 (execution and risk intelligence).
+Phases 5–8 are not built yet, and the UI does not pretend they are.
 
 ## Phase 1: Foundation
 
@@ -31,9 +31,10 @@ AI. First make the platform observable"):
 | Strategy telemetry | `services/guardian/strategy.py` | Phase 2: SMC and PA trace mapping, the read-only lab readers, the almost-trade rules, the strategy view and closed-trade results. |
 | Incidents | `services/guardian/incidents.py` | Phase 3: grouping by root, diagnosis with confidence, lifecycle, timeline, correlation. |
 | Anomalies | `services/guardian/anomalies.py` | Phase 3: deviations from each stream's own baseline. |
+| Integrity | `services/guardian/integrity.py` | Phase 4: stage-by-stage reconciliation and the global paper/live exposure view. |
 | Instance traces | `services/strategy_trace.py` | Phase 2: the per-candle trace from the engine's own outcome. Outside the Guardian package because it reads the strategy gate registry. |
-| API | `routers/guardian.py` | `GET /guardian/status`, `/events`, `/events/{id}`, `/strategies`, `/almost-trades`, `/incidents`, `/incidents/{id}`, `/anomalies`, `/actions`, `/catalogue`. GET only. |
-| UI | `automation-hub-dashboard/src/pages/GuardianHub.tsx` | One sidebar entry, "Guardian", with five tabs: Command Center, Incidents, System Map, Strategies and Activity. |
+| API | `routers/guardian.py` | `GET /guardian/status`, `/events`, `/events/{id}`, `/strategies`, `/almost-trades`, `/incidents`, `/incidents/{id}`, `/anomalies`, `/integrity`, `/actions`, `/catalogue`. GET only. |
+| UI | `automation-hub-dashboard/src/pages/GuardianHub.tsx` | One sidebar entry, "Guardian", with six tabs: Command Center, Incidents, System Map, Strategies, Risk & Integrity and Activity. |
 
 ## What it observes today
 
@@ -268,7 +269,62 @@ API: `GET /guardian/incidents?state=active|OPEN|RECOVERED|CLOSED`,
 UI: a new **Incidents** tab. The Command Center shows open incidents and
 anomalies.
 
-## PRD §44 acceptance tests: status after Phase 3
+## Phase 4: Execution and risk intelligence
+
+### Every stage reconciles (PRD §23, §25)
+
+Guardian reads each account's own records through read-only connections:
+* the instance ledger and the Adaptive lab ledger (fills, positions, trades,
+  order intents);
+* the SMC and PA labs' paper broker;
+* the journal's trade records.
+
+It reports any record with no counterpart at the next stage:
+
+| Rule | Severity | Meaning |
+|---|---|---|
+| `fill_without_position` | HIGH | A fill whose position or trade record does not exist |
+| `position_trade_mismatch` | HIGH | A position and its trade disagree about whether it is open |
+| `trade_not_journalled` | HIGH | A completed trade with no journal record after the grace period (15 min) |
+| `open_trade_not_journalled` | WARNING | An open trade with no journal record after the grace period |
+| `intent_unresolved` | WARNING | An order intent still pending or claimed after 30 minutes |
+| `lab_position_not_journalled` | WARNING | An open lab position with no open journal record |
+| `journal_incomplete` | WATCH | Closed journal records the journal itself grades MINIMAL |
+| `live_exposure_while_locked` | CRITICAL | A position in an account not labelled paper while live routing is locked |
+
+Notes:
+* Legs created by a partial reduce are judged with their root trade.
+* PARTIAL journal records are not flagged. A replayed trade has no quote
+  evidence, and that is not a fault.
+* A journal Guardian cannot read is reported as such. Guardian then makes no
+  journal findings at all rather than guessing.
+
+A rule is reported once when it starts failing (`integrity_violation`) and
+once when it clears (`integrity_resolved`). Both are incident signals, so a
+journal gap becomes a CONFIRMED incident that recovers when the recorder
+catches up. Guardian repairs nothing.
+
+### Global risk observer (PRD §24)
+
+Open exposure is added up across every instance and lab from the positions
+themselves:
+* risk to stop is entry-to-stop distance times size;
+* a position with no recorded stop counts as unknown risk, never as zero.
+
+It is grouped by symbol and side (listing the accounts) and by correlated
+cluster. Crypto majors form one cluster, the same rule as the signal
+pipeline's correlation guard, so "three BTC-quoted longs" reads as one bet.
+
+**Paper and live are never added together.** An account is paper only when
+its own record says so. The known paper labels are the broker's `PAPER` and
+the labs' `SMC_LAB` and `PA_LAB`. Any other label is kept out of the paper
+totals and listed separately. If such an account holds a position while live
+routing is locked (the broker registry's own answer), that is CRITICAL.
+
+API: `GET /guardian/integrity`. UI: a **Risk & Integrity** tab. The Command
+Center shows the finding count and paper open risk.
+
+## PRD §44 acceptance tests: status after Phase 4
 
 | # | Test | Status |
 |---|---|---|
@@ -279,21 +335,21 @@ anomalies.
 | 5 | Traces rejected setups | **Done.** Tested with the real 3-Candle Rejection (instance), SMC (agent) and Price Action (lab) strategies. |
 | 6 | Records almost-trades | **Done.** One per setup, never a rule verdict. |
 | 7 | Detects worker crashes | **Done.** A real crash inside the worker thread. |
-| 8 | Detects journal failures | **Partly.** A journal that cannot read its ledger is DEGRADED; per-trade journal checks are Phase 4. |
-| 9 | Order/journal inconsistency | Phase 4. |
+| 8 | Detects journal failures | **Done.** A journal that cannot read its ledger is DEGRADED; a completed trade with no journal record is a HIGH finding and a CONFIRMED incident. |
+| 9 | Order/journal inconsistency | **Done.** Fill, position, trade and journal reconciled; tested with real trades and a corrupted ledger copy. |
 | 10 | Correlates related incidents | **Done.** A Binance outage across two instances and a lab is one incident; overlapping incidents on one instance are linked. |
 | 11 | Survives trading-worker failure | **Done.** |
 | 12 | Trading survives Guardian failure | **Done.** A real trade with Guardian's store failing and its queue full. |
 | 13–15 | Cannot modify strategy, raise risk or enable live | **Done by construction and tested.** |
 | 16 | Research strategies isolated | Phase 5. |
-| 17 | Paper/live ledgers isolated | Phase 4 (global risk observer). |
+| 17 | Paper/live ledgers isolated | **Done.** Paper totals hold only paper-labelled accounts; any other account with a position while live is locked is CRITICAL. |
 | 18 | Every Guardian action audited | **Done.** Append-only. |
 | 19 | Duplicate alerts grouped | **Done** for incidents: one `incident_opened` per outage, engine events attached. Notification sending is Phase 8. |
 | 20 | Only evidence-backed conclusions | **Done** for health. A blind collector reports UNKNOWN, and one socket is not called a Binance outage. |
 
 Tests: `tests/test_guardian.py` (16), `tests/test_guardian_strategy.py` (15),
-`tests/test_guardian_incidents.py` (13) and
-`automation-hub-dashboard/e2e/guardian.spec.ts` (7). The UI's mock data
+`tests/test_guardian_incidents.py` (13), `tests/test_guardian_integrity.py` (10)
+and `automation-hub-dashboard/e2e/guardian.spec.ts` (9). The UI's mock data
 is the real service's output over real strategies
 (`e2e/fixtures/generate_guardian_fixture.py`).
 

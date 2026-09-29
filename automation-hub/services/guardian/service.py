@@ -41,6 +41,7 @@ class GuardianService:
                  journal: Optional[Callable[[], dict]] = None,
                  telemetry=None, performance_path: Optional[str] = None,
                  incident_verify_s: float = 60.0, degraded_grace_s: float = 300.0,
+                 integrity=None,
                  interval_s: float = 15.0, clock: Callable[[], float] = time.time):
         self.store, self.bus = store, bus
         self.instances = dict(instances or {})    # name -> read-only rows
@@ -55,6 +56,7 @@ class GuardianService:
         self.incidents = IncidentEngine(store, verify_s=incident_verify_s,
                                         degraded_grace_s=degraded_grace_s)
         self.anomalies = AnomalyDetector(store)
+        self.integrity = integrity                # Phase 4: integrity.IntegrityMonitor
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._previous: dict[str, str] = {}
@@ -260,7 +262,10 @@ class GuardianService:
                           reason="no longer observed: stopped or removed by its owner")
         self._previous = {cid: n.effective for cid, n in nodes.items()}
         self.store.save_components({cid: n.to_dict() for cid, n in nodes.items()})
-        for name, step in (("incidents", self.incidents.cycle), ("anomalies", self.anomalies.cycle)):
+        steps = [("incidents", self.incidents.cycle), ("anomalies", self.anomalies.cycle)]
+        if self.integrity is not None:
+            steps.insert(0, ("integrity", self.integrity.cycle))
+        for name, step in steps:
             try:
                 step(nodes, now=self.clock(), publish=self._publish)
                 if name in self._collector_errors:
@@ -336,6 +341,19 @@ class GuardianService:
         view["performance_error"] = perf_error
         return view
 
+    def _integrity_summary(self) -> Optional[dict]:
+        report = getattr(self.integrity, "last", None)
+        if not report:
+            return None
+        return {"at": report["at"], "findings": len(report["findings"]),
+                "worst": max((f["severity"] for f in report["findings"]),
+                             key=lambda s: ["INFO", "WATCH", "WARNING", "HIGH", "CRITICAL"].index(s),
+                             default=None),
+                "paper_open_risk": report["exposure"]["paper"]["risk"],
+                "paper_positions": report["exposure"]["paper"]["positions"],
+                "live_positions": report["exposure"]["live"]["positions"],
+                "live_routing_locked": report["exposure"]["live"]["routing_locked"]}
+
     def snapshot(self) -> dict:
         """Everything the Command Center shows, judged at read time."""
         nodes = {cid: h.Component(**{**data, "depends_on": tuple(data.get("depends_on") or ())})
@@ -364,6 +382,7 @@ class GuardianService:
             "incidents": {"counts": self.incidents.counts(),
                           "active": self.incidents.list(state="active", limit=10)},
             "anomalies": self.anomalies.active(),
+            "integrity": self._integrity_summary(),
             "boundary": {"mode": "read-only",
                          "may_change": [],
                          "never_changes": ["strategy rules or parameters", "risk limits or leverage",

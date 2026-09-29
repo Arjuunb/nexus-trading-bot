@@ -2684,6 +2684,7 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .gd-incident-times { margin-bottom: 10px; }
 .gd-sub { margin: 12px 0 6px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
 .gd-more { display: inline-block; margin-top: 8px; font-size: 12px; }
+.gd-cluster { font-size: 12px; margin-top: 8px; }
 @media (max-width: 900px) { .gd-chain > li { grid-template-columns: 1fr; gap: 2px; } }
 @media (max-width: 900px) {
   .gd-hero { flex-direction: column; } .gd-hero-meta { text-align: left; }

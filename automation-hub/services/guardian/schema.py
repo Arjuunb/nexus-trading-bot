@@ -39,7 +39,8 @@ _CATALOGUE = {
     "execution": (
         "intent_created", "order_submitted", "order_acknowledged", "order_rejected",
         "order_filled", "partial_fill", "execution_uncertain",
-        "reconciliation_started", "reconciliation_completed"),
+        "reconciliation_started", "reconciliation_completed",
+        "integrity_violation", "integrity_resolved"),
     "position": (
         "position_opened", "stop_updated", "target_updated", "position_closed",
         "stop_hit", "target_hit"),

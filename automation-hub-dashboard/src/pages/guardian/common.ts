@@ -29,6 +29,8 @@ export interface GuardianStatus {
   events_24h: { total: number; warning_or_worse: number };
   incidents?: { counts: Record<string, number>; active: Incident[] };
   anomalies?: Anomaly[];
+  integrity?: { at: string; findings: number; worst: Severity | null; paper_open_risk: number;
+    paper_positions: number; live_positions: number; live_routing_locked: boolean | null } | null;
   boundary: { mode: string; may_change: string[]; never_changes: string[] };
 }
 
@@ -173,3 +175,20 @@ export const INCIDENT_TONE: Record<string, Tone> = { OPEN: "red", RECOVERED: "am
 export const CONFIDENCE_TONE: Record<string, Tone> = {
   CONFIRMED: "green", "HIGH CONFIDENCE": "blue", PROBABLE: "amber", POSSIBLE: "purple", UNKNOWN: "default",
 };
+
+// ---- Phase 4: integrity and exposure
+
+export interface ExposureTotals {
+  positions: number; notional: number; risk: number; risk_unknown: number;
+  by_symbol: { symbol: string; side: string; positions: number; notional: number; risk: number;
+    risk_unknown: number; accounts: string[] }[];
+  by_cluster: Record<string, { long: number; short: number; net: number; positions: number }>;
+}
+
+export interface IntegrityReport {
+  at: string; journal_checked: boolean; errors: Record<string, string>;
+  sources: Record<string, Record<string, unknown>>;
+  findings: { rule: string; source: string; item: string; detail: string; severity: Severity; meaning: string }[];
+  exposure: { paper: ExposureTotals; live: ExposureTotals & { routing_locked: boolean | null }; note: string;
+    positions: Record<string, unknown>[] };
+}

@@ -357,4 +357,5 @@ def test_the_incident_api_is_read_only():
     assert "incidents" in listing and "counts" in listing
     assert client.get("/guardian/incidents/999999").status_code == 404
     assert "active" in client.get("/guardian/anomalies").json()
+    assert client.get("/guardian/integrity").status_code == 200
     assert client.post("/guardian/incidents").status_code == 405

@@ -98,6 +98,18 @@ def guardian_anomalies() -> dict:
             "recent": _wa.guardian_store.events(event_type="anomaly_detected", limit=50)}
 
 
+@router.get("/guardian/integrity")
+def guardian_integrity() -> dict:
+    """Execution and journal reconciliation findings, and open exposure
+    across every account with paper and live kept apart (PRD §23-25).
+    Reading it changes nothing."""
+    import time
+    monitor = _wa.guardian.integrity
+    if monitor is None:
+        raise HTTPException(503, "integrity monitoring is not configured")
+    return monitor.last or monitor.run(now=time.time())
+
+
 @router.get("/guardian/actions")
 def guardian_actions(limit: int = 100) -> dict:
     """Everything Guardian itself has done, append-only (PRD §39)."""

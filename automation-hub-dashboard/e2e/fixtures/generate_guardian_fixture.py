@@ -26,6 +26,7 @@ sys.path.insert(0, str(HERE.parents[2] / "automation-hub"))
 from services.guardian.bus import EventBus  # noqa: E402
 from services.guardian.service import GuardianService  # noqa: E402
 from services.guardian.store import GuardianStore  # noqa: E402
+from services.guardian.integrity import IntegrityMonitor, Source  # noqa: E402
 from services.guardian.strategy import StrategyTelemetry  # noqa: E402
 
 store = GuardianStore()
@@ -69,6 +70,7 @@ def strategy_scene(tmp: Path) -> list:
     from tests.test_three_candle_rejection import _history, _long_pattern
 
     g.install(bus)
+    ledgers = []
     for k, (trend, open_) in enumerate((("down", 101.6), ("up", 110.0))):
         ledger = SqliteLedger(str(tmp / f"ledger{k}.db"))
         scoped = InstanceLedger(ledger, instance["id"], "sess-1")
@@ -91,6 +93,7 @@ def strategy_scene(tmp: Path) -> list:
         strategy.bars.extend(bars[:-3])
         for bar in bars[-3:]:
             engine._process_bar("BTCUSDT", bar, strategy)
+        ledgers.append(ledger)
     g.uninstall()
 
     journal = SMCAgentJournal(str(tmp / "agent.db"))
@@ -111,11 +114,42 @@ def strategy_scene(tmp: Path) -> list:
     for bar in candles[150:]:
         pa.process_closed_bar(bar, market_data_health="SYNCHRONIZED")
         account.record_evaluation(pa.visual_state(candle_window=3000), bar, {"state": "SYNCHRONIZED"})
-    return [SMCDecisionReader(str(tmp / "agent.db")), PAEvaluationReader(account.path)]
+    return [SMCDecisionReader(str(tmp / "agent.db")), PAEvaluationReader(account.path)], ledgers
+
+
+def integrity_scene(tmp: Path, ledgers) -> IntegrityMonitor:
+    """The taken trade stays open (paper risk to its stop), an SMC-lab paper
+    position, and the real journal recorder over the instance ledger."""
+    from data.trade_record_store import TradeRecordStore
+    from services.journal_recorder import JournalRecorder, LedgerSource
+    from tests.test_guardian_integrity import _broker_position
+    recorder = JournalRecorder(TradeRecordStore(str(tmp / "records.db")))
+    recorder.add_ledger(LedgerSource("MAIN", ledgers[1]))
+    recorder.reconcile()
+    _broker_position(tmp / "smc_lab.db", "SMC_LAB")
+    return IntegrityMonitor(store, [Source("MAIN", ledgers[1].path, kind="ledger"),
+                                    Source("SMC_LAB", str(tmp / "smc_lab.db"), kind="lab_broker")],
+                            journal_path=str(tmp / "records.db"), live_status=lambda: {"locked": True},
+                            every=1)
+
+
+def broken_integrity(tmp: Path, ledgers) -> dict:
+    """The same monitor over a copy of the instance ledger whose position row
+    was deleted: what a fill without its position looks like."""
+    import sqlite3
+    copy = tmp / "ledger_broken.db"
+    shutil.copy(ledgers[1].path, copy)
+    conn = sqlite3.connect(copy)
+    conn.execute("DELETE FROM positions")
+    conn.commit()
+    conn.close()
+    return IntegrityMonitor(GuardianStore(), [Source("MAIN", str(copy), kind="ledger")],
+                            journal_path=str(tmp / "records.db"), live_status=lambda: {"locked": True},
+                            every=1).run(now=time.time())
 
 
 tmpdir = Path(tempfile.mkdtemp())
-readers = strategy_scene(tmpdir)
+readers, scene_ledgers = strategy_scene(tmpdir)
 second = {"id": "7e1d4b09c2a35f86", "symbol": "ETHUSDT", "timeframe": "15m",
           "strategy_id": "three_candle_rejection", "strategy_label": "3-Candle Rejection · EMA 9/33",
           "mode": "trading", "live_feed": True, "state": "running", "paused": False, "alive": True,
@@ -126,6 +160,7 @@ svc = GuardianService(store, bus, instances={"main": lambda: [instance, second]}
                                                                     "detail": "Recording decisions and fills"}},
                                         "last_sample_at": time.time(), "interval_s": 60},
                       journal=lambda: journal, telemetry=StrategyTelemetry(store, readers),
+                      integrity=integrity_scene(tmpdir, scene_ledgers),
                       interval_s=15)
 # Phase 3 scene. A Binance outage stalls both instances and the SMC lab at
 # once: one incident, recovered and verified. Then one instance's own feed
@@ -174,6 +209,8 @@ out = {"status": status,
        "traces": {event_id: store.event(event_id) for event_id in sorted(wanted)},
        "incidents": {"incidents": svc.incidents.list(), "counts": svc.incidents.counts()},
        "incident_details": {str(i["id"]): svc.incidents.get(i["id"]) for i in svc.incidents.list()},
+       "integrity": svc.integrity.last,
+       "integrity_with_findings": broken_integrity(tmpdir, scene_ledgers),
        "anomalies": {"active": svc.anomalies.active(),
                      "recent": store.events(event_type="anomaly_detected", limit=50)}}
 shutil.rmtree(tmpdir, ignore_errors=True)
