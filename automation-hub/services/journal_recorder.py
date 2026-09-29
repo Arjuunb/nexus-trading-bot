@@ -1048,6 +1048,7 @@ class JournalRecorder:
         self.ledgers: list[LedgerSource] = []
         self.labs: list = []                 # lab projectors (services/journal_labs.py)
         self.legacy = None                   # legacy journal migration
+        self.before_pass: list[Callable[[], None]] = []
         self.after_pass: list[Callable[[], None]] = []
         self._ledger = LedgerProjector(store)
         self._decisions = DecisionProjector(store)
@@ -1072,6 +1073,13 @@ class JournalRecorder:
             started = time.monotonic()
             report: dict = {"at": utcnow(), "ledgers": [], "labs": [], "decisions": []}
             errors = []
+            for hook in self.before_pass:
+                # e.g. the Supabase ledger mirror catching up before it is read
+                try:
+                    hook()
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"before-pass {getattr(hook, '__name__', hook)}: "
+                                  f"{type(exc).__name__}: {exc}")
             for source in self.ledgers:
                 try:
                     report["ledgers"].append(self._ledger.project(source))

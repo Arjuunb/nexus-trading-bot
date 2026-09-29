@@ -1450,8 +1450,19 @@ def _parked_intents(manager):
     return parked
 
 
+# The journal reads the ledger with SQL. A Supabase ledger cannot be read that
+# way, so the recorder reads a local, read-only mirror of the four tables it
+# needs, brought up to date before every pass (services/ledger_mirror.py).
+ledger_mirror = None
+_journal_main_ledger = ledger
+if type(ledger).__name__ == "SupabaseLedger":
+    from services.ledger_mirror import LedgerMirror, PostgrestTables  # noqa: E402
+    ledger_mirror = LedgerMirror(PostgrestTables(ledger), _os.environ.get(
+        "HUB_LEDGER_MIRROR_DB", _os.path.join(_os.path.dirname(settings.audit_path), "ledger_mirror.db")))
+    _journal_main_ledger = ledger_mirror.ledger
+    journal_recorder.before_pass.append(ledger_mirror.sync)
 journal_recorder.add_ledger(LedgerSource(
-    "MAIN", ledger, instances=_journal_instances(instance_manager),
+    "MAIN", _journal_main_ledger, instances=_journal_instances(instance_manager),
     pending_intents=_parked_intents(instance_manager),
     decision_store=decision_store))
 journal_recorder.add_ledger(LedgerSource(

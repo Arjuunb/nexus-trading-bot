@@ -919,3 +919,36 @@ output that fails on the old code.
   the health case fails on the old health code alone (0.75 instead of 1.0).
 * Validation: `automation-hub` tests 3,556 passed, 15 skipped; engine tests
   509 passed; audit harness 37/37, ALL MATCH, 18/18, 85/85.
+
+**The journal could not read the production ledger. FIXED.**
+* Bug: production's ledger is Supabase. The journal recorder reads ledgers
+  with SQL, found no local connection, and skipped the MAIN ledger on every
+  pass. No Trading Instance trade reached the Journal on the server; only
+  the labs, the decision stores and the legacy import did. Guardian
+  surfaced it as "not journalling: MAIN".
+* Change: `services/ledger_mirror.py` keeps a local, read-only copy of the
+  four tables the recorder reads (`paper_trades`, `paper_executions`,
+  `webhook_events`, `instance_engine_logs`), using the ledger's own schema.
+  It syncs before every pass. Each sync:
+  * reads rows at or after each table's last timestamp, with a 10-minute
+    overlap;
+  * re-reads every claimed or pending order, so a promotion or a released
+    claim is reflected;
+  * never writes to Supabase.
+
+  The recorder then reads the copy with its existing SQL, unchanged. The
+  mirror is used only when the ledger is Supabase (`HUB_LEDGER_MIRROR_DB`,
+  default `ledger_mirror.db` in the data directory).
+* Tests: `tests/test_ledger_mirror.py`. A real ledger with real trades
+  stands in for Supabase and answers the same two queries PostgREST
+  answers. The journal built from the copy equals the journal built from the
+  ledger itself for:
+  * an open forward trade, with paging forced;
+  * a trade that closes after a sync;
+  * new trades;
+  * a released claim.
+
+  A remote column the local schema lacks is kept, and a failing remote is
+  reported while the copy keeps what it had. The PostgREST adapter's queries
+  are checked for shape only (read-only); they cannot run against Supabase
+  here.
