@@ -17,6 +17,7 @@ from wsgiref.simple_server import make_server
 from .events import GuardianEvent, GuardianEventError, MAX_EVENT_BYTES
 from .health import component_health
 from .incidents import GuardianIncidentEngine
+from .lab_backfill import GuardianLabBackfill
 from .lab_observer import GuardianLabObserver
 from .public_status import GuardianPublicStatusCollector
 from .store import GuardianStore
@@ -268,6 +269,20 @@ def _lab_observation_monitor(store: GuardianStore, collector: GuardianLabObserve
         stopped.wait(30)
 
 
+def _lab_backfill_monitor(store: GuardianStore, collector: GuardianLabBackfill,
+                          stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_backfill", "FAILED",
+                                       reason="LAB_BACKFILL_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
 def main() -> None:
     """Run separately: python -m tradexa.guardian.service (loopback by default)."""
     source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
@@ -291,6 +306,9 @@ def main() -> None:
     lab_url = os.environ.get("GUARDIAN_LAB_OBSERVER_URL", "").strip()
     if lab_url and "guardian_lab_probe" not in required:
         required += ("guardian_lab_probe",)
+    backfill_url = os.environ.get("GUARDIAN_LAB_BACKFILL_URL", "").strip()
+    if backfill_url and "guardian_lab_backfill" not in required:
+        required += ("guardian_lab_backfill",)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required)
@@ -308,12 +326,19 @@ def main() -> None:
     lab_monitor = (Thread(target=_lab_observation_monitor,
                           args=(store, lab_collector, stopped), daemon=True)
                    if lab_collector else None)
+    backfill_collector = (GuardianLabBackfill(store, backfill_url, lab_observer_key)
+                          if backfill_url else None)
+    backfill_monitor = (Thread(target=_lab_backfill_monitor,
+                               args=(store, backfill_collector, stopped), daemon=True)
+                        if backfill_collector else None)
     monitor.start()
     incident_monitor.start()
     if public_monitor:
         public_monitor.start()
     if lab_monitor:
         lab_monitor.start()
+    if backfill_monitor:
+        backfill_monitor.start()
     try:
         with make_server(os.environ.get("GUARDIAN_BIND_HOST", "127.0.0.1"),
                          int(os.environ.get("GUARDIAN_PORT", "8765")), app) as server:
@@ -326,6 +351,8 @@ def main() -> None:
             public_monitor.join(timeout=2)
         if lab_monitor:
             lab_monitor.join(timeout=2)
+        if backfill_monitor:
+            backfill_monitor.join(timeout=2)
 
 
 if __name__ == "__main__":

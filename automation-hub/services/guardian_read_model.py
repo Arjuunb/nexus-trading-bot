@@ -16,6 +16,7 @@ LAB_TABLES = {
     "SMC": ("smc_sessions", "smc_evaluations"),
 }
 MAX_ROWS = 32
+BACKFILL_PAGE_ROWS = 32
 
 
 def _list(value, name: str) -> list:
@@ -100,3 +101,52 @@ def lab_decision_snapshot(path: str | Path, lab: str, *, limit: int = MAX_ROWS) 
     return {"lab": lab, "state": "OBSERVED", "reason": "BOUNDED_SAVED_DECISIONS",
             "session_id": session["id"], "coverage": "LATEST_ACTIVE_SESSION_ONLY",
             "limit": limit, "evaluations": [_project_row(row, lab) for row in rows]}
+
+
+def lab_decision_page(path: str | Path, lab: str, *, after: int = 0,
+                      anchor: str = "", limit: int = BACKFILL_PAGE_ROWS) -> dict:
+    """Page all committed evaluation identities without reading trading runtime state.
+
+    The rowid cursor is valid only while the source table retains the last
+    consumed row. The anchor check fails closed on a reset, deletion of that
+    row, or a VACUUM that moves it; operators must not silently reset cursors.
+    Evaluation rows can later change state, so this is *decision existence*
+    coverage, not an immutable lifecycle-event stream.
+    """
+    if lab not in LAB_TABLES or type(after) is not int or after < 0 or \
+            not 1 <= limit <= BACKFILL_PAGE_ROWS or \
+            (after == 0 and anchor) or (after > 0 and not anchor):
+        raise ValueError("invalid Guardian decision cursor")
+    source = Path(path)
+    if not source.is_file():
+        raise sqlite3.OperationalError("source evidence database is unavailable")
+    evaluations = LAB_TABLES[lab][1]
+    with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro",
+                                 uri=True, timeout=0.25)) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA busy_timeout=250")
+        connection.execute("BEGIN")
+        if after:
+            saved = connection.execute(
+                f"SELECT correlation_id FROM {evaluations} WHERE rowid=?", (after,)
+            ).fetchone()
+            if saved is None or saved["correlation_id"] != anchor:
+                raise ValueError("Guardian decision source cursor is invalid")
+        rows = connection.execute(
+            f"SELECT rowid AS source_sequence,correlation_id,session_id,candle_time,"
+            f"created_at,updated_at,symbol,timeframe,strategy_id,strategy_version,"
+            + ("model_id," if lab == "SMC" else "")
+            + f"state,reason,missing_conditions_json,payload_json FROM {evaluations} "
+              "WHERE rowid>? ORDER BY rowid LIMIT ?",
+            (after, limit + 1),
+        ).fetchall()
+    page = rows[:limit]
+    return {
+        "lab": lab, "coverage": "ALL_RETAINED_EVALUATION_IDENTITIES",
+        "after": after, "anchor": anchor, "has_more": len(rows) > limit,
+        "next_after": page[-1]["source_sequence"] if page else after,
+        "next_anchor": page[-1]["correlation_id"] if page else anchor,
+        "evaluations": [{"source_sequence": row["source_sequence"],
+                         **_project_row(row, lab)} for row in page],
+    }

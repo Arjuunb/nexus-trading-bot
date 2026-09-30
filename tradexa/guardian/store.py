@@ -61,6 +61,12 @@ class GuardianStore:
                     reason TEXT NOT NULL,
                     observed_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS observer_cursors (
+                    component TEXT PRIMARY KEY,
+                    source_sequence INTEGER NOT NULL,
+                    anchor_id TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
             """)
             conn.commit()
 
@@ -101,6 +107,84 @@ class GuardianStore:
                 )
                 conn.commit()
                 return True
+            except Exception:
+                conn.rollback()
+                raise
+
+    def observer_cursor(self, component: str) -> tuple[int, str]:
+        if not _NAME.fullmatch(component or ""):
+            raise ValueError("invalid observer component")
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT source_sequence,anchor_id FROM observer_cursors WHERE component=?",
+                (component,),
+            ).fetchone()
+        return (int(row["source_sequence"]), row["anchor_id"]) if row else (0, "")
+
+    def append_observed_page(self, component: str, *, expected: tuple[int, str],
+                             next_cursor: tuple[int, str],
+                             events: list[GuardianEvent]) -> int:
+        """Commit a source page and its checkpoint in one Guardian transaction.
+
+        A crash or failed insert cannot advance the cursor beyond durable
+        evidence. Repeated identical pages are idempotent; changed evidence
+        under the same ID is a hard error.
+        """
+        if not _NAME.fullmatch(component or "") or len(events) > 32:
+            raise ValueError("invalid observer page")
+        old_sequence, old_anchor = expected
+        new_sequence, new_anchor = next_cursor
+        if (type(old_sequence) is not int or type(new_sequence) is not int or
+                old_sequence < 0 or new_sequence < old_sequence or
+                not isinstance(old_anchor, str) or not isinstance(new_anchor, str) or
+                len(old_anchor) > 128 or len(new_anchor) > 128 or
+                bool(old_sequence) != bool(old_anchor) or
+                bool(new_sequence) != bool(new_anchor) or
+                (bool(events) != (new_sequence > old_sequence))):
+            raise ValueError("invalid observer checkpoint")
+        payloads = [event.canonical_json() for event in events]
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(self._connect()) as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    "SELECT source_sequence,anchor_id FROM observer_cursors WHERE component=?",
+                    (component,),
+                ).fetchone()
+                actual = (int(row["source_sequence"]), row["anchor_id"]) if row else (0, "")
+                if actual != expected:
+                    raise ValueError("observer checkpoint changed concurrently")
+                appended = 0
+                for event, payload in zip(events, payloads):
+                    existing = conn.execute(
+                        "SELECT payload_json FROM events WHERE event_id=?", (event.event_id,)
+                    ).fetchone()
+                    if existing is not None:
+                        if existing["payload_json"] != payload:
+                            raise GuardianEventError("event_id collision with different evidence")
+                        continue
+                    conn.execute(
+                        """INSERT INTO events
+                           (event_id,timestamp,received_at,source_service,
+                            source_component,event_type,severity,payload_json)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (event.event_id, event.timestamp.astimezone(timezone.utc).isoformat(),
+                         now, event.source_service, event.source_component,
+                         event.event_type, event.severity, payload),
+                    )
+                    appended += 1
+                if next_cursor != expected:
+                    conn.execute(
+                        """INSERT INTO observer_cursors
+                           (component,source_sequence,anchor_id,updated_at)
+                           VALUES (?,?,?,?)
+                           ON CONFLICT(component) DO UPDATE SET
+                           source_sequence=excluded.source_sequence,
+                           anchor_id=excluded.anchor_id,updated_at=excluded.updated_at""",
+                        (component, new_sequence, new_anchor, now),
+                    )
+                conn.commit()
+                return appended
             except Exception:
                 conn.rollback()
                 raise

@@ -332,7 +332,8 @@ async def _require_auth(request: Request, call_next):
         exempt = exempt + ("/settings/", "/app")
     hdr = request.headers.get("x-webhook-secret")
     observer_key = request.headers.get("x-guardian-observer-key", "")
-    guardian_read = (path == "/guardian/observations" and request.method == "GET"
+    guardian_read = (path in ("/guardian/observations", "/guardian/evaluations")
+                     and request.method == "GET"
                      and bool(settings.guardian_observer_key) and
                      hmac.compare_digest(observer_key, settings.guardian_observer_key))
     # The retained SQLite engine is deployment-wide legacy state. While the
