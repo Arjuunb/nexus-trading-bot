@@ -54,16 +54,22 @@ test("dashboard metrics use one readable column on the smallest breakpoint", asy
   expect(columns).toBe(1);
 });
 
-test("mobile pet stays in the footer and opens no box until requested", async ({ page }) => {
+test("mobile pet rests on the footer, hides no content, and opens no box until requested", async ({ page }) => {
   await mockApi(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#/dashboard");
 
   const content = await page.locator(".content").boundingBox();
   const pet = await page.locator(".nexus-pet-button").boundingBox();
+  const footer = await page.locator("footer.ticker").boundingBox();
   expect(content).not.toBeNull();
   expect(pet).not.toBeNull();
-  expect(pet!.y).toBeGreaterThanOrEqual(content!.y + content!.height - 1);
+  // Sprig sits on the footer line as on desktop (its art's lowest pixel is
+  // 64/724 of the frame above the frame's bottom)...
+  expect(Math.abs(pet!.y + pet!.height * (1 - 64 / 724) - footer!.y)).toBeLessThanOrEqual(1.5);
+  // ...and the page has room to scroll every card clear of it.
+  const padding = await page.locator(".content").evaluate((el) => parseFloat(getComputedStyle(el).paddingBottom));
+  expect(padding).toBeGreaterThanOrEqual(content!.y + content!.height - pet!.y);
   await expect(page.locator(".nexus-pet-popover")).toHaveCount(0);
 
   await page.locator(".nexus-pet-button").click();
