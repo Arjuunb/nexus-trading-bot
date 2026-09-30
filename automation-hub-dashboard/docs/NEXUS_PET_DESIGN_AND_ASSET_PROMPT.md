@@ -77,18 +77,46 @@ state.
 
 | When | Sprig |
 |---|---|
-| Idle, engine running | Types at the laptop, breathes, blinks every 3–6 s, and every 20–40 s looks up for a moment |
+| Idle, engine running | Types at the laptop, breathes, blinks every 2.5–6 s, and every 20–40 s looks up for a moment |
 | Pointer nearby | Looks up from the laptop, and its eyes follow the pointer; it leans slightly toward it |
 | Pointer on Sprig | Waves, with its painted happy eyes |
 | Stroked back and forth, or pressed and held (touch, pen or mouse) | A small happy hop and three leaf-green hearts. Holding does not open the status panel |
 | Click or tap | A small hop, and the status panel opens; Sprig looks at you while it is open |
 | Nothing running (offline) | Dozes at the laptop: eyes closed, slow breathing, a drifting "z", no floor glow. It wakes to greet you |
 | Paused | Drowsy, half-closed eyes |
-| Warning, trade loss or error | The amber alert pose. Petting never makes it happy while something is wrong |
+| Warning, trade loss or error | The amber alert pose, sprout drooping a little. Petting never makes it happy while something is wrong |
+| Analysing (an instance starting, warming up, syncing or recovering) | Stays at the laptop; its eyes sweep across the screen |
+| Signal found, or a trade opens | Looks up from the laptop, attentive |
+| A trade closes in profit | Waves (only while nothing is wrong) |
 
-Reduced motion turns off every animation and the blink and glance timers. The
-poses still follow state, so Sprig stays informative. A hidden tab pauses
-everything. E2e tests cover each row.
+### What makes it feel alive
+
+- **The sprout is a separate layer on a spring.** It sways in a light breeze.
+  When Sprig hops, is patted, greets you or changes pose, the sprout lags
+  behind, overshoots, swings back a few times and settles, like a real stem.
+  The swing is capped at 18°.
+- **The body leans toward the pointer on a spring**, from the floor up. It does
+  not snap.
+- **The eyes are never frozen.** While working, Sprig looks down at its laptop.
+  Small, quick eye movements come every 0.7–2.6 s. They stop while its eyes
+  follow the pointer, because then they are fixed on it.
+- **Blinks are asymmetric.** The eye closes fast and opens slower, and now and
+  then Sprig blinks twice.
+- **Poses fade into each other in 0.11 s.** The old pose stays solid under the
+  new one, so Sprig never turns see-through. A longer fade reads as a double
+  exposure.
+- **The laptop screen is lit.** It gives off a soft, flickering glow, and a blip
+  appears where the newest candle is drawn. When Sprig dozes, the screen dims.
+  The robot itself stays solid while asleep.
+- **The contact shadow reacts to a hop or a pat.** It shrinks and fades as
+  Sprig leaves the ground, then returns when it lands.
+
+Reduced motion turns off every animation, the springs, and the blink, glance
+and eye-movement timers. The poses still follow state, so Sprig stays
+informative. A hidden tab pauses everything. E2e tests cover the pointer, petting,
+click, offline, error and analysing rows, the gaze at the laptop, blinking, reduced
+motion and the sprout's swing. The paused, signal, open-trade and winning-trade rows
+are not yet covered by an e2e test.
 
 ## Raster asset-generation prompt
 
@@ -118,11 +146,19 @@ reported bot state.
 
 ## Implementation rule
 
-The default Sprig footer pet uses the approved transparent production sprite
-sheet directly (`public/nexus-pet-concepts/sprig-production-poses-v4.png`). The sheet
+The default Sprig footer pet uses the approved transparent production artwork
+(`docs/nexus-pet/sprig-production-poses-v4.png`, kept out of the build). The sheet
 is four equal 620×724 cells, one pose per cell: working, aware, greeting and warning.
 Each cell has transparent gutters, and no pose may cross into the next cell, or the
-frame shows a sliver of the neighbouring pose. An e2e test checks the cell edges.
+frame shows a sliver of the neighbouring pose.
+
+`scripts/split_sprig_sprout.py` splits that sheet into the two sheets the app ships:
+`public/nexus-pet-concepts/sprig-body-v5.png` and `sprig-sprout-v5.png`. Every pixel
+goes to exactly one layer, so the two stacked reproduce the approved art bit for bit.
+The script asserts this. It also prints each pose's stem pivot, which the CSS uses as
+the sprout's rotation origin. Run it again whenever the art changes. E2e tests check
+both sheets' cell edges, and that the sprout never overlaps the body and lies only
+above the head.
 
 Sprig belongs to the platform, not to a card on top of it. It rests on the footer's top
 edge, grounded by a soft contact shadow and a faint glow in the state colour. No CSS

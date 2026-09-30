@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "../../app-context";
 import NexusPetPopover from "./NexusPetPopover";
 import NexusPetSettings, { NEXUS_PETS } from "./NexusPetSettings";
@@ -29,15 +29,37 @@ const random = (min: number, max: number) => min + Math.random() * (max - min);
 
 function derivePose(b: Behaviour): { pose: string; eyes: string } {
   if (UNHEALTHY.has(b.state)) return { pose: "alert", eyes: "open" };
-  const pose = b.hovered || b.petted ? "greet" : b.near || b.glance || b.popover ? "aware" : "working";
+  const celebrates = b.state === "trade-win";                                  // a real, closed winning trade
+  const attentive = b.state === "signal-found" || b.state === "trade-open";
+  const pose = b.hovered || b.petted || celebrates ? "greet"
+    : b.near || b.glance || b.popover || attentive ? "aware" : "working";
   const eyes = b.state === "paused" ? "drowsy"
     : b.state === "offline" && pose === "working" ? "sleep"       // nothing running: dozes at the laptop
+    : b.state === "analysing" && pose === "working" ? "scan"     // reading the market: the eyes sweep the screen
     : "open";
   return { pose, eyes };
 }
 
+/* Springs for the physical parts: the body leans toward the pointer and the
+   sprout, a flexible stem, lags behind the body, overshoots and settles, and
+   flicks when Sprig hops or is patted. Integrated per animation frame only
+   while something is still moving; never with reduced motion. */
+type Spring = { a: number; v: number; target: number };
+const LEAN = { k: 70, c: 12 };          // firm, barely overshoots
+const SPROUT = { k: 90, c: 4.5 };        // springy: a few visible swings, about 0.66 s each
+const step = (s: Spring, { k, c }: { k: number; c: number }, dt: number) => {
+  s.v += (-k * (s.a - s.target) - c * s.v) * dt;
+  s.a += s.v * dt;
+};
+const settled = (s: Spring) => Math.abs(s.a - s.target) < 0.01 && Math.abs(s.v) < 0.02;
+
+const SPRIG_POSES = ["working", "aware", "greet", "alert"] as const;
+
 const PET_STORAGE_KEY = "tradelogx:nexus-pet:v1";
-const SPRIG_SPRITE_URL = `${import.meta.env.BASE_URL}nexus-pet-concepts/sprig-production-poses-v4.png`;
+// The approved Sprig artwork, split into a body and a sprout layer (same
+// 620x724 cells) by scripts/split_sprig_sprout.py so the sprout can move.
+const SPRIG_BODY_URL = `${import.meta.env.BASE_URL}nexus-pet-concepts/sprig-body-v5.png`;
+const SPRIG_SPROUT_URL = `${import.meta.env.BASE_URL}nexus-pet-concepts/sprig-sprout-v5.png`;
 const PET_IDS = new Set<NexusPetId>(NEXUS_PETS.map((pet) => pet.id));
 const PET_SIZES = new Set<NexusPetSize>(["small", "medium", "large"]);
 const DEFAULT_APPEARANCE: NexusPetAppearance = { pet: "sprig", size: "medium" };
@@ -87,14 +109,49 @@ export default function NexusBotPet() {
   const suppressClick = useRef(false);
   const lastPet = useRef(Number.NEGATIVE_INFINITY);   // page time starts at 0, so 0 would block the first second
   const stroke = useRef({ at: 0, x: 0, dir: 0, distance: 0, turns: 0 });
+  const springs = useRef({ lean: { a: 0, v: 0, target: 0 }, shift: { a: 0, v: 0, target: 0 },
+                           sprout: { a: 0, v: 0, target: 0 } });
+  const physicsFrame = useRef<number | null>(null);
+
+  const runPhysics = useCallback(() => {
+    if (physicsFrame.current !== null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let last = performance.now();
+    const tick = (now: number) => {
+      const dt = Math.min(0.033, (now - last) / 1000);
+      last = now;
+      const { lean, shift, sprout } = springs.current;
+      step(lean, LEAN, dt);
+      step(shift, LEAN, dt);
+      sprout.target = -lean.v * 0.09;                 // the stem drags behind the body's motion
+      step(sprout, SPROUT, dt);
+      sprout.a = Math.max(-18, Math.min(18, sprout.a));
+      const root = rootRef.current;
+      if (root) {
+        root.style.setProperty("--pet-lean-turn", `${lean.a.toFixed(3)}deg`);
+        root.style.setProperty("--pet-lean-x", `${shift.a.toFixed(3)}px`);
+        root.style.setProperty("--pet-sprout-swing", `${sprout.a.toFixed(3)}deg`);
+      }
+      physicsFrame.current = settled(lean) && settled(shift) && settled(sprout) ? null
+        : window.requestAnimationFrame(tick);
+    };
+    physicsFrame.current = window.requestAnimationFrame(tick);
+  }, []);
+
+  const flick = useCallback((degPerSecond: number) => {
+    springs.current.sprout.v += degPerSecond;
+    runPhysics();
+  }, [runPhysics]);
 
   const applyPose = useCallback(() => {
     const root = rootRef.current;
     if (!root) return;
     const { pose, eyes } = derivePose(behaviour.current);
-    if (root.dataset.pose !== pose) root.dataset.pose = pose;
+    if (root.dataset.pose !== pose) {
+      if (root.dataset.pose) flick((Math.random() < .5 ? -1 : 1) * 36);   // moving between poses sways the stem
+      root.dataset.pose = pose;
+    }
     if (root.dataset.eyes !== eyes) root.dataset.eyes = eyes;
-  }, []);
+  }, [flick]);
 
   const pet = useCallback(() => {
     const root = rootRef.current;
@@ -107,13 +164,14 @@ export default function NexusBotPet() {
     void root.offsetWidth;                                  // restart the hearts for a second pat
     root.dataset.petted = "true";
     applyPose();
+    flick((Math.random() < .5 ? -1 : 1) * 150);
     if (petTimer.current !== null) window.clearTimeout(petTimer.current);
     petTimer.current = window.setTimeout(() => {
       behaviour.current.petted = false;
       if (rootRef.current) rootRef.current.dataset.petted = "false";
       applyPose();
     }, PET_HAPPY_MS);
-  }, [applyPose]);
+  }, [applyPose, flick]);
 
   const petName = NEXUS_PETS.find((pet) => pet.id === appearance.pet)?.name ?? "Sprig";
 
@@ -138,6 +196,7 @@ export default function NexusBotPet() {
     if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
     if (petTimer.current !== null) window.clearTimeout(petTimer.current);
     if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
+    if (physicsFrame.current !== null) window.cancelAnimationFrame(physicsFrame.current);
   }, []);
 
   // The engine's state and the status panel feed the pose.
@@ -150,15 +209,34 @@ export default function NexusBotPet() {
   useEffect(() => {
     if (appearance.pet !== "sprig") return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    let blinkTimer = 0, glanceTimer = 0, glanceEnd = 0, open = 0;
+    let blinkTimer = 0, glanceTimer = 0, glanceEnd = 0, open = 0, again = 0, saccadeTimer = 0;
     const quiet = () => reduceMotion.matches || document.hidden;
+    const blinkOnce = () => {
+      const root = rootRef.current;
+      if (!root) return;
+      root.dataset.blink = "true";                 // closes fast, opens slower (CSS keyframes)
+      open = window.setTimeout(() => { if (rootRef.current) rootRef.current.dataset.blink = "false"; }, 210);
+    };
     const blink = () => {
       const root = rootRef.current;
       if (root && !quiet() && root.dataset.eyes === "open") {
-        root.dataset.blink = "true";
-        open = window.setTimeout(() => { if (rootRef.current) rootRef.current.dataset.blink = "false"; }, 150);
+        blinkOnce();
+        if (Math.random() < .2) again = window.setTimeout(blinkOnce, 330);   // now and then a double blink
       }
-      blinkTimer = window.setTimeout(blink, random(2600, 6400));
+      blinkTimer = window.setTimeout(blink, random(2400, 6200));
+    };
+    // Small, quick eye movements: real eyes never hold perfectly still. Not
+    // while following the pointer: then the eyes stay fixed on it.
+    const saccade = () => {
+      const root = rootRef.current;
+      if (root && !quiet()) {
+        const working = root.dataset.pose === "working";
+        const [x, y] = Math.random() < .3 || root.dataset.near === "true" ? [0, 0]
+          : working ? [random(-12, 7), random(-5, 6)] : [random(-6, 6), random(-4, 4)];
+        root.style.setProperty("--pet-saccade-x", `${x.toFixed(1)}%`);
+        root.style.setProperty("--pet-saccade-y", `${y.toFixed(1)}%`);
+      }
+      saccadeTimer = window.setTimeout(saccade, random(700, 2600));
     };
     const glance = () => {
       const b = behaviour.current;
@@ -171,7 +249,8 @@ export default function NexusBotPet() {
     };
     blinkTimer = window.setTimeout(blink, random(1500, 3500));
     glanceTimer = window.setTimeout(glance, random(18000, 30000));
-    return () => { [blinkTimer, glanceTimer, glanceEnd, open].forEach((t) => window.clearTimeout(t)); };
+    saccadeTimer = window.setTimeout(saccade, random(600, 1500));
+    return () => { [blinkTimer, glanceTimer, glanceEnd, open, again, saccadeTimer].forEach((t) => window.clearTimeout(t)); };
   }, [appearance.pet, applyPose]);
 
   useEffect(() => {
@@ -195,7 +274,18 @@ export default function NexusBotPet() {
         const close = distance < 82;
         root.dataset.near = String(near);
         root.dataset.close = String(close);
-        if (behaviour.current.near !== near) { behaviour.current.near = near; applyPose(); }
+        if (behaviour.current.near !== near) {
+          behaviour.current.near = near;
+          applyPose();
+          if (near) {                                 // eyes on the pointer: stop wandering
+            root.style.setProperty("--pet-saccade-x", "0%");
+            root.style.setProperty("--pet-saccade-y", "0%");
+          }
+        }
+        const { lean, shift } = springs.current;
+        lean.target = x * 2.4;                        // leans toward the pointer, from the floor up
+        shift.target = x * .9;
+        runPhysics();
         root.style.setProperty("--pet-look-x", `${(x * 3).toFixed(2)}px`);
         root.style.setProperty("--pet-look-y", `${(y * 1.7).toFixed(2)}px`);
         root.style.setProperty("--pet-head-turn", `${(x * 5.2).toFixed(2)}deg`);
@@ -208,7 +298,7 @@ export default function NexusBotPet() {
     };
     window.addEventListener("pointermove", trackPointer, { passive: true });
     return () => window.removeEventListener("pointermove", trackPointer);
-  }, [applyPose]);
+  }, [applyPose, runPhysics]);
 
   useEffect(() => {
     const onVisibility = () => { if (rootRef.current) rootRef.current.dataset.hidden = String(document.hidden); };
@@ -244,6 +334,7 @@ export default function NexusBotPet() {
       return;
     }
     react("click", 560);
+    flick((Math.random() < .5 ? -1 : 1) * 110);     // the hop throws the sprout
     setSettingsOpen(false);
     setOpen((value) => !value);
   };
@@ -258,6 +349,7 @@ export default function NexusBotPet() {
     if (root) root.dataset.hovered = "true";
     behaviour.current.hovered = true;
     applyPose();
+    flick(-55);
     react("hover", 480);
     if (curiosityTimer.current !== null) window.clearTimeout(curiosityTimer.current);
     curiosityTimer.current = window.setTimeout(() => {
@@ -337,21 +429,33 @@ export default function NexusBotPet() {
         <span className="nexus-pet-stage" aria-hidden="true">
           {appearance.pet === "sprig" && (
             <span className="nexus-pet-production-sprite">
-              <img
-                className="nexus-pet-production-image"
-                src={SPRIG_SPRITE_URL}
-                alt=""
-                draggable={false}
-                onLoad={() => setSpriteLoaded(true)}
-                onError={() => setSpriteLoaded(false)}
-              />
-              {/* Live LED eyes over the painted ones: they follow the pointer,
-                  blink, doze and droop. Hidden while Sprig waves (its happy
-                  eyes are painted). */}
-              <span className="nexus-pet-live-eyes">
-                <span className="nexus-pet-socket nexus-pet-socket-l"><i className="nexus-pet-led" /></span>
-                <span className="nexus-pet-socket nexus-pet-socket-r"><i className="nexus-pet-led" /></span>
-              </span>
+              {/* One layer per pose; the active one fades in. Each carries the
+                  body, the laptop screen's glow, the sprout (swinging on its
+                  stem) and live LED eyes (not in the greet pose: its happy eyes
+                  are painted). */}
+              {SPRIG_POSES.map((pose, cell) => (
+                <span key={pose} className={`nexus-pet-pose nexus-pet-pose-${pose}`}
+                  style={{ "--cell": cell } as CSSProperties}>
+                  <img
+                    className="nexus-pet-production-image"
+                    src={SPRIG_BODY_URL}
+                    alt=""
+                    draggable={false}
+                    onLoad={cell === 0 ? () => setSpriteLoaded(true) : undefined}
+                    onError={cell === 0 ? () => setSpriteLoaded(false) : undefined}
+                  />
+                  <span className="nexus-pet-screen-glow"><i /></span>
+                  <span className="nexus-pet-sprout">
+                    <img className="nexus-pet-sprout-image" src={SPRIG_SPROUT_URL} alt="" draggable={false} />
+                  </span>
+                  {pose !== "greet" && (
+                    <span className="nexus-pet-live-eyes">
+                      <span className="nexus-pet-socket nexus-pet-socket-l"><i className="nexus-pet-led" /></span>
+                      <span className="nexus-pet-socket nexus-pet-socket-r"><i className="nexus-pet-led" /></span>
+                    </span>
+                  )}
+                </span>
+              ))}
             </span>
           )}
           {appearance.pet === "sprig" && (

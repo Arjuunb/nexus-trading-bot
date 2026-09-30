@@ -11,7 +11,6 @@
   --pet-accent: #c99a3d;
   --pet-shell: #15181e;
   --pet-face: #090b0e;
-  --pet-pose-shift: 0%;
   --pet-button-width: 48px;
   --pet-button-height: 54px;
   position: absolute;
@@ -26,9 +25,9 @@
 .nexus-pet-root[data-size="small"] { --pet-button-width: 39px; --pet-button-height: 44px; width: 45px; height: 48px; }
 .nexus-pet-root[data-size="large"] { --pet-button-width: 58px; --pet-button-height: 65px; width: 64px; height: 69px; }
 
-/* Sprig's sheet (sprig-production-poses-v4.png) is four 620x724 cells, one
-   pose each with transparent gutters, so a frame of that shape shows exactly
-   one pose and nothing of its neighbours. */
+/* Sprig's sheets (sprig-body-v5.png and sprig-sprout-v5.png) are four 620x724
+   cells, one pose each with transparent gutters, so a frame of that shape
+   shows exactly one pose and nothing of its neighbours. */
 .nexus-pet-root[data-pet="sprig"] { --pet-accent: #c99a3d; --pet-shell: #15181e; --pet-face: #090b0e; --pet-button-height: 96px; --pet-button-width: calc(var(--pet-button-height) * 620 / 724); width: calc(var(--pet-button-width) + 6px); height: 100px; }
 .nexus-pet-root[data-pet="sprig"][data-size="small"] { --pet-button-height: 78px; height: 82px; }
 .nexus-pet-root[data-pet="sprig"][data-size="large"] { --pet-button-height: 114px; height: 118px; }
@@ -42,9 +41,7 @@
 .nexus-pet-root[data-pet="sprig"] {
   --pet-art-floor: calc(var(--pet-button-height) * 64 / 724);
   bottom: calc(100% - var(--pet-art-floor));
-  /* the working pose's eyes, and the LED look shared by every pose */
-  --el-x: 41.88%; --el-y: 49.88%; --el-w: 5.26%; --el-h: 7.11%; --el-r: -19deg;
-  --er-x: 57.83%; --er-y: 49.36%; --er-w: 6.94%; --er-h: 7.42%; --er-r: -16.5deg;
+  /* the LED look shared by every pose (each pose layer places its own eyes) */
   --pet-screen: #080b06;
   --led: #35ee02; --led-hot: #c2ff9c; --led-edge: #1fb400;
   --led-glow: rgba(53, 238, 2, .75); --led-halo: rgba(40, 220, 20, .28);
@@ -71,6 +68,8 @@
   transition: opacity .25s ease;
 }
 .nexus-pet-root[data-pet="sprig"][data-state="offline"] .nexus-pet-button::after { opacity: 0; }
+.nexus-pet-root[data-pet="sprig"][data-interaction="click"] .nexus-pet-button::before { animation: nexus-pet-shadow-hop .56s ease-out 1; }
+.nexus-pet-root[data-pet="sprig"][data-petted="true"] .nexus-pet-button::before { animation: nexus-pet-shadow-happy .9s ease-out 1; }
 .nexus-pet-root[data-pet="pulse"] { --pet-accent: #4ade80; --pet-shell: #102219; --pet-face: #06100a; }
 .nexus-pet-root[data-pet="orbit"] { --pet-accent: #67e8f9; --pet-shell: #10212a; --pet-face: #061116; }
 .nexus-pet-root[data-pet="glint"] { --pet-accent: #f5e7c2; --pet-shell: #211f1a; --pet-face: #0f0e0b; }
@@ -130,22 +129,100 @@
   display: block;
   overflow: hidden;
 }
-.nexus-pet-production-image {
+/* Sprig: one layer per pose, stacked. The active pose fades in on top while
+   the previous one stays opaque beneath it until the fade ends, so the robot
+   never turns see-through between poses. The fade is short: longer, and the
+   two poses read as a double exposure. */
+.nexus-pet-pose { position: absolute; inset: 0; overflow: hidden; z-index: 1; opacity: 0; transition: opacity 0s linear .11s; }
+.nexus-pet-pose-working { opacity: 1; }
+.nexus-pet-root[data-pose] .nexus-pet-pose-working { opacity: 0; }
+.nexus-pet-root[data-pose="working"] .nexus-pet-pose-working,
+.nexus-pet-root[data-pose="aware"] .nexus-pet-pose-aware,
+.nexus-pet-root[data-pose="greet"] .nexus-pet-pose-greet,
+.nexus-pet-root[data-pose="alert"] .nexus-pet-pose-alert { z-index: 2; opacity: 1; transition: opacity .11s ease-out; }
+.nexus-pet-production-image, .nexus-pet-sprout-image {
+  position: absolute; left: 0; top: 0;
   display: block;
   width: 400%;
   max-width: none;
   height: 100%;
-  transform: translateX(var(--pet-pose-shift));
-  transform-origin: left center;
+  transform: translateX(calc(var(--cell) * -25%));
 }
+/* Per pose, measured from the artwork (% of the frame): the stem's flex
+   point, the laptop chart, and the eyes' centre, size and tilt. Sprig looks
+   at its laptop while it works. */
+.nexus-pet-pose-working {
+  --pivot-x: 56.41%; --pivot-y: 26.1%;
+  --chart-x: 29.35%; --chart-y: 76.17%; --chart-w: 13.55%; --chart-h: 9.25%;
+  --el-x: 41.88%; --el-y: 49.88%; --el-w: 5.26%; --el-h: 7.11%; --el-r: -19deg;
+  --er-x: 57.83%; --er-y: 49.36%; --er-w: 6.94%; --er-h: 7.42%; --er-r: -16.5deg;
+  --gaze-x: -16%; --gaze-y: 11%;
+}
+.nexus-pet-pose-aware {
+  --pivot-x: 53.26%; --pivot-y: 23.9%;
+  --chart-x: 24.68%; --chart-y: 76.38%; --chart-w: 14.19%; --chart-h: 9.94%;
+  --el-x: 45.25%; --el-y: 46.69%; --el-w: 7.52%; --el-h: 7.48%; --el-r: -11deg;
+  --er-x: 64.98%; --er-y: 44.58%; --er-w: 7.45%; --er-h: 7.45%; --er-r: -6deg;
+}
+.nexus-pet-pose-greet {
+  --pivot-x: 62.34%; --pivot-y: 21.55%;
+  --chart-x: 19.76%; --chart-y: 77.21%; --chart-w: 14.03%; --chart-h: 9.67%;
+}
+.nexus-pet-pose-alert {
+  --pivot-x: 53.24%; --pivot-y: 23.07%;
+  --chart-x: 21.61%; --chart-y: 76.93%; --chart-w: 12.58%; --chart-h: 9.12%;
+  --el-x: 38.41%; --el-y: 43.52%; --el-w: 5.83%; --el-h: 6.88%; --el-r: -1deg;
+  --er-x: 55.44%; --er-y: 43.64%; --er-w: 6.67%; --er-h: 6.96%; --er-r: 0deg;
+  --pet-screen: #100c05; --led: #f6b201; --led-hot: #ffe7a3; --led-edge: #cf8a00;
+  --led-glow: rgba(246, 178, 1, .75); --led-halo: rgba(246, 150, 1, .3);
+}
+
+/* The sprout is its own layer: it sways in a light breeze and, driven by a
+   spring (--pet-sprout-swing), lags behind the body, overshoots and settles.
+   It droops a little when something is wrong. */
+/* No clip of its own: the pose layer clips to the frame, and a rotated clip
+   would cut the leaf tips at a big swing. */
+.nexus-pet-sprout {
+  position: absolute; inset: 0;
+  transform-origin: var(--pivot-x) var(--pivot-y);
+  rotate: var(--pet-sprout-swing, 0deg);
+  animation: nexus-pet-breeze 5.4s ease-in-out infinite;
+}
+.nexus-pet-pose-alert .nexus-pet-sprout { scale: 1 .93; }
+.nexus-pet-root[data-eyes="sleep"] .nexus-pet-sprout { animation-duration: 8.6s; }
+
+/* The laptop screen is lit: a soft glow that breathes with the display and
+   a blip where the newest candle is drawn. Dim while Sprig sleeps. */
+.nexus-pet-screen-glow {
+  position: absolute;
+  left: calc(var(--chart-x) - var(--chart-w) * .8); top: calc(var(--chart-y) - var(--chart-h) * .8);
+  width: calc(var(--chart-w) * 1.6); height: calc(var(--chart-h) * 1.6);
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(74, 222, 128, .5), rgba(74, 222, 128, 0));
+  opacity: .45;
+  animation: nexus-pet-screen 3.7s ease-in-out infinite;
+  pointer-events: none;
+}
+.nexus-pet-screen-glow i {
+  position: absolute; left: 77%; top: 30%; width: 9%; height: 13%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, #d9ffe6, rgba(74, 222, 128, 0));
+  opacity: 0;
+  animation: nexus-pet-tick 2.6s ease-out infinite;
+}
+/* Asleep, the laptop sleeps too: a soft patch of the lid's own colour dims the chart. */
+.nexus-pet-root[data-eyes="sleep"] .nexus-pet-screen-glow {
+  opacity: 1; animation: none;
+  background: radial-gradient(closest-side, rgba(40, 42, 46, .84) 62%, rgba(40, 42, 46, 0));
+}
+.nexus-pet-root[data-eyes="sleep"] .nexus-pet-screen-glow i { animation: none; }
 .nexus-pet-root[data-pet="sprig"][data-sprite-loaded="true"] .nexus-pet-vector-fallback {
   visibility: hidden;
 }
-/* Sprig leans a little toward the pointer, from the floor up. */
+/* Sprig leans toward the pointer from the floor up, on a spring. */
 .nexus-pet-root[data-pet="sprig"] .nexus-pet-production-sprite {
-  transform: translateX(calc(var(--pet-body-x) * .7)) rotate(calc(var(--pet-body-turn) * 1.3));
+  transform: translateX(var(--pet-lean-x, 0px)) rotate(var(--pet-lean-turn, 0deg));
   transform-origin: 50% 90%;
-  transition: transform .3s cubic-bezier(.2, .8, .2, 1);
 }
 
 /* Live eyes. A soft patch of the face screen's own colour covers each
@@ -153,7 +230,6 @@
    sits on it and can look, blink, doze and droop. No filter is used. */
 .nexus-pet-live-eyes { position: absolute; inset: 0; display: none; pointer-events: none; }
 .nexus-pet-root[data-pet="sprig"][data-sprite-loaded="true"] .nexus-pet-live-eyes { display: block; }
-.nexus-pet-root[data-pet="sprig"][data-sprite-loaded="true"][data-pose="greet"] .nexus-pet-live-eyes { display: none; }
 .nexus-pet-socket {
   position: absolute;
   left: calc(var(--eye-x) - var(--eye-w) * 1.7);
@@ -175,12 +251,18 @@
     radial-gradient(circle, transparent 0 52%, rgba(0, 0, 0, .22) 62%) 0 0 / 8.5% 7%,
     linear-gradient(170deg, var(--led-hot) -40%, var(--led) 38%, var(--led) 100%);
   box-shadow: 0 0 1px .3px var(--led-glow), 0 0 3px .6px var(--led-halo);
-  translate: calc(var(--pet-look-x) * .4) calc(var(--pet-look-y) * .5 + var(--led-drop));
+  /* where it looks: at the laptop while working, at the pointer when near,
+     plus small quick eye movements */
+  translate: calc(var(--pet-look-x) * .7 + var(--gaze-x, 0%) + var(--pet-saccade-x, 0%))
+             calc(var(--pet-look-y) * .6 + var(--gaze-y, 0%) + var(--pet-saccade-y, 0%) + var(--led-drop));
   rotate: var(--eye-r);
   scale: 1 var(--led-open);
-  transition: translate .12s ease-out, scale 80ms ease-in-out, opacity .3s ease;
+  transition: translate 70ms ease-out, scale 90ms ease-in-out, opacity .3s ease;
 }
-.nexus-pet-root[data-blink="true"] .nexus-pet-led { --led-open: .1; }
+/* A blink closes fast and opens slower. */
+.nexus-pet-root[data-blink="true"] .nexus-pet-led { animation: nexus-pet-led-blink .21s linear 1; }
+/* Analysing: the eyes sweep the laptop screen. */
+.nexus-pet-root[data-eyes="scan"] .nexus-pet-led { animation: nexus-pet-led-scan 2.2s ease-in-out infinite; }
 .nexus-pet-root[data-eyes="drowsy"] .nexus-pet-led { --led-open: .46; --led-drop: 14%; }
 .nexus-pet-root[data-eyes="sleep"] .nexus-pet-led { --led-open: .13; --led-drop: 22%; opacity: .7; }
 
@@ -237,23 +319,6 @@
 /* Proximity is written directly to this root by requestAnimationFrame. It
    never enters React state, so a moving cursor cannot rerender the dashboard. */
 .nexus-pet-root[data-near="true"] .nexus-pet-floor { opacity: .3; }
-/* Sprig's pose comes from one attribute the component derives (see
-   derivePose): working, aware (looks up), greet (waves, happy eyes) or alert
-   (amber eyes). Each pose also places the live eyes over the painted ones:
-   centre, size and tilt measured from the sprite sheet, as % of the frame. */
-.nexus-pet-root[data-pet="sprig"][data-pose="aware"] {
-  --pet-pose-shift: -25%;
-  --el-x: 45.25%; --el-y: 46.69%; --el-w: 7.52%; --el-h: 7.48%; --el-r: -11deg;
-  --er-x: 64.98%; --er-y: 44.58%; --er-w: 7.45%; --er-h: 7.45%; --er-r: -6deg;
-}
-.nexus-pet-root[data-pet="sprig"][data-pose="greet"] { --pet-pose-shift: -50%; }
-.nexus-pet-root[data-pet="sprig"][data-pose="alert"] {
-  --pet-pose-shift: -75%;
-  --el-x: 38.41%; --el-y: 43.52%; --el-w: 5.83%; --el-h: 6.88%; --el-r: -1deg;
-  --er-x: 55.44%; --er-y: 43.64%; --er-w: 6.67%; --er-h: 6.96%; --er-r: 0deg;
-  --pet-screen: #100c05; --led: #f6b201; --led-hot: #ffe7a3; --led-edge: #cf8a00;
-  --led-glow: rgba(246, 178, 1, .75); --led-halo: rgba(246, 150, 1, .3);
-}
 .nexus-pet-root[data-near="true"] .nexus-pet-eyes rect { filter: drop-shadow(0 0 4px var(--pet-state-color)); }
 .nexus-pet-root[data-near="true"] .nexus-pet-laptop { opacity: .72; transform: translateX(-1px) scale(.98); }
 .nexus-pet-root[data-near="true"] .nexus-pet-typing-hands,
@@ -273,7 +338,7 @@
 .nexus-pet-root[data-state="offline"] .nexus-pet-laptop { opacity: .35; }
 .nexus-pet-root[data-state="offline"] .nexus-pet-laptop-chart,
 .nexus-pet-root[data-state="offline"] .nexus-pet-typing-hands { animation: none; opacity: .25; }
-.nexus-pet-root[data-pet="sprig"][data-state="offline"] .nexus-pet-stage { animation: nexus-pet-breathe 6.4s ease-in-out infinite; filter: none; opacity: .8; }   /* dimmed without a filter; slow sleeping breath */
+.nexus-pet-root[data-pet="sprig"][data-state="offline"] .nexus-pet-stage { animation: nexus-pet-breathe 6.4s ease-in-out infinite; filter: none; opacity: 1; }   /* a slow sleeping breath; solid, never see-through */
 .nexus-pet-root[data-state="paused"] .nexus-pet-stage { animation-duration: 8s; }
 .nexus-pet-root[data-state="paused"] .nexus-pet-eyes { animation: none; transform: scaleY(.45); }
 .nexus-pet-root[data-state="analysing"] .nexus-pet-eyes { animation: nexus-pet-scan 1.8s ease-in-out 2; }
@@ -398,6 +463,13 @@
 .nexus-pet-size-options button[data-selected="true"] { background: rgba(234,181,79,.16); color: var(--gold); }
 
 @keyframes nexus-pet-idle { 0%, 100% { transform: translateY(0); } 52% { transform: translateY(-1.2px); } }
+@keyframes nexus-pet-breeze { 0%, 100% { transform: rotate(0deg); } 17% { transform: rotate(1.6deg); } 38% { transform: rotate(-.7deg); } 61% { transform: rotate(2.2deg); } 83% { transform: rotate(.3deg); } }
+@keyframes nexus-pet-screen { 0%, 100% { opacity: .38; } 13% { opacity: .52; } 21% { opacity: .41; } 47% { opacity: .58; } 63% { opacity: .44; } 88% { opacity: .55; } }
+@keyframes nexus-pet-tick { 0%, 62% { opacity: 0; } 70% { opacity: .95; } 100% { opacity: 0; } }
+@keyframes nexus-pet-led-blink { 0% { scale: 1 var(--led-open); } 26%, 44% { scale: 1 .07; } 100% { scale: 1 var(--led-open); } }
+@keyframes nexus-pet-led-scan { 0%, 100% { translate: -20% 12%; } 45% { translate: 10% 8%; } 55% { translate: 10% 8%; } }
+@keyframes nexus-pet-shadow-hop { 0%, 100% { transform: scaleX(1); opacity: 1; } 35% { transform: scaleX(.8); opacity: .55; } 70% { transform: scaleX(.94); opacity: .85; } }
+@keyframes nexus-pet-shadow-happy { 0%, 100% { transform: scaleX(1); opacity: 1; } 18% { transform: scaleX(.78); opacity: .5; } 36% { transform: scaleX(1.03); opacity: 1; } 54% { transform: scaleX(.86); opacity: .65; } 72% { transform: scaleX(1); opacity: 1; } }
 @keyframes nexus-pet-breathe { 0%, 100% { transform: scale(1, 1); } 48% { transform: scale(1.006, 1.017); } }
 @keyframes nexus-pet-happy { 0%, 100% { transform: translateY(0) scale(1, 1); } 18% { transform: translateY(-3.5px) scale(.98, 1.03); } 36% { transform: translateY(0) scale(1.03, .97); } 54% { transform: translateY(-2px) scale(.99, 1.02); } 72% { transform: translateY(0) scale(1.01, .99); } }
 @keyframes nexus-pet-heart { 0% { opacity: 0; transform: translate(0, 6px) scale(.4); } 22% { opacity: .95; } 100% { opacity: 0; transform: translate(var(--hx), -24px) scale(1); } }
