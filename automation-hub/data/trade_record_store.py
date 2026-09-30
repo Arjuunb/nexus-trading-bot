@@ -354,11 +354,16 @@ class TradeRecordStore:
         return json.loads(row["value_json"]) if row else default
 
     def set_state(self, key: str, value) -> None:
+        text = _dumps(value)
         with self._lock:
+            row = self._c.execute("SELECT value_json FROM recorder_state WHERE key=?",
+                                  (key,)).fetchone()
+            if row is not None and row["value_json"] == text:
+                return                       # unchanged: no write, no disk sync
             self._c.execute(
                 "INSERT INTO recorder_state VALUES (?,?,?) ON CONFLICT(key) DO UPDATE "
                 "SET value_json=excluded.value_json, updated_at=excluded.updated_at",
-                (key, _dumps(value), utcnow()))
+                (key, text, utcnow()))
             self._c.commit()
 
     # ------------------------------------------------------------ trade records
@@ -456,7 +461,24 @@ class TradeRecordStore:
         return result
 
     def _write_events(self, rid: str, events: Iterable[dict]) -> None:
+        events = list(events)
+        if not events:
+            return
+        # The recorder re-projects every record on each pass. Write only the
+        # stages whose stored row would change, so an unchanged record costs
+        # a read, not a write and a disk sync.
+        current = {row["stage"]: row for row in self._c.execute(
+            "SELECT stage, at, status, detail, seq FROM trade_record_events "
+            "WHERE journal_record_id=?", (rid,))}
         for seq, event in enumerate(events):
+            old = current.get(event["stage"])
+            if old is not None:
+                after = (old["at"] if old["at"] is not None else event.get("at"),
+                         event.get("status") or "DONE",
+                         event.get("detail") if event.get("detail") is not None else old["detail"],
+                         seq)
+                if after == (old["at"], old["status"], old["detail"], old["seq"]):
+                    continue
             self._c.execute(
                 "INSERT INTO trade_record_events(journal_record_id,stage,at,status,detail,seq) "
                 "VALUES (?,?,?,?,?,?) ON CONFLICT(journal_record_id,stage) DO UPDATE SET "
@@ -586,10 +608,24 @@ class TradeRecordStore:
             "evidence_json": _dumps(decision.get("evidence")),
             "source_ref_json": _dumps(decision.get("source_ref")),
         }
-        row["decided_at"] = row["decided_at"] or now
         cols = list(row)
         updatable = [c for c in cols if c not in ("decision_record_id", "decision_key")]
         with self._lock:
+            existing = self._c.execute(
+                "SELECT * FROM decision_records WHERE decision_key=?", (key,)).fetchone()
+            if existing is None:
+                row["decided_at"] = row["decided_at"] or now
+            else:
+                # Without a decision time of its own, a decision keeps the one it
+                # was first recorded with; it used to take the time of every pass.
+                row["decided_at"] = row["decided_at"] or existing["decided_at"]
+                # What the upsert below would store; when that is what is already
+                # stored, skip it: the recorder re-projects every decision on each
+                # pass, and a write per unchanged decision is a disk sync each.
+                if all(existing[c] == (row[c] if c in self._DECISION_OVERWRITE
+                                       or row[c] is not None else existing[c])
+                       for c in updatable):
+                    return did
             self._c.execute(
                 f"INSERT INTO decision_records({','.join(cols)},created_at,updated_at) "
                 f"VALUES ({','.join('?' * len(cols))},?,?) ON CONFLICT(decision_key) DO UPDATE SET "

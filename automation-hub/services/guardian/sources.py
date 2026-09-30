@@ -72,10 +72,13 @@ def journal_row(recorder) -> dict:
     """The journal recorder's own account of its last pass, including any
     ledger it had to skip (a skipped ledger is a ledger whose trades are not
     being journalled)."""
-    status = recorder.status()
+    # Read the recorder's own attributes, never recorder.status(): that reads
+    # the journal database, whose lock a long pass holds, and a Guardian cycle
+    # waiting on it stops Guardian's heartbeat.
     report = getattr(recorder, "last_report", None) or {}
     skipped = [f"{row.get('source')}: {row.get('skipped')}"
                for row in report.get("ledgers", []) if isinstance(row, dict) and row.get("skipped")]
-    return {"running": bool(status.get("running")), "passes": int(status.get("passes") or 0),
-            "last_error": status.get("last_error"), "last_pass_at": report.get("at"),
-            "skipped": skipped}
+    return {"running": bool(getattr(recorder, "running", False)),
+            "passes": int(getattr(recorder, "passes", 0) or 0),
+            "last_error": getattr(recorder, "last_error", None), "last_pass_at": report.get("at"),
+            "pass_seconds": report.get("seconds"), "skipped": skipped}
