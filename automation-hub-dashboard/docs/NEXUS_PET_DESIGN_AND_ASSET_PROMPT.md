@@ -96,7 +96,16 @@ reported bot state.
 ## Implementation rule
 
 The default Sprig footer pet uses the approved transparent production sprite
-sheet directly. CSS selects the working, aware, greeting, or warning pose from
+sheet directly (`public/nexus-pet-concepts/sprig-production-poses-v4.png`). The sheet
+is four equal 620×724 cells, one pose per cell: working, aware, greeting and warning.
+Each cell has transparent gutters, and no pose may cross into the next cell, or the
+frame shows a sliver of the neighbouring pose. An e2e test checks the cell edges.
+
+Sprig belongs to the platform, not to a card on top of it. It rests on the footer's top
+edge, grounded by a soft contact shadow and a faint glow in the state colour. No CSS
+`filter` is used on the pet: WebKit (every iPhone browser) draws a filter on this
+clipped, animated layer around its rectangle, which reads as a dark box. An e2e test
+checks that there is no filter and that the art sits on the footer line. CSS selects the working, aware, greeting, or warning pose from
 authoritative application state. The code-native SVG remains a fallback for
 roster members that do not yet have matching full-body pose sheets. State,
 accessibility, reduced-motion behaviour, and cursor interactions remain

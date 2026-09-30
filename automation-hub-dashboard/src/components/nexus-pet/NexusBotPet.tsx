@@ -9,7 +9,7 @@ import "./NexusPet.css";
 type Interaction = "idle" | "hover" | "click";
 
 const PET_STORAGE_KEY = "tradelogx:nexus-pet:v1";
-const SPRIG_SPRITE_URL = `${import.meta.env.BASE_URL}nexus-pet-concepts/sprig-production-poses-v3.png`;
+const SPRIG_SPRITE_URL = `${import.meta.env.BASE_URL}nexus-pet-concepts/sprig-production-poses-v4.png`;
 const PET_IDS = new Set<NexusPetId>(NEXUS_PETS.map((pet) => pet.id));
 const PET_SIZES = new Set<NexusPetSize>(["small", "medium", "large"]);
 const DEFAULT_APPEARANCE: NexusPetAppearance = { pet: "sprig", size: "medium" };
