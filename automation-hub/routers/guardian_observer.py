@@ -10,6 +10,7 @@ from fastapi import APIRouter, Header, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from config import settings
+from services.guardian_execution_read_model import smc_execution_integrity_snapshot
 from services.guardian_read_model import lab_decision_page, lab_decision_snapshot
 
 router = APIRouter(tags=["guardian-observer"])
@@ -68,4 +69,23 @@ def guardian_evaluations(
         "feed_health_verified": False,
         "execution_integrity_verified": False,
         "page": page,
+    }, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/guardian/smc-execution")
+def guardian_smc_execution(x_guardian_observer_key: Optional[str] = Header(default=None)):
+    """Observe durable SMC Agent paper records without invoking its runtime."""
+    _require_observer_key(x_guardian_observer_key)
+    try:
+        snapshot = smc_execution_integrity_snapshot(
+            settings.smc_agent_journal_db, settings.smc_paper_db)
+    except (sqlite3.Error, ValueError, TypeError) as exc:
+        raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED",
+                                  "code": "EXECUTION_EVIDENCE_UNAVAILABLE"}) from exc
+    return JSONResponse({
+        "schema_version": 1,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "feed_health_verified": False,
+        "execution_integrity_verified": False,
+        **snapshot,
     }, headers={"Cache-Control": "no-store"})

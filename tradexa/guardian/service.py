@@ -20,6 +20,7 @@ from .incidents import GuardianIncidentEngine
 from .lab_backfill import GuardianLabBackfill
 from .lab_observer import GuardianLabObserver
 from .public_status import GuardianPublicStatusCollector
+from .smc_execution_observer import GuardianSMCExecutionObserver
 from .store import GuardianStore
 
 _STATUSES = {
@@ -283,6 +284,21 @@ def _lab_backfill_monitor(store: GuardianStore, collector: GuardianLabBackfill,
         stopped.wait(30)
 
 
+def _smc_execution_monitor(store: GuardianStore,
+                           collector: GuardianSMCExecutionObserver,
+                           stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_smc_execution_probe", "FAILED",
+                                       reason="SMC_EXECUTION_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
 def main() -> None:
     """Run separately: python -m tradexa.guardian.service (loopback by default)."""
     source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
@@ -309,6 +325,9 @@ def main() -> None:
     backfill_url = os.environ.get("GUARDIAN_LAB_BACKFILL_URL", "").strip()
     if backfill_url and "guardian_lab_backfill" not in required:
         required += ("guardian_lab_backfill",)
+    smc_execution_url = os.environ.get("GUARDIAN_SMC_EXECUTION_URL", "").strip()
+    if smc_execution_url and "guardian_smc_execution_probe" not in required:
+        required += ("guardian_smc_execution_probe",)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required)
@@ -331,6 +350,13 @@ def main() -> None:
     backfill_monitor = (Thread(target=_lab_backfill_monitor,
                                args=(store, backfill_collector, stopped), daemon=True)
                         if backfill_collector else None)
+    smc_execution_collector = (
+        GuardianSMCExecutionObserver(store, smc_execution_url, lab_observer_key)
+        if smc_execution_url else None)
+    smc_execution_monitor = (
+        Thread(target=_smc_execution_monitor,
+               args=(store, smc_execution_collector, stopped), daemon=True)
+        if smc_execution_collector else None)
     monitor.start()
     incident_monitor.start()
     if public_monitor:
@@ -339,6 +365,8 @@ def main() -> None:
         lab_monitor.start()
     if backfill_monitor:
         backfill_monitor.start()
+    if smc_execution_monitor:
+        smc_execution_monitor.start()
     try:
         with make_server(os.environ.get("GUARDIAN_BIND_HOST", "127.0.0.1"),
                          int(os.environ.get("GUARDIAN_PORT", "8765")), app) as server:
@@ -353,6 +381,8 @@ def main() -> None:
             lab_monitor.join(timeout=2)
         if backfill_monitor:
             backfill_monitor.join(timeout=2)
+        if smc_execution_monitor:
+            smc_execution_monitor.join(timeout=2)
 
 
 if __name__ == "__main__":
