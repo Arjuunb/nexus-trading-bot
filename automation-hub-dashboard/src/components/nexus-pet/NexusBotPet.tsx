@@ -8,6 +8,34 @@ import "./NexusPet.css";
 
 type Interaction = "idle" | "hover" | "click";
 
+/* Sprig's behaviour, kept out of React state so a moving pointer or a timer
+   never rerenders the dashboard. `applyPose` turns these inputs into one pose
+   (which cell of the sprite sheet shows) and one eye state, written straight
+   to the root's dataset for CSS. An unhealthy platform always wins: Sprig is
+   never happy while the engine reports a warning, a loss or an error. */
+type Behaviour = {
+  state: string;
+  near: boolean;      // pointer within reach: looks up from the laptop
+  hovered: boolean;   // pointer on Sprig: waves
+  petted: boolean;    // stroked or held: happy
+  glance: boolean;    // an occasional look up while working
+  popover: boolean;   // status open: looks at the reader
+};
+const UNHEALTHY = new Set(["warning", "trade-loss", "error"]);
+const PET_HOLD_MS = 480;          // press and hold (touch, pen or mouse) to pet
+const PET_STROKE_PX = 80;         // or stroke back and forth across Sprig
+const PET_HAPPY_MS = 1700;
+const random = (min: number, max: number) => min + Math.random() * (max - min);
+
+function derivePose(b: Behaviour): { pose: string; eyes: string } {
+  if (UNHEALTHY.has(b.state)) return { pose: "alert", eyes: "open" };
+  const pose = b.hovered || b.petted ? "greet" : b.near || b.glance || b.popover ? "aware" : "working";
+  const eyes = b.state === "paused" ? "drowsy"
+    : b.state === "offline" && pose === "working" ? "sleep"       // nothing running: dozes at the laptop
+    : "open";
+  return { pose, eyes };
+}
+
 const PET_STORAGE_KEY = "tradelogx:nexus-pet:v1";
 const SPRIG_SPRITE_URL = `${import.meta.env.BASE_URL}nexus-pet-concepts/sprig-production-poses-v4.png`;
 const PET_IDS = new Set<NexusPetId>(NEXUS_PETS.map((pet) => pet.id));
@@ -52,6 +80,40 @@ export default function NexusBotPet() {
   const [interaction, setInteraction] = useState<Interaction>("idle");
   const [appearance, setAppearance] = useState<NexusPetAppearance>(loadAppearance);
   const [spriteLoaded, setSpriteLoaded] = useState(false);
+  const behaviour = useRef<Behaviour>({ state: model.state, near: false, hovered: false, petted: false,
+                                        glance: false, popover: false });
+  const petTimer = useRef<number | null>(null);
+  const holdTimer = useRef<number | null>(null);
+  const suppressClick = useRef(false);
+  const lastPet = useRef(Number.NEGATIVE_INFINITY);   // page time starts at 0, so 0 would block the first second
+  const stroke = useRef({ at: 0, x: 0, dir: 0, distance: 0, turns: 0 });
+
+  const applyPose = useCallback(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const { pose, eyes } = derivePose(behaviour.current);
+    if (root.dataset.pose !== pose) root.dataset.pose = pose;
+    if (root.dataset.eyes !== eyes) root.dataset.eyes = eyes;
+  }, []);
+
+  const pet = useCallback(() => {
+    const root = rootRef.current;
+    const now = performance.now();
+    if (!root || now - lastPet.current < 900) return;
+    lastPet.current = now;
+    if (UNHEALTHY.has(behaviour.current.state)) return;   // attentive, never happy, when something is wrong
+    behaviour.current.petted = true;
+    root.dataset.petted = "false";
+    void root.offsetWidth;                                  // restart the hearts for a second pat
+    root.dataset.petted = "true";
+    applyPose();
+    if (petTimer.current !== null) window.clearTimeout(petTimer.current);
+    petTimer.current = window.setTimeout(() => {
+      behaviour.current.petted = false;
+      if (rootRef.current) rootRef.current.dataset.petted = "false";
+      applyPose();
+    }, PET_HAPPY_MS);
+  }, [applyPose]);
 
   const petName = NEXUS_PETS.find((pet) => pet.id === appearance.pet)?.name ?? "Sprig";
 
@@ -74,7 +136,43 @@ export default function NexusBotPet() {
     if (interactionTimer.current !== null) window.clearTimeout(interactionTimer.current);
     if (curiosityTimer.current !== null) window.clearTimeout(curiosityTimer.current);
     if (frameRef.current !== null) window.cancelAnimationFrame(frameRef.current);
+    if (petTimer.current !== null) window.clearTimeout(petTimer.current);
+    if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
   }, []);
+
+  // The engine's state and the status panel feed the pose.
+  useEffect(() => { behaviour.current.state = model.state; applyPose(); }, [model.state, applyPose]);
+  useEffect(() => { behaviour.current.popover = open || settingsOpen; applyPose(); }, [open, settingsOpen, applyPose]);
+
+  // Life while nobody is interacting: Sprig blinks every few seconds and now
+  // and then looks up from the laptop. Neither runs with reduced motion or in
+  // a hidden tab.
+  useEffect(() => {
+    if (appearance.pet !== "sprig") return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let blinkTimer = 0, glanceTimer = 0, glanceEnd = 0, open = 0;
+    const quiet = () => reduceMotion.matches || document.hidden;
+    const blink = () => {
+      const root = rootRef.current;
+      if (root && !quiet() && root.dataset.eyes === "open") {
+        root.dataset.blink = "true";
+        open = window.setTimeout(() => { if (rootRef.current) rootRef.current.dataset.blink = "false"; }, 150);
+      }
+      blinkTimer = window.setTimeout(blink, random(2600, 6400));
+    };
+    const glance = () => {
+      const b = behaviour.current;
+      if (!quiet() && !b.near && !b.hovered && !b.petted && b.state !== "offline") {
+        b.glance = true;
+        applyPose();
+        glanceEnd = window.setTimeout(() => { behaviour.current.glance = false; applyPose(); }, 1800);
+      }
+      glanceTimer = window.setTimeout(glance, random(22000, 40000));
+    };
+    blinkTimer = window.setTimeout(blink, random(1500, 3500));
+    glanceTimer = window.setTimeout(glance, random(18000, 30000));
+    return () => { [blinkTimer, glanceTimer, glanceEnd, open].forEach((t) => window.clearTimeout(t)); };
+  }, [appearance.pet, applyPose]);
 
   useEffect(() => {
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -97,6 +195,7 @@ export default function NexusBotPet() {
         const close = distance < 82;
         root.dataset.near = String(near);
         root.dataset.close = String(close);
+        if (behaviour.current.near !== near) { behaviour.current.near = near; applyPose(); }
         root.style.setProperty("--pet-look-x", `${(x * 3).toFixed(2)}px`);
         root.style.setProperty("--pet-look-y", `${(y * 1.7).toFixed(2)}px`);
         root.style.setProperty("--pet-head-turn", `${(x * 5.2).toFixed(2)}deg`);
@@ -109,7 +208,7 @@ export default function NexusBotPet() {
     };
     window.addEventListener("pointermove", trackPointer, { passive: true });
     return () => window.removeEventListener("pointermove", trackPointer);
-  }, []);
+  }, [applyPose]);
 
   useEffect(() => {
     const onVisibility = () => { if (rootRef.current) rootRef.current.dataset.hidden = String(document.hidden); };
@@ -140,6 +239,10 @@ export default function NexusBotPet() {
   }, [open, settingsOpen]);
 
   const toggle = () => {
+    if (suppressClick.current) {             // the press was a pat, not a request for status
+      suppressClick.current = false;
+      return;
+    }
     react("click", 560);
     setSettingsOpen(false);
     setOpen((value) => !value);
@@ -153,6 +256,8 @@ export default function NexusBotPet() {
   const greet = () => {
     const root = rootRef.current;
     if (root) root.dataset.hovered = "true";
+    behaviour.current.hovered = true;
+    applyPose();
     react("hover", 480);
     if (curiosityTimer.current !== null) window.clearTimeout(curiosityTimer.current);
     curiosityTimer.current = window.setTimeout(() => {
@@ -162,10 +267,50 @@ export default function NexusBotPet() {
 
   const settle = () => {
     if (curiosityTimer.current !== null) window.clearTimeout(curiosityTimer.current);
+    cancelHold();
+    behaviour.current.hovered = false;
+    applyPose();
     const root = rootRef.current;
     if (!root) return;
     root.dataset.hovered = "false";
     root.dataset.curious = "false";
+  };
+
+  // Petting: press and hold anywhere on Sprig, or stroke back and forth.
+  const cancelHold = () => {
+    if (holdTimer.current !== null) window.clearTimeout(holdTimer.current);
+    holdTimer.current = null;
+  };
+  const startHold = (event: React.PointerEvent) => {
+    if (event.button !== 0) return;
+    cancelHold();
+    stroke.current = { at: performance.now(), x: event.clientX, dir: 0, distance: 0, turns: 0 };
+    holdTimer.current = window.setTimeout(() => {
+      holdTimer.current = null;
+      suppressClick.current = true;
+      pet();
+    }, PET_HOLD_MS);
+  };
+  const strokeOrDrift = (event: React.PointerEvent) => {
+    const now = performance.now();
+    if (now - stroke.current.at > 450) {     // a pause ends a stroke; this move starts a new one
+      stroke.current = { at: now, x: event.clientX, dir: 0, distance: 0, turns: 0 };
+      return;
+    }
+    const s = stroke.current;
+    s.at = now;
+    const dx = event.clientX - s.x;
+    if (Math.abs(dx) < 2) return;
+    if (holdTimer.current !== null && Math.abs(dx) > 8) cancelHold();   // moving, not holding
+    const dir = Math.sign(dx);
+    if (s.dir && dir !== s.dir) s.turns += 1;
+    s.dir = dir;
+    s.distance += Math.abs(dx);
+    s.x = event.clientX;
+    if (event.pointerType === "mouse" && s.turns >= 2 && s.distance >= PET_STROKE_PX) {
+      stroke.current = { at: now, x: event.clientX, dir: 0, distance: 0, turns: 0 };
+      pet();
+    }
   };
 
   return (
@@ -179,10 +324,15 @@ export default function NexusBotPet() {
         aria-label={`${petName}, Nexus pet: ${model.statusLabel}. Open status.`}
         aria-haspopup="dialog"
         aria-expanded={open || settingsOpen}
-        title={`${petName} · Nexus Engine · ${model.statusLabel}`}
+        title={`${petName} · Nexus Engine · ${model.statusLabel} · click for status, hold or stroke to pet`}
         onClick={toggle}
         onPointerEnter={greet}
         onPointerLeave={settle}
+        onPointerDown={startHold}
+        onPointerUp={cancelHold}
+        onPointerCancel={cancelHold}
+        onPointerMove={strokeOrDrift}
+        onContextMenu={(event) => { if (suppressClick.current) event.preventDefault(); }}
       >
         <span className="nexus-pet-stage" aria-hidden="true">
           {appearance.pet === "sprig" && (
@@ -195,7 +345,24 @@ export default function NexusBotPet() {
                 onLoad={() => setSpriteLoaded(true)}
                 onError={() => setSpriteLoaded(false)}
               />
+              {/* Live LED eyes over the painted ones: they follow the pointer,
+                  blink, doze and droop. Hidden while Sprig waves (its happy
+                  eyes are painted). */}
+              <span className="nexus-pet-live-eyes">
+                <span className="nexus-pet-socket nexus-pet-socket-l"><i className="nexus-pet-led" /></span>
+                <span className="nexus-pet-socket nexus-pet-socket-r"><i className="nexus-pet-led" /></span>
+              </span>
             </span>
+          )}
+          {appearance.pet === "sprig" && (
+            <>
+              <span className="nexus-pet-hearts">
+                {[0, 1, 2].map((i) => (
+                  <svg key={i} viewBox="0 0 12 11" focusable="false"><path d="M6 10.4 1.3 5.9a3 3 0 0 1 4.3-4.2L6 2.1l.4-.4a3 3 0 0 1 4.3 4.2Z" /></svg>
+                ))}
+              </span>
+              <span className="nexus-pet-zzz"><i>z</i><i>z</i><i>z</i></span>
+            </>
           )}
           <svg className="nexus-pet-vector-fallback" viewBox="0 0 64 74" role="presentation" focusable="false">
             <ellipse className="nexus-pet-floor" cx="32" cy="69" rx="20" ry="3.5" />

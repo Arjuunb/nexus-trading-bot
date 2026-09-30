@@ -67,6 +67,29 @@ Interaction sequence:
 Respect `prefers-reduced-motion`, pause animation when the document is hidden,
 and avoid React rerenders for continuous cursor tracking.
 
+### How Sprig behaves like a pet
+
+Sprig's painted eyes are covered by live LED eyes: the same colour, size and tilt
+as the painting, measured per pose from the sprite sheet. This lets the eyes
+move. The component turns its inputs into one pose and one eye state (the
+`derivePose` function) and writes them to the root's dataset, never to React
+state.
+
+| When | Sprig |
+|---|---|
+| Idle, engine running | Types at the laptop, breathes, blinks every 3–6 s, and every 20–40 s looks up for a moment |
+| Pointer nearby | Looks up from the laptop, and its eyes follow the pointer; it leans slightly toward it |
+| Pointer on Sprig | Waves, with its painted happy eyes |
+| Stroked back and forth, or pressed and held (touch, pen or mouse) | A small happy hop and three leaf-green hearts. Holding does not open the status panel |
+| Click or tap | A small hop, and the status panel opens; Sprig looks at you while it is open |
+| Nothing running (offline) | Dozes at the laptop: eyes closed, slow breathing, a drifting "z", no floor glow. It wakes to greet you |
+| Paused | Drowsy, half-closed eyes |
+| Warning, trade loss or error | The amber alert pose. Petting never makes it happy while something is wrong |
+
+Reduced motion turns off every animation and the blink and glance timers. The
+poses still follow state, so Sprig stays informative. A hidden tab pauses
+everything. E2e tests cover each row.
+
 ## Raster asset-generation prompt
 
 ```text

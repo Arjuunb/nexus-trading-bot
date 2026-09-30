@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { mockApi } from "./mock";
 
 const STORAGE_KEY = "tradelogx:nexus-pet:v1";
@@ -93,4 +93,115 @@ test("Sprig rests on the footer as part of the platform, never on a shadow plate
   const footer = (await page.locator("footer.ticker").boundingBox())!;
   const artBottom = frame.y + frame.height - frame.height * 64 / 724;
   expect(Math.abs(artBottom - footer.y)).toBeLessThanOrEqual(1.5);
+});
+
+// ---- Sprig behaves like a pet ------------------------------------------------
+const INSTANCE = { id: "pet-i1", symbol: "BTCUSDT", strategy_label: "3-Candle Rejection", timeframe: "5m",
+  state: "running", market_data: { market_data_status: "healthy" }, engine: { lifecycle_state: "running" } };
+const snapshot = (state: string) => ({ instances: [{ ...INSTANCE, state, last_error: state === "error" ? "order rejected" : null }],
+  active_slots: 1, max_active_slots: 8, global_risk_status: "ok" });
+
+async function openSprig(page: Page, instances?: unknown) {
+  await mockApi(page);
+  if (instances) await page.route((url) => url.pathname === "/instances", (route) => route.fulfill({ json: instances }));
+  await page.goto("/#/overview");
+  const root = page.locator(".nexus-pet-root");
+  await expect(root).toHaveAttribute("data-sprite-loaded", "true");
+  const button = page.getByRole("button", { name: /Sprig, Nexus pet:/ });
+  const box = (await button.boundingBox())!;
+  return { root, button, cx: box.x + box.width / 2, cy: box.y + box.height / 2 };
+}
+const ledX = (page: Page) => page.locator(".nexus-pet-socket-l .nexus-pet-led").evaluate(
+  (el) => parseFloat(getComputedStyle(el).translate.split(" ")[0]) || 0);
+
+test("Sprig notices the pointer, looks at it, and waves when touched", async ({ page }) => {
+  const { root, button, cx, cy } = await openSprig(page, snapshot("running"));
+  await expect(root).toHaveAttribute("data-state", "running");
+  await page.mouse.move(5, 5);
+  await expect(root).toHaveAttribute("data-pose", "working");
+  await expect(root).toHaveAttribute("data-eyes", "open");
+
+  await page.mouse.move(cx - 120, cy, { steps: 4 });          // near, to the left: looks up and left
+  await expect(root).toHaveAttribute("data-pose", "aware");
+  await expect.poll(() => ledX(page)).toBeLessThan(0);
+  await page.mouse.move(cx + 110, cy - 20, { steps: 6 });     // to the right: the eyes follow
+  await expect.poll(() => ledX(page)).toBeGreaterThan(0);
+
+  await button.hover();                                        // on Sprig: waves with its painted happy eyes
+  await expect(root).toHaveAttribute("data-pose", "greet");
+  await expect(page.locator(".nexus-pet-live-eyes")).toBeHidden();
+  await page.mouse.move(5, 5, { steps: 4 });
+  await expect(root).toHaveAttribute("data-pose", "working");
+});
+
+test("stroking or holding Sprig pets it, without opening the status panel", async ({ page }) => {
+  const { root, cx, cy } = await openSprig(page, snapshot("running"));
+  const status = page.getByRole("dialog", { name: "Nexus Engine status" });
+
+  await page.mouse.move(cx, cy);
+  for (const x of [cx - 26, cx + 26, cx - 26, cx + 26]) await page.mouse.move(x, cy, { steps: 5 });
+  await expect(root).toHaveAttribute("data-petted", "true");
+  await expect(root).toHaveAttribute("data-pose", "greet");
+  const heart = page.locator(".nexus-pet-hearts svg").first();
+  await expect.poll(() => heart.evaluate((el) => getComputedStyle(el).animationName)).toBe("nexus-pet-heart");
+  await expect(status).toBeHidden();
+  await expect(root).toHaveAttribute("data-petted", "false", { timeout: 4000 });
+
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();                                     // press and hold: a pat, not a click
+  await page.waitForTimeout(650);
+  await page.mouse.up();
+  await expect(root).toHaveAttribute("data-petted", "true");
+  await expect(status).toBeHidden();
+
+  await page.mouse.click(cx, cy);                              // a plain click still opens status
+  await expect(status).toBeVisible();
+});
+
+test("Sprig dozes when nothing is running and wakes to greet you", async ({ page }) => {
+  const { root, button } = await openSprig(page);              // the default mock: no running instance
+  await page.mouse.move(5, 5);
+  await expect(root).toHaveAttribute("data-state", "offline");
+  await expect(root).toHaveAttribute("data-eyes", "sleep");
+  await expect.poll(() => page.locator(".nexus-pet-zzz i").first()
+    .evaluate((el) => getComputedStyle(el).animationName)).toBe("nexus-pet-z");
+  await button.hover();
+  await expect(root).toHaveAttribute("data-pose", "greet");
+  await expect(root).toHaveAttribute("data-eyes", "open");
+});
+
+test("Sprig is never happy while the engine reports a problem", async ({ page }) => {
+  const { root, cx, cy } = await openSprig(page, snapshot("error"));
+  await expect(root).toHaveAttribute("data-state", "error");
+  await expect(root).toHaveAttribute("data-pose", "alert");
+  await page.mouse.move(cx, cy);
+  for (const x of [cx - 26, cx + 26, cx - 26, cx + 26]) await page.mouse.move(x, cy, { steps: 5 });
+  await page.mouse.down();
+  await page.waitForTimeout(650);
+  await page.mouse.up();
+  await expect(root).toHaveAttribute("data-pose", "alert");    // hovered and petted, still alert
+  expect(await root.getAttribute("data-petted")).not.toBe("true");
+});
+
+test("Sprig blinks on its own, and keeps still with reduced motion", async ({ page }) => {
+  const { root } = await openSprig(page, snapshot("running"));
+  await page.mouse.move(5, 5);
+  const countBlinks = () => page.evaluate(() => {
+    const w = window as unknown as { blinks?: number };
+    if (w.blinks === undefined) {
+      w.blinks = 0;
+      new MutationObserver(() => {
+        if (document.querySelector(".nexus-pet-root")?.getAttribute("data-blink") === "true") w.blinks! += 1;
+      }).observe(document.querySelector(".nexus-pet-root")!, { attributes: true, attributeFilter: ["data-blink"] });
+    }
+    return w.blinks;
+  });
+  await countBlinks();
+  await expect.poll(countBlinks, { timeout: 9000 }).toBeGreaterThan(0);   // a blink lasts 150ms
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await expect(root).toHaveAttribute("data-sprite-loaded", "true");
+  await page.waitForTimeout(4500);                             // the first blink would be due by now
+  expect(await root.getAttribute("data-blink")).toBeNull();
 });
