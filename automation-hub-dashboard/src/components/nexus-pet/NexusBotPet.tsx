@@ -332,7 +332,7 @@ export default function NexusBotPet() {
         onPointerUp={cancelHold}
         onPointerCancel={cancelHold}
         onPointerMove={strokeOrDrift}
-        onContextMenu={(event) => { if (suppressClick.current) event.preventDefault(); }}
+        onContextMenu={(event) => event.preventDefault()}
       >
         <span className="nexus-pet-stage" aria-hidden="true">
           {appearance.pet === "sprig" && (

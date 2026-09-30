@@ -205,3 +205,30 @@ test("Sprig blinks on its own, and keeps still with reduced motion", async ({ pa
   await page.waitForTimeout(4500);                             // the first blink would be due by now
   expect(await root.getAttribute("data-blink")).toBeNull();
 });
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+
+  test("Sprig sits on the footer as on desktop, and nothing stays hidden behind it", async ({ page }) => {
+    const { button } = await openSprig(page, snapshot("running"));
+    const frame = (await button.boundingBox())!;
+    const footer = (await page.locator("footer.ticker").boundingBox())!;
+    expect(frame.height).toBeCloseTo(72, 0);                          // three quarters of desktop, not a footer icon
+    const artBottom = frame.y + frame.height - frame.height * 64 / 724;
+    expect(Math.abs(artBottom - footer.y)).toBeLessThanOrEqual(1.5);  // resting on the footer line
+    expect(frame.x + frame.width).toBeLessThanOrEqual(390);
+    const padding = await page.locator(".content").evaluate((el) => parseFloat(getComputedStyle(el).paddingBottom));
+    expect(padding).toBeGreaterThanOrEqual(footer.y - frame.y);      // the last card can scroll clear of it
+    const touch = await button.evaluate((el) => ({ callout: getComputedStyle(el).getPropertyValue("-webkit-touch-callout"),
+                                                     select: getComputedStyle(el).userSelect }));
+    expect(touch.select).toBe("none");
+
+    await button.tap();                                               // a tap opens status above Sprig, on screen
+    const status = page.getByRole("dialog", { name: "Nexus Engine status" });
+    await expect(status).toBeVisible();
+    const panel = (await status.boundingBox())!;
+    expect(panel.x).toBeGreaterThanOrEqual(0);
+    expect(panel.x + panel.width).toBeLessThanOrEqual(390);
+    expect(panel.y + panel.height).toBeLessThanOrEqual(frame.y + 1);
+  });
+});

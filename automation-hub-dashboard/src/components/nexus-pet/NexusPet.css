@@ -100,6 +100,11 @@
   background: transparent;
   color: inherit;
   pointer-events: auto;
+  /* press-and-hold is a pat: no iOS image callout, text selection or zoom */
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
 }
 
 .nexus-pet-button:focus-visible {
@@ -421,10 +426,17 @@
      the footer's reserved 42px slot instead. */
   .nexus-pet-root { right: 0; bottom: 0; width: 42px; height: 42px; }
   .nexus-pet-root .nexus-pet-button { transform: scale(.72); transform-origin: right bottom; }
-  .nexus-pet-root[data-pet="sprig"] { bottom: 0; width: 42px; height: 42px; }
-  .nexus-pet-root[data-pet="sprig"] .nexus-pet-button { transform: scale(.42); }
   .nexus-pet-root[data-size="large"] .nexus-pet-button { transform: scale(.64); }
-  .nexus-pet-root[data-pet="sprig"][data-size="large"] .nexus-pet-button { transform: scale(.36); }
+  /* Sprig keeps its desktop look on phones: it sits on the footer at three
+     quarters of its desktop size rather than shrinking into the footer slot,
+     and the page gains room at the bottom so no card stays hidden behind it. */
+  .nexus-pet-root[data-pet="sprig"] { --pet-button-height: 72px; right: -2px; bottom: calc(100% - var(--pet-art-floor)); height: 76px; }
+  .nexus-pet-root[data-pet="sprig"][data-size="small"] { --pet-button-height: 60px; height: 64px; }
+  .nexus-pet-root[data-pet="sprig"][data-size="large"] { --pet-button-height: 84px; height: 88px; }
+  .nexus-pet-root[data-pet="sprig"] .nexus-pet-button,
+  .nexus-pet-root[data-pet="sprig"][data-size="large"] .nexus-pet-button { transform: none; }
+  .nexus-pet-root[data-pet="sprig"] .nexus-pet-popover { position: absolute; right: 0; bottom: calc(100% + 9px); }
+  .main:has(.nexus-pet-root[data-pet="sprig"]) .content { padding-bottom: 96px; }
   .nexus-pet-popover { position: fixed; right: 10px; bottom: 54px; }
   .nexus-pet-settings { right: 10px; width: min(390px, calc(100vw - 20px)); }
   .nexus-pet-roster { grid-template-columns: 1fr; }
