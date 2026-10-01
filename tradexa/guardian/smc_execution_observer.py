@@ -107,14 +107,22 @@ class GuardianSMCExecutionObserver:
                 "journal_trade_size": row.get("journal_trade_size"),
                 "open_position_matches_order": row.get("open_position_matches_order"),
             }
-            identity = json.dumps(material, sort_keys=True, separators=(",", ":"))
+            # A source intent may receive a new durable update with the same
+            # projected fields. Its timestamp then changes too, so reusing
+            # the prior ID would be a conflicting replay rather than a valid
+            # second observation. Polling the unchanged source row still
+            # produces exactly the same event ID and payload.
+            identity = json.dumps({"material": material,
+                                   "source_updated_at": updated.isoformat()},
+                                  sort_keys=True, separators=(",", ":"))
             event = GuardianEvent(
                 source_service="guardian_smc_probe",
                 source_component="smc_agent",
                 event_type="execution_integrity_observed",
                 event_id=hashlib.sha256(identity.encode()).hexdigest()[:32],
                 timestamp=updated,
-                severity="INFO" if row["integrity_code"] in {"CONSISTENT", "PENDING"} else "WATCH",
+                severity="INFO" if row["integrity_code"] in {
+                    "CONSISTENT", "PENDING", "ORDER_AWAITING_FILL"} else "WATCH",
                 session_id=row.get("session_id"),
                 execution_id=row["execution_key"],
                 correlation_id=row.get("decision_id"),

@@ -1,4 +1,5 @@
 """Guardian observes SMC paper evidence without becoming an order authority."""
+from datetime import datetime, timedelta, timezone
 import sqlite3
 
 from fastapi.testclient import TestClient
@@ -9,6 +10,7 @@ from execution.paper_broker_v2 import PaperBrokerV2
 from services.guardian_execution_read_model import smc_execution_integrity_snapshot
 from services.smc_agent_journal import SMCAgentJournal
 from tradexa.guardian.smc_execution_observer import GuardianSMCExecutionObserver
+from tradexa.guardian.incidents import GuardianIncidentEngine
 from tradexa.guardian.store import GuardianStore
 
 
@@ -175,6 +177,89 @@ def test_observer_key_and_deduplicated_event_do_not_change_trading_records(
     assert len(store.recent()) == 1
     assert len(broker.orders()) == 1
     assert journal.execution_intent("decision-1")["broker_order_id"] is None
+    journal.close()
+    broker._c.close()
+
+
+def test_real_resting_order_with_premature_trade_opens_possible_incident(tmp_path):
+    journal, broker, journal_path, broker_path = _sources(tmp_path)
+    order = _submit(broker)
+    journal.transition_execution("decision-1", "EXECUTED",
+                                 broker_order_id=order["id"])
+    trade_id = journal.open_trade(
+        decision_id="decision-1", symbol="BTCUSDT", timeframe="5m",
+        direction="long", entry=100, stop=90, target=120,
+        planned_rr=2, size=0.01, why="approved SMC paper decision",
+        order_id=order["id"])
+    journal.transition_execution("decision-1", "COMPLETE", trade_id=trade_id)
+
+    store = GuardianStore(tmp_path / "guardian.db")
+    observer = GuardianSMCExecutionObserver(
+        store, URL, KEY,
+        fetch=lambda: {**smc_execution_integrity_snapshot(journal_path, broker_path),
+                       "schema_version": 1,
+                       "observed_at": datetime.now(timezone.utc).isoformat(),
+                       "feed_health_verified": False,
+                       "execution_integrity_verified": False})
+    assert observer.poll() == 1
+    engine = GuardianIncidentEngine(store)
+    assert engine.scan() == 1
+    [incident] = engine.list()
+    assert incident["fingerprint"] == "smc_execution_integrity:decision-1"
+    assert incident["severity"] == "WARNING"
+    assert incident["confidence"] == "POSSIBLE"
+    assert len(broker.orders()) == 1
+    assert broker.positions() == []
+    assert len(journal.trades()) == 1
+    journal.close()
+    broker._c.close()
+
+
+def test_source_update_with_unchanged_projection_is_not_event_id_collision(tmp_path):
+    journal, broker, journal_path, broker_path = _sources(tmp_path)
+    store = GuardianStore(tmp_path / "guardian.db")
+    first_update = datetime.now(timezone.utc) - timedelta(seconds=2)
+    source = smc_execution_integrity_snapshot(journal_path, broker_path)
+    source["executions"][0]["updated_at"] = first_update.isoformat()
+
+    def fetch():
+        return {**source, "schema_version": 1,
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "feed_health_verified": False,
+                "execution_integrity_verified": False}
+
+    observer = GuardianSMCExecutionObserver(store, URL, KEY, fetch=fetch)
+    assert observer.poll() == 1
+    assert observer.poll() == 0
+    source["executions"][0]["updated_at"] = (
+        first_update + timedelta(seconds=1)).isoformat()
+    assert observer.poll() == 1
+    assert observer.poll() == 0
+    assert store.count() == 2
+    assert all(event["severity"] == "INFO" for event in store.recent())
+    journal.close()
+    broker._c.close()
+
+
+def test_resting_order_without_trade_is_normal_guardian_info(tmp_path):
+    journal, broker, journal_path, broker_path = _sources(tmp_path)
+    order = _submit(broker)
+    journal.transition_execution("decision-1", "EXECUTED",
+                                 broker_order_id=order["id"])
+    store = GuardianStore(tmp_path / "guardian.db")
+    observer = GuardianSMCExecutionObserver(
+        store, URL, KEY,
+        fetch=lambda: {**smc_execution_integrity_snapshot(journal_path, broker_path),
+                       "schema_version": 1,
+                       "observed_at": datetime.now(timezone.utc).isoformat(),
+                       "feed_health_verified": False,
+                       "execution_integrity_verified": False})
+    assert observer.poll() == 1
+    assert store.recent()[0]["reason"] == "ORDER_AWAITING_FILL"
+    assert store.recent()[0]["severity"] == "INFO"
+    engine = GuardianIncidentEngine(store)
+    engine.scan()
+    assert engine.list() == []
     journal.close()
     broker._c.close()
 

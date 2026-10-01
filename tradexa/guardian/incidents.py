@@ -17,6 +17,23 @@ from .store import GuardianStore
 
 _SEVERITY = {"INFO": 0, "WATCH": 1, "WARNING": 2, "HIGH": 3, "CRITICAL": 4}
 
+# The SMC probe reads the broker and agent journal in separate snapshots.
+# These are investigation candidates, never proof that a broker/journal
+# invariant failed at one atomic instant. In particular, an unfilled order is
+# normal; a trade journal row that claims that order filled is not.
+_SMC_EXECUTION_WARNINGS = frozenset({
+    "AGENT_TRADE_PRECEDES_FILL", "JOURNAL_SIZE_EXCEEDS_BROKER_FILL",
+    "OPEN_TRADE_POSITION_UNVERIFIED", "BROKER_ORDER_UNRECORDED",
+    "ORDER_ID_UNRECORDED", "TRADE_ID_NOT_FOUND",
+    "COMPLETE_INTENT_TRADE_UNRECORDED", "EXECUTION_UNCERTAIN",
+})
+_SMC_EXECUTION_HIGH = frozenset({
+    "FILLED_ORDER_JOURNAL_PENDING", "DUPLICATE_EXECUTION_KEY",
+    "ORDER_ID_NOT_FOUND", "ORDER_IDENTITY_MISMATCH",
+    "TRADE_IDENTITY_MISMATCH", "ENTRY_MARKED_REDUCE_ONLY",
+    "FAILED_INTENT_WITH_ORDER_ID",
+})
+
 
 @dataclass(frozen=True)
 class IncidentSignal:
@@ -39,6 +56,33 @@ def classify_incident(event: dict) -> IncidentSignal | None:
     kind = event.get("event_type")
     source = event.get("source_service") or "unknown"
     component = event.get("source_component") or "unknown"
+    if kind == "execution_integrity_observed":
+        # This exact read-only source is the only producer of this contract.
+        # Never permit a generic event to resolve an execution incident.
+        evidence = event.get("evidence") or {}
+        code = evidence.get("integrity_code")
+        key = event.get("execution_id")
+        if (source != "guardian_smc_probe" or component != "smc_agent" or
+                (event.get("metadata") or {}).get("paper_only") is not True or
+                evidence.get("cross_database_atomic") is not False or
+                evidence.get("execution_integrity_verified") is not False or
+                not isinstance(key, str) or not key or
+                evidence.get("execution_key") != key or
+                code != event.get("reason")):
+            return None
+        fingerprint = f"smc_execution_integrity:{key}"
+        if code == "CONSISTENT":
+            # A later non-atomic healthy-looking read cannot close an incident.
+            # Source-authoritative reconciliation must do that explicitly.
+            return IncidentSignal(fingerprint, "SMC paper execution integrity",
+                                  "smc_agent", "SMC broker and journal appear consistent in a later read; independent verification is still required",
+                                  "POSSIBLE", "WARNING", "RECOVERING")
+        if code not in _SMC_EXECUTION_WARNINGS | _SMC_EXECUTION_HIGH:
+            return None  # PENDING and ORDER_AWAITING_FILL are normal states.
+        severity = "HIGH" if code in _SMC_EXECUTION_HIGH else "WARNING"
+        return IncidentSignal(fingerprint, "SMC paper execution integrity",
+                              "smc_agent", f"SMC paper execution observation: {code}; broker and journal reads are non-atomic",
+                              "POSSIBLE", severity, "OPEN")
     if kind in {"websocket_disconnected", "stale_candle", "stale_htf_candle",
                 "candle_missing", "sequence_gap", "websocket_reconnected",
                 "feed_synchronized"}:

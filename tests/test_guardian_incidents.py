@@ -156,3 +156,57 @@ def test_recovery_without_observed_failure_creates_no_incident(guardian):
     _append(store, "feed_sync_000001", "feed_synchronized")
     assert engine.scan() == 1
     assert engine.list() == []
+
+
+def _execution_observation(store, event_id: str, key: str, code: str, **changes):
+    evidence = {"execution_key": key, "integrity_code": code,
+                "cross_database_atomic": False,
+                "execution_integrity_verified": False,
+                **changes.pop("evidence", {})}
+    _append(store, event_id, "execution_integrity_observed",
+            source_service=changes.pop("source_service", "guardian_smc_probe"),
+            source_component=changes.pop("source_component", "smc_agent"),
+            execution_id=key, reason=code, evidence=evidence,
+            metadata={"paper_only": True, **changes.pop("metadata", {})},
+            **changes)
+
+
+def test_smc_execution_observation_groups_per_key_without_claiming_proof(guardian):
+    store, engine = guardian
+    _execution_observation(store, "smc_pending_0001", "decision-1", "ORDER_AWAITING_FILL")
+    _execution_observation(store, "smc_mismatch_001", "decision-1", "AGENT_TRADE_PRECEDES_FILL")
+    _execution_observation(store, "smc_mismatch_002", "decision-1", "JOURNAL_SIZE_EXCEEDS_BROKER_FILL")
+    _execution_observation(store, "smc_mismatch_003", "decision-2", "FILLED_ORDER_JOURNAL_PENDING")
+    engine.scan()
+
+    incidents = {row["fingerprint"]: row for row in engine.list()}
+    assert set(incidents) == {"smc_execution_integrity:decision-1",
+                              "smc_execution_integrity:decision-2"}
+    first = incidents["smc_execution_integrity:decision-1"]
+    assert first["confidence"] == "POSSIBLE"
+    assert first["severity"] == "WARNING"
+    assert first["evidence_count"] == 2
+    assert incidents["smc_execution_integrity:decision-2"]["severity"] == "HIGH"
+
+    # A later consistent cross-database read is progress, not proof of repair.
+    _execution_observation(store, "smc_consistent_01", "decision-1", "CONSISTENT")
+    engine.scan()
+    assert engine.get(first["incident_id"])["state"] == "RECOVERING"
+    assert len(engine.timeline(first["incident_id"])) == 3
+    assert GuardianIncidentEngine(store).scan() == 0
+
+
+def test_smc_execution_observation_rejects_untrusted_or_unverified_contract(guardian):
+    store, engine = guardian
+    _execution_observation(store, "smc_no_incident_1", "decision-1", "PENDING")
+    _execution_observation(store, "smc_no_incident_2", "decision-1", "CONSISTENT")
+    _execution_observation(store, "smc_wrong_source_1", "decision-1", "DUPLICATE_EXECUTION_KEY",
+                           source_service="smc_lab")
+    _execution_observation(store, "smc_wrong_scope_1", "decision-1", "DUPLICATE_EXECUTION_KEY",
+                           metadata={"paper_only": False})
+    _execution_observation(store, "smc_wrong_claim_1", "decision-1", "DUPLICATE_EXECUTION_KEY",
+                           evidence={"cross_database_atomic": True})
+    _execution_observation(store, "smc_wrong_key_0001", "decision-1", "DUPLICATE_EXECUTION_KEY",
+                           evidence={"execution_key": "decision-2"})
+    engine.scan()
+    assert engine.list() == []
