@@ -167,8 +167,18 @@ class GuardianService:
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
                 if path == "/v1/health":
-                    return self._respond(start_response, 200, component_health(
-                        self.store.heartbeats(), self.required_components))
+                    health = component_health(
+                        self.store.heartbeats(), self.required_components)
+                    incidents = self.incidents.active_summary()
+                    health["active_incidents"] = incidents
+                    if health["state"] == "HEALTHY" and incidents["warning_or_higher"]:
+                        # A heartbeat proves the components answered recently,
+                        # not that an unresolved execution or journal finding
+                        # disappeared. This is an observation only; no trading
+                        # gate is changed by Guardian.
+                        health["state"] = "DEGRADED"
+                        health["state_reason"] = "ACTIVE_INCIDENTS"
+                    return self._respond(start_response, 200, health)
                 query = parse_qs(environ.get("QUERY_STRING", ""))
                 try:
                     limit = int(query.get("limit", ["50"])[0])

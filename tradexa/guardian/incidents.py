@@ -275,6 +275,19 @@ class GuardianIncidentEngine:
                     (limit,)).fetchall()
         return [dict(row) for row in rows]
 
+    def active_summary(self) -> dict[str, int]:
+        """Count all unresolved incidents, not only the visible recent page."""
+        with closing(self.store._connect()) as conn:
+            rows = conn.execute(
+                "SELECT severity, COUNT(*) AS total FROM guardian_incidents "
+                "WHERE state IN ('OPEN','RECOVERING') GROUP BY severity"
+            ).fetchall()
+        counts = {row["severity"]: int(row["total"]) for row in rows}
+        return {"total": sum(counts.values()),
+                "warning_or_higher": sum(counts.get(level, 0) for level in
+                                          ("WARNING", "HIGH", "CRITICAL")),
+                "high_or_critical": counts.get("HIGH", 0) + counts.get("CRITICAL", 0)}
+
     def timeline(self, incident_id: str) -> list[dict[str, Any]]:
         with closing(self.store._connect()) as conn:
             rows = conn.execute(

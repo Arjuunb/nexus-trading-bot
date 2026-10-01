@@ -96,11 +96,12 @@
       ? observed.toLocaleString() : "Unknown time";
   }
 
-  function renderIncidents(incidents) {
+  function renderIncidents(incidents, activeSummary) {
     const body = byId("incidents");
     body.replaceChildren();
-    byId("incident-count").textContent = String(incidents.filter(
-      (incident) => incident.state === "OPEN" || incident.state === "RECOVERING").length);
+    const activeCount = activeSummary && Number.isSafeInteger(activeSummary.total)
+      && activeSummary.total >= 0 ? activeSummary.total : null;
+    byId("incident-count").textContent = activeCount == null ? "—" : String(activeCount);
     if (!incidents.length) {
       const row = document.createElement("tr");
       const cell = document.createElement("td");
@@ -184,7 +185,8 @@
       if (current !== generation || request !== requestSequence || !readKey) return;
       renderComponents(health);
       renderEvents(Array.isArray(eventPage.events) ? eventPage.events : []);
-      renderIncidents(Array.isArray(incidentPage.incidents) ? incidentPage.incidents : []);
+      renderIncidents(Array.isArray(incidentPage.incidents) ? incidentPage.incidents : [],
+        health.active_incidents);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);

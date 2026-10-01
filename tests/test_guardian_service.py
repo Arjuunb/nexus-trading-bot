@@ -104,6 +104,37 @@ def test_health_is_unknown_without_evidence_then_source_bound_heartbeat(app):
     assert health["evidence_complete"] is True
 
 
+def test_open_incident_prevents_green_overall_health_but_does_not_claim_trading_block(app):
+    assert _request(app, "GET", "/healthz")[0] == 200
+    heartbeat = {"component": "smc_lab", "state": "HEALTHY", "reason": "SOURCE_OBSERVED",
+                 "observed_at": datetime.now(timezone.utc).isoformat()}
+    assert _request(app, "POST", "/v1/heartbeats", payload=heartbeat,
+                    key=SOURCE_KEY)[0] == 200
+    assert _request(app, "GET", "/v1/health", key=READ_KEY)[1]["state"] == "HEALTHY"
+
+    crashed = json.loads(_event(event_type="worker_crashed").canonical_json())
+    assert _request(app, "POST", "/v1/events", payload=crashed,
+                    key=SOURCE_KEY)[0] == 201
+    assert app.incidents.scan() == 1
+    _, health, _ = _request(app, "GET", "/v1/health", key=READ_KEY)
+    assert health["state"] == "DEGRADED"
+    assert health["state_reason"] == "ACTIVE_INCIDENTS"
+    assert health["active_incidents"] == {
+        "total": 1, "warning_or_higher": 1, "high_or_critical": 1}
+    assert health["components"]["smc_lab"]["state"] == "HEALTHY"
+    assert health["evidence_complete"] is True
+
+    verified = json.loads(_event(
+        event_id="worker_verified_123456", event_type="worker_heartbeat",
+        evidence={"worker_operational_verified": True}).canonical_json())
+    assert _request(app, "POST", "/v1/events", payload=verified,
+                    key=SOURCE_KEY)[0] == 201
+    assert app.incidents.scan() == 1
+    _, recovered, _ = _request(app, "GET", "/v1/health", key=READ_KEY)
+    assert recovered["state"] == "HEALTHY"
+    assert recovered["active_incidents"]["total"] == 0
+
+
 def test_persistence_outage_returns_structured_unavailable(app, monkeypatch):
     def unavailable(*args, **kwargs):
         raise sqlite3.OperationalError("database locked")
@@ -189,6 +220,8 @@ def test_command_center_never_embeds_keys_or_event_html():
     assert "X-Guardian-Key" in script
     assert "/v1/incidents?limit=50" in script
     assert "incident-count" in html
+    assert "health.active_incidents" in script
+    assert "All unresolved derived incidents" in html
     assert "timeline" in script
     assert "<script src=\"/assets/command-center.js\" defer>" in html
 

@@ -210,3 +210,14 @@ def test_smc_execution_observation_rejects_untrusted_or_unverified_contract(guar
                            evidence={"execution_key": "decision-2"})
     engine.scan()
     assert engine.list() == []
+
+
+def test_active_incident_count_is_not_truncated_to_visible_page(guardian):
+    store, engine = guardian
+    for number in range(55):
+        _append(store, f"worker_crash_{number:04d}", "worker_crashed",
+                source_service="smc_lab", source_component=f"worker_{number}")
+    assert engine.scan() == 55
+    assert len(engine.list(limit=50)) == 50
+    assert engine.active_summary() == {
+        "total": 55, "warning_or_higher": 55, "high_or_critical": 55}
