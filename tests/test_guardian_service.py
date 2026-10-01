@@ -223,6 +223,10 @@ def test_command_center_never_embeds_keys_or_event_html():
     assert "health.active_incidents" in script
     assert "All unresolved derived incidents" in html
     assert "timeline" in script
+    assert 'id="decision-traces"' in html
+    assert "Bounded received snapshots" in html
+    assert "/v1/decision-traces?limit=50" in script
+    assert "near_valid_candidate" in script
     assert "<script src=\"/assets/command-center.js\" defer>" in html
 
 

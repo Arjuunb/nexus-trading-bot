@@ -47,6 +47,9 @@ class GuardianStore:
                 );
                 CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp);
                 CREATE INDEX IF NOT EXISTS events_source ON events(source_service, source_component);
+                CREATE INDEX IF NOT EXISTS events_lab_decision_scan ON events(sequence DESC)
+                  WHERE source_service IN ('guardian_lab_probe','guardian_lab_backfill')
+                    AND event_type IN ('lab_evaluation_observed','lab_evaluation_backfilled');
                 CREATE TRIGGER IF NOT EXISTS events_no_update
                   BEFORE UPDATE ON events BEGIN
                     SELECT RAISE(ABORT, 'Guardian evidence is immutable');
@@ -205,6 +208,24 @@ class GuardianStore:
                 ).fetchall()
         return [{**json.loads(row["payload_json"]), "received_at": row["received_at"]}
                 for row in rows]
+
+    def recent_lab_evidence(self, limit: int = 2000) -> list[dict]:
+        """Bounded source snapshots for a derived decision view, newest first.
+
+        This is deliberately not an all-history strategy statistic. Raw events
+        remain immutable; the caller must disclose that the scan is bounded.
+        """
+        if type(limit) is not int or not 1 <= limit <= 2000:
+            raise ValueError("invalid lab evidence scan limit")
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                """SELECT sequence,received_at,payload_json FROM events
+                   WHERE source_service IN ('guardian_lab_probe','guardian_lab_backfill')
+                     AND event_type IN ('lab_evaluation_observed','lab_evaluation_backfilled')
+                   ORDER BY sequence DESC LIMIT ?""", (limit,),
+            ).fetchall()
+        return [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
+                 "guardian_sequence": row["sequence"]} for row in rows]
 
     def count(self) -> int:
         with closing(self._connect()) as conn:

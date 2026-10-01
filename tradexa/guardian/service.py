@@ -15,6 +15,7 @@ from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
 from .events import GuardianEvent, GuardianEventError, MAX_EVENT_BYTES
+from .decision_traces import decision_traces
 from .health import component_health
 from .incidents import GuardianIncidentEngine
 from .lab_backfill import GuardianLabBackfill
@@ -162,7 +163,7 @@ class GuardianService:
                                             reason=payload.get("reason", ""),
                                             observed_at=observed_at)
                 return self._respond(start_response, 200, {"result": "RECORDED"})
-            if (path in ("/v1/events", "/v1/health", "/v1/incidents") or
+            if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces") or
                     path.startswith("/v1/incidents/")) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
@@ -186,6 +187,14 @@ class GuardianService:
                     raise _HTTPError(400, "INVALID_LIMIT") from exc
                 if not 1 <= limit <= 500:
                     raise _HTTPError(400, "INVALID_LIMIT")
+                if path == "/v1/decision-traces":
+                    if limit > 100:
+                        raise _HTTPError(400, "INVALID_LIMIT")
+                    lab = query.get("lab", [None])[0]
+                    if lab not in (None, "PRICE_ACTION", "SMC"):
+                        raise _HTTPError(400, "INVALID_LAB")
+                    return self._respond(start_response, 200,
+                                         decision_traces(self.store, limit=limit, lab=lab))
                 if path == "/v1/incidents":
                     state = query.get("state", [None])[0]
                     if state not in (None, "OPEN", "RECOVERING", "RECOVERED"):
@@ -205,7 +214,8 @@ class GuardianService:
                 source = query.get("source_service", [None])[0]
                 return self._respond(start_response, 200, {
                     "events": self.store.recent(limit, source_service=source)})
-            if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents"):
+            if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
+                        "/v1/decision-traces"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
         except _HTTPError as exc:

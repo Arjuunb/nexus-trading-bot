@@ -165,6 +165,37 @@
     }
   }
 
+  function renderDecisionTraces(page) {
+    const body = byId("decision-traces");
+    body.replaceChildren();
+    const traces = Array.isArray(page.traces) ? page.traces : [];
+    byId("decision-coverage").textContent = page.scan_may_be_truncated
+      ? "Recent Guardian evidence only; the bounded scan was truncated. No full-history or outcome claim."
+      : "Recent Guardian evidence only; earlier or unobserved lifecycle states may be missing. No outcome claim.";
+    if (!traces.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.className = "empty";
+      cell.textContent = "No PA/SMC decision evidence received. This does not prove no evaluations occurred.";
+      row.appendChild(cell);
+      body.appendChild(row);
+      return;
+    }
+    for (const trace of traces) {
+      const row = document.createElement("tr");
+      textCell(row, displayTime(trace.candle_time));
+      textCell(row, `${trace.lab || "Unknown"} · ${trace.strategy_id || "Unknown"} ${trace.strategy_version || ""}`);
+      textCell(row, `${trace.symbol || "Unknown"} · ${trace.timeframe || "Unknown"}`);
+      textCell(row, `${trace.decision || "UNKNOWN"} · ${trace.reason || "No saved reason"}`);
+      textCell(row, Array.isArray(trace.missing_conditions) && trace.missing_conditions.length
+        ? trace.missing_conditions.join(", ") : "—");
+      textCell(row, trace.near_valid_candidate ? "One missing condition · unproven candidate" : "—");
+      textCell(row, trace.event_id);
+      body.appendChild(row);
+    }
+  }
+
   async function read(path) {
     const response = await fetch(path, {
       method: "GET", headers: { "X-Guardian-Key": readKey },
@@ -179,14 +210,16 @@
     const current = generation;
     const request = ++requestSequence;
     try {
-      const [health, eventPage, incidentPage] = await Promise.all([
+      const [health, eventPage, incidentPage, decisionPage] = await Promise.all([
         read("/v1/health"), read("/v1/events?limit=50"), read("/v1/incidents?limit=50"),
+        read("/v1/decision-traces?limit=50"),
       ]);
       if (current !== generation || request !== requestSequence || !readKey) return;
       renderComponents(health);
       renderEvents(Array.isArray(eventPage.events) ? eventPage.events : []);
       renderIncidents(Array.isArray(incidentPage.incidents) ? incidentPage.incidents : [],
         health.active_incidents);
+      renderDecisionTraces(decisionPage);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);
@@ -226,6 +259,15 @@
     placeholder.textContent = "Connect to view Guardian's observed components.";
     components.appendChild(placeholder);
     byId("events").replaceChildren();
+    byId("decision-coverage").textContent = "Connect to load saved decision evidence.";
+    byId("decision-traces").replaceChildren();
+    const decisionRow = document.createElement("tr");
+    const decisionCell = document.createElement("td");
+    decisionCell.colSpan = 7;
+    decisionCell.className = "empty";
+    decisionCell.textContent = "Connect to load decision traces.";
+    decisionRow.appendChild(decisionCell);
+    byId("decision-traces").appendChild(decisionRow);
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;
