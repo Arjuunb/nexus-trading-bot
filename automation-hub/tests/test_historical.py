@@ -35,6 +35,51 @@ def test_store_get_n_and_window(tmp_path):
     assert cov["candles"] == 10 and cov["first"] and cov["last"]
 
 
+def _reference_bars(st, symbol, timeframe, n=None, start_ms=None, end_ms=None):
+    """What get_bars returned before it read only the newest n rows: the whole
+    filtered series in time order, then its last n."""
+    c = st._conn()
+    try:
+        q = "SELECT open_time FROM candles WHERE symbol=? AND timeframe=?"
+        args = [symbol, timeframe]
+        if start_ms is not None:
+            q += " AND open_time>=?"; args.append(start_ms)
+        if end_ms is not None:
+            q += " AND open_time<=?"; args.append(end_ms)
+        rows = [r[0] for r in c.execute(q + " ORDER BY open_time", args)]
+    finally:
+        c.close()
+    return rows[-n:] if n is not None and len(rows) > n else rows
+
+
+def test_the_newest_n_bars_are_exactly_what_a_full_read_kept(tmp_path):
+    st = HistoricalStore(str(tmp_path / "m.db"))
+    st.upsert("ETHUSDT", "1d", [(i * 1000, i, i, i, i, 1) for i in range(1, 41)])
+    st.upsert("BTCUSDT", "1d", [(i * 1000, i, i, i, i, 1) for i in range(1, 6)])   # another series
+    for n in (None, 0, 1, 3, 10, 40, 100):
+        for start in (None, 5000, 39000):
+            for end in (None, 20000, 500):
+                got = [int(b.timestamp.timestamp() * 1000)
+                       for b in st.get_bars("ETHUSDT", "1d", n=n, start_ms=start, end_ms=end)]
+                assert got == _reference_bars(st, "ETHUSDT", "1d", n, start, end), (n, start, end)
+
+
+def test_the_newest_n_bars_are_read_without_reading_the_whole_series(tmp_path, monkeypatch):
+    st = HistoricalStore(str(tmp_path / "m.db"))
+    st.upsert("BTCUSDT", "5m", [(i * 300_000, 1, 2, 0.5, 1.5, 9) for i in range(1, 5001)])
+    statements = []
+    real = st._conn
+
+    def traced():
+        c = real()
+        c.set_trace_callback(statements.append)
+        return c
+    monkeypatch.setattr(st, "_conn", traced)
+    bars = st.get_bars("BTCUSDT", "5m", n=10)
+    assert [int(b.timestamp.timestamp() * 1000) for b in bars] == [i * 300_000 for i in range(4991, 5001)]
+    [select] = [s for s in statements if s.lstrip().upper().startswith("SELECT")]
+    assert "DESC LIMIT 10" in select.upper()
+
 def test_sync_paginates_backward_with_injected_fetcher(tmp_path):
     st = HistoricalStore(str(tmp_path / "m.db"))
     step = _TF_MS["4h"]

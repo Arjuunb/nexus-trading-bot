@@ -106,8 +106,18 @@ class HistoricalStore:
                 q += " AND open_time>=?"; args.append(int(start_ms))
             if end_ms is not None:
                 q += " AND open_time<=?"; args.append(int(end_ms))
-            q += " ORDER BY open_time"
-            rows = c.execute(q, args).fetchall()
+            if n is not None and n > 0:
+                # Only the newest n rows, read backwards off the primary key and
+                # put back in time order: the same bars as reading the whole
+                # series and keeping its last n, without reading every cached
+                # candle (a year of 5m is 105,120 rows) to return a few hundred.
+                # Request threads doing that full read were what kept a core busy.
+                q += " ORDER BY open_time DESC LIMIT ?"; args.append(int(n))
+                rows = c.execute(q, args).fetchall()
+                rows.reverse()
+            else:
+                q += " ORDER BY open_time"
+                rows = c.execute(q, args).fetchall()
         finally:
             c.close()
         if n is not None and len(rows) > n:
