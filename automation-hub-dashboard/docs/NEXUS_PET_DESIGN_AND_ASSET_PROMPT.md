@@ -164,7 +164,7 @@ Sprig belongs to the platform, not to a card on top of it. It rests on the foote
 edge, grounded by a soft contact shadow and a faint glow in the state colour. No CSS
 `filter` is used on the pet: WebKit (every iPhone browser) draws a filter on this
 clipped, animated layer around its rectangle, which reads as a dark box. An e2e test
-checks that there is no filter and that the art sits on the footer line. CSS selects the working, aware, greeting, or warning pose from
+checks that there is no filter and that the art sits on the footer line. For the same reason Safari's tap highlight is switched off on Sprig: touching or holding it (a pat) would otherwise draw a grey rounded box over it. The phone e2e test checks that too. CSS selects the working, aware, greeting, or warning pose from
 authoritative application state. The code-native SVG remains a fallback for
 roster members that do not yet have matching full-body pose sheets. State,
 accessibility, reduced-motion behaviour, and cursor interactions remain

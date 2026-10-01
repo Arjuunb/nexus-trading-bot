@@ -323,8 +323,10 @@ test.describe("on a phone", () => {
     const padding = await page.locator(".content").evaluate((el) => parseFloat(getComputedStyle(el).paddingBottom));
     expect(padding).toBeGreaterThanOrEqual(footer.y - frame.y);      // the last card can scroll clear of it
     const touch = await button.evaluate((el) => ({ callout: getComputedStyle(el).getPropertyValue("-webkit-touch-callout"),
-                                                     select: getComputedStyle(el).userSelect }));
+                                                     select: getComputedStyle(el).userSelect,
+                                                     highlight: getComputedStyle(el).getPropertyValue("-webkit-tap-highlight-color") }));
     expect(touch.select).toBe("none");
+    expect(touch.highlight).toBe("rgba(0, 0, 0, 0)");               // no grey box over Sprig while touched
 
     await button.tap();                                               // a tap opens status above Sprig, on screen
     const status = page.getByRole("dialog", { name: "Nexus Engine status" });

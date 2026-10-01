@@ -101,6 +101,8 @@
   pointer-events: auto;
   /* press-and-hold is a pat: no iOS image callout, text selection or zoom */
   -webkit-touch-callout: none;
+  /* nor Safari's tap highlight: a grey rounded box over Sprig while touched */
+  -webkit-tap-highlight-color: transparent;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
