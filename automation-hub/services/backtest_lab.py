@@ -24,12 +24,28 @@ def _fetch(symbol: str, timeframe: str, bars: int):
     return get_bars(symbol, n=max(600, min(int(bars), 10000)), timeframe=timeframe, require_real=True)
 
 
-def _metrics_on(strategy, symbol, timeframe, tuning, rows, custom_spec=None):
+def _fetch_for_strategy(strategy: str, symbol: str, timeframe: str, bars: int):
+    if strategy != "Adaptive MTF Trend Pullback":
+        rows, source = _fetch(symbol, timeframe, bars)
+        return rows, source, None
+    if timeframe != "5m":
+        return [], "Adaptive MTF Trend Pullback requires a 5m entry timeframe", None
+    from services.native_research_context import load_adaptive_history
+    try:
+        rows, native = load_adaptive_history(symbol, limit=max(600, min(int(bars), 10000)))
+    except Exception as exc:
+        return [], f"Native Adaptive MTF history unavailable: {exc}", None
+    return rows, "Market Data V2 (native Binance USD-M futures)", native
+
+
+def _metrics_on(strategy, symbol, timeframe, tuning, rows, custom_spec=None,
+                *, native_context=None):
     """(_metrics, raw results) for a strategy over ``rows``; None on error/empty."""
     from services.strategy_presets import _run_on, _metrics
     if not rows:
         return None
-    r = _run_on(strategy, symbol, timeframe, tuning or {}, custom_spec, rows)
+    r = _run_on(strategy, symbol, timeframe, tuning or {}, custom_spec, rows,
+                native_context=native_context)
     if "error" in r:
         return None
     return _metrics(r), r
@@ -62,14 +78,22 @@ def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int
     no Decision Brain. There is no score to optimise then, so each fold is a
     plain train/test pair."""
     gate = _gate(quality_gate)
-    rows, src = _fetch(symbol, timeframe, bars)
+    rows, src, native_context = _fetch_for_strategy(strategy, symbol, timeframe, bars)
     if not rows:
-        return {"available": False, "error": "Historical data not available. Load Binance data first."}
+        return {"available": False, "error": src if strategy == "Adaptive MTF Trend Pullback"
+                else "Historical data not available. Load Binance data first."}
     n = len(rows)
     folds = max(2, min(folds, n // 150))
     block = n // (folds + 1)
     grid = [50, 60, 70, 80] if not gate else [0]
     out = []
+
+    def measure(tuning, segment):
+        if native_context is not None:
+            return _metrics_on(strategy, symbol, timeframe, tuning, segment, custom_spec,
+                               native_context=native_context)
+        return _metrics_on(strategy, symbol, timeframe, tuning, segment, custom_spec)
+
     for i in range(folds):
         train = rows[i * block:(i + 1) * block]
         test = rows[(i + 1) * block:(i + 2) * block]
@@ -77,12 +101,12 @@ def walk_forward(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int
             continue
         best = None
         for ms in grid:
-            m = _metrics_on(strategy, symbol, timeframe, {"min_score": ms, **gate}, train, custom_spec)
+            m = measure({"min_score": ms, **gate}, train)
             if m and m[0]["trades"] >= 3 and (best is None or m[0]["net_r"] > best[1]["net_r"]):
                 best = (ms, m[0])
         if best is None:
             continue
-        tm = _metrics_on(strategy, symbol, timeframe, {"min_score": best[0], **gate}, test, custom_spec)
+        tm = measure({"min_score": best[0], **gate}, test)
         tmet = tm[0] if tm else {"net_r": 0.0, "trades": 0, "profit_factor": 0.0}
         out.append({
             "fold": i + 1, "best_min_score": best[0],
@@ -112,10 +136,13 @@ def monte_carlo(strategy: str, symbol: str, timeframe: str = "4h", *, bars: int 
     R and max drawdown, plus probability of ruin / survival / recovery — how much
     of the result is luck vs edge, and how survivable it is. ``ruin_r`` is the
     drawdown (in R) that counts as account ruin."""
-    rows, src = _fetch(symbol, timeframe, bars)
+    rows, src, native_context = _fetch_for_strategy(strategy, symbol, timeframe, bars)
     if not rows:
-        return {"available": False, "error": "Historical data not available. Load Binance data first."}
-    m = _metrics_on(strategy, symbol, timeframe, _gate(quality_gate), rows, custom_spec)
+        return {"available": False, "error": src if strategy == "Adaptive MTF Trend Pullback"
+                else "Historical data not available. Load Binance data first."}
+    m = (_metrics_on(strategy, symbol, timeframe, _gate(quality_gate), rows, custom_spec,
+                     native_context=native_context) if native_context is not None else
+         _metrics_on(strategy, symbol, timeframe, _gate(quality_gate), rows, custom_spec))
     rs = _trade_rs(m[1]) if m else []
     if len(rs) < 10:
         return {"available": True, "data_source": src, "trades": len(rs),
@@ -186,12 +213,19 @@ def out_of_sample(strategy: str, symbol: str, timeframe: str = "4h", *, bars: in
                   split: float = 0.7, tuning: Optional[dict] = None,
                   custom_spec: Optional[dict] = None, quality_gate: str = "on") -> dict:
     tuning = {**(tuning or {}), **_gate(quality_gate)}
-    rows, src = _fetch(symbol, timeframe, bars)
+    rows, src, native_context = _fetch_for_strategy(strategy, symbol, timeframe, bars)
     if not rows:
-        return {"available": False, "error": "Historical data not available. Load Binance data first."}
+        return {"available": False, "error": src if strategy == "Adaptive MTF Trend Pullback"
+                else "Historical data not available. Load Binance data first."}
     cut = int(len(rows) * split)
-    tr = _metrics_on(strategy, symbol, timeframe, tuning, rows[:cut], custom_spec)
-    te = _metrics_on(strategy, symbol, timeframe, tuning, rows[cut:], custom_spec)
+    if native_context is not None:
+        tr = _metrics_on(strategy, symbol, timeframe, tuning, rows[:cut], custom_spec,
+                         native_context=native_context)
+        te = _metrics_on(strategy, symbol, timeframe, tuning, rows[cut:], custom_spec,
+                         native_context=native_context)
+    else:
+        tr = _metrics_on(strategy, symbol, timeframe, tuning, rows[:cut], custom_spec)
+        te = _metrics_on(strategy, symbol, timeframe, tuning, rows[cut:], custom_spec)
     if not tr or not te:
         return {"available": False, "error": "Could not simulate one of the segments."}
     train, test = tr[0], te[0]
@@ -211,6 +245,9 @@ def sliced_performance(strategy: str, timeframe: str = "15m", *,
                        limit: int = 800) -> dict:
     """Regime- / session- / symbol-conditional results for one strategy (#5:
     regime-based, session-based and symbol-based testing)."""
+    if strategy == "Adaptive MTF Trend Pullback":
+        return {"available": False, "error": "Adaptive MTF sliced performance requires "
+                "native-context Replay; it is not available until that separate path is repaired."}
     from services.replay import build_replay
     from services.coach import _bucket
     from strategies.diagnosis import _hour, _session

@@ -81,6 +81,15 @@ DEFAULT_TUNING = {
 }
 
 
+def _adaptive_clock_error(timeframe: str, macro: str, confirmation: str) -> str | None:
+    if timeframe != "5m":
+        return "Adaptive MTF Trend Pullback requires a 5m entry timeframe."
+    if macro not in (None, "", "4h") or confirmation not in (None, "", "15m"):
+        return ("Adaptive MTF has fixed native clocks: 1h gate, 15m pullback, "
+                "4h bias only. Other control-bar MTF overrides are not supported.")
+    return None
+
+
 def _risk_kwargs(tuning: dict) -> dict:
     """The risk-manager limits the simulator enforces (priority: risk manager)."""
     t = {**DEFAULT_TUNING, **(tuning or {})}
@@ -133,7 +142,8 @@ def resolve(strategy: str, symbol: str, timeframe: str, tuning: dict,
 
 
 def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spec: dict,
-            rows, macro: str = None, confirmation: str = None, fill_cost: float = 0.0) -> dict:
+            rows, macro: str = None, confirmation: str = None, fill_cost: float = 0.0,
+            native_context=None) -> dict:
     """Run a resolved configuration over a given bar list (no fetch). Returns the
     raw results dict (with diagnosis, _mtf_gate, _spec) or {'error': ...}.
 
@@ -148,10 +158,21 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
     desc = resolve(strategy, symbol, timeframe, tuning or {}, custom_spec)
     if "error" in desc:
         return desc
+    adaptive = desc.get("key") == "adaptive_trend_pullback"
+    if adaptive:
+        clock_error = _adaptive_clock_error(timeframe, macro, confirmation)
+        if clock_error:
+            return {"error": clock_error}
+        if native_context is None:
+            from services.native_research_context import load_adaptive_history
+            try:
+                _, native_context = load_adaptive_history(symbol, entry_rows=rows)
+            except Exception as exc:  # native cache failure is an unavailable result, never zero trades
+                return {"error": f"Native Adaptive MTF history unavailable: {exc}"}
 
     mtf_lookup = mtf_tfs = None
     requested = [tf for tf in (confirmation, macro) if tf and tf != timeframe]
-    if requested:
+    if requested and not adaptive:
         mtf_lookup = make_trend_lookup(rows, timeframe, requested)
         mtf_tfs = mtf_lookup.timeframes
 
@@ -172,6 +193,8 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
         strat = make_builtin_strategy(desc["key"], symbol)
         results = simulate_strategy(strat, rows, brain=brain, min_score=min_score, slippage=slippage,
                                     mtf_lookup=mtf_lookup, mtf_tfs=mtf_tfs,
+                                    native_context=native_context,
+                                    entry_mode="limit" if adaptive else "market",
                                     **_risk_kwargs(tuning))
     else:
         spec = desc["spec"]
@@ -180,7 +203,10 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
                            min_score=min_score if use_brain else 0,
                            mtf_lookup=mtf_lookup, mtf_tfs=mtf_tfs)
     results["diagnosis"] = diagnose(results, results.get("blocked"))
-    results["_mtf_gate"] = list(mtf_tfs) if mtf_tfs else []
+    # Adaptive owns its fixed native 1h gate/15m pullback/optional 4h bias.
+    # Applying the generic row-index MTF lookup here would create an extra,
+    # non-production gate from resampled 5m history.
+    results["_mtf_gate"] = ["1h"] if adaptive else list(mtf_tfs) if mtf_tfs else []
     results["_spec"] = desc.get("spec")
     return results
 
@@ -228,17 +254,30 @@ def run_simulation(strategy: str, symbol: str, timeframe: str, *, tuning: dict =
     ``realistic`` charges the paper engine's fill friction (spread + slippage +
     latency) so the backtest matches realistic execution, not perfect fills.
     """
-    from data.market_data import get_bars
-    rows, source = get_bars(symbol, n=max(600, min(int(bars), 10000)), timeframe=timeframe,
-                            require_real=True)
+    native_context = None
+    if strategy == "Adaptive MTF Trend Pullback":
+        clock_error = _adaptive_clock_error(timeframe, macro, confirmation)
+        if clock_error:
+            return {"available": False, "error": clock_error}
+        from services.native_research_context import load_adaptive_history
+        try:
+            rows, native_context = load_adaptive_history(
+                symbol, limit=max(600, min(int(bars), 10000)))
+        except Exception as exc:
+            return {"available": False, "error": f"Native Adaptive MTF history unavailable: {exc}"}
+        source = "Market Data V2 (native Binance USD-M futures)"
+    else:
+        from data.market_data import get_bars
+        rows, source = get_bars(symbol, n=max(600, min(int(bars), 10000)), timeframe=timeframe,
+                                require_real=True)
     if not rows:
         return {"error": "Historical data not available. Please load Binance data first "
                          "(run /data/sync).", "data_source": source, "available": False}
     fill_cost = _realistic_fill_cost() if realistic else 0.0
     results = _run_on(strategy, symbol, timeframe, tuning or {}, custom_spec, rows, macro, confirmation,
-                      fill_cost=fill_cost)
+                      fill_cost=fill_cost, native_context=native_context)
     if "error" in results:
-        return results
+        return {"available": False, "data_source": source, **results}
     gate = results.pop("_mtf_gate", [])
     spec = results.pop("_spec", None)
     return {
@@ -261,9 +300,22 @@ def auto_tune(strategy: str, symbol: str, timeframe: str, *, macro: str = None,
     """Search the brain-tuning space on real data with a train/test split and an
     overfit verdict — the bot's 'tune this losing strategy' helper. Optimises on
     the train slice, validates on the unseen test slice."""
-    from data.market_data import get_bars
-    rows, source = get_bars(symbol, n=max(800, min(int(bars), 10000)), timeframe=timeframe,
-                            require_real=True)
+    native_context = None
+    if strategy == "Adaptive MTF Trend Pullback":
+        clock_error = _adaptive_clock_error(timeframe, macro, confirmation)
+        if clock_error:
+            return {"available": False, "error": clock_error}
+        from services.native_research_context import load_adaptive_history
+        try:
+            rows, native_context = load_adaptive_history(
+                symbol, limit=max(800, min(int(bars), 10000)))
+        except Exception as exc:
+            return {"available": False, "error": f"Native Adaptive MTF history unavailable: {exc}"}
+        source = "Market Data V2 (native Binance USD-M futures)"
+    else:
+        from data.market_data import get_bars
+        rows, source = get_bars(symbol, n=max(800, min(int(bars), 10000)), timeframe=timeframe,
+                                require_real=True)
     if not rows:
         return {"available": False,
                 "error": "Historical data not available. Please load Binance data first."}
@@ -271,7 +323,8 @@ def auto_tune(strategy: str, symbol: str, timeframe: str, *, macro: str = None,
     train, test = rows[:cut], rows[cut:]
 
     def metric_on(t, segment):
-        r = _run_on(strategy, symbol, timeframe, t, custom_spec, segment, macro, confirmation)
+        r = _run_on(strategy, symbol, timeframe, t, custom_spec, segment, macro, confirmation,
+                    native_context=native_context)
         return _metrics(r) if "error" not in r else {"trades": 0, "net_r": -1e9, "profit_factor": 0}
 
     base = {**DEFAULT_TUNING}
