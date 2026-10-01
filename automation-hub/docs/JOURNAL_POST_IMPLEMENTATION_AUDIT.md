@@ -716,8 +716,12 @@ strategy's proposals.**
 * Consequence: the PA lab cannot place orders from its own strategy in live
   or replay. Its orders so far could only come from states whose proposals
   carry no `signal_at`, such as the lab's own tests.
-* Not changed: `price_action_lab.py` is frozen. A one-line fix would compare
-  `isoformat()` values. It needs the owner's decision to lift the freeze.
+* Fixed later, with the owner's explicit approval to lift the freeze:
+  `record_evaluation` now compares the two times as instants. The change is
+  recorded as an approved delta in `data/pr6_real_paper_freeze.json`, and
+  `tests/test_pa_lab_accepts_engine_proposals.py` drives the real engine
+  through the replay sequence: each proposal is attested, and automatic mode
+  places paper orders from it.
 
 **D17 — FIXED (level and touches; EMA values stay unrecorded).**
 * Change: when a strategy signals, the engine now also freezes the
@@ -829,9 +833,8 @@ D1). Each fix has its own commit and a test on real engine or strategy
 output that fails on the old code.
 
 **Still open, not changed here:**
-* **The PA lab never attests its strategy's proposals** (§21, found while
-  fixing D6). It is in `services/price_action_lab.py`, which is frozen; the
-  owner has to decide whether to lift the freeze for the one-line fix.
+* ~~**The PA lab never attests its strategy's proposals**~~ (§21, found while
+  fixing D6). Fixed later with the owner's approval to lift the freeze; see §21.
 * **The EMA 9/33 values are not recorded as data** (D17). The strategy's
   report does not carry them, and changing that would change strategy code.
 * **Records already finalized keep what they were written with.** Finished

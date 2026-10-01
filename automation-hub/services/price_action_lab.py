@@ -61,6 +61,21 @@ def _candle(row: Bar) -> dict:
             "low": row.low, "close": row.close, "volume": row.volume}
 
 
+def _same_instant(value, when: datetime) -> bool:
+    """True when a proposal's signal time is this candle's time.
+
+    The engine hands signal_at over as a datetime, whose str() has a space
+    where isoformat() has a "T"; a serialised state carries a string. Compare
+    the instants, not their spellings. An unreadable time never matches.
+    """
+    if not isinstance(value, datetime):
+        try:
+            value = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    return value == when
+
+
 OPERATING_MODES = {"signals_only", "manual_approval", "automatic"}
 OPEN_BROKER_ORDER_STATUSES = {"open", "partially_filled", "triggered"}
 OPEN_STRATEGY_ORDER_STATUSES = {"ORDER_PENDING", "PARTIALLY_FILLED", "ENTERED"}
@@ -845,7 +860,7 @@ class PriceActionPaperAccount:
                   if row.get("strategy_id") == config.strategy_id]
         proposals = [row for row in visual_state.get("proposals", [])
                      if row.get("strategy_id") == config.strategy_id and
-                     (not row.get("signal_at") or str(row.get("signal_at")) == candle_time)]
+                     (not row.get("signal_at") or _same_instant(row.get("signal_at"), candle.timestamp))]
         selected = min(traces, key=lambda row: len(row.get("missing_conditions", []))) if traces else {}
         missing = list(selected.get("missing_conditions") or [])
         state = "SIGNAL_FOUND" if proposals else "WATCHING"
