@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { mockApi } from "./mock";
-import { NAV_LABELS, slug } from "../src/app-context";
+import { NAV_LABELS, OFF_SIDEBAR_LABELS, slug } from "../src/app-context";
 
-const ROUTES = [...NAV_LABELS, "Settings"].map(slug);
+const ROUTES = [...NAV_LABELS, "Settings", ...OFF_SIDEBAR_LABELS].map(slug);
 
 test("current application routes remain contained on a phone viewport", async ({ page }, testInfo) => {
   await mockApi(page);

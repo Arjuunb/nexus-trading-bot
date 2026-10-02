@@ -1,8 +1,8 @@
 import { test, expect, type Page, type ConsoleMessage } from "@playwright/test";
 import { mockApi } from "./mock";
-import { NAV_LABELS, slug } from "../src/app-context";
+import { NAV_LABELS, OFF_SIDEBAR_LABELS, slug } from "../src/app-context";
 
-const PAGES = [...NAV_LABELS, "Settings"];
+const PAGES = [...NAV_LABELS, "Settings", ...OFF_SIDEBAR_LABELS];
 
 // console errors that are noise (not app defects) — network aborts from the
 // polling hooks racing a page change, favicon, etc.

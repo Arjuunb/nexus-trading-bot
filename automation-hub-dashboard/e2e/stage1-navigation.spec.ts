@@ -3,13 +3,18 @@ import { mockApi } from "./mock";
 
 const NAV = [
   "Dashboard", "Guardian",
-  "Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading",
+  "Trading Instances", "Instance Visual Lab", "Strategy Studio", "Live Trading",
   "Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting",
-  "Optimization Lab", "Forward Validation",
+  "Forward Validation",
   "Portfolio", "Analytics",
   "Calendar", "Journal",
-  "Market Data", "Risk & Health",
+  "Risk & Health",
 ];
+
+// Out of the sidebar, but every one still opens from its address, a bookmark
+// or the link that points at it.
+const OFF_SIDEBAR = { "paper-trading": "Paper Trading", "optimization-lab": "Optimization Lab",
+                      "market-data": "Market Data" };
 
 test("Stage 1 sidebar has a scrollable nav and fixed Settings footer", async ({ page }) => {
   await mockApi(page);
@@ -23,6 +28,18 @@ test("Stage 1 sidebar has a scrollable nav and fixed Settings footer", async ({ 
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
     const box = await footer.boundingBox(); expect(box).not.toBeNull(); expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(viewport.height);
   }
+});
+
+test("pages taken out of the sidebar still open from their address and their links", async ({ page }) => {
+  await mockApi(page);
+  for (const [path, name] of Object.entries(OFF_SIDEBAR)) {
+    await page.goto(`/#/${path}`);
+    await expect(page).toHaveURL(new RegExp(`#/${path}$`));                       // not bounced to the Dashboard
+    await expect(page.locator("aside.sidebar nav.nav button.nav-item", { hasText: name })).toHaveCount(0);
+  }
+  await page.goto("/#/settings?section=market-data");
+  await page.getByRole("button", { name: /Open download & repair tools/ }).click();
+  await expect(page).toHaveURL(/#\/market-data$/);
 });
 
 test("Settings Centre exposes working controls and keeps unsupported trading locked", async ({ page }) => {

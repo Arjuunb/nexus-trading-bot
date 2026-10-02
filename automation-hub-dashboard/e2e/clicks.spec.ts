@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { mockApi } from "./mock";
-import { NAV_LABELS, slug } from "../src/app-context";
+import { NAV_LABELS, OFF_SIDEBAR_LABELS, slug } from "../src/app-context";
 
 /** Full UI click coverage (task 2): every sidebar link, every content button on
  *  every page, the paper controls, emergency stop, engine start/stop, settings
@@ -12,7 +12,7 @@ import { NAV_LABELS, slug } from "../src/app-context";
 const NAV = [...NAV_LABELS, "Settings"];
 // Routable by hash but not in the sidebar: linked from their sibling pages.
 const HIDDEN = ["Symbols", "Markets", "Strategies", "Strategy Proof", "Simulation", "Evolution",
-  "Paper Account", "AI Assistant", "Alerts", "SMC Visual Lab"];
+  "Paper Account", "AI Assistant", "Alerts", "SMC Visual Lab", ...OFF_SIDEBAR_LABELS];
 // Old addresses that now open a tab of a hub page. Bookmarks and in-app
 // links still use them, so each must land on a real page.
 const REDIRECTED: [string, string][] = [

@@ -32,13 +32,13 @@ export const useApp = () => useContext(AppContext);
 export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
   // Guardian: the read-only observer over everything below it (one entry).
   { title: null, items: ["Dashboard", "Guardian"] },
-  { title: "Trading", items: ["Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading"] },
-  { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
+  { title: "Trading", items: ["Trading Instances", "Instance Visual Lab", "Strategy Studio", "Live Trading"] },
+  { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },
   // Calendar: every source's realized P&L by day. Its own entry, deliberately
   // not inside Performance (Portfolio/Analytics), which stays as it is.
   { title: "Records", items: ["Calendar", "Journal"] },
-  { title: "System", items: ["Market Data", "Risk & Health"] },
+  { title: "System", items: ["Risk & Health"] },
 ];
 
 export const NAV_LABELS: string[] = NAV_GROUPS.flatMap((g) => g.items);
@@ -51,10 +51,18 @@ export const NAV_LABELS: string[] = NAV_GROUPS.flatMap((g) => g.items);
 // Trading terminal, AI Assistant from AI Intelligence, SMC Visual Lab from the
 // SMC Strategy Lab, whose market section points at it for the Pine reference
 // and parity review).
+//
+// Taken out of the sidebar at the owner's request, still reachable here:
+// Paper Trading (the single-engine terminal from before Trading Instances;
+// the profile menu's Paper Settings still opens it), Optimization Lab (it
+// tunes that engine's score threshold and R:R, not a Trading Instance), and
+// Market Data (download and repair tools; Settings > Market Data opens it).
+export const OFF_SIDEBAR_LABELS = ["Paper Trading", "Optimization Lab", "Market Data"] as const;
+
 const EXTRA_ROUTES = [
   "Alerts", "Symbols", "Markets", "Strategies", "Strategy Proof",
   "Simulation", "Evolution", "Safety Center", "Paper Account", "AI Assistant", "Settings",
-  "SMC Visual Lab",
+  "SMC Visual Lab", ...OFF_SIDEBAR_LABELS,
 ] as const;
 
 // Old bookmarks / saved hashes keep working after the reorganisation.
