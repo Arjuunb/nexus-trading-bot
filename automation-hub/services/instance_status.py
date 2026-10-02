@@ -128,7 +128,7 @@ WAITING_FOR_DATA_MARKET = "WAITING_FOR_DATA"
 
 def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
                     warmup_required: int, blocker: str | None,
-                    htf_ready: bool, health_status: str | None) -> tuple[str, str]:
+                    htf_ready: bool) -> tuple[str, str]:
     state = str(worker_state or "").lower()
     if state == "error":
         return STRATEGY_ERROR, "worker error"
@@ -142,8 +142,9 @@ def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
         return WARMING_UP, f"{warmup_bars}/{warmup_required} warm-up candles"
     if not htf_ready:
         return WAITING_FOR_HTF, "native higher-timeframe context is not available"
-    if str(health_status or "").lower() == "unhealthy":
-        return BLOCKED, "strategy health guard"
+    # A poor historical record is not a block. The engine's health guard only
+    # shrinks new-entry risk (services/auto_engine.py::_health_factor); entries
+    # go on. Reading BLOCKED here hid what the strategy was really doing.
     text = str(blocker or "")
     if text and "WARMUP" in text.upper():
         return WARMING_UP, text
@@ -172,8 +173,7 @@ def execution_status(*, mode: str, execution_mode: str, entries_armed: bool,
 
 
 def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int,
-          worker_alive: bool, entries_armed: bool, health_status: str | None,
-          htf_policy: dict | None) -> dict:
+          worker_alive: bool, entries_armed: bool, htf_policy: dict | None) -> dict:
     """Assemble the full status contract for one instance."""
     engine = engine or {}
     subscription = engine.get("websocket") or {}
@@ -197,8 +197,7 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
         warmup_bars=int(engine.get("warmup_bars") or 0),
         warmup_required=int(engine.get("warmup_required") or 0),
         blocker=engine.get("last_blocker") or market.get("last_blocker"),
-        htf_ready=bool(htf) or not (htf_policy or {}).get("requires_htf", True),
-        health_status=health_status)
+        htf_ready=bool(htf) or not (htf_policy or {}).get("requires_htf", True))
     execution, execution_reason = execution_status(
         mode=instance.mode, execution_mode=instance.execution_mode,
         entries_armed=bool(entries_armed), market=feed, runtime=runtime)

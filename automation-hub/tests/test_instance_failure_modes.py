@@ -129,7 +129,7 @@ def test_a_missing_higher_timeframe_candle_blocks_entries_rather_than_guessing()
     status, reason = instance_status.strategy_status(
         market=instance_status.LIVE, worker_state="running",
         warmup_bars=400, warmup_required=400, blocker=None,
-        htf_ready=False, health_status="Healthy")
+        htf_ready=False)
     assert status == instance_status.WAITING_FOR_HTF
     assert "higher-timeframe" in reason
 

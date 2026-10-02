@@ -3495,7 +3495,6 @@ class TradingInstanceManager:
             except Exception:  # noqa: BLE001 -- observability must not stop a worker
                 last_decision = None
         strategy_health = metrics.get("strategy_health") or {}
-        health_status = str(strategy_health.get("status") or "").lower()
         market_status = str(market.get("market_data_status") or "").lower()
         last_blocker = ((engine or {}).get("last_blocker") or market.get("last_blocker"))
         worker_strategy = str((engine or {}).get("strategy") or "")
@@ -3505,8 +3504,7 @@ class TradingInstanceManager:
         if state in ("error", "degraded") or not strategy_matches:
             ui_status = "ERROR"
         elif (state in ("paused", "stopped", "created", "data_stale", "recovering", "rebooting")
-              or market_status in ("stale", "disconnected", "error")
-              or health_status == "unhealthy"):
+              or market_status in ("stale", "disconnected", "error")):
             ui_status = "BLOCKED"
         elif state in ("starting", "bootstrapping", "warming", "syncing", "ready"):
             ui_status = "RUNNING_UNARMED"
@@ -3561,7 +3559,6 @@ class TradingInstanceManager:
             timeframe_seconds=_TIMEFRAME_SECONDS.get(inst.timeframe, 300),
             worker_alive=worker_alive,
             entries_armed=controls_armed,
-            health_status=strategy_health.get("status"),
             htf_policy={**instance_mtf_policy, "requires_htf": requires_htf})
         return {**inst.to_dict(), **contract,
                 "strategy_lifecycle": (registry_row.lifecycle if registry_row else "UNKNOWN"),
