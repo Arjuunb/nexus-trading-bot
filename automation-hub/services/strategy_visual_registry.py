@@ -293,6 +293,12 @@ BLOCKER_EXPLANATIONS: Mapping[str, str] = {
     "EXECUTION": "The paper broker refused the order.",
     "PIPELINE_ERROR": "The decision pipeline raised an error on this candle.",
     "NO_OPEN_POSITION": "There is no open position for this management decision.",
+    # services/signal_pipeline.py stages that gate_blocker names after themselves
+    "SIZING": "The position sizer could not size this entry within the instance's risk settings.",
+    "EXPOSURE": "The exposure limit leaves no room for this entry.",
+    "VENUE_RULES": "The exchange's order rules reject this quantity, or could not be read.",
+    "RISK_ENGINE": "The risk engine's rules refused this entry.",
+    "GLOBAL_RISK": "The platform-wide risk manager refused this entry, or could not be reached.",
 }
 
 
@@ -728,6 +734,18 @@ _STATE_BY_BLOCKER: Mapping[str, DecisionState] = {
     "ATR_UNAVAILABLE": DecisionState.WAITING_FOR_DATA,
     "QUALITY_TOO_LOW": DecisionState.SIGNAL_REJECTED,
     "NO_SETUP": DecisionState.SCANNING,
+    # strategies/three_candle_rejection.py
+    "NO_CONFIRMATION": DecisionState.WAITING_CONFIRMATION,
+    "EMA_TREND_NOT_ALIGNED": DecisionState.SCANNING,
+    # strategies/price_action_rejection.py::_BLOCKER_BY_CONDITION
+    "TREND_NOT_ALIGNED": DecisionState.SCANNING,
+    "NO_ROLE_FLIP": DecisionState.SCANNING,
+    "RETEST_NOT_HELD": DecisionState.WAITING_CONFIRMATION,
+    "NO_FALSE_BREAK": DecisionState.WAITING_CONFIRMATION,
+    "NO_REVERSAL_CLOSE": DecisionState.WAITING_CONFIRMATION,
+    "PIN_BAR_REQUIRED": DecisionState.WAITING_CONFIRMATION,
+    "NOT_FIRST_TOUCH": DecisionState.WAITING_FOR_POI,
+    "NO_OPEN_POSITION": DecisionState.SCANNING,
     "NET_RR_TOO_LOW": DecisionState.SIGNAL_REJECTED,
     "INSUFFICIENT_RR": DecisionState.SIGNAL_REJECTED,
     "RR_TOO_LOW": DecisionState.SIGNAL_REJECTED,
@@ -744,6 +762,11 @@ _STATE_BY_BLOCKER: Mapping[str, DecisionState] = {
     "WEEKLY_LOSS_LIMIT": DecisionState.RISK_BLOCKED,
     "LOSS_COOLDOWN": DecisionState.RISK_BLOCKED,
     "COOLDOWN_ACTIVE": DecisionState.RISK_BLOCKED,
+    "SIZING": DecisionState.RISK_BLOCKED,
+    "EXPOSURE": DecisionState.RISK_BLOCKED,
+    "VENUE_RULES": DecisionState.RISK_BLOCKED,
+    "RISK_ENGINE": DecisionState.RISK_BLOCKED,
+    "GLOBAL_RISK": DecisionState.RISK_BLOCKED,
     "EXISTING_EXPOSURE": DecisionState.POSITION_OPEN,
     "POSITION_ALREADY_ALIGNED": DecisionState.POSITION_OPEN,
     "POSITION_MANAGED": DecisionState.POSITION_OPEN,
@@ -759,6 +782,13 @@ _STATE_BY_BLOCKER: Mapping[str, DecisionState] = {
     "EXECUTION": DecisionState.SIGNAL_REJECTED,
     "PIPELINE_ERROR": DecisionState.DATA_BLOCKED,
 }
+
+
+def blocker_state(blocker: Optional[str]) -> Optional[DecisionState]:
+    """The state a blocker code puts an instance in, or None for a code no
+    one has classified. Unlike decision_state() this does not guess: a caller
+    that must fail closed can tell "unknown" from "scanning"."""
+    return _STATE_BY_BLOCKER.get(normalise_blocker(blocker))
 
 
 def decision_state(*, blocker: Optional[str], running: bool,

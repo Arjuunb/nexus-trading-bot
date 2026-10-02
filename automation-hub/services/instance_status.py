@@ -15,6 +15,7 @@ field is ``None``, never a plausible-looking default.
 from __future__ import annotations
 
 from services.market_data_freshness import grace_for_interval
+from services.strategy_visual_registry import DecisionState, blocker_state, explain
 
 from datetime import datetime, timezone
 
@@ -40,8 +41,32 @@ WARMING_UP = "WARMING_UP"
 WAITING_FOR_DATA = "WAITING_FOR_DATA"
 WAITING_FOR_HTF = "WAITING_FOR_HTF"
 WAITING_FOR_SETUP = "WAITING_FOR_SETUP"
+IN_POSITION = "IN_POSITION"
+ORDER_PENDING = "ORDER_PENDING"
 BLOCKED = "BLOCKED"
 STRATEGY_ERROR = "ERROR"
+
+#: What the last candle's blocker says the strategy is doing, by the same
+#: per-code states the Instance Visual Lab shows. Only something holding
+#: entries back -- a risk or loss limit, a pause, bad data -- reads BLOCKED.
+#: A strategy that simply found nothing on the candle, or is in a trade, or
+#: has an order resting, is not blocked; reading BLOCKED for those made the
+#: badge flicker red on ordinary candles.
+_STRATEGY_BY_STATE = {
+    DecisionState.SCANNING: WAITING_FOR_SETUP,
+    DecisionState.WAITING_FOR_POI: WAITING_FOR_SETUP,
+    DecisionState.WAITING_CONFIRMATION: WAITING_FOR_SETUP,
+    DecisionState.SIGNAL_REJECTED: WAITING_FOR_SETUP,   # the strategy's own RR/quality rule, this candle
+    DecisionState.SIGNALS_ONLY: WAITING_FOR_SETUP,      # the execution axis says SIGNALS_ONLY
+    DecisionState.WAITING_FOR_DATA: WARMING_UP,
+    DecisionState.WAITING_FOR_HTF: WAITING_FOR_HTF,
+    DecisionState.POSITION_OPEN: IN_POSITION,
+    DecisionState.ORDER_PENDING: ORDER_PENDING,
+    DecisionState.ORDER_INTENT: ORDER_PENDING,
+}
+#: Codes that cover a real refusal as well as a benign one. Without the reason
+#: the code alone cannot tell them apart, so they stay BLOCKED.
+_AMBIGUOUS_CODES = frozenset({"EXECUTION"})
 
 # -------------------------------------------------------------- execution
 SIGNALS_ONLY, FORWARD_PAPER, EXECUTION_DISABLED = "SIGNALS_ONLY", "FORWARD_PAPER", "DISABLED"
@@ -128,7 +153,7 @@ WAITING_FOR_DATA_MARKET = "WAITING_FOR_DATA"
 
 def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
                     warmup_required: int, blocker: str | None,
-                    htf_ready: bool) -> tuple[str, str]:
+                    htf_ready: bool, position_open: bool = False) -> tuple[str, str]:
     state = str(worker_state or "").lower()
     if state == "error":
         return STRATEGY_ERROR, "worker error"
@@ -149,8 +174,16 @@ def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
     if text and "WARMUP" in text.upper():
         return WARMING_UP, text
     if text and "NO_SETUP" not in text.upper():
-        return BLOCKED, text
+        code = text.replace("GATE_REJECTED:", "").strip().upper()
+        mapped = None if code in _AMBIGUOUS_CODES else _STRATEGY_BY_STATE.get(blocker_state(text))
+        # A code no one has classified stays BLOCKED: unknown is never
+        # rounded to "fine".
+        if mapped == WAITING_FOR_SETUP and position_open:
+            return IN_POSITION, text
+        return (mapped or BLOCKED), text
     if state in ("ready", "running"):
+        if position_open:
+            return IN_POSITION, text or "a position is open"
         return WAITING_FOR_SETUP, text or "no qualifying setup on the last closed candle"
     return WARMING_UP, text or "worker is not evaluating yet"
 
@@ -173,7 +206,8 @@ def execution_status(*, mode: str, execution_mode: str, entries_armed: bool,
 
 
 def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int,
-          worker_alive: bool, entries_armed: bool, htf_policy: dict | None) -> dict:
+          worker_alive: bool, entries_armed: bool, htf_policy: dict | None,
+          position_open: bool = False) -> dict:
     """Assemble the full status contract for one instance."""
     engine = engine or {}
     subscription = engine.get("websocket") or {}
@@ -192,12 +226,14 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
         worker_state=worker_state, feed=engine, subscription=subscription,
         data_age_seconds=data_age, timeframe_seconds=timeframe_seconds)
     htf = (htf_policy or {}).get("evidence") or {}
+    blocker = engine.get("last_blocker") or market.get("last_blocker")
     strategy, strategy_reason = strategy_status(
         market=feed, worker_state=worker_state,
         warmup_bars=int(engine.get("warmup_bars") or 0),
         warmup_required=int(engine.get("warmup_required") or 0),
-        blocker=engine.get("last_blocker") or market.get("last_blocker"),
-        htf_ready=bool(htf) or not (htf_policy or {}).get("requires_htf", True))
+        blocker=blocker,
+        htf_ready=bool(htf) or not (htf_policy or {}).get("requires_htf", True),
+        position_open=position_open)
     execution, execution_reason = execution_status(
         mode=instance.mode, execution_mode=instance.execution_mode,
         entries_armed=bool(entries_armed), market=feed, runtime=runtime)
@@ -219,8 +255,10 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
         # feed can be the real cause.
         "current_blocker": (
             feed_reason if feed != LIVE else
-            (engine.get("last_blocker") or market.get("last_blocker")
-             or (None if strategy == WAITING_FOR_SETUP else strategy_reason))),
+            (blocker or (None if strategy == WAITING_FOR_SETUP else strategy_reason))),
+        # The same sentence the Instance Visual Lab shows for the code, so the
+        # card can say what a code means instead of printing it bare.
+        "current_blocker_explanation": explain(blocker) if feed == LIVE and blocker else None,
         "feed": {
             "exchange": market.get("exchange"),
             "market_type": market.get("market_type"),

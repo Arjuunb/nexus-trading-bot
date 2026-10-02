@@ -3559,7 +3559,8 @@ class TradingInstanceManager:
             timeframe_seconds=_TIMEFRAME_SECONDS.get(inst.timeframe, 300),
             worker_alive=worker_alive,
             entries_armed=controls_armed,
-            htf_policy={**instance_mtf_policy, "requires_htf": requires_htf})
+            htf_policy={**instance_mtf_policy, "requires_htf": requires_htf},
+            position_open=current_position is not None)
         return {**inst.to_dict(), **contract,
                 "strategy_lifecycle": (registry_row.lifecycle if registry_row else "UNKNOWN"),
                 "effective_exchange": effective_exchange,
