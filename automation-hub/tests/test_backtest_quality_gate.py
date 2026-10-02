@@ -122,11 +122,41 @@ def test_the_script_runs_all_three_modes_and_writes_the_report(monkeypatch, tmp_
     [market] = report["markets"]
     assert report["gates"] == ["on", "off", "raw"] and market["candles"] == 1500
     for gate in ("on", "off", "raw"):
-        assert set(market[gate]) == {"whole_period", "streak_pauses", "out_of_sample",
+        assert set(market[gate]) == {"whole_period", "streak_pauses", "refusals", "out_of_sample",
                                      "walk_forward", "monte_carlo"}
         assert "paths" not in market[gate]["monte_carlo"]
         assert market[gate]["walk_forward"]["quality_gate"] == gate
     assert market["raw"]["streak_pauses"] is None       # no Brain, so no pause
+    refused = market["on"]["refusals"]
+    if refused:                                          # every refusal counted once, by kind
+        assert sum(row["count"] for row in refused["by_reason"]) == refused["signals_refused"]
+        assert f"Refused, BTCUSDT 1h gate on: {refused['signals_refused']} signal(s) refused" in printed
+
+
+def test_refusals_are_grouped_by_kind_and_listed_most_frequent_first():
+    script = _script()
+    results = {"blocked": [
+        {"reason": "ranging / unclear regime for a trend setup"},
+        {"reason": "score 41 < 60"}, {"reason": "score 55 < 60"},
+        {"reason": "ranging / unclear regime for a trend setup"},
+        {"reason": "ranging / unclear regime for a trend setup"},
+        {"reason": "reward:risk 0.85 below 1.0"},
+        {"reason": "losing-streak cooldown (5 in a row)"}, {"reason": "losing-streak cooldown (6 in a row)"},
+    ]}
+    refused = script.refusals(results)
+    assert refused == {"signals_refused": 8, "by_reason": [
+        {"reason": "ranging / unclear regime for a trend setup", "count": 3},
+        {"reason": "quality score below the minimum", "count": 2},
+        {"reason": "losing-streak cooldown (# in a row)", "count": 2},
+        {"reason": "reward:risk # below #", "count": 1}]}
+    assert script.refusals({"blocked": []}) is None
+    report = {"gates": ["on"], "markets": [{
+        "symbol": "SOLUSDT", "timeframe": "5m",
+        "on": {"whole_period": {"trades": 12}, "streak_pauses": None, "refusals": refused,
+               "out_of_sample": {}, "walk_forward": {}, "monte_carlo": {}}}]}
+    lines = "\n".join(script.summary_rows(report))
+    assert ("Refused, SOLUSDT 5m gate on: 8 signal(s) refused, 12 traded — "
+            "ranging / unclear regime for a trend setup 3, quality score below the minimum 2") in lines
 
 
 def test_signals_refused_by_the_streak_pause_are_counted_and_called_out():

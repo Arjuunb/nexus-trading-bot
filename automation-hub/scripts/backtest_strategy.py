@@ -24,6 +24,12 @@ losses in a row a symbol sits out 24 hours from its latest loss (the same rule
 the live engine applies, services/quality_gate.py). Those signals were not
 tested, so a run with many of them says less about the strategy.
 
+And it lists every refused signal by reason (a ranging regime, a score below
+the minimum, a strong higher-timeframe trend against the side, ...), so the
+gate's share of the strategy's signals is a number rather than a guess. The
+Brain scores every built-in strategy's signal as a trend setup, live and here
+alike, so its ranging-regime block applies to rejection setups too.
+
 Costs are the simulator's: 0.04% fee and 0.02% slippage on each side.
 Nothing here trades, places an order or changes an instance.
 
@@ -40,7 +46,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -87,6 +95,7 @@ def run_market(strategy: str, symbol: str, timeframe: str, bars: int, gates: lis
         out[gate] = {
             "whole_period": whole[0] if whole else None,
             "streak_pauses": streak_pauses(whole[1]) if whole else None,
+            "refusals": refusals(whole[1]) if whole else None,
             "out_of_sample": lab.out_of_sample(strategy, symbol, timeframe, bars=bars, quality_gate=gate),
             "walk_forward": lab.walk_forward(strategy, symbol, timeframe, bars=bars, quality_gate=gate),
             "monte_carlo": lab.monte_carlo(strategy, symbol, timeframe, bars=bars, runs=runs, quality_gate=gate),
@@ -103,6 +112,26 @@ def streak_pauses(results: dict) -> dict | None:
     if not refused:
         return None
     return {"first": str(refused[0].get("time", ""))[:10], "signals_refused": len(refused)}
+
+
+def _reason_kind(reason) -> str:
+    """One label per kind of refusal: the numbers in a reason are folded, so
+    "score 41 < 60" and "score 55 < 60" count as the same reason."""
+    text = str(reason or "").strip() or "no reason recorded"
+    if re.match(r"score \d", text):
+        return "quality score below the minimum"
+    return re.sub(r"\d+(?:\.\d+)?%?", "#", text)
+
+
+def refusals(results: dict) -> dict | None:
+    """Why signals were refused in this run, most frequent first. The
+    simulator records the first block of each refusal, as the live engine logs it."""
+    blocked = results.get("blocked") or []
+    if not blocked:
+        return None
+    counts = Counter(_reason_kind(b.get("reason")) for b in blocked)
+    return {"signals_refused": len(blocked),
+            "by_reason": [{"reason": reason, "count": n} for reason, n in counts.most_common()]}
 
 
 def _fmt(value, spec: str = ".2f") -> str:
@@ -149,6 +178,16 @@ def summary_rows(report: dict) -> list[str]:
                 lines.append(f"  ! {market['symbol']} {market['timeframe']} gate {gate}: "
                              f"{pauses['signals_refused']} signal(s) refused by the 24-hour pause after "
                              f"5 losses in a row (first on {pauses['first']}); those were not tested.")
+    for market in report["markets"]:
+        for gate in report["gates"]:
+            part = market.get(gate) or {}
+            refused = part.get("refusals")
+            if not refused:
+                continue
+            traded = (part.get("whole_period") or {}).get("trades", 0)
+            reasons = ", ".join(f"{row['reason']} {row['count']}" for row in refused["by_reason"][:6])
+            lines.append(f"  Refused, {market['symbol']} {market['timeframe']} gate {gate}: "
+                         f"{refused['signals_refused']} signal(s) refused, {traded} traded — {reasons}")
     return lines
 
 
