@@ -229,6 +229,20 @@ class GuardianStore:
         return [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
                  "guardian_sequence": row["sequence"]} for row in rows]
 
+    def recent_instance_decision_evidence(self, limit: int = 2000) -> list[dict]:
+        """Bounded received instance transitions, newest ingestion first."""
+        if type(limit) is not int or not 1 <= limit <= 2000:
+            raise ValueError("invalid instance evidence scan limit")
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                """SELECT sequence,received_at,payload_json FROM events
+                   WHERE source_service='guardian_instance_decisions'
+                     AND event_type='instance_decision_observed'
+                   ORDER BY sequence DESC LIMIT ?""", (limit,),
+            ).fetchall()
+        return [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
+                 "guardian_sequence": row["sequence"]} for row in rows]
+
     def count(self) -> int:
         with closing(self._connect()) as conn:
             return int(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0])

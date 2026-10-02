@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from services.guardian_execution_read_model import smc_execution_integrity_snapshot
+from services.guardian_instance_read_model import instance_decision_page
 from services.guardian_lab_feed_read_model import lab_feed_snapshot
 from services.guardian_read_model import lab_decision_page, lab_decision_snapshot, lab_lifecycle_page
 
@@ -126,6 +127,28 @@ def guardian_lifecycle(
         "schema_version": 1,
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "scope": "POST_INSTALL_MATERIAL_LIFECYCLE",
+        "feed_health_verified": False,
+        "execution_integrity_verified": False,
+        "page": page,
+    }, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/guardian/instance-decisions")
+def guardian_instance_decisions(
+        after: int = Query(0, ge=0),
+        anchor: str = Query("", max_length=128),
+        x_guardian_observer_key: Optional[str] = Header(default=None)):
+    """Read committed decision/gate history, without invoking the worker."""
+    _require_observer_key(x_guardian_observer_key)
+    try:
+        page = instance_decision_page(settings.decisions_db, after=after, anchor=anchor)
+    except (sqlite3.Error, ValueError, TypeError) as exc:
+        raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED",
+                                  "code": "INSTANCE_DECISION_EVIDENCE_UNAVAILABLE"}) from exc
+    return JSONResponse({
+        "schema_version": 1,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "scope": "POST_INSTALL_INSTANCE_DECISION_LIFECYCLE",
         "feed_health_verified": False,
         "execution_integrity_verified": False,
         "page": page,

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from data.tenant_scope import ensure_column, ensure_tenant_column
+from data.decision_outbox import install_decision_outbox
 
 
 def _utcnow() -> str:
@@ -70,6 +71,7 @@ class DecisionStore:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_decisions_identity "
             "ON decisions(decision_identity) WHERE decision_identity <> ''")
         ensure_tenant_column(self._c, "decisions")   # Phase C-3: schema-only, additive
+        install_decision_outbox(self._c)
         self._c.commit()
 
     def record(self, d: dict) -> int:

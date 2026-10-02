@@ -18,6 +18,8 @@ from .events import GuardianEvent, GuardianEventError, MAX_EVENT_BYTES
 from .decision_traces import decision_traces
 from .health import component_health
 from .incidents import GuardianIncidentEngine
+from .instance_decisions import GuardianInstanceDecisions
+from .instance_decision_traces import instance_decision_traces
 from .lab_backfill import GuardianLabBackfill
 from .lab_lifecycle import GuardianLabLifecycle
 from .lab_feed_observer import GuardianLabFeedObserver
@@ -165,7 +167,8 @@ class GuardianService:
                                             reason=payload.get("reason", ""),
                                             observed_at=observed_at)
                 return self._respond(start_response, 200, {"result": "RECORDED"})
-            if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces") or
+            if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
+                         "/v1/instance-decision-traces") or
                     path.startswith("/v1/incidents/")) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
@@ -197,6 +200,15 @@ class GuardianService:
                         raise _HTTPError(400, "INVALID_LAB")
                     return self._respond(start_response, 200,
                                          decision_traces(self.store, limit=limit, lab=lab))
+                if path == "/v1/instance-decision-traces":
+                    if limit > 100:
+                        raise _HTTPError(400, "INVALID_LIMIT")
+                    instance_id = query.get("instance_id", [None])[0]
+                    if instance_id is not None and not 1 <= len(instance_id) <= 128:
+                        raise _HTTPError(400, "INVALID_INSTANCE_ID")
+                    return self._respond(start_response, 200,
+                                         instance_decision_traces(
+                                             self.store, limit=limit, instance_id=instance_id))
                 if path == "/v1/incidents":
                     state = query.get("state", [None])[0]
                     if state not in (None, "OPEN", "RECOVERING", "RECOVERED"):
@@ -217,7 +229,7 @@ class GuardianService:
                 return self._respond(start_response, 200, {
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
-                        "/v1/decision-traces"):
+                        "/v1/decision-traces", "/v1/instance-decision-traces"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
         except _HTTPError as exc:
@@ -349,6 +361,21 @@ def _smc_execution_monitor(store: GuardianStore,
         stopped.wait(30)
 
 
+def _instance_decision_monitor(store: GuardianStore,
+                               collector: GuardianInstanceDecisions,
+                               stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_instance_decisions", "FAILED",
+                                       reason="INSTANCE_DECISION_IMPORT_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
 def main() -> None:
     """Run separately: python -m tradexa.guardian.service (loopback by default)."""
     source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
@@ -386,6 +413,9 @@ def main() -> None:
     smc_execution_url = os.environ.get("GUARDIAN_SMC_EXECUTION_URL", "").strip()
     if smc_execution_url and "guardian_smc_execution_probe" not in required:
         required += ("guardian_smc_execution_probe",)
+    instance_decision_url = os.environ.get("GUARDIAN_INSTANCE_DECISION_URL", "").strip()
+    if instance_decision_url and "guardian_instance_decisions" not in required:
+        required += ("guardian_instance_decisions",)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required)
@@ -425,6 +455,13 @@ def main() -> None:
         Thread(target=_smc_execution_monitor,
                args=(store, smc_execution_collector, stopped), daemon=True)
         if smc_execution_collector else None)
+    instance_decision_collector = (
+        GuardianInstanceDecisions(store, instance_decision_url, lab_observer_key)
+        if instance_decision_url else None)
+    instance_decision_monitor = (
+        Thread(target=_instance_decision_monitor,
+               args=(store, instance_decision_collector, stopped), daemon=True)
+        if instance_decision_collector else None)
     monitor.start()
     incident_monitor.start()
     if public_monitor:
@@ -439,6 +476,8 @@ def main() -> None:
         lifecycle_monitor.start()
     if smc_execution_monitor:
         smc_execution_monitor.start()
+    if instance_decision_monitor:
+        instance_decision_monitor.start()
     try:
         with make_server(os.environ.get("GUARDIAN_BIND_HOST", "127.0.0.1"),
                          int(os.environ.get("GUARDIAN_PORT", "8765")), app) as server:
@@ -459,6 +498,8 @@ def main() -> None:
             lifecycle_monitor.join(timeout=2)
         if smc_execution_monitor:
             smc_execution_monitor.join(timeout=2)
+        if instance_decision_monitor:
+            instance_decision_monitor.join(timeout=2)
 
 
 if __name__ == "__main__":

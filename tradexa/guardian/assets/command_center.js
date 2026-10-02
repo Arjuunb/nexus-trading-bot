@@ -196,6 +196,36 @@
     }
   }
 
+  function renderInstanceDecisionTraces(page) {
+    const body = byId("instance-decision-traces");
+    body.replaceChildren();
+    const traces = Array.isArray(page.traces) ? page.traces : [];
+    byId("instance-decision-coverage").textContent = page.scan_may_be_truncated
+      ? "Recent persisted decisions only; bounded evidence scan truncated. Broker fills and all evaluations are not proven."
+      : "Post-install persisted decisions only; missing source writes and broker fills are not proven.";
+    if (!traces.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.className = "empty";
+      cell.textContent = "No instance decision evidence received. This does not prove no decisions occurred.";
+      row.appendChild(cell);
+      body.appendChild(row);
+      return;
+    }
+    for (const trace of traces) {
+      const row = document.createElement("tr");
+      textCell(row, displayTime(trace.decision_time));
+      textCell(row, `${trace.instance_id || "Unknown"} · ${trace.strategy_id || "Unknown"}`);
+      textCell(row, `${trace.symbol || "Unknown"} · ${trace.timeframe || "Unknown"}`);
+      textCell(row, trace.strategy_verdict || "UNKNOWN");
+      textCell(row, trace.final_state || "UNKNOWN");
+      textCell(row, `${trace.gate_stage || "—"} · ${trace.blocker || trace.reason || "No saved blocker"}`);
+      textCell(row, trace.event_id);
+      body.appendChild(row);
+    }
+  }
+
   async function read(path) {
     const response = await fetch(path, {
       method: "GET", headers: { "X-Guardian-Key": readKey },
@@ -210,9 +240,10 @@
     const current = generation;
     const request = ++requestSequence;
     try {
-      const [health, eventPage, incidentPage, decisionPage] = await Promise.all([
+      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage] = await Promise.all([
         read("/v1/health"), read("/v1/events?limit=50"), read("/v1/incidents?limit=50"),
         read("/v1/decision-traces?limit=50"),
+        read("/v1/instance-decision-traces?limit=50"),
       ]);
       if (current !== generation || request !== requestSequence || !readKey) return;
       renderComponents(health);
@@ -220,6 +251,7 @@
       renderIncidents(Array.isArray(incidentPage.incidents) ? incidentPage.incidents : [],
         health.active_incidents);
       renderDecisionTraces(decisionPage);
+      renderInstanceDecisionTraces(instanceDecisionPage);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);
@@ -268,6 +300,15 @@
     decisionCell.textContent = "Connect to load decision traces.";
     decisionRow.appendChild(decisionCell);
     byId("decision-traces").appendChild(decisionRow);
+    byId("instance-decision-coverage").textContent = "Connect to load instance gate evidence.";
+    byId("instance-decision-traces").replaceChildren();
+    const instanceRow = document.createElement("tr");
+    const instanceCell = document.createElement("td");
+    instanceCell.colSpan = 7;
+    instanceCell.className = "empty";
+    instanceCell.textContent = "Connect to load instance decision traces.";
+    instanceRow.appendChild(instanceCell);
+    byId("instance-decision-traces").appendChild(instanceRow);
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;
