@@ -220,8 +220,10 @@ class GuardianStore:
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 """SELECT sequence,received_at,payload_json FROM events
-                   WHERE source_service IN ('guardian_lab_probe','guardian_lab_backfill')
-                     AND event_type IN ('lab_evaluation_observed','lab_evaluation_backfilled')
+                   WHERE source_service IN ('guardian_lab_probe','guardian_lab_backfill',
+                                            'guardian_lab_lifecycle')
+                     AND event_type IN ('lab_evaluation_observed','lab_evaluation_backfilled',
+                                        'lab_lifecycle_observed')
                    ORDER BY sequence DESC LIMIT ?""", (limit,),
             ).fetchall()
         return [{**json.loads(row["payload_json"]), "received_at": row["received_at"],

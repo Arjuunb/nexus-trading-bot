@@ -19,6 +19,7 @@ from .decision_traces import decision_traces
 from .health import component_health
 from .incidents import GuardianIncidentEngine
 from .lab_backfill import GuardianLabBackfill
+from .lab_lifecycle import GuardianLabLifecycle
 from .lab_feed_observer import GuardianLabFeedObserver
 from .lab_observer import GuardianLabObserver
 from .public_status import GuardianPublicStatusCollector
@@ -319,6 +320,20 @@ def _lab_backfill_monitor(store: GuardianStore, collector: GuardianLabBackfill,
         stopped.wait(30)
 
 
+def _lab_lifecycle_monitor(store: GuardianStore, collector: GuardianLabLifecycle,
+                           stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_lifecycle", "FAILED",
+                                       reason="LAB_LIFECYCLE_IMPORT_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
 def _smc_execution_monitor(store: GuardianStore,
                            collector: GuardianSMCExecutionObserver,
                            stopped: Event) -> None:
@@ -365,6 +380,9 @@ def main() -> None:
     backfill_url = os.environ.get("GUARDIAN_LAB_BACKFILL_URL", "").strip()
     if backfill_url and "guardian_lab_backfill" not in required:
         required += ("guardian_lab_backfill",)
+    lifecycle_url = os.environ.get("GUARDIAN_LAB_LIFECYCLE_URL", "").strip()
+    if lifecycle_url and "guardian_lab_lifecycle" not in required:
+        required += ("guardian_lab_lifecycle",)
     smc_execution_url = os.environ.get("GUARDIAN_SMC_EXECUTION_URL", "").strip()
     if smc_execution_url and "guardian_smc_execution_probe" not in required:
         required += ("guardian_smc_execution_probe",)
@@ -395,6 +413,11 @@ def main() -> None:
     backfill_monitor = (Thread(target=_lab_backfill_monitor,
                                args=(store, backfill_collector, stopped), daemon=True)
                         if backfill_collector else None)
+    lifecycle_collector = (GuardianLabLifecycle(store, lifecycle_url, lab_observer_key)
+                           if lifecycle_url else None)
+    lifecycle_monitor = (Thread(target=_lab_lifecycle_monitor,
+                                args=(store, lifecycle_collector, stopped), daemon=True)
+                         if lifecycle_collector else None)
     smc_execution_collector = (
         GuardianSMCExecutionObserver(store, smc_execution_url, lab_observer_key)
         if smc_execution_url else None)
@@ -412,6 +435,8 @@ def main() -> None:
         lab_feed_monitor.start()
     if backfill_monitor:
         backfill_monitor.start()
+    if lifecycle_monitor:
+        lifecycle_monitor.start()
     if smc_execution_monitor:
         smc_execution_monitor.start()
     try:
@@ -430,6 +455,8 @@ def main() -> None:
             lab_feed_monitor.join(timeout=2)
         if backfill_monitor:
             backfill_monitor.join(timeout=2)
+        if lifecycle_monitor:
+            lifecycle_monitor.join(timeout=2)
         if smc_execution_monitor:
             smc_execution_monitor.join(timeout=2)
 

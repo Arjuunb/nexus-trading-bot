@@ -26,9 +26,9 @@ def decision_traces(store: GuardianStore, *, limit: int = 50,
                     lab: str | None = None) -> dict:
     """Return latest *observed* state per decision in a bounded evidence scan.
 
-    Backfill and recent polling may describe the same decision. They are not
-    separate evaluations. The newest received snapshot wins; missing lifecycle
-    transitions cannot be recreated from a saved row.
+    Backfill, recent polling, and durable lifecycle may describe one decision.
+    The highest durable lifecycle sequence wins when available; an older saved
+    row imported later cannot regress the view. Pre-install history is unknown.
     """
     if type(limit) is not int or not 1 <= limit <= 100 or lab not in (
             None, "PRICE_ACTION", "SMC"):
@@ -44,14 +44,24 @@ def decision_traces(store: GuardianStore, *, limit: int = 50,
                 not isinstance(correlation, str) or not correlation:
             continue
         identity = (event_lab, session, correlation)
-        if identity in selected:
-            continue
         evidence = event.get("evidence") or {}
+        durable = event.get("source_service") == "guardian_lab_lifecycle"
+        sequence = evidence.get("source_sequence") if durable else -1
+        if durable and type(sequence) is not int:
+            continue
+        previous = selected.get(identity)
+        if previous and (previous.get("post_install_lifecycle_evidence") and
+                         (not durable or sequence <= previous["source_sequence"])):
+            continue
+        if previous and not durable:
+            continue
         conditions = evidence.get("conditions")
         selected[identity] = {
             "lab": event_lab, "session_id": session,
             "correlation_id": correlation, "event_id": event["event_id"],
             "source_service": event["source_service"],
+            "source_sequence": sequence,
+            "post_install_lifecycle_evidence": durable,
             "received_at": event["received_at"], "candle_time": event["timestamp"],
             "strategy_id": event.get("strategy_id"),
             "strategy_version": event.get("strategy_version"),

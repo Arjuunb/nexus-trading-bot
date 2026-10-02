@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from services.price_action_lab import PriceActionPaperAccount
 from services.smc_agent_runtime import AgentGatedSMCPaperAccount
+from services.guardian_lifecycle_outbox import install_lab_lifecycle_outbox
 
 LABS = {"price_action": "Price Action Lab", "smc": "SMC Lab", "adaptive": "Adaptive Lab"}
 
@@ -53,6 +54,10 @@ class EventGuardedPriceActionPaperAccount(PriceActionPaperAccount):
     #: services.instance_event_guard.InstanceEventGuard, attached by the server.
     event_guard = None
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        install_lab_lifecycle_outbox(self._db, "pa")
+
     def _runtime_control(self) -> dict:
         control = super()._runtime_control()
         if control.get("readiness_recheck_required"):
@@ -67,6 +72,10 @@ class EventGuardedPriceActionPaperAccount(PriceActionPaperAccount):
 class EventGuardedSMCPaperAccount(AgentGatedSMCPaperAccount):
     #: services.instance_event_guard.InstanceEventGuard, attached by the server.
     event_guard = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        install_lab_lifecycle_outbox(self._db, "smc")
 
     def submit_order(self, **kwargs):
         if kwargs.get("ownership") == "strategy":
