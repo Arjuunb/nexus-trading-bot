@@ -19,6 +19,7 @@ from .decision_traces import decision_traces
 from .health import component_health
 from .incidents import GuardianIncidentEngine
 from .lab_backfill import GuardianLabBackfill
+from .lab_feed_observer import GuardianLabFeedObserver
 from .lab_observer import GuardianLabObserver
 from .public_status import GuardianPublicStatusCollector
 from .smc_execution_observer import GuardianSMCExecutionObserver
@@ -290,6 +291,20 @@ def _lab_observation_monitor(store: GuardianStore, collector: GuardianLabObserve
         stopped.wait(30)
 
 
+def _lab_feed_monitor(store: GuardianStore, collector: GuardianLabFeedObserver,
+                      stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_feed_probe", "FAILED",
+                                       reason="LAB_FEED_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(15)
+
+
 def _lab_backfill_monitor(store: GuardianStore, collector: GuardianLabBackfill,
                           stopped: Event) -> None:
     while not stopped.is_set():
@@ -342,6 +357,11 @@ def main() -> None:
     lab_url = os.environ.get("GUARDIAN_LAB_OBSERVER_URL", "").strip()
     if lab_url and "guardian_lab_probe" not in required:
         required += ("guardian_lab_probe",)
+    lab_feed_url = os.environ.get("GUARDIAN_LAB_FEED_URL", "").strip()
+    if lab_feed_url:
+        required += tuple(name for name in
+                          ("guardian_lab_feed_probe", "pa_feed", "smc_feed")
+                          if name not in required)
     backfill_url = os.environ.get("GUARDIAN_LAB_BACKFILL_URL", "").strip()
     if backfill_url and "guardian_lab_backfill" not in required:
         required += ("guardian_lab_backfill",)
@@ -365,6 +385,11 @@ def main() -> None:
     lab_monitor = (Thread(target=_lab_observation_monitor,
                           args=(store, lab_collector, stopped), daemon=True)
                    if lab_collector else None)
+    lab_feed_collector = (GuardianLabFeedObserver(store, lab_feed_url, lab_observer_key)
+                          if lab_feed_url else None)
+    lab_feed_monitor = (Thread(target=_lab_feed_monitor,
+                               args=(store, lab_feed_collector, stopped), daemon=True)
+                        if lab_feed_collector else None)
     backfill_collector = (GuardianLabBackfill(store, backfill_url, lab_observer_key)
                           if backfill_url else None)
     backfill_monitor = (Thread(target=_lab_backfill_monitor,
@@ -383,6 +408,8 @@ def main() -> None:
         public_monitor.start()
     if lab_monitor:
         lab_monitor.start()
+    if lab_feed_monitor:
+        lab_feed_monitor.start()
     if backfill_monitor:
         backfill_monitor.start()
     if smc_execution_monitor:
@@ -399,6 +426,8 @@ def main() -> None:
             public_monitor.join(timeout=2)
         if lab_monitor:
             lab_monitor.join(timeout=2)
+        if lab_feed_monitor:
+            lab_feed_monitor.join(timeout=2)
         if backfill_monitor:
             backfill_monitor.join(timeout=2)
         if smc_execution_monitor:

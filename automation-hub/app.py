@@ -333,7 +333,7 @@ async def _require_auth(request: Request, call_next):
     hdr = request.headers.get("x-webhook-secret")
     observer_key = request.headers.get("x-guardian-observer-key", "")
     guardian_read = (path in ("/guardian/observations", "/guardian/evaluations",
-                              "/guardian/smc-execution")
+                              "/guardian/smc-execution", "/guardian/lab-feeds")
                      and request.method == "GET"
                      and bool(settings.guardian_observer_key) and
                      hmac.compare_digest(observer_key, settings.guardian_observer_key))
