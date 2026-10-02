@@ -293,6 +293,9 @@ BLOCKER_EXPLANATIONS: Mapping[str, str] = {
     "EXECUTION": "The paper broker refused the order.",
     "PIPELINE_ERROR": "The decision pipeline raised an error on this candle.",
     "NO_OPEN_POSITION": "There is no open position for this management decision.",
+    # services/auto_engine.py gates ahead of the pipeline
+    "BRAIN": "The Decision Brain quality gate refused this candle's signal.",
+    "CONTEXT": "The cross-asset context gate refused this side on this candle.",
     # services/signal_pipeline.py stages that gate_blocker names after themselves
     "SIZING": "The position sizer could not size this entry within the instance's risk settings.",
     "EXPOSURE": "The exposure limit leaves no room for this entry.",
@@ -746,6 +749,11 @@ _STATE_BY_BLOCKER: Mapping[str, DecisionState] = {
     "PIN_BAR_REQUIRED": DecisionState.WAITING_CONFIRMATION,
     "NOT_FIRST_TOUCH": DecisionState.WAITING_FOR_POI,
     "NO_OPEN_POSITION": DecisionState.SCANNING,
+    # One candle's signal refused by a gate ahead of the pipeline. BRAIN also
+    # covers the 24-hour losing-streak pause; services/instance_status.py
+    # reads the reason to keep that one BLOCKED.
+    "BRAIN": DecisionState.SIGNAL_REJECTED,
+    "CONTEXT": DecisionState.SIGNAL_REJECTED,
     "NET_RR_TOO_LOW": DecisionState.SIGNAL_REJECTED,
     "INSUFFICIENT_RR": DecisionState.SIGNAL_REJECTED,
     "RR_TOO_LOW": DecisionState.SIGNAL_REJECTED,

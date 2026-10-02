@@ -41,6 +41,7 @@ WARMING_UP = "WARMING_UP"
 WAITING_FOR_DATA = "WAITING_FOR_DATA"
 WAITING_FOR_HTF = "WAITING_FOR_HTF"
 WAITING_FOR_SETUP = "WAITING_FOR_SETUP"
+SIGNAL_REFUSED = "SIGNAL_REFUSED"
 IN_POSITION = "IN_POSITION"
 ORDER_PENDING = "ORDER_PENDING"
 BLOCKED = "BLOCKED"
@@ -56,7 +57,7 @@ _STRATEGY_BY_STATE = {
     DecisionState.SCANNING: WAITING_FOR_SETUP,
     DecisionState.WAITING_FOR_POI: WAITING_FOR_SETUP,
     DecisionState.WAITING_CONFIRMATION: WAITING_FOR_SETUP,
-    DecisionState.SIGNAL_REJECTED: WAITING_FOR_SETUP,   # the strategy's own RR/quality rule, this candle
+    DecisionState.SIGNAL_REJECTED: SIGNAL_REFUSED,      # a setup, refused on this candle only
     DecisionState.SIGNALS_ONLY: WAITING_FOR_SETUP,      # the execution axis says SIGNALS_ONLY
     DecisionState.WAITING_FOR_DATA: WARMING_UP,
     DecisionState.WAITING_FOR_HTF: WAITING_FOR_HTF,
@@ -67,6 +68,17 @@ _STRATEGY_BY_STATE = {
 #: Codes that cover a real refusal as well as a benign one. Without the reason
 #: the code alone cannot tell them apart, so they stay BLOCKED.
 _AMBIGUOUS_CODES = frozenset({"EXECUTION"})
+
+
+def _brain_refusal(reason: str) -> str:
+    """The Decision Brain's BRAIN code covers a one-candle refusal (a low
+    score, a ranging regime) and the 24-hour losing-streak pause alike."""
+    text = reason.lower()
+    if not text or "losing-streak cooldown" in text:
+        return BLOCKED                    # the pause holds entries; no reason is not "fine"
+    if "htf context unavailable" in text:
+        return WAITING_FOR_HTF
+    return SIGNAL_REFUSED
 
 # -------------------------------------------------------------- execution
 SIGNALS_ONLY, FORWARD_PAPER, EXECUTION_DISABLED = "SIGNALS_ONLY", "FORWARD_PAPER", "DISABLED"
@@ -153,7 +165,8 @@ WAITING_FOR_DATA_MARKET = "WAITING_FOR_DATA"
 
 def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
                     warmup_required: int, blocker: str | None,
-                    htf_ready: bool, position_open: bool = False) -> tuple[str, str]:
+                    htf_ready: bool, position_open: bool = False,
+                    blocker_reason: str = "") -> tuple[str, str]:
     state = str(worker_state or "").lower()
     if state == "error":
         return STRATEGY_ERROR, "worker error"
@@ -175,7 +188,9 @@ def strategy_status(*, market: str, worker_state: str, warmup_bars: int,
         return WARMING_UP, text
     if text and "NO_SETUP" not in text.upper():
         code = text.replace("GATE_REJECTED:", "").strip().upper()
-        mapped = None if code in _AMBIGUOUS_CODES else _STRATEGY_BY_STATE.get(blocker_state(text))
+        mapped = (None if code in _AMBIGUOUS_CODES
+                  else _brain_refusal(str(blocker_reason or "")) if code == "BRAIN"
+                  else _STRATEGY_BY_STATE.get(blocker_state(text)))
         # A code no one has classified stays BLOCKED: unknown is never
         # rounded to "fine".
         if mapped == WAITING_FOR_SETUP and position_open:
@@ -203,6 +218,29 @@ def execution_status(*, mode: str, execution_mode: str, entries_armed: bool,
         # demonstrably current.
         return EXECUTION_DISABLED, f"entries blocked while market data is {market}"
     return FORWARD_PAPER, "forward paper execution on live Binance USD-M data; no exchange routing"
+
+
+def _pause_until(value) -> str | None:
+    """The engine's losing-streak pause, if it is still running now."""
+    if not value:
+        return None
+    if value == "unknown":
+        return value
+    try:
+        until = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if until.tzinfo is None:
+        until = until.replace(tzinfo=timezone.utc)
+    return until.strftime("%Y-%m-%d %H:%M UTC") if until > datetime.now(timezone.utc) else None
+
+
+def _explanation(blocker: str, reason) -> str:
+    """The registry's sentence for the code, plus the gate's own words when it
+    gave any (the Brain's reason, and when a losing-streak pause resumes)."""
+    sentence = explain(blocker)
+    reason = str(reason or "").strip()
+    return f"{sentence} Reason: {reason}" if reason and reason not in sentence else sentence
 
 
 def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int,
@@ -233,7 +271,17 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
         warmup_required=int(engine.get("warmup_required") or 0),
         blocker=blocker,
         htf_ready=bool(htf) or not (htf_policy or {}).get("requires_htf", True),
-        position_open=position_open)
+        position_open=position_open,
+        blocker_reason=str(engine.get("last_blocker_reason") or ""))
+    # The Decision Brain's losing-streak pause holds new entries for 24 hours
+    # from the latest loss, on the candles where the strategy does not signal
+    # as much as on those where it does. An open trade or a resting order is
+    # still that; only "waiting" and "refused" give way to the pause.
+    pause = _pause_until(engine.get("entry_pause_until")) if feed == LIVE else None
+    if pause and strategy in (WAITING_FOR_SETUP, SIGNAL_REFUSED):
+        strategy = BLOCKED
+        strategy_reason = ("losing-streak pause: new entries are held until " + pause if pause != "unknown"
+                           else "losing-streak pause: the latest loss has no recorded time, so the pause has no end")
     execution, execution_reason = execution_status(
         mode=instance.mode, execution_mode=instance.execution_mode,
         entries_armed=bool(entries_armed), market=feed, runtime=runtime)
@@ -255,10 +303,13 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
         # feed can be the real cause.
         "current_blocker": (
             feed_reason if feed != LIVE else
+            "GATE_REJECTED: LOSS_COOLDOWN" if pause and strategy == BLOCKED else
             (blocker or (None if strategy == WAITING_FOR_SETUP else strategy_reason))),
         # The same sentence the Instance Visual Lab shows for the code, so the
         # card can say what a code means instead of printing it bare.
-        "current_blocker_explanation": explain(blocker) if feed == LIVE and blocker else None,
+        "current_blocker_explanation": (
+            _explanation("GATE_REJECTED: LOSS_COOLDOWN", strategy_reason) if pause and strategy == BLOCKED else
+            _explanation(blocker, engine.get("last_blocker_reason")) if feed == LIVE and blocker else None),
         "feed": {
             "exchange": market.get("exchange"),
             "market_type": market.get("market_type"),

@@ -15,13 +15,22 @@ const base = {
 const instances = [
   { ...base, id: "sol-1", symbol: "SOLUSDT", strategy_status: "WAITING_FOR_SETUP",
     current_blocker: "GATE_REJECTED: NO_CONFIRMATION",
-    current_blocker_explanation: "The rejection formed, but the next candle did not close beyond it." },
+    current_blocker_explanation: "The rejection formed, but the next candle did not close beyond it.",
+    last_decision: { final_state: "PENDING_INTENT", blocker: "GATE_REJECTED: ORDER_PENDING", reason: "limit entry resting" } },
   { ...base, id: "xrp-1", symbol: "XRPUSDT", strategy_status: "IN_POSITION",
     current_blocker: "GATE_REJECTED: POSITION_MANAGED",
     current_blocker_explanation: "The engine is managing an open position rather than scanning for entries." },
+  { ...base, id: "btc-1", symbol: "BTCUSDT", strategy_status: "SIGNAL_REFUSED",
+    current_blocker: "GATE_REJECTED: BRAIN",
+    current_blocker_explanation: "The Decision Brain quality gate refused this candle's signal. Reason: Hard block: ranging / unclear regime for a trend setup" },
+  { ...base, id: "bnb-1", symbol: "BNBUSDT", strategy_status: "BLOCKED",
+    current_blocker: "GATE_REJECTED: LOSS_COOLDOWN",
+    current_blocker_explanation: "A cooldown after a loss is still holding entries. Reason: losing-streak pause: new entries are held until 2026-10-03 14:05 UTC" },
   { ...base, id: "eth-1", symbol: "ETHUSDT", strategy_status: "BLOCKED",
     current_blocker: "GATE_REJECTED: DAILY_LOSS_LIMIT",
-    current_blocker_explanation: "The daily loss limit has paused new entries." },
+    current_blocker_explanation: "The daily loss limit has paused new entries.",
+    last_decision: { final_state: "GATE_REJECTED", blocker: "GATE_REJECTED: BRAIN",
+                     reason: "Hard block: ranging / unclear regime for a trend setup" } },
 ];
 
 test("a waiting strategy is not shown as blocked; a real hold still is", async ({ page }) => {
@@ -47,11 +56,30 @@ test("a waiting strategy is not shown as blocked; a real hold still is", async (
   await expect(strategyBadge("XRPUSDT")).toHaveText("IN_POSITION");
   await expect(card("XRPUSDT").locator(".instance-blocker")).toContainText("Last candle: POSITION_MANAGED");
 
+  // one candle's signal refused by the Decision Brain: amber, not red
+  await expect(strategyBadge("BTCUSDT")).toHaveText("SIGNAL_REFUSED");
+  await expect(card("BTCUSDT").locator(".instance-blocker")).toHaveText(
+    "Last candle: BRAIN — The Decision Brain quality gate refused this candle's signal. Reason: Hard block: ranging / unclear regime for a trend setup");
+  // the losing-streak pause is a real hold, and says when it ends
+  await expect(strategyBadge("BNBUSDT")).toHaveText("BLOCKED");
+  await expect(card("BNBUSDT").locator(".instance-blocker")).toContainText(
+    "Blocker: GATE_REJECTED: LOSS_COOLDOWN — A cooldown after a loss is still holding entries. Reason: losing-streak pause: new entries are held until 2026-10-03 14:05 UTC");
+
   await expect(strategyBadge("ETHUSDT")).toHaveText("BLOCKED");
   await expect(card("ETHUSDT").locator(".instance-blocker")).toHaveText(
     "Blocker: GATE_REJECTED: DAILY_LOSS_LIMIT — The daily loss limit has paused new entries.");
+  // the last decision in words: a resting order is not a refusal, and a
+  // refusal says which gate and why
+  const lastDecision = (symbol: string) =>
+    card(symbol).getByText("Last decision", { exact: true }).locator("xpath=following-sibling::div[1]");
+  await expect(lastDecision("SOLUSDT")).toHaveText("Order waiting to fill");
+  await expect(lastDecision("ETHUSDT")).toHaveText(
+    "Refused · BRAIN — Hard block: ranging / unclear regime for a trend setup");
+
   // red is reserved for the real hold
   const color = (symbol: string) => strategyBadge(symbol).evaluate((el) => getComputedStyle(el).color);
   expect(await color("ETHUSDT")).not.toEqual(await color("SOLUSDT"));
   expect(await color("XRPUSDT")).not.toEqual(await color("ETHUSDT"));
+  expect(await color("BTCUSDT")).not.toEqual(await color("ETHUSDT"));
+  expect(await color("BNBUSDT")).toEqual(await color("ETHUSDT"));
 });

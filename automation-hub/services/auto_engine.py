@@ -168,6 +168,14 @@ class AutoStrategyEngine:
         self.last_error: Optional[str] = None
         self.last_blocker: Optional[str] = "GATE_REJECTED: WARMUP" if live else None
         self.last_blocker_timestamp: Optional[str] = None
+        # The words behind last_blocker when a gate gave any. One code can
+        # cover different refusals: BRAIN is a low score on one candle or the
+        # 24-hour losing-streak pause, and only the reason tells them apart.
+        self.last_blocker_reason: str = ""
+        # When the Decision Brain's losing-streak pause ends for the symbol
+        # being traded ("unknown" if it holds with no end time), or None.
+        # Worked out once per live candle, never per status poll.
+        self.entry_pause_until: Optional[str] = None
         self.last_heartbeat: Optional[str] = None
         self.last_transition: Optional[str] = None
         self.reconnect_attempt = 0
@@ -468,6 +476,8 @@ class AutoStrategyEngine:
             "last_error": self.last_error,
             "last_blocker": self.last_blocker,
             "last_blocker_timestamp": self.last_blocker_timestamp,
+            "last_blocker_reason": self.last_blocker_reason,
+            "entry_pause_until": self.entry_pause_until,
             "last_heartbeat": self.last_heartbeat,
             "last_transition": self.last_transition,
             "instance_id": self.instance_id,
@@ -1143,6 +1153,7 @@ class AutoStrategyEngine:
             self.market_data_status = "stale"
             self.last_blocker = f"GATE_REJECTED: {verdict.blocker or 'STALE_CANDLES'}"
             self.last_blocker_timestamp = newest.timestamp.isoformat()
+            self.last_blocker_reason = ""
             raise MarketDataStaleError(
                 f"{symbol} market data stale: age={age:.0f}s allowed={allowed_age:.0f}s")
         self.market_data_status = "healthy"
@@ -1341,6 +1352,9 @@ class AutoStrategyEngine:
                     blocker = "GATE_REJECTED: NO_SETUP"
         self.last_blocker = blocker
         self.last_blocker_timestamp = bar.timestamp.isoformat()
+        self.last_blocker_reason = str((outcome or {}).get("reason") or "") if blocker else ""
+        if self.live:
+            self.entry_pause_until = self._entry_pause_until(sym)
         if outcome is None:
             outcome = {"kind": "no_trade", "blocker": blocker}
         else:
@@ -2121,6 +2135,25 @@ class AutoStrategyEngine:
             self.ledger.log(level="warning", stage="strategy_health", symbol=sym,
                             message=f"{sym}: health guard unavailable ({type(exc).__name__}); no risk change")
             return 1.0
+
+    def _entry_pause_until(self, sym: str) -> Optional[str]:
+        """When the losing-streak pause the Decision Brain applies to new
+        entries on this symbol ends: the rule of _brain_streak, read out
+        rather than waited for, so the dashboard can say an instance is paused
+        on the candles where its strategy does not signal too. Telemetry only."""
+        if self.min_quality_score <= 0:
+            return None                   # no Brain, no pause
+        try:
+            streak = self._symbol_loss_streak(sym)
+            if streak < QUALITY_GATE_STREAK_BLOCK_AT:
+                return None
+            last_loss = self._symbol_last_loss_at(sym)
+            if last_loss is None:
+                return "unknown"          # the block holds with no time to count from
+            resume = streak_resumes_at(streak, last_loss)
+            return resume.isoformat() if resume and resume > datetime.now(timezone.utc) else None
+        except Exception:  # noqa: BLE001 -- telemetry never touches a trade
+            return None
 
     def _symbol_last_loss_at(self, sym: str) -> Optional[datetime]:
         """When this symbol's most recent closed trade closed, if it lost."""
