@@ -295,6 +295,19 @@ class GuardianStore:
         with closing(self._connect()) as conn:
             return int(conn.execute("SELECT COUNT(*) FROM events").fetchone()[0])
 
+    def observed_snapshot(self, component: str) -> dict | None:
+        """Read the event committed with a change-only observer checkpoint."""
+        if not _NAME.fullmatch(component or ""):
+            raise ValueError("invalid observer component")
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT e.payload_json,e.received_at FROM observer_snapshot_state s "
+                "JOIN events e ON e.event_id=s.event_id WHERE s.component=?",
+                (component,),
+            ).fetchone()
+        return ({**json.loads(row["payload_json"]), "received_at": row["received_at"]}
+                if row else None)
+
     def record_heartbeat(self, component: str, state: str, *, reason: str = "",
                          observed_at: datetime | None = None) -> None:
         """Keep only the current heartbeat; lifecycle evidence stays append-only."""

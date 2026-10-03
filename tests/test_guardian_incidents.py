@@ -221,3 +221,73 @@ def test_active_incident_count_is_not_truncated_to_visible_page(guardian):
     assert len(engine.list(limit=50)) == 50
     assert engine.active_summary() == {
         "total": 55, "warning_or_higher": 55, "high_or_critical": 55}
+
+
+def _paper_ledger_observation(store, event_id, findings, *, atomic=True,
+                              source="guardian_instance_ledger_probe"):
+    _append(store, event_id, "instance_paper_ledger_observed",
+            source_service=source, source_component="instance_ledger",
+            metadata={"paper_only": True}, evidence={
+                "scope": "INSTANCE_ATTRIBUTED_PAPER_LEDGER_ONLY",
+                "atomic_snapshot": atomic, "source_coverage_verified": atomic,
+                "broker_fill_verified": False, "live_exposure_verified": False,
+                "findings": findings})
+
+
+def test_instance_integrity_groups_by_owner_and_never_certifies_repair(guardian):
+    store, engine = guardian
+    _paper_ledger_observation(store, "instance_pair_issue_1", [
+        {"instance_id": "i1", "codes": ["MISSING_STOP"]},
+        {"instance_id": "i1", "codes": ["SIZE_MISMATCH"]},
+        {"instance_id": "i2", "codes": ["OPEN_POSITION_TRADE_UNVERIFIED"]},
+    ])
+    assert engine.scan() == 1
+    incidents = {row["fingerprint"]: row for row in engine.list()}
+    assert set(incidents) == {"instance_paper_ledger:i1", "instance_paper_ledger:i2"}
+    assert all(row["confidence"] == "CONFIRMED" for row in incidents.values())
+    assert all(row["severity"] == "HIGH" for row in incidents.values())
+    assert all(row["evidence_count"] == 1 for row in incidents.values())
+    _paper_ledger_observation(store, "instance_pair_read_2", [
+        {"instance_id": "i1", "codes": []}, {"instance_id": "i2", "codes": []}])
+    engine.scan()
+    assert all(row["state"] == "RECOVERING" for row in engine.list())
+    assert GuardianIncidentEngine(store).scan() == 0
+
+
+def test_legacy_unknown_or_wrong_source_is_not_an_integrity_incident(guardian):
+    store, engine = guardian
+    _paper_ledger_observation(store, "legacy_pair_read_1", [
+        {"instance_id": "i1", "codes": ["EXECUTION_LINK_UNVERIFIED"]},
+        {"instance_id": "i1", "codes": ["OPEN_TRADE_POSITION_UNVERIFIED"]},
+    ])
+    _paper_ledger_observation(store, "wrong_pair_source_1", [
+        {"instance_id": "i1", "codes": ["MISSING_STOP"]}], source="smc_lab")
+    _paper_ledger_observation(store, "empty_pair_read_001", [])
+    engine.scan()
+    assert engine.list() == []
+    _paper_ledger_observation(store, "racing_pair_read_1", [
+        {"instance_id": "i1", "codes": ["MISSING_STOP"]}], atomic=False)
+    engine.scan()
+    assert engine.list()[0]["confidence"] == "POSSIBLE"
+
+
+def test_multi_instance_analysis_failure_rolls_back_all_incidents(guardian, monkeypatch):
+    store, engine = guardian
+    _paper_ledger_observation(store, "multi_pair_issue_01", [
+        {"instance_id": "i1", "codes": ["MISSING_STOP"]},
+        {"instance_id": "i2", "codes": ["MISSING_STOP"]}])
+    original = engine._apply
+    calls = []
+    def fail_second(conn, event, received_at, signal):
+        original(conn, event, received_at, signal)
+        calls.append(signal.fingerprint)
+        if len(calls) == 2:
+            raise RuntimeError("injected second instance failure")
+    monkeypatch.setattr(engine, "_apply", fail_second)
+    with pytest.raises(RuntimeError, match="injected"):
+        engine.scan()
+    assert engine.list() == []
+    monkeypatch.setattr(engine, "_apply", original)
+    assert engine.scan() == 1
+    assert len(engine.list()) == 2
+    assert all(row["evidence_count"] == 1 for row in engine.list())

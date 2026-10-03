@@ -145,6 +145,18 @@ def test_persistence_outage_returns_structured_unavailable(app, monkeypatch):
     assert status == 503 and data == {"error": "PERSISTENCE_UNAVAILABLE"}
 
 
+def test_paper_ledger_view_is_read_only_and_unknown_without_observation(app):
+    assert _request(app, "GET", "/v1/instance-ledger")[0] == 401
+    assert _request(app, "GET", "/v1/instance-ledger", key=SOURCE_KEY)[0] == 401
+    status, result, _ = _request(app, "GET", "/v1/instance-ledger", key=READ_KEY)
+    assert status == 200
+    assert result["observation_state"] == "UNKNOWN"
+    assert result["instances"] == []
+    assert result["global_risk_amount"] is None
+    assert result["live_exposure_verified"] is False
+    assert _request(app, "POST", "/v1/instance-ledger", key=READ_KEY)[0] == 405
+
+
 def test_emitter_is_nonblocking_and_reports_backpressure():
     entered = Event()
     release = Event()

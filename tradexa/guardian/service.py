@@ -21,6 +21,7 @@ from .incidents import GuardianIncidentEngine
 from .instance_decisions import GuardianInstanceDecisions
 from .instance_decision_traces import instance_decision_traces
 from .instance_ledger_observer import GuardianInstanceLedgerObserver
+from .instance_ledger_view import instance_ledger_view
 from .lab_backfill import GuardianLabBackfill
 from .lab_lifecycle import GuardianLabLifecycle
 from .lab_feed_observer import GuardianLabFeedObserver
@@ -169,7 +170,7 @@ class GuardianService:
                                             observed_at=observed_at)
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
-                         "/v1/instance-decision-traces") or
+                         "/v1/instance-decision-traces", "/v1/instance-ledger") or
                     path.startswith("/v1/incidents/")) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
@@ -186,6 +187,8 @@ class GuardianService:
                         health["state"] = "DEGRADED"
                         health["state_reason"] = "ACTIVE_INCIDENTS"
                     return self._respond(start_response, 200, health)
+                if path == "/v1/instance-ledger":
+                    return self._respond(start_response, 200, instance_ledger_view(self.store))
                 query = parse_qs(environ.get("QUERY_STRING", ""))
                 try:
                     limit = int(query.get("limit", ["50"])[0])
@@ -230,7 +233,8 @@ class GuardianService:
                 return self._respond(start_response, 200, {
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
-                        "/v1/decision-traces", "/v1/instance-decision-traces"):
+                        "/v1/decision-traces", "/v1/instance-decision-traces",
+                        "/v1/instance-ledger"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
         except _HTTPError as exc:

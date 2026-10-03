@@ -33,6 +33,14 @@ _SMC_EXECUTION_HIGH = frozenset({
     "TRADE_IDENTITY_MISMATCH", "ENTRY_MARKED_REDUCE_ONLY",
     "FAILED_INTENT_WITH_ORDER_ID",
 })
+_INSTANCE_LEDGER_HIGH = frozenset({
+    "MISSING_STOP", "STOP_GEOMETRY_INVALID", "POSITION_GEOMETRY_INVALID",
+    "MULTIPLE_EXECUTION_LINKS", "MULTIPLE_POSITION_LINKS",
+    "EXECUTION_OWNER_MISMATCH", "TRADE_OWNER_MISMATCH", "SESSION_MISMATCH",
+    "SYMBOL_SIDE_MISMATCH", "SIZE_MISMATCH", "ENTRY_MISMATCH",
+    "OPEN_POSITION_TRADE_UNVERIFIED",
+})
+_INSTANCE_LEDGER_WARNING = frozenset({"PAPER_SOURCE_UNVERIFIED"})
 
 
 @dataclass(frozen=True)
@@ -143,6 +151,52 @@ def classify_incident(event: dict) -> IncidentSignal | None:
     return None
 
 
+def _instance_ledger_signals(event: dict) -> list[IncidentSignal]:
+    """Group a source snapshot per instance without mixing paper accounts."""
+    evidence = event.get("evidence") or {}
+    if (event.get("source_service") != "guardian_instance_ledger_probe" or
+            event.get("source_component") != "instance_ledger" or
+            event.get("event_type") != "instance_paper_ledger_observed" or
+            (event.get("metadata") or {}).get("paper_only") is not True or
+            evidence.get("scope") != "INSTANCE_ATTRIBUTED_PAPER_LEDGER_ONLY" or
+            evidence.get("broker_fill_verified") is not False or
+            evidence.get("live_exposure_verified") is not False or
+            type(evidence.get("atomic_snapshot")) is not bool or
+            not isinstance(evidence.get("findings"), list) or
+            len(evidence["findings"]) > 128):
+        return []
+    grouped: dict[str, set[str]] = {}
+    for finding in evidence["findings"]:
+        if not isinstance(finding, dict):
+            return []
+        owner, codes = finding.get("instance_id"), finding.get("codes")
+        if (not isinstance(owner, str) or not 1 <= len(owner) <= 128 or
+                not isinstance(codes, list) or
+                any(not isinstance(code, str) for code in codes)):
+            return []
+        grouped.setdefault(owner, set()).update(codes)
+    atomic = (evidence["atomic_snapshot"] and
+              evidence.get("source_coverage_verified") is True)
+    signals = []
+    for owner, codes in sorted(grouped.items()):
+        significant = codes & (_INSTANCE_LEDGER_HIGH | _INSTANCE_LEDGER_WARNING)
+        fingerprint = f"instance_paper_ledger:{owner}"
+        if significant:
+            signals.append(IncidentSignal(
+                fingerprint, "Trading Instance paper ledger integrity", "instance_ledger",
+                f"Instance {owner} paper ledger: {', '.join(sorted(significant))}",
+                "CONFIRMED" if atomic and significant <= _INSTANCE_LEDGER_HIGH else "POSSIBLE",
+                "HIGH" if significant & _INSTANCE_LEDGER_HIGH else "WARNING", "OPEN"))
+        elif not codes and atomic:
+            # A matching current read is useful progress but cannot certify
+            # that a historical execution/journal defect was repaired.
+            signals.append(IncidentSignal(
+                fingerprint, "Trading Instance paper ledger integrity", "instance_ledger",
+                f"Instance {owner} open paper rows match in a later read; repair verification remains required",
+                "POSSIBLE", "WARNING", "RECOVERING"))
+    return signals
+
+
 class GuardianIncidentEngine:
     def __init__(self, store: GuardianStore):
         self.store = store
@@ -203,8 +257,11 @@ class GuardianIncidentEngine:
                         conn.commit()
                         break
                     event = json.loads(row["payload_json"])
+                    signals = _instance_ledger_signals(event)
                     signal = classify_incident(event)
                     if signal is not None:
+                        signals.append(signal)
+                    for signal in signals:
                         self._apply(conn, event, row["received_at"], signal)
                     conn.execute(
                         "UPDATE guardian_analysis_cursor SET last_event_sequence=? "

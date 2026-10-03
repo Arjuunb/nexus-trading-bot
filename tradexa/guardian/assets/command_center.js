@@ -11,6 +11,7 @@
   let refreshTimer = null;
   let generation = 0;
   let requestSequence = 0;
+  let lastInstanceLedger = null;
 
   function setState(state) {
     const normalized = ["HEALTHY", "DEGRADED", "BLOCKED", "FAILED", "UNKNOWN"].includes(state)
@@ -226,6 +227,42 @@
     }
   }
 
+  function renderInstanceLedger(view) {
+    const body = byId("instance-ledger");
+    body.replaceChildren();
+    const current = view.observation_state === "CURRENT";
+    const rows = Array.isArray(view.instances) ? view.instances : [];
+    const findings = Array.isArray(view.findings) ? view.findings : [];
+    byId("instance-ledger-coverage").textContent = current
+      ? `Last successful read ${view.observation_age_seconds ?? "unknown"}s ago · ${view.snapshot_atomic ? "atomic source read" : "non-atomic source read; risk unknown"} · Global exposure and currency remain unverified.`
+      : "Current paper ledger evidence is unavailable. Any rows below are cached; risk remains unknown.";
+    for (const item of rows) {
+      const row = document.createElement("tr");
+      const owned = findings.filter((finding) => finding.instance_id === item.instance_id);
+      const codes = [...new Set(owned.flatMap((finding) => Array.isArray(finding.codes) ? finding.codes : []))];
+      textCell(row, item.instance_id);
+      textCell(row, item.open_positions);
+      textCell(row, item.open_trades);
+      textCell(row, current && item.risk_complete && Number.isFinite(item.risk_amount)
+        ? item.risk_amount : "Unknown");
+      textCell(row, codes.length ? codes.join(", ")
+        : current && view.snapshot_atomic ? "Open rows match" : "Unverified");
+      textCell(row, view.event_id);
+      body.appendChild(row);
+    }
+    if (!rows.length) {
+      const row = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 6;
+      cell.className = "empty";
+      cell.textContent = current
+        ? "No open instance-attributed paper rows were returned by this source read."
+        : "No paper ledger observation received.";
+      row.appendChild(cell);
+      body.appendChild(row);
+    }
+  }
+
   async function read(path) {
     const response = await fetch(path, {
       method: "GET", headers: { "X-Guardian-Key": readKey },
@@ -240,10 +277,11 @@
     const current = generation;
     const request = ++requestSequence;
     try {
-      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage] = await Promise.all([
+      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger] = await Promise.all([
         read("/v1/health"), read("/v1/events?limit=50"), read("/v1/incidents?limit=50"),
         read("/v1/decision-traces?limit=50"),
         read("/v1/instance-decision-traces?limit=50"),
+        read("/v1/instance-ledger"),
       ]);
       if (current !== generation || request !== requestSequence || !readKey) return;
       renderComponents(health);
@@ -252,6 +290,8 @@
         health.active_incidents);
       renderDecisionTraces(decisionPage);
       renderInstanceDecisionTraces(instanceDecisionPage);
+      lastInstanceLedger = instanceLedger;
+      renderInstanceLedger(instanceLedger);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);
@@ -260,6 +300,7 @@
     } catch (error) {
       if (current !== generation || request !== requestSequence) return;
       setState("UNKNOWN");
+      renderInstanceLedger({ ...(lastInstanceLedger || {}), observation_state: "UNKNOWN" });
       byId("last-checked").textContent = "Unavailable";
       message.textContent = error.message === "READ_KEY_REJECTED"
         ? "Read key rejected. Reconnect with the correct key." : "Guardian evidence unavailable. Prior observations may be stale.";
@@ -273,6 +314,7 @@
   function disconnect() {
     generation += 1;
     readKey = null;
+    lastInstanceLedger = null;
     keyInput.value = "";
     clearInterval(refreshTimer);
     refreshTimer = null;
@@ -309,6 +351,8 @@
     instanceCell.textContent = "Connect to load instance decision traces.";
     instanceRow.appendChild(instanceCell);
     byId("instance-decision-traces").appendChild(instanceRow);
+    byId("instance-ledger-coverage").textContent = "Connect to load paper ledger evidence.";
+    byId("instance-ledger").replaceChildren();
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;
