@@ -5,6 +5,7 @@ import json
 import os
 import sqlite3
 import stat
+import re
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
@@ -68,6 +69,12 @@ class GuardianStore:
                     component TEXT PRIMARY KEY,
                     source_sequence INTEGER NOT NULL,
                     anchor_id TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS observer_snapshot_state (
+                    component TEXT PRIMARY KEY,
+                    material_digest TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
             """)
@@ -188,6 +195,47 @@ class GuardianStore:
                     )
                 conn.commit()
                 return appended
+            except Exception:
+                conn.rollback()
+                raise
+
+    def append_observed_snapshot(self, component: str, digest: str,
+                                 event: GuardianEvent) -> bool:
+        """Atomically append a changed observation and its dedupe checkpoint."""
+        if (not _NAME.fullmatch(component or "") or
+                not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest) or
+                event.source_component != component):
+            raise ValueError("invalid Guardian observer snapshot")
+        payload = event.canonical_json()
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(self._connect()) as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                prior = conn.execute(
+                    "SELECT material_digest FROM observer_snapshot_state WHERE component=?",
+                    (component,),
+                ).fetchone()
+                if prior is not None and prior["material_digest"] == digest:
+                    conn.commit()
+                    return False
+                conn.execute(
+                    """INSERT INTO events(event_id,timestamp,received_at,source_service,
+                       source_component,event_type,severity,payload_json)
+                       VALUES (?,?,?,?,?,?,?,?)""",
+                    (event.event_id, event.timestamp.astimezone(timezone.utc).isoformat(),
+                     now, event.source_service, event.source_component,
+                     event.event_type, event.severity, payload),
+                )
+                conn.execute(
+                    """INSERT INTO observer_snapshot_state
+                       (component,material_digest,event_id,updated_at) VALUES (?,?,?,?)
+                       ON CONFLICT(component) DO UPDATE SET
+                       material_digest=excluded.material_digest,
+                       event_id=excluded.event_id,updated_at=excluded.updated_at""",
+                    (component, digest, event.event_id, now),
+                )
+                conn.commit()
+                return True
             except Exception:
                 conn.rollback()
                 raise

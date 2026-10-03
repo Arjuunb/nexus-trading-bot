@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from config import settings
 from services.guardian_execution_read_model import smc_execution_integrity_snapshot
 from services.guardian_instance_read_model import instance_decision_page
+from services.guardian_instance_ledger_read_model import instance_paper_ledger_snapshot
 from services.guardian_lab_feed_read_model import lab_feed_snapshot
 from services.guardian_read_model import lab_decision_page, lab_decision_snapshot, lab_lifecycle_page
 
@@ -152,6 +153,26 @@ def guardian_instance_decisions(
         "feed_health_verified": False,
         "execution_integrity_verified": False,
         "page": page,
+    }, headers={"Cache-Control": "no-store"})
+
+
+@router.get("/guardian/instance-ledger")
+def guardian_instance_ledger(x_guardian_observer_key: Optional[str] = Header(default=None)):
+    """Inspect the configured primary ledger; never use a fallback account."""
+    _require_observer_key(x_guardian_observer_key)
+    from webhook_api import ledger
+    try:
+        snapshot = instance_paper_ledger_snapshot(ledger)
+    except Exception as exc:  # noqa: BLE001 -- remote primary failures must be structured
+        raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED",
+                                  "code": "INSTANCE_LEDGER_EVIDENCE_UNAVAILABLE"}) from exc
+    return JSONResponse({
+        "schema_version": 1,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "scope": "INSTANCE_ATTRIBUTED_PAPER_LEDGER_ONLY",
+        "feed_health_verified": False,
+        "execution_integrity_verified": False,
+        "snapshot": snapshot,
     }, headers={"Cache-Control": "no-store"})
 
 

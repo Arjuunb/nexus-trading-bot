@@ -352,6 +352,10 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # mathematics out of the execution engine. Adding a venue touches this file
     # and no arithmetic.
     "automation-hub/services/portfolio_view.py",
+    # Guardian: the GET-only primary-ledger adapter translates bounded source
+    # rows into a pure paper-pair observation. No trading control path consumes
+    # its result, and Guardian never imports the trading ledger back.
+    "automation-hub/services/guardian_instance_ledger_read_model.py",
 }
 
 

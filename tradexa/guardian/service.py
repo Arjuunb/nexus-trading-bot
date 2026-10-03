@@ -20,6 +20,7 @@ from .health import component_health
 from .incidents import GuardianIncidentEngine
 from .instance_decisions import GuardianInstanceDecisions
 from .instance_decision_traces import instance_decision_traces
+from .instance_ledger_observer import GuardianInstanceLedgerObserver
 from .lab_backfill import GuardianLabBackfill
 from .lab_lifecycle import GuardianLabLifecycle
 from .lab_feed_observer import GuardianLabFeedObserver
@@ -376,6 +377,21 @@ def _instance_decision_monitor(store: GuardianStore,
         stopped.wait(30)
 
 
+def _instance_ledger_monitor(store: GuardianStore,
+                             collector: GuardianInstanceLedgerObserver,
+                             stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_instance_ledger_probe", "FAILED",
+                                       reason="INSTANCE_LEDGER_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
 def main() -> None:
     """Run separately: python -m tradexa.guardian.service (loopback by default)."""
     source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
@@ -416,6 +432,9 @@ def main() -> None:
     instance_decision_url = os.environ.get("GUARDIAN_INSTANCE_DECISION_URL", "").strip()
     if instance_decision_url and "guardian_instance_decisions" not in required:
         required += ("guardian_instance_decisions",)
+    instance_ledger_url = os.environ.get("GUARDIAN_INSTANCE_LEDGER_URL", "").strip()
+    if instance_ledger_url and "guardian_instance_ledger_probe" not in required:
+        required += ("guardian_instance_ledger_probe",)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required)
@@ -462,6 +481,13 @@ def main() -> None:
         Thread(target=_instance_decision_monitor,
                args=(store, instance_decision_collector, stopped), daemon=True)
         if instance_decision_collector else None)
+    instance_ledger_collector = (
+        GuardianInstanceLedgerObserver(store, instance_ledger_url, lab_observer_key)
+        if instance_ledger_url else None)
+    instance_ledger_monitor = (
+        Thread(target=_instance_ledger_monitor,
+               args=(store, instance_ledger_collector, stopped), daemon=True)
+        if instance_ledger_collector else None)
     monitor.start()
     incident_monitor.start()
     if public_monitor:
@@ -478,6 +504,8 @@ def main() -> None:
         smc_execution_monitor.start()
     if instance_decision_monitor:
         instance_decision_monitor.start()
+    if instance_ledger_monitor:
+        instance_ledger_monitor.start()
     try:
         with make_server(os.environ.get("GUARDIAN_BIND_HOST", "127.0.0.1"),
                          int(os.environ.get("GUARDIAN_PORT", "8765")), app) as server:
@@ -500,6 +528,8 @@ def main() -> None:
             smc_execution_monitor.join(timeout=2)
         if instance_decision_monitor:
             instance_decision_monitor.join(timeout=2)
+        if instance_ledger_monitor:
+            instance_ledger_monitor.join(timeout=2)
 
 
 if __name__ == "__main__":
