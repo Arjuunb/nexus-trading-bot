@@ -853,3 +853,26 @@ def test_a_recovered_venue_is_used_again(monkeypatch):
     shared._FAILURES.clear()               # the cooldown elapsing
     body = client.get("/research/instance-visual/candles?instance_id=inst-1").json()
     assert body["source"] == "venue binance_usdm · live closed candles"
+
+
+def test_a_losing_streak_pause_reads_risk_blocked_on_quiet_candles_too(lab):
+    """The card holds BLOCKED through the Decision Brain's 24-hour pause; the
+    Lab says the same, not SCANNING, on a candle where nothing signalled."""
+    row = _instance(blocker="GATE_REJECTED: NO_SETUP")
+    row.update(current_blocker="GATE_REJECTED: LOSS_COOLDOWN",
+               current_blocker_explanation=("A cooldown after a loss is still holding entries. Reason: "
+                                            "losing-streak pause: new entries are held until 2026-10-03 14:05 UTC"))
+    body = lab([row]).get("/research/instance-visual/state?instance_id=inst-1").json()
+    assert body["decision_state"] == "RISK_BLOCKED"
+    assert body["blocker"] == "LOSS_COOLDOWN"
+    assert "held until 2026-10-03 14:05 UTC" in body["blocker_explanation"]
+
+
+def test_a_one_candle_brain_refusal_reads_signal_rejected_with_its_reason(lab):
+    row = _instance(blocker="GATE_REJECTED: BRAIN")
+    row.update(current_blocker="GATE_REJECTED: BRAIN",
+               current_blocker_explanation=("The Decision Brain quality gate refused this candle's signal. "
+                                            "Reason: Hard block: ranging / unclear regime for a trend setup"))
+    body = lab([row]).get("/research/instance-visual/state?instance_id=inst-1").json()
+    assert body["decision_state"] == "SIGNAL_REJECTED"
+    assert body["blocker_explanation"].endswith("ranging / unclear regime for a trend setup")

@@ -83,3 +83,21 @@ test("a waiting strategy is not shown as blocked; a real hold still is", async (
   expect(await color("BTCUSDT")).not.toEqual(await color("ETHUSDT"));
   expect(await color("BNBUSDT")).toEqual(await color("ETHUSDT"));
 });
+
+// The header strip's state for the selected instance. "warning" is risk
+// capacity almost used and entries still go on; only the daily loss limit
+// holds them.
+for (const [risk, expected] of [["warning", "RUNNING_ARMED"], ["daily_loss_limit_reached", "BLOCKED"]]) {
+  test(`the header reads ${expected} when global risk is ${risk}`, async ({ page }) => {
+    await mockApi(page);
+    const armed = { ...base, id: "sol-1", symbol: "SOLUSDT", ui_status: "RUNNING_ARMED",
+                    strategy_status: "WAITING_FOR_SETUP", market_data: { market_data_status: "healthy" } };
+    await page.route((url) => url.host === "localhost:8000" && url.pathname === "/instances", (route) =>
+      route.fulfill({ json: { instances: [armed], active_slots: 1, max_active_slots: 8, total_current_equity: 1000,
+        paper_account_capital: 10000, available_paper_capital: 9000, current_global_risk_amount: 460,
+        max_global_risk_amount: 500, total_open_positions: 1, global_risk_status: risk,
+        global_risk_message: "Risk capacity almost reached", market_data_status: "healthy" } }));
+    await page.goto("/#/dashboard");
+    await expect(page.locator(".hdr-controls .state-label")).toHaveText(expected);
+  });
+}

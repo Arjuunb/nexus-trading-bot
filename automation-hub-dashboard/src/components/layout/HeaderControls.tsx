@@ -134,7 +134,9 @@ export default function HeaderControls() {
   };
 
   const market = selected?.market_data?.market_data_status ?? "not available";
-  const riskBlocked = Boolean(live.data?.global_risk_status && live.data.global_risk_status !== "healthy");
+  // "warning" is risk capacity almost used: entries still go on. Only a status
+  // past that (the daily loss limit) holds them.
+  const riskBlocked = Boolean(live.data?.global_risk_status && !["healthy", "warning"].includes(live.data.global_risk_status));
   const dataDegraded = ["error", "disconnected", "stale"].includes(market);
   const engineState = !selected ? "BLOCKED" : riskBlocked || dataDegraded ? "BLOCKED" : selected.ui_status ?? "BLOCKED";
   const stateDot = engineState === "RUNNING_ARMED" ? "online" : engineState === "ERROR" ? "offline" : "warn";

@@ -152,7 +152,12 @@ def state_payload(instance_id: str, *, manager=None) -> dict:
                         "services/strategy_visual_registry.py rather than a new page"),
             "strategy_id": strategy_id})
 
-    blocker = normalise_blocker(engine.get("last_blocker") or market.get("last_blocker"))
+    # A losing-streak pause holds new entries on every candle, signal or not.
+    # The instance status says so (services/instance_status.py); the engine's
+    # own code only on the candles where the strategy signalled.
+    paused = status.get("current_blocker") == "GATE_REJECTED: LOSS_COOLDOWN"
+    blocker = normalise_blocker("LOSS_COOLDOWN" if paused else
+                                engine.get("last_blocker") or market.get("last_blocker"))
     running = str(status.get("state") or "").lower() in {"running", "degraded", "rebooting"}
     position_open = bool(status.get("current_position"))
     gates = resolve_gates(adapter, blocker=blocker, position_open=position_open)
@@ -166,7 +171,10 @@ def state_payload(instance_id: str, *, manager=None) -> dict:
         "decision_state": decision_state(blocker=blocker, running=running,
                                          position_open=position_open).value,
         "blocker": blocker or None,
-        "blocker_explanation": explain(blocker) if blocker else "",
+        # The card's sentence, which carries the gate's own reason (the
+        # Brain's, or when a pause ends), else the registry's.
+        "blocker_explanation": (status.get("current_blocker_explanation") or explain(blocker)
+                                if blocker else ""),
         "blocker_at": engine.get("last_blocker_timestamp"),
         "required_next": (failing.gate.label if failing else
                           (waiting.gate.label if waiting else None)),
