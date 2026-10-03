@@ -37,6 +37,11 @@ const server = http.createServer((request, response) => {
     "/v1/decision-traces": { traces: [] },
     "/v1/instance-decision-traces": { traces: [] },
     "/v1/instance-ledger": ledger(),
+    "/v1/notifications": { notifications: [] },
+    "/v1/reports": { reports: [{ kind: "DAILY", report_id: "fixture-report",
+      window_start: "2026-10-01T00:00:00+00:00", window_end: "2026-10-02T00:00:00+00:00",
+      coverage: { observed_events: 0, scan_truncated: false }, strategies: [],
+      conclusions: ["Trade outcomes, currency, global exposure and uptime are not verified."] }] },
   };
   if (url.pathname === "/v1/instance-ledger" && ledgerMode === "failed") {
     response.writeHead(503, { "Content-Type": "application/json" });
@@ -66,6 +71,8 @@ const server = http.createServer((request, response) => {
     const risk = page.locator("#instance-ledger td").nth(3);
     await page.waitForFunction(() => document.querySelector("#instance-ledger td:nth-child(4)")?.textContent === "10");
     assert.equal(await page.locator("#read-key").inputValue(), "");
+    await page.locator("#reports summary").click();
+    assert.match(await page.locator("#reports").textContent(), /outcomes.*not verified/);
 
     ledgerMode = "failed";
     await page.clock.fastForward(15001);

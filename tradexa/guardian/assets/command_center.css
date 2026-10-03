@@ -55,6 +55,9 @@ td:last-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .timeline-list { margin: 0; padding-left: 20px; line-height: 1.6; }
 .timeline-list li { padding: 3px 0; }
 .empty { color: #92a1af; font-style: italic; }
+.report { border-top: 1px solid #263441; padding: 14px 0; font-size: .85rem; line-height: 1.6; overflow-wrap: anywhere; }
+.report summary { cursor: pointer; font-weight: 700; }
+.report p { margin: 12px 0; color: #92a1af; }
 footer { padding: 25px 0 0; text-align: center; font-size: .75rem; }
 @media (max-width: 800px) {
   .shell { width: min(100% - 24px, 1240px); padding-top: 22px; }

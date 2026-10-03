@@ -27,6 +27,8 @@ from .lab_lifecycle import GuardianLabLifecycle
 from .lab_feed_observer import GuardianLabFeedObserver
 from .lab_observer import GuardianLabObserver
 from .public_status import GuardianPublicStatusCollector
+from .notifications import GuardianNotifications
+from .reports import GuardianReports
 from .smc_execution_observer import GuardianSMCExecutionObserver
 from .store import GuardianStore
 
@@ -62,6 +64,8 @@ class GuardianService:
             raise ValueError("Guardian health must include its own component")
         self.store = store
         self.incidents = GuardianIncidentEngine(store)
+        self.notifications = GuardianNotifications(store)
+        self.reports = GuardianReports(store)
         self.source_keys = dict(source_keys)
         self.read_key = read_key
         self.required_components = tuple(required_components)
@@ -170,7 +174,8 @@ class GuardianService:
                                             observed_at=observed_at)
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
-                         "/v1/instance-decision-traces", "/v1/instance-ledger") or
+                         "/v1/instance-decision-traces", "/v1/instance-ledger",
+                         "/v1/reports", "/v1/notifications") or
                     path.startswith("/v1/incidents/")) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
@@ -189,6 +194,11 @@ class GuardianService:
                     return self._respond(start_response, 200, health)
                 if path == "/v1/instance-ledger":
                     return self._respond(start_response, 200, instance_ledger_view(self.store))
+                if path == "/v1/reports":
+                    return self._respond(start_response, 200, {"reports": self.reports.list()})
+                if path == "/v1/notifications":
+                    return self._respond(start_response, 200, {
+                        "channel": "IN_APP", "notifications": self.notifications.list()})
                 query = parse_qs(environ.get("QUERY_STRING", ""))
                 try:
                     limit = int(query.get("limit", ["50"])[0])
@@ -234,7 +244,7 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger"):
+                        "/v1/instance-ledger", "/v1/reports", "/v1/notifications"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
         except _HTTPError as exc:
@@ -264,7 +274,7 @@ def _self_heartbeat(store: GuardianStore, stopped: Event) -> None:
 
 
 def _incident_monitor(store: GuardianStore, engine: GuardianIncidentEngine,
-                      stopped: Event) -> None:
+                      notifications: GuardianNotifications, stopped: Event) -> None:
     while not stopped.is_set():
         try:
             processed = engine.scan(limit=500)
@@ -276,7 +286,35 @@ def _incident_monitor(store: GuardianStore, engine: GuardianIncidentEngine,
                                        reason="INCIDENT_ANALYSIS_FAILED")
             except sqlite3.Error:
                 pass
-        stopped.wait(0.25 if processed == 500 else 5)
+        try:
+            notified = notifications.scan(limit=500)
+            store.record_heartbeat("guardian_notifications", "HEALTHY")
+        except Exception:
+            notified = 0
+            try:
+                store.record_heartbeat("guardian_notifications", "FAILED",
+                                       reason="NOTIFICATION_ANALYSIS_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(0.25 if processed == 500 or notified == 500 else 5)
+
+
+def _report_monitor(store: GuardianStore, reports: GuardianReports, stopped: Event) -> None:
+    next_report = 0.0
+    from time import monotonic
+    while not stopped.is_set():
+        try:
+            if monotonic() >= next_report:
+                reports.generate_due()
+                next_report = monotonic() + 3600
+            store.record_heartbeat("guardian_reports", "HEALTHY")
+        except Exception:
+            next_report = 0.0
+            try:
+                store.record_heartbeat("guardian_reports", "FAILED", reason="REPORT_GENERATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
 
 
 def _public_status_monitor(store: GuardianStore, collector: GuardianPublicStatusCollector,
@@ -413,6 +451,8 @@ def main() -> None:
         "guardian,guardian_incident_engine,api,instance_ledger,instance_market_data,"
         "trading_instances,pa_lab,smc_lab"
     ).split(",") if part.strip())
+    required += tuple(name for name in ("guardian_reports", "guardian_notifications")
+                      if name not in required)
     public_url = os.environ.get("GUARDIAN_PUBLIC_STATUS_URL", "").strip()
     if public_url and "guardian_public_probe" not in required:
         required += ("guardian_public_probe",)
@@ -445,7 +485,8 @@ def main() -> None:
     stopped = Event()
     monitor = Thread(target=_self_heartbeat, args=(store, stopped), daemon=True)
     incident_monitor = Thread(target=_incident_monitor,
-                              args=(store, app.incidents, stopped), daemon=True)
+                              args=(store, app.incidents, app.notifications, stopped), daemon=True)
+    report_monitor = Thread(target=_report_monitor, args=(store, app.reports, stopped), daemon=True)
     public_collector = (GuardianPublicStatusCollector(store, public_url)
                         if public_url else None)
     public_monitor = (Thread(target=_public_status_monitor,
@@ -494,6 +535,7 @@ def main() -> None:
         if instance_ledger_collector else None)
     monitor.start()
     incident_monitor.start()
+    report_monitor.start()
     if public_monitor:
         public_monitor.start()
     if lab_monitor:
@@ -518,6 +560,7 @@ def main() -> None:
         stopped.set()
         monitor.join(timeout=2)
         incident_monitor.join(timeout=2)
+        report_monitor.join(timeout=2)
         if public_monitor:
             public_monitor.join(timeout=2)
         if lab_monitor:

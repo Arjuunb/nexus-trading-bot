@@ -87,6 +87,27 @@ class GuardianStore:
         conn.execute("PRAGMA synchronous=FULL")
         return conn
 
+    @staticmethod
+    def _append_in_transaction(conn: sqlite3.Connection, event: GuardianEvent,
+                               received_at: str) -> bool:
+        """Audit a Guardian-derived action in its caller's short transaction."""
+        if not conn.in_transaction:
+            raise RuntimeError("Guardian audit insertion requires an active transaction")
+        payload = event.canonical_json()
+        existing = conn.execute("SELECT payload_json FROM events WHERE event_id=?",
+                                (event.event_id,)).fetchone()
+        if existing is not None:
+            if existing["payload_json"] != payload:
+                raise GuardianEventError("event_id collision with different evidence")
+            return False
+        conn.execute(
+            "INSERT INTO events(event_id,timestamp,received_at,source_service,"
+            "source_component,event_type,severity,payload_json) VALUES (?,?,?,?,?,?,?,?)",
+            (event.event_id, event.timestamp.astimezone(timezone.utc).isoformat(),
+             received_at, event.source_service, event.source_component,
+             event.event_type, event.severity, payload))
+        return True
+
     def append(self, event: GuardianEvent) -> bool:
         """Append immutable evidence; an identical retried ID is idempotent.
 

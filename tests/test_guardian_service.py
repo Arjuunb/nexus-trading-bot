@@ -145,6 +145,15 @@ def test_persistence_outage_returns_structured_unavailable(app, monkeypatch):
     assert status == 503 and data == {"error": "PERSISTENCE_UNAVAILABLE"}
 
 
+@pytest.mark.parametrize("path", ["/v1/reports", "/v1/notifications"])
+def test_reports_and_notices_are_read_only_and_read_key_only(app, path):
+    for key in ("", SOURCE_KEY):
+        assert _request(app, "GET", path, key=key)[0] == 401
+    assert _request(app, "GET", path, key=READ_KEY)[0] == 200
+    assert _request(app, "POST", path, payload={}, key=READ_KEY)[0] == 405
+    assert app.store.count() == 0
+
+
 def test_paper_ledger_view_is_read_only_and_unknown_without_observation(app):
     assert _request(app, "GET", "/v1/instance-ledger")[0] == 401
     assert _request(app, "GET", "/v1/instance-ledger", key=SOURCE_KEY)[0] == 401

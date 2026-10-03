@@ -272,16 +272,75 @@
     return response.json();
   }
 
+  function renderNotifications(page) {
+    const body = byId("notifications");
+    body.replaceChildren();
+    for (const notice of Array.isArray(page.notifications) ? page.notifications : []) {
+      const row = document.createElement("tr");
+      textCell(row, displayTime(notice.observed_at));
+      textCell(row, notice.category);
+      textCell(row, notice.severity);
+      textCell(row, `${notice.summary || "No summary"} · ${notice.confidence || "UNKNOWN"} · ${notice.evidence_id || "No evidence ID"}`);
+      textCell(row, notice.incident_id);
+      body.appendChild(row);
+    }
+    if (!body.children.length) {
+      const row = document.createElement("tr"), cell = document.createElement("td");
+      cell.colSpan = 5;
+      cell.className = "empty";
+      cell.textContent = "No incident notices received. This is not proof of complete source coverage.";
+      row.appendChild(cell);
+      body.appendChild(row);
+    }
+  }
+
+  function renderReports(page) {
+    const container = byId("reports");
+    container.replaceChildren();
+    for (const report of Array.isArray(page.reports) ? page.reports : []) {
+      const item = document.createElement("details");
+      item.className = "report";
+      const heading = document.createElement("summary");
+      heading.textContent = `${report.kind || "Unknown"} · ${displayTime(report.window_start)} → ${displayTime(report.window_end)}`;
+      const scope = document.createElement("p");
+      const coverage = report.coverage || {};
+      scope.textContent = `${coverage.observed_events ?? "Unknown"} received events scanned · ${coverage.scan_truncated ? "SCAN TRUNCATED" : "bounded scan"} · all trading activity UNVERIFIED · revision ${report.report_id || "Unknown"}`;
+      const conclusions = document.createElement("ul");
+      for (const text of Array.isArray(report.conclusions) ? report.conclusions : []) {
+        const line = document.createElement("li");
+        line.textContent = text;
+        conclusions.appendChild(line);
+      }
+      const groups = document.createElement("ul");
+      for (const group of Array.isArray(report.strategies) ? report.strategies : []) {
+        const line = document.createElement("li");
+        const blockers = group.blockers && typeof group.blockers === "object"
+          ? Object.entries(group.blockers).map(([reason, count]) => `${reason}: ${count}`).join(", ") : "Unknown";
+        line.textContent = `${group.scope || "Unknown"} · ${group.owner_id || "Unknown owner"} · ${group.strategy_id || "Unknown strategy"} ${group.strategy_version || "version unknown"} · ${group.symbol || "Unknown"} ${group.timeframe || ""} · ${group.observed_decisions ?? "Unknown"} observed decisions · blockers ${blockers || "none observed"} · outcomes unverified`;
+        groups.appendChild(line);
+      }
+      item.append(heading, scope, conclusions, groups);
+      container.appendChild(item);
+    }
+    if (!container.children.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No closed-window report has been generated yet.";
+      container.appendChild(empty);
+    }
+  }
+
   async function refresh() {
     if (!readKey) return;
     const current = generation;
     const request = ++requestSequence;
     try {
-      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger] = await Promise.all([
+      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger, notices, reports] = await Promise.all([
         read("/v1/health"), read("/v1/events?limit=50"), read("/v1/incidents?limit=50"),
         read("/v1/decision-traces?limit=50"),
         read("/v1/instance-decision-traces?limit=50"),
         read("/v1/instance-ledger"),
+        read("/v1/notifications"), read("/v1/reports"),
       ]);
       if (current !== generation || request !== requestSequence || !readKey) return;
       renderComponents(health);
@@ -292,6 +351,8 @@
       renderInstanceDecisionTraces(instanceDecisionPage);
       lastInstanceLedger = instanceLedger;
       renderInstanceLedger(instanceLedger);
+      renderNotifications(notices);
+      renderReports(reports);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);
@@ -353,6 +414,8 @@
     byId("instance-decision-traces").appendChild(instanceRow);
     byId("instance-ledger-coverage").textContent = "Connect to load paper ledger evidence.";
     byId("instance-ledger").replaceChildren();
+    byId("notifications").replaceChildren();
+    byId("reports").replaceChildren();
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;
