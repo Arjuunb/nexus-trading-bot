@@ -1,6 +1,6 @@
 # Tradexa Guardian: evidence foundation
 
-Status: local foundation, independently runnable service, read-only Command Center shell, initial incident correlation, an optional coarse public-status collector, PA/SMC and Trading Instance decision observers/outboxes, a bounded SMC paper execution observer, and an optional primary Trading Instance paper-ledger probe. This is **not** a deployed Guardian service or a completed Phase 1/2.
+Status: local foundation, independently runnable service, read-only Command Center, incident correlation, optional source observers/outboxes, paper-ledger inspection, daily/weekly received-evidence reports, deduplicated in-app notices, and an owner-governed research registry. This is **not** a deployed Guardian service, complete source coverage, or a completed eight-phase PRD.
 
 ## Boundaries
 
@@ -43,6 +43,10 @@ Closed-UTC daily and Monday-to-Monday weekly reports are generated independently
 
 In-app incident notices have a durable transactional cursor. A new WARNING-or-higher incident, severity escalation or source-verified recovery creates an immutable notice and audit event in one Guardian transaction. Repeated outage updates, reconnect-only states, normal no-setup decisions and near-valid candidates do not generate more notices. Recovery is not a Guardian intervention. Remote push/email/Telegram delivery is **not configured or implemented**; no destination or delivery secret is sent anywhere. `guardian_reports` and `guardian_notifications` heartbeats reflect these local processors, not trading health.
 
+The research registry is **governance, not a research runner or certification system**. A hypothesis binds existing Guardian evidence IDs, exact strategy/version/commit/config identities, and one immutable candidate artifact SHA-256. Identity deduplication retains failed/rejected hypotheses across restart. Owner `SEND_TO_BACKTEST` approval is required before accepting the first result. Results must then follow historical backtest → out-of-sample → walk-forward → stress → forward-paper → statistical comparison → recommendation, without skipping. The registry validates aware completed periods, distinct and later out-of-sample data, nonoverlapping causal walk-forward fold declarations, finite samples/metrics and unchanged candidate identity. These structural checks do **not** verify artifact bytes, backtester code, strategy-copy isolation, statistical sufficiency or absence of internal lookahead. Every result remains `method_verified=false`; no backtest or paper experiment is executed by this service.
+
+Only a separate owner key can reject a hypothesis or approve development after all seven reported stages. Reviews bind the current evidence digest, fail on stale evidence, and are immutable/idempotent. Approval ends at `APPROVED_FOR_DEVELOPMENT_NO_DEPLOYMENT`, never modifies code/risk/orders or deploys. Hypothesis/result/review plus audit event commit atomically; failure rolls all changes back. `GUARDIAN_RESEARCH_KEY` and `GUARDIAN_ADMIN_KEY` are optional, independent of ingestion/read/observer/control credentials, and disabled by default. The Command Center is still read-only; it displays provenance, reported stages and unresolved verification. Do not send exchange secrets, raw generated code, commands, file paths or live-routing requests into this registry.
+
 Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON object mapping each source service to its own long random key), and a distinct `GUARDIAN_READ_KEY`. Optional settings: `GUARDIAN_REQUIRED_COMPONENTS`, `GUARDIAN_BIND_HOST`, `GUARDIAN_PORT`, `GUARDIAN_PUBLIC_STATUS_URL`, `GUARDIAN_LAB_OBSERVER_URL`, `GUARDIAN_LAB_BACKFILL_URL`, `GUARDIAN_LAB_LIFECYCLE_URL`, `GUARDIAN_INSTANCE_DECISION_URL`, `GUARDIAN_INSTANCE_LEDGER_URL`, `GUARDIAN_LAB_FEED_URL`, `GUARDIAN_SMC_EXECUTION_URL`, and `GUARDIAN_LAB_OBSERVER_KEY`. The service rejects reuse of `HUB_CONTROL_KEY` when it is present in its environment and refuses a lab observer key shared with its read/source keys. Keep the database in a dedicated owner-only directory and supply secrets through a protected environment mechanism, not source control or shell history. With the public or lab collectors enabled, their own probes are required for overall health; `pa_lab` and `smc_lab` remain `UNKNOWN` until independent lab-health telemetry exists.
 
 | Method | Path | Authority | Result |
@@ -60,6 +64,10 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | GET | `/v1/instance-ledger` | separate read key | latest paper-pair snapshot and current probe age; stale/failed risk masked; no global or verified-currency exposure |
 | GET | `/v1/reports` | separate read key | most recent 20 immutable closed-window evidence revisions; unknown economics remain null |
 | GET | `/v1/notifications` | separate read key | newest 50 deduplicated in-app incident notices; no remote send or remediation |
+| GET | `/v1/research/hypotheses` and `/v1/research/<64-hex-id>` | separate read key | bounded hypotheses/results/reviews with provenance and methods unverified |
+| POST | `/v1/research/hypotheses` | optional separate research key | validated immutable hypothesis; cannot execute it |
+| POST | `/v1/research/<64-hex-id>/results` | optional separate research key | source-reported result for exactly the next approved stage; no runner/certification |
+| POST | `/v1/research/<64-hex-id>/review` | optional separate owner/admin key | `SEND_TO_BACKTEST`, `REJECT`, or `APPROVE_FOR_DEVELOPMENT`, bound to current `expected_digest`; no deployment |
 
 Local browser smoke: run `node scripts/guardian_ui_smoke.cjs` with Playwright available. If its bundled Chromium is absent, set `GUARDIAN_SMOKE_CHROME` to a locally installed Chrome executable. The test serves actual Guardian assets with test-only fixtures, blocks non-local requests, injects a 503 and stale evidence, verifies retry and risk masking, checks mobile containment, and clears evidence on disconnect. No trading database, public account, or production key is involved.
 
@@ -87,3 +95,11 @@ The Command Center asks for the separate read key when opened. It holds that key
 6. Test worker death, Guardian death, transport backpressure, database lock/full conditions, secret redaction, replay, stale evidence, and permissions in the actual deployment configuration. Only then consider incident and recovery phases.
 
 No live-routing, risk, strategy, deployment, or automatic-recovery change is part of this foundation.
+
+## Local validation (2026-10-04)
+
+The repository Python suite passed **4,216 tests, 15 skipped** (284 seconds; existing FastAPI/aiohttp deprecation warnings remain). The separate local Chromium fixture test passed risk masking, cached-health masking on refresh failure, retry, stale evidence, report rendering, mobile containment, key/evidence clearing on disconnect and zero JavaScript page errors. Both SMC source/behaviour locks passed; protected SMC, PA and strategy directories have no diff from `804a7c0`. These are **local code/fixture results**, not VPS, real source-provider, exchange, profitability, research-method or completed-PRD certification. Nothing in this Guardian slice has been deployed.
+
+## PRD completion boundary
+
+Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), PA and all-instance execution/journal/exit adapters, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, anomaly baselines/dependency investigation, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

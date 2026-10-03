@@ -12,6 +12,7 @@
   let generation = 0;
   let requestSequence = 0;
   let lastInstanceLedger = null;
+  let lastHealth = null;
 
   function setState(state) {
     const normalized = ["HEALTHY", "DEGRADED", "BLOCKED", "FAILED", "UNKNOWN"].includes(state)
@@ -330,19 +331,52 @@
     }
   }
 
+  function renderResearch(page) {
+    const container = byId("research");
+    container.replaceChildren();
+    for (const hypothesis of Array.isArray(page.hypotheses) ? page.hypotheses : []) {
+      const item = document.createElement("details");
+      item.className = "report";
+      const summary = document.createElement("summary");
+      summary.textContent = `${hypothesis.strategy_id || "Unknown"} ${hypothesis.strategy_version || ""} · ${hypothesis.status || "UNKNOWN"}`;
+      const text = document.createElement("p");
+      text.textContent = hypothesis.hypothesis || "No hypothesis text";
+      const provenance = document.createElement("p");
+      provenance.textContent = `Production commit ${hypothesis.code_commit || "unknown"} · config ${hypothesis.config_hash || "unknown"} · candidate artifact ${hypothesis.candidate_artifact_sha256 || "unknown"} · methods UNVERIFIED · no production change`;
+      const results = document.createElement("ol");
+      for (const result of Array.isArray(hypothesis.results) ? hypothesis.results : []) {
+        const line = document.createElement("li");
+        line.textContent = `${result.stage || "Unknown"} · ${result.passed === true ? "source reports PASS" : "source reports FAIL"} · method unverified · artifact ${result.result_artifact_sha256 || "unknown"}`;
+        results.appendChild(line);
+      }
+      const refs = document.createElement("p");
+      refs.textContent = `Evidence: ${(Array.isArray(hypothesis.evidence_ids) ? hypothesis.evidence_ids : []).join(", ") || "unknown"} · owner review digest ${hypothesis.evidence_digest || "unknown"}`;
+      item.append(summary, text, provenance, results, refs);
+      container.appendChild(item);
+    }
+    if (!container.children.length) {
+      const empty = document.createElement("p");
+      empty.className = "empty";
+      empty.textContent = "No research hypotheses recorded. Production remains unchanged.";
+      container.appendChild(empty);
+    }
+  }
+
   async function refresh() {
     if (!readKey) return;
     const current = generation;
     const request = ++requestSequence;
     try {
-      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger, notices, reports] = await Promise.all([
+      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger, notices, reports, research] = await Promise.all([
         read("/v1/health"), read("/v1/events?limit=50"), read("/v1/incidents?limit=50"),
         read("/v1/decision-traces?limit=50"),
         read("/v1/instance-decision-traces?limit=50"),
         read("/v1/instance-ledger"),
         read("/v1/notifications"), read("/v1/reports"),
+        read("/v1/research/hypotheses"),
       ]);
       if (current !== generation || request !== requestSequence || !readKey) return;
+      lastHealth = health;
       renderComponents(health);
       renderEvents(Array.isArray(eventPage.events) ? eventPage.events : []);
       renderIncidents(Array.isArray(incidentPage.incidents) ? incidentPage.incidents : [],
@@ -353,6 +387,7 @@
       renderInstanceLedger(instanceLedger);
       renderNotifications(notices);
       renderReports(reports);
+      renderResearch(research);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);
@@ -361,6 +396,11 @@
     } catch (error) {
       if (current !== generation || request !== requestSequence) return;
       setState("UNKNOWN");
+      renderComponents({ evidence_complete: false, components: Object.fromEntries(
+        Object.keys(lastHealth?.components || {}).map((name) => [name, {
+          state: "UNKNOWN", reason: "EVIDENCE_READ_FAILED; prior heartbeat may be stale",
+        }])) });
+      byId("incident-count").textContent = "—";
       renderInstanceLedger({ ...(lastInstanceLedger || {}), observation_state: "UNKNOWN" });
       byId("last-checked").textContent = "Unavailable";
       message.textContent = error.message === "READ_KEY_REJECTED"
@@ -376,6 +416,7 @@
     generation += 1;
     readKey = null;
     lastInstanceLedger = null;
+    lastHealth = null;
     keyInput.value = "";
     clearInterval(refreshTimer);
     refreshTimer = null;
@@ -416,6 +457,7 @@
     byId("instance-ledger").replaceChildren();
     byId("notifications").replaceChildren();
     byId("reports").replaceChildren();
+    byId("research").replaceChildren();
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;

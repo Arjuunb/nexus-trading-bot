@@ -154,6 +154,37 @@ def test_reports_and_notices_are_read_only_and_read_key_only(app, path):
     assert app.store.count() == 0
 
 
+def test_research_disabled_by_default_and_authorities_do_not_cross(app):
+    from tests.test_guardian_research import proposal
+    app.store.append(_event(event_id="research_evidence_001"))
+    research_key, admin_key = "research-authority-independent-key", "owner-authority-independent-key"
+    scoped = GuardianService(app.store, source_keys={"smc_lab": SOURCE_KEY}, read_key=READ_KEY,
+                              required_components=("guardian",), research_key=research_key, admin_key=admin_key)
+    base = "/v1/research/hypotheses"
+    assert _request(app, "POST", base, payload=proposal(), key=READ_KEY)[0] == 403
+    for key in (READ_KEY, SOURCE_KEY, admin_key):
+        assert _request(scoped, "POST", base, payload=proposal(), key=key)[0] == 403
+    status, hypothesis, _ = _request(scoped, "POST", base, payload=proposal(), key=research_key)
+    assert status == 201
+    review = f"/v1/research/{hypothesis['hypothesis_id']}/review"
+    payload = {"decision": "SEND_TO_BACKTEST", "expected_digest": hypothesis["evidence_digest"]}
+    for key in (READ_KEY, SOURCE_KEY, research_key):
+        assert _request(scoped, "POST", review, payload=payload, key=key)[0] == 403
+    assert _request(scoped, "POST", review, payload=payload, key=admin_key)[1]["status"] == "HISTORICAL_BACKTEST_PENDING"
+    assert _request(scoped, "GET", base, key=READ_KEY)[0] == 200
+    assert _request(scoped, "GET", base, key=admin_key)[0] == 401
+    assert _request(scoped, "POST", "/v1/start", payload={}, key=admin_key)[0] == 404
+
+
+@pytest.mark.parametrize("research_key,admin_key", [(READ_KEY, None), (SOURCE_KEY, None),
+                                                       ("same-long-key-123456789012345", "same-long-key-123456789012345"),
+                                                       ("short", None)])
+def test_research_admin_and_read_credentials_must_be_independent(app, research_key, admin_key):
+    with pytest.raises(ValueError, match="independently scoped"):
+        GuardianService(app.store, source_keys={"smc_lab": SOURCE_KEY}, read_key=READ_KEY,
+                        required_components=("guardian",), research_key=research_key, admin_key=admin_key)
+
+
 def test_paper_ledger_view_is_read_only_and_unknown_without_observation(app):
     assert _request(app, "GET", "/v1/instance-ledger")[0] == 401
     assert _request(app, "GET", "/v1/instance-ledger", key=SOURCE_KEY)[0] == 401

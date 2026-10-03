@@ -29,6 +29,7 @@ from .lab_observer import GuardianLabObserver
 from .public_status import GuardianPublicStatusCollector
 from .notifications import GuardianNotifications
 from .reports import GuardianReports
+from .research import GuardianResearch
 from .smc_execution_observer import GuardianSMCExecutionObserver
 from .store import GuardianStore
 
@@ -53,7 +54,8 @@ class GuardianService:
     """WSGI app with per-source ingestion keys and a separate read key."""
 
     def __init__(self, store: GuardianStore, *, source_keys: Mapping[str, str],
-                 read_key: str, required_components: tuple[str, ...]):
+                 read_key: str, required_components: tuple[str, ...],
+                 research_key: str | None = None, admin_key: str | None = None):
         if not source_keys or any(not isinstance(key, str) or len(key) < 24
                                   for key in source_keys.values()):
             raise ValueError("each Guardian source requires a private key of at least 24 characters")
@@ -62,12 +64,18 @@ class GuardianService:
             raise ValueError("Guardian source and read keys must be distinct")
         if not required_components or "guardian" not in required_components:
             raise ValueError("Guardian health must include its own component")
+        optional = [key for key in (research_key, admin_key) if key is not None]
+        if (any(not isinstance(key, str) or len(key) < 24 for key in optional) or
+                len(set((*source_keys.values(), read_key, *optional))) != len(source_keys) + 1 + len(optional)):
+            raise ValueError("Guardian research/admin credentials must be long and independently scoped")
         self.store = store
         self.incidents = GuardianIncidentEngine(store)
         self.notifications = GuardianNotifications(store)
         self.reports = GuardianReports(store)
+        self.research = GuardianResearch(store)
         self.source_keys = dict(source_keys)
         self.read_key = read_key
+        self.research_key, self.admin_key = research_key, admin_key
         self.required_components = tuple(required_components)
 
     def _source(self, presented: str) -> str | None:
@@ -144,6 +152,25 @@ class GuardianService:
                     "service": "guardian", "self_state": "HEALTHY",
                     "platform_state": "UNKNOWN_UNTIL_EVIDENCE_CHECKED",
                 })
+            if path == "/v1/research/hypotheses" and method == "POST":
+                if not self.research_key or not hmac.compare_digest(presented, self.research_key):
+                    raise _HTTPError(403, "RESEARCH_AUTHORITY_REQUIRED")
+                return self._respond(start_response, 201, self.research.create(self._body(environ)))
+            if path.startswith("/v1/research/") and method == "POST":
+                match = re.fullmatch(r"/v1/research/([0-9a-f]{64})/(results|review)", path)
+                if match is None:
+                    raise _HTTPError(404, "NOT_FOUND")
+                authority = self.research_key if match[2] == "results" else self.admin_key
+                if not authority or not hmac.compare_digest(presented, authority):
+                    raise _HTTPError(403, "RESEARCH_AUTHORITY_REQUIRED" if match[2] == "results" else "OWNER_AUTHORITY_REQUIRED")
+                payload = self._body(environ)
+                if match[2] == "results":
+                    result = self.research.record_result(match[1], payload)
+                else:
+                    if set(payload) != {"decision", "expected_digest"}:
+                        raise _HTTPError(422, "INVALID_REVIEW")
+                    result = self.research.review(match[1], **payload)
+                return self._respond(start_response, 200, result)
             if path in ("/v1/events", "/v1/heartbeats") and method == "POST":
                 source = self._source(presented)
                 if source is None:
@@ -175,8 +202,8 @@ class GuardianService:
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger",
-                         "/v1/reports", "/v1/notifications") or
-                    path.startswith("/v1/incidents/")) and method == "GET":
+                         "/v1/reports", "/v1/notifications", "/v1/research/hypotheses") or
+                    path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
                 if path == "/v1/health":
@@ -199,6 +226,13 @@ class GuardianService:
                 if path == "/v1/notifications":
                     return self._respond(start_response, 200, {
                         "channel": "IN_APP", "notifications": self.notifications.list()})
+                if path == "/v1/research/hypotheses":
+                    return self._respond(start_response, 200, {"hypotheses": self.research.list()})
+                if path.startswith("/v1/research/"):
+                    match = re.fullmatch(r"/v1/research/([0-9a-f]{64})", path)
+                    if match is None:
+                        raise _HTTPError(404, "NOT_FOUND")
+                    return self._respond(start_response, 200, self.research.get(match[1]))
                 query = parse_qs(environ.get("QUERY_STRING", ""))
                 try:
                     limit = int(query.get("limit", ["50"])[0])
@@ -440,11 +474,13 @@ def main() -> None:
     if not isinstance(source_keys, dict):
         raise ValueError("GUARDIAN_SOURCE_KEYS_JSON must be an object")
     read_key = os.environ["GUARDIAN_READ_KEY"]
+    research_key = os.environ.get("GUARDIAN_RESEARCH_KEY") or None
+    admin_key = os.environ.get("GUARDIAN_ADMIN_KEY") or None
     lab_observer_key = os.environ.get("GUARDIAN_LAB_OBSERVER_KEY", "")
     hub_key = os.environ.get("HUB_CONTROL_KEY")
-    if hub_key and hub_key in (read_key, lab_observer_key, *source_keys.values()):
+    if hub_key and hub_key in (read_key, lab_observer_key, research_key, admin_key, *source_keys.values()):
         raise ValueError("Guardian credentials must not reuse HUB_CONTROL_KEY")
-    if lab_observer_key and lab_observer_key in (read_key, *source_keys.values()):
+    if lab_observer_key and lab_observer_key in (read_key, research_key, admin_key, *source_keys.values()):
         raise ValueError("Guardian lab observation credential must be independent")
     required = tuple(part.strip() for part in os.environ.get(
         "GUARDIAN_REQUIRED_COMPONENTS",
@@ -481,7 +517,7 @@ def main() -> None:
         required += ("guardian_instance_ledger_probe",)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
-                          required_components=required)
+                          required_components=required, research_key=research_key, admin_key=admin_key)
     stopped = Event()
     monitor = Thread(target=_self_heartbeat, args=(store, stopped), daemon=True)
     incident_monitor = Thread(target=_incident_monitor,

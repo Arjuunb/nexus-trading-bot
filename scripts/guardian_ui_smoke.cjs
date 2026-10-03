@@ -38,6 +38,7 @@ const server = http.createServer((request, response) => {
     "/v1/instance-decision-traces": { traces: [] },
     "/v1/instance-ledger": ledger(),
     "/v1/notifications": { notifications: [] },
+    "/v1/research/hypotheses": { hypotheses: [] },
     "/v1/reports": { reports: [{ kind: "DAILY", report_id: "fixture-report",
       window_start: "2026-10-01T00:00:00+00:00", window_end: "2026-10-02T00:00:00+00:00",
       coverage: { observed_events: 0, scan_truncated: false }, strategies: [],
@@ -78,6 +79,8 @@ const server = http.createServer((request, response) => {
     await page.clock.fastForward(15001);
     await page.waitForFunction(() => document.querySelector("#overall-state").textContent === "UNKNOWN");
     assert.equal(await risk.textContent(), "Unknown");
+    assert.equal(await page.locator("#components .state").textContent(), "UNKNOWN");
+    assert.equal(await page.locator("#incident-count").textContent(), "—");
     assert.match(await page.locator("#instance-ledger-coverage").textContent(), /unavailable/);
 
     ledgerMode = "current";
