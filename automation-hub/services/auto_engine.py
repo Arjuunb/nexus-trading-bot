@@ -176,6 +176,11 @@ class AutoStrategyEngine:
         # being traded ("unknown" if it holds with no end time), or None.
         # Worked out once per live candle, never per status poll.
         self.entry_pause_until: Optional[str] = None
+        # What became of a resting limit order on the candle being processed:
+        # "filled", "expired" or None. Guardian's trace for that candle used to
+        # read POSITION_MANAGED or NO_SETUP instead, so limit-entry instances
+        # showed 0 entries and their expired orders were nowhere.
+        self._pending_result: Optional[str] = None
         self.last_heartbeat: Optional[str] = None
         self.last_transition: Optional[str] = None
         self.reconnect_attempt = 0
@@ -1244,6 +1249,7 @@ class AutoStrategyEngine:
         # does not reveal whether its high happened before or after that fill,
         # so a newly filled entry may be stopped on this candle but can never be
         # credited with a same-candle target/scale-out (conservative ordering).
+        self._pending_result = None
         filled_this_bar = self._check_pending(sym, bar)
         # 2. stop-loss / take-profit exits against this bar's range.
         position_before_exit = self.paper.open_position(sym)
@@ -1368,7 +1374,7 @@ class AutoStrategyEngine:
             signal_side=(None if signal is None else
                          "long" if signal.type == SignalType.LONG else "short"),
             strategy_decision=strategy_decision, position_managed=skip_entry_scan,
-            decision_identity=decision_identity)
+            decision_identity=decision_identity, pending_result=self._pending_result)
         if self.core_v2_observer is not None:
             try:
                 self.core_v2_observer.observe(
@@ -1443,6 +1449,7 @@ class AutoStrategyEngine:
             po["ttl"] -= 1
             if po["ttl"] <= 0:
                 self._pending.pop(sym, None)
+                self._pending_result = "expired"
                 self.stats_missed_entries += 1
                 self.stats["rejections"] += 1
                 self.rejection_counts["limit"] = self.rejection_counts.get("limit", 0) + 1
@@ -1473,6 +1480,7 @@ class AutoStrategyEngine:
             return False
         f = res.fill or {}
         if res.accepted and f.get("action") == "opened":
+            self._pending_result = "filled"
             self.stats["accepted_signals"] += 1
             if po.get("decision_id") is not None and self.decisions is not None:
                 try:

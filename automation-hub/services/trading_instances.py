@@ -1987,6 +1987,10 @@ class TradingInstanceManager:
                                 message=(f"forward-paper fill {fill.side} {fill.size:.8f} "
                                          f"@ {fill.price:.8f} from Binance USD-M quote"),
                             )
+                            if engine_ref.get("engine") is not None:
+                                from services.strategy_trace import publish_instance_fill
+                                publish_instance_fill(engine_ref["engine"], symbol=fill.symbol,
+                                                      filled_at=str(quote.get("received_at") or _now()))
                         if fills and self.journal_notify is not None:
                             try:
                                 self.journal_notify()

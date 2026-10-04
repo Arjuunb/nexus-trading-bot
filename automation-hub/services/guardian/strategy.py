@@ -435,10 +435,14 @@ def strategy_overview(store, *, since_day: str, performance: Optional[list[dict]
             "last_evaluation_at": None})
         n = int(row["count"])
         final = row["decision"]
-        card["evaluations"] += n
+        # A quote fill is an entry between candles, not a candle evaluated.
+        quote_fill = final == "FILLED" and row["blocker_code"] == "QUOTE_FILL"
+        card["evaluations"] += 0 if quote_fill else n
         card["decisions"][final] = card["decisions"].get(final, 0) + n
         card["setups"] += n if final in _SETUP_FINALS else 0
-        card["entries"] += n if final == "ENTERED" else 0
+        # A limit order fills on a later candle than its signal: FILLED is that
+        # candle (services/strategy_trace.py), an entry but not a new setup.
+        card["entries"] += n if final in ("ENTERED", "FILLED") else 0
         card["refused"] += n if final in _REFUSED_FINALS else 0
         card["no_setup"] += n if final == "NO_SETUP" else 0
         if row["blocker_code"] and (final in _REFUSED_FINALS or final == "NO_SETUP"):

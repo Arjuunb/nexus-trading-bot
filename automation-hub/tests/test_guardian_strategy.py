@@ -438,3 +438,63 @@ def test_the_guardian_strategy_api(tmp_path):
     assert client.get("/guardian/events/does-not-exist").status_code == 404
     assert client.post("/guardian/strategies").status_code == 405
     assert timedelta  # noqa: B018
+
+
+# ------------------------------------- limit entries: fills and expiries
+def _limit_run(tmp_path, after):
+    """The 3-candle long pattern with a limit entry, then the candles after."""
+    from tests.test_three_candle_rejection import _history, _long_pattern
+    _, engine, paper = _instance(tmp_path)
+    engine.entry_mode = "limit"
+    rows, i = _history()
+    pattern = rows + _long_pattern(i)
+    strategy, bars = _run(engine, pattern)
+    assert engine._pending, "the setup should leave a resting limit order"
+    entry = engine._pending["BTCUSDT"]["price"]
+    start = bars[-1].timestamp
+    for k, (low, close) in enumerate(after(entry), start=1):
+        engine._process_bar("BTCUSDT", Bar(start + TF * k, close, close + 0.2, low, close, 1.0), strategy)
+    return engine, paper
+
+
+def test_a_resting_limit_that_fills_is_traced_as_an_entry_not_a_new_setup(tmp_path, g):
+    store, bus = g
+    engine, paper = _limit_run(tmp_path, lambda entry: [(entry - 0.1, entry + 0.3)])
+    assert paper.open_position("BTCUSDT") is not None
+    _drain(bus)
+    finals = [t["decision"] for t in _traces(store, source_component="instance:inst-s")]
+    assert finals[-2:] == ["ORDER_PENDING", "FILLED"]
+    view = GuardianService(store, bus, performance_path=str(tmp_path / "none.db")).strategies(days=3650)
+    [card] = [c for c in view["strategies"] if c["scope"] == "instance:inst-s"]
+    assert (card["setups"], card["entries"]) == (1, 1)
+    assert card["evaluations"] == len(finals)          # every candle, the fill candle included once
+
+
+def test_a_resting_limit_that_expires_is_traced_as_missed(tmp_path, g):
+    store, bus = g
+    engine, paper = _limit_run(tmp_path, lambda entry: [(entry + 0.5, entry + 0.9)] * 3)
+    assert paper.open_position("BTCUSDT") is None and not engine._pending
+    _drain(bus)
+    traces = _traces(store, source_component="instance:inst-s")
+    missed = [t for t in traces if t["decision"] == "MISSED"]
+    assert len(missed) == 1 and missed[0]["event_type"] == "setup_expired"
+    assert missed[0]["evidence"]["blocker_code"] == "LIMIT_EXPIRED"
+    view = GuardianService(store, bus, performance_path=str(tmp_path / "none.db")).strategies(days=3650)
+    [card] = [c for c in view["strategies"] if c["scope"] == "instance:inst-s"]
+    assert (card["setups"], card["entries"], card["refused"]) == (1, 0, 1)
+    assert {"decision": "MISSED", "code": "LIMIT_EXPIRED", "count": 1} in card["top_rejection_reasons"]
+
+
+def test_a_live_intent_filled_by_a_quote_counts_as_an_entry(tmp_path, g):
+    """Forward-paper entries fill on the quote thread, between candles: no
+    candle trace ever said so, and Guardian showed 0 entries."""
+    from services.strategy_trace import publish_instance_fill
+    store, bus = g
+    _, engine, _paper = _instance(tmp_path)
+    assert publish_instance_fill(engine, symbol="BTCUSDT", filled_at="2026-10-04T00:07:12+00:00")
+    _drain(bus)
+    [fill] = _traces(store, source_component="instance:inst-s")
+    assert fill["decision"] == "FILLED" and fill["evidence"]["reason"] == "resting limit order filled on this candle"
+    view = GuardianService(store, bus, performance_path=str(tmp_path / "none.db")).strategies(days=3650)
+    [card] = [c for c in view["strategies"] if c["scope"] == "instance:inst-s"]
+    assert (card["entries"], card["setups"], card["evaluations"]) == (1, 0, 0)

@@ -65,7 +65,7 @@ _FINAL = {"opened": "ENTERED", "pending": "ORDER_PENDING", "queued": "APPROVAL_R
 #: final state -> Guardian event type
 EVENT_FOR_FINAL = {"ENTERED": "setup_detected", "ORDER_PENDING": "setup_detected",
                    "APPROVAL_REQUIRED": "setup_detected", "SIGNAL_ONLY": "setup_detected",
-                   "REJECTED": "setup_rejected"}
+                   "REJECTED": "setup_rejected", "MISSED": "setup_expired"}
 
 
 def _row(gate: Gate, kind: str, state: str, code: str = "", detail: str = "") -> dict:
@@ -121,8 +121,13 @@ def _brain_blocking(quality: Optional[dict], reason: str) -> list[dict]:
 def instance_trace(*, strategy_id: str, blocker: Optional[str], outcome: Optional[dict],
                    signal_side: Optional[str], strategy_decision: Optional[dict] = None,
                    position_managed: bool = False, min_quality_score: Optional[float] = None,
-                   htf_verified: bool = True) -> dict:
-    """The ordered condition trace for one closed candle of one instance."""
+                   htf_verified: bool = True, pending_result: Optional[str] = None) -> dict:
+    """The ordered condition trace for one closed candle of one instance.
+
+    ``pending_result`` is what became of a limit order resting from an earlier
+    candle: "filled" makes this candle FILLED (an entry, though no new signal
+    came), "expired" makes it MISSED with LIMIT_EXPIRED unless a new signal on
+    the same candle says more."""
     adapter = adapter_for(strategy_id)
     setup = adapter.setup_gates if adapter else ()
     kinds = {g.id: "market_data" for g in MARKET_DATA_GATES} | {g.id: "strategy" for g in setup}
@@ -138,7 +143,24 @@ def instance_trace(*, strategy_id: str, blocker: Optional[str], outcome: Optiona
 
     if signal_side is None:
         post = [_row(g, "gate", NOT_REACHED) for g in POST_SIGNAL]
-        if position_managed:
+        if pending_result == "filled":
+            final, code = "FILLED", ""
+            reason = "resting limit order filled on this candle"
+            rows = ([_row(g, "market_data", PASS) for g in MARKET_DATA_GATES]
+                    + [_row(g, "strategy", NOT_APPLICABLE) for g in setup])
+            post = [_row(g, "gate", PASS, detail=reason) if g.id == "broker_accepts"
+                    else _row(g, "gate", NOT_APPLICABLE) for g in POST_SIGNAL]
+        elif pending_result == "expired":
+            final, code = "MISSED", "LIMIT_EXPIRED"
+            reason = "limit entry expired unfilled"
+            rows = ([_row(g, "market_data", PASS) for g in MARKET_DATA_GATES]
+                    + [_row(g, "strategy", NOT_APPLICABLE) for g in setup])
+            failing = _locate(POST_SIGNAL, code)
+            post = [_row(g, "gate", FAIL, code, reason) if i == failing
+                    else _row(g, "gate", NOT_APPLICABLE) for i, g in enumerate(POST_SIGNAL)]
+            blocking = [{"id": POST_SIGNAL[failing].id if failing is not None else None,
+                         "code": code, "detail": reason}]
+        elif position_managed:
             final = "POSITION_MANAGED"
             rows = ([_row(g, "market_data", PASS) for g in MARKET_DATA_GATES]
                     + [_row(g, "strategy", NOT_APPLICABLE) for g in setup])
@@ -288,7 +310,7 @@ def _source_component(engine) -> str:
 def publish_instance_trace(engine, *, symbol: str, candle_time: str, blocker: Optional[str],
                            outcome: Optional[dict], signal_side: Optional[str],
                            strategy_decision: Optional[dict], position_managed: bool,
-                           decision_identity: str = "") -> bool:
+                           decision_identity: str = "", pending_result: Optional[str] = None) -> bool:
     """Build and queue one candle's trace. Never raises, never waits.
 
     Only live engines publish: a replay runs history as fast as it can and
@@ -305,7 +327,8 @@ def publish_instance_trace(engine, *, symbol: str, candle_time: str, blocker: Op
                                signal_side=signal_side, strategy_decision=strategy_decision,
                                position_managed=position_managed,
                                min_quality_score=getattr(engine, "min_quality_score", None),
-                               htf_verified=bool(getattr(engine, "live", False)))
+                               htf_verified=bool(getattr(engine, "live", False)),
+                               pending_result=pending_result)
         trace["candle_time"] = candle_time
         trace["data"] = "live" if getattr(engine, "live", False) else "replay"
         common = dict(source_service="trading_instances", source_component=_source_component(engine),
@@ -330,6 +353,44 @@ def publish_instance_trace(engine, *, symbol: str, candle_time: str, blocker: Op
         _publish_htf_transition(engine, symbol, trace, common)
         return sent
     except Exception:  # noqa: BLE001 -- observability must never reach the bar loop
+        return False
+
+
+#: Marks a fill that arrived on the quote thread rather than on a candle, so
+#: Guardian counts it as an entry but not as a candle evaluated.
+QUOTE_FILL = "QUOTE_FILL"
+
+
+def publish_instance_fill(engine, *, symbol: str, filled_at: str) -> bool:
+    """A live intent filled by a Binance quote, between candles.
+
+    Forward-paper entries are intents that fill on the quote thread, never on
+    a candle, so no candle trace said ENTERED and Guardian counted 0 entries
+    for instances that were trading. This is that entry. Never raises."""
+    try:
+        from services import guardian
+        if guardian.installed() is None:
+            return False
+        if not getattr(engine, "guardian_trace", bool(getattr(engine, "live", False))):
+            return False
+        strategy_id = str(getattr(engine, "strategy_key", "") or "")
+        trace = instance_trace(strategy_id=strategy_id, blocker=None, outcome=None,
+                               signal_side=None, pending_result="filled",
+                               htf_verified=bool(getattr(engine, "live", False)))
+        trace["candle_time"] = filled_at
+        trace["data"] = "live" if getattr(engine, "live", False) else "replay"
+        return bool(guardian.emit_deferred(
+            "evaluation_completed", severity="INFO", decision="FILLED",
+            reason=trace["reason"], evidence=trace,
+            metadata={"blocker_code": QUOTE_FILL, "trace_source": "instance_quote_fill",
+                      "source_ref": f"fill:{filled_at}"},
+            source_service="trading_instances", source_component=_source_component(engine),
+            instance_id=getattr(engine, "instance_id", None) or None,
+            lab_id=getattr(engine, "guardian_lab_id", None),
+            strategy_id=strategy_id or getattr(engine, "strategy_label", None),
+            strategy_version=getattr(engine, "strategy_version", None) or None,
+            symbol=symbol, timeframe=getattr(engine, "timeframe", None)))
+    except Exception:  # noqa: BLE001 -- Guardian observes; it never touches a fill
         return False
 
 
