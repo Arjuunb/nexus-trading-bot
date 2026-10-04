@@ -226,3 +226,24 @@ def test_the_card_gets_the_same_sentence_the_visual_lab_shows():
     assert built["strategy_status"] == status.WAITING_FOR_SETUP
     assert built["current_blocker"] == "GATE_REJECTED: NO_CONFIRMATION"
     assert built["current_blocker_explanation"] == BLOCKER_EXPLANATIONS["NO_CONFIRMATION"]
+
+
+def test_a_wanted_instance_with_no_free_slot_says_so():
+    """Four instances wanted, three slots: the fourth never starts. The card
+    said only "no market worker is running"; the supervisor's reason was on
+    the row all along."""
+    why = ("NO_FREE_SLOT: all 3 trading slots are in use (SOLUSDT 5m, XRPUSDT 5m, XRPUSDT 5m). "
+           "It starts on its own once one is stopped.")
+    instance = SimpleNamespace(state="stopped", desired_running=True, symbol="LINKUSDT", timeframe="5m",
+                               mode="trading", execution_mode="paper", last_error=why)
+    card = status.build(instance=instance, engine=None, market={"_worker_state": "stopped"},
+                        timeframe_seconds=300, worker_alive=False, entries_armed=False,
+                        htf_policy={"requires_htf": False})
+    assert card["market_status"] == status.DISCONNECTED
+    assert card["current_blocker"] == f"no market worker is running — {why}"
+
+    stopped = SimpleNamespace(**{**vars(instance), "desired_running": False, "last_error": ""})
+    card = status.build(instance=stopped, engine=None, market={"_worker_state": "stopped"},
+                        timeframe_seconds=300, worker_alive=False, entries_armed=False,
+                        htf_policy={"requires_htf": False})
+    assert card["current_blocker"] == "no market worker is running"      # stopped by its owner

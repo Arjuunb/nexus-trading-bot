@@ -263,6 +263,14 @@ def build(*, instance, engine: dict | None, market: dict, timeframe_seconds: int
     feed, feed_reason = market_status(
         worker_state=worker_state, feed=engine, subscription=subscription,
         data_age_seconds=data_age, timeframe_seconds=timeframe_seconds)
+    # An instance its owner wants running but whose worker the supervisor could
+    # not start carries the reason on its row (services/instance_supervisor.py:
+    # no free trading slot, another process's lease, ...). "No market worker"
+    # alone sent the owner looking at the feed.
+    why = str(getattr(instance, "last_error", "") or "").strip()
+    if (feed == DISCONNECTED and feed_reason == "no market worker is running"
+            and getattr(instance, "desired_running", False) and not worker_alive and why):
+        feed_reason = f"no market worker is running — {why}"
     htf = (htf_policy or {}).get("evidence") or {}
     blocker = engine.get("last_blocker") or market.get("last_blocker")
     strategy, strategy_reason = strategy_status(
