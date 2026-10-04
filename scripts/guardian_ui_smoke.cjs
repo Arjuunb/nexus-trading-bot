@@ -58,6 +58,16 @@ const server = http.createServer((request, response) => {
     "/v1/decision-traces": { traces: [] },
     "/v1/instance-decision-traces": { traces: [] },
     "/v1/instance-ledger": ledger(),
+    "/v1/lab-execution": { labs: ["PRICE_ACTION", "SMC"].map((lab) => ({ lab,
+      account_id: `${lab}-isolated-fixture`, observation_state: ledgerMode === "stale" ? "UNKNOWN" : "CURRENT",
+      observation_age_seconds: 1, open_orders: 0, open_positions: 1,
+      fills_sampled: 3, fill_window_complete: true, exit_link_state: "UNVERIFIED", unlinked_sampled_fill_count: 1,
+      orders: [{ order_id: "fixture-order", symbol: "BTCUSDT", status: "filled", filled: 1,
+        quantity: 1, action: "ENTRY", reduce_only: false, session_id: "fixture-session", execution_key: "fixture-decision" }],
+      positions: [{ symbol: "BTCUSDT", side: "long", size: 1, entry_price: 100, stop_loss: 90,
+        take_profit: 120, entry_to_stop_amount: ledgerMode === "stale" ? null : 10, entry_order_id: "fixture-order" }],
+      findings: [{ code: "PA_SETUP_JOURNAL_UNVERIFIED", confidence: "UNVERIFIED", record_id: "<not-html>" }],
+    })) },
     "/v1/notifications": { notifications: [] },
     "/v1/research/hypotheses": { hypotheses: [] },
     "/v1/reports": { reports: [{ kind: "DAILY", report_id: "fixture-report",
@@ -93,6 +103,15 @@ const server = http.createServer((request, response) => {
     const risk = page.locator("#instance-ledger td").nth(3);
     await page.waitForFunction(() => document.querySelector("#instance-ledger td:nth-child(4)")?.textContent === "10");
     assert.equal(await page.locator("#read-key").inputValue(), "");
+    assert.equal(await page.locator("#lab-execution article").count(), 2);
+    assert.match(await page.locator("#lab-execution .lab-position").first().textContent(), /Entry-to-stop amount 10 source units/);
+    assert.match(await page.locator("#lab-execution").textContent(), /Global risk Unknown/);
+    assert.equal(await page.locator("#lab-execution not-html").count(), 0);
+    if (process.env.GUARDIAN_SMOKE_LAB_SCREENSHOT) {
+      await page.locator("#lab-execution-title").scrollIntoViewIfNeeded();
+      await page.clock.runFor(100);
+      await page.screenshot({ path: process.env.GUARDIAN_SMOKE_LAB_SCREENSHOT });
+    }
     await page.locator("#reports summary").click();
     assert.match(await page.locator("#reports").textContent(), /outcomes.*not verified/);
     await page.locator("#dependencies-title").locator("..").locator("summary").click();
@@ -113,6 +132,8 @@ const server = http.createServer((request, response) => {
     await page.clock.fastForward(15001);
     await page.waitForFunction(() => document.querySelector("#overall-state").textContent === "UNKNOWN");
     assert.equal(await risk.textContent(), "Unknown");
+    assert.match(await page.locator("#lab-execution .lab-position").first().textContent(), /Entry-to-stop amount Unknown/);
+    assert.match(await page.locator("#lab-execution").textContent(), /Open orders Unknown/);
     assert.equal(await page.locator("#components .state").textContent(), "UNKNOWN");
     assert.equal(await page.locator("#incident-count").textContent(), "—");
     assert.match(await page.locator("#instance-ledger-coverage").textContent(), /unavailable/);
@@ -137,10 +158,11 @@ const server = http.createServer((request, response) => {
     }
     await page.locator("#disconnect").click();
     assert.equal(await page.locator("#instance-ledger tr").count(), 0);
+    assert.equal(await page.locator("#lab-execution article").count(), 0);
     assert.equal(await page.locator("#dependency-map tr").count(), 0);
     assert.equal(await page.locator("#anomalies tr").count(), 0);
     assert.deepEqual(errors, []);
-    console.log("PASS: risk/dependency/anomaly masking, sparse evidence, source/cause separation, text-only investigation, retry, stale reads, mobile containment, disconnect, zero JavaScript errors");
+    console.log("PASS: isolated PA/SMC execution, risk/dependency/anomaly masking, sparse evidence, source/cause separation, text-only investigation, retry, stale reads, mobile containment, disconnect, zero JavaScript errors");
   } finally {
     if (browser) await browser.close();
     await new Promise((resolve) => server.close(resolve));

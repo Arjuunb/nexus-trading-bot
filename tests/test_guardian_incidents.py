@@ -33,6 +33,20 @@ def test_normal_strategy_inactivity_is_not_an_incident(guardian):
     assert engine.list() == []
 
 
+@pytest.mark.parametrize("findings", [None, ["bad-row"], [{"code": "EXIT_NOT_REDUCE_ONLY"}],
+                                    [{"code": ["bad"], "record_type": "order", "record_id": "id", "confidence": "UNVERIFIED"}]])
+def test_malformed_lab_execution_event_does_not_poison_incident_cursor(guardian, findings):
+    store, engine = guardian
+    _append(store, "invalid_lab_evidence", "lab_paper_execution_observed",
+            source_service="guardian_smc_paper_execution_probe", source_component="smc_paper_execution",
+            metadata={"paper_only": True}, evidence={"lab": "SMC", "atomic_snapshot": True,
+                                                     "account_id": "smc-paper", "findings": findings})
+    _append(store, "next_valid_crash", "worker_crashed", source_service="smc_lab", source_component="agent")
+    assert engine.scan() == 2
+    assert len(engine.list()) == 1
+    assert engine.list()[0]["root_component"] == "agent"
+
+
 def test_one_feed_outage_groups_downstream_symptoms_and_requires_continuity(guardian):
     store, engine = guardian
     meta = {"venue": "binance_usdm"}

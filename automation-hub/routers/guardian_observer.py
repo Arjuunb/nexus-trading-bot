@@ -11,12 +11,30 @@ from fastapi.responses import JSONResponse
 
 from config import settings
 from services.guardian_execution_read_model import smc_execution_integrity_snapshot
+from services.guardian_lab_execution_read_model import lab_paper_execution_snapshot
 from services.guardian_instance_read_model import instance_decision_page
 from services.guardian_instance_ledger_read_model import instance_paper_ledger_snapshot
 from services.guardian_lab_feed_read_model import lab_feed_snapshot
 from services.guardian_read_model import lab_decision_page, lab_decision_snapshot, lab_lifecycle_page
 
 router = APIRouter(tags=["guardian-observer"])
+
+
+@router.get("/guardian/lab-execution")
+def guardian_lab_execution(
+        lab: str = Query(..., pattern="^(PRICE_ACTION|SMC)$"),
+        x_guardian_observer_key: Optional[str] = Header(default=None)):
+    _require_observer_key(x_guardian_observer_key)
+    try:
+        snapshot = lab_paper_execution_snapshot(
+            settings.price_action_paper_db if lab == "PRICE_ACTION" else settings.smc_paper_db, lab)
+    except (sqlite3.Error, ValueError, TypeError) as exc:
+        raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED",
+                                  "code": "LAB_EXECUTION_EVIDENCE_UNAVAILABLE"}) from exc
+    return JSONResponse({"schema_version": 1, "scope": "ISOLATED_LAB_PAPER_BROKER",
+                         "observed_at": datetime.now(timezone.utc).isoformat(),
+                         "execution_integrity_verified": False, "snapshot": snapshot},
+                        headers={"Cache-Control": "no-store"})
 
 
 def _require_observer_key(presented: Optional[str]) -> None:

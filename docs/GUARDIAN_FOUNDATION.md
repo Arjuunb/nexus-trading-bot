@@ -39,6 +39,63 @@ Status: local foundation, independently runnable service, read-only Command Cent
 
 ## Local service contract
 
+### Isolated lab execution / risk evidence
+
+The optional `GUARDIAN_LAB_EXECUTION_URL=http://app:8000/guardian/lab-execution`
+collector uses the independent observer credential and requests `lab=PRICE_ACTION`
+and `lab=SMC` separately. A failing PA read does not suppress the SMC observation.
+The source reads each configured lab SQLite file using `mode=ro`, `query_only`, a
+single read transaction, a 250 ms busy timeout and a 500 ms SQL progress deadline.
+It never instantiates a broker/runtime or changes pragmas governing source durability.
+All open positions (maximum 16) and open orders (maximum 32) are included; exceeding
+these bounds fails closed. Eight recently inserted orders, every open position's
+origin, order links for the 16 newest fills, and at most 128 recently inserted fills
+form a bounded history sample. The final order set is bounded at 64. Insertion order
+is used for the sample, not claimed as event chronology or complete historical coverage.
+No rolling candle windows, quote updates, or full journal JSON are exported.
+
+Guardian compares order quantity/remaining/filled arithmetic, sampled fill quantity
+and weighted price, account/engine identity, position origin, reduce-only exit flags,
+order keys and session links. All identity comparisons stay inside one paper account.
+PA setup-journal links are observed separately: a setup snapshot is never presented
+as proof of a finalized execution trade. SMC Agent intent/trade reconciliation remains
+in its existing separate, non-atomic observer. Synthetic protective/remediation fills
+may legitimately have no persisted order row. Unlinked fills and incomplete fill
+history stay **UNVERIFIED**, not invented orphan orders or proof of failed protection.
+The sampled order-key check cannot certify uniqueness across all retained history.
+
+Important finding codes:
+
+| Codes | Meaning |
+| --- | --- |
+| `ORDER_QUANTITY_MISMATCH`, `ORDER_STATUS_QUANTITY_MISMATCH`, `FILLED_QUANTITY_MISMATCH`, `FILLED_PRICE_MISMATCH` | Inconsistent values within one atomic paper-record snapshot; no automatic repair |
+| `ORDER_IDENTITY_MISMATCH`, `FILL_ORDER_IDENTITY_MISMATCH`, `DUPLICATE_ORDER_KEY` | Observed identity conflict in the bounded sample |
+| `EXIT_NOT_REDUCE_ONLY`, `ENTRY_MARKED_REDUCE_ONLY` | Persisted action/flag contradiction; paper evidence only |
+| `ORDER_SESSION_LINK_UNVERIFIED`, `PA_SETUP_JOURNAL_UNVERIFIED` | Required association not established; does not mean no order was placed |
+| `POSITION_ORIGIN_UNVERIFIED`, `POSITION_STOP_UNVERIFIED`, `ORDER_AVERAGE_PRICE_UNVERIFIED`, `FILL_HISTORY_INCOMPLETE` | Evidence insufficient for the corresponding claim |
+
+Significant contradictions and missing stops produce grouped incidents scoped by
+lab/account/record. Atomic contradictions confirm only a **record fact**, not its
+cause or a live-venue risk. Missing stops are possible protection issues. Normal
+resting/cancelled orders and incomplete historical samples do not create incident spam.
+A record disappearing from the sample cannot certify recovery; these incidents
+remain open for independently verified resolution.
+
+`GET /v1/lab-execution` requires the Guardian read key and exposes separate PA/SMC
+observations. An entry-to-stop amount is `size * max(0, adverse entry-to-stop distance)`
+in **unverified source units**, excluding costs/gaps; trailing stops across entry are
+not rejected. No mark-to-market risk, portfolio sum, currency conversion, guaranteed
+protective fill or whole-position lifecycle is certified. Missing/contradictory
+origin evidence masks the amount. Failed/stale probes and failed browser refreshes
+mask it too. Probe `HEALTHY` means the evidence read succeeded, not that execution
+is healthy. Unchanged polls/restarts create no new immutable event; material changes
+append evidence and checkpoint atomically in Guardian's own database. Source history
+is never rewritten, deleted, vacuumed or reset.
+
+This slice does not complete Phase 4: authoritative cross-account currency/exposure,
+correlation, every fill/exit's durable lifecycle, and full journal/reconciliation coverage
+remain required. Production installation and fault/load verification remain separate.
+
 Closed-UTC daily and Monday-to-Monday weekly reports are generated independently at startup and checked hourly. Only the last closed day and week are scheduled; older windows are an explicit offline call to `GuardianReports.generate`, not an unbounded startup backfill. Each report scans at most 10,000 events / 8 MiB, records coverage/truncation, deduplicates material decision snapshots by source identity, and keeps separate owner/strategy/version/config/market groups. Source coverage is not complete: uptime, trade count, P&L, win rate, average R, drawdown, excursions, global exposure and successful interventions are null. Late source evidence creates a new immutable content-addressed revision; unchanged polls/restarts create none. Report plus its audit event commit atomically; a failure rolls both back. No strategy, backtest, model, credential or trading runtime is invoked.
 
 In-app incident notices have a durable transactional cursor. A new WARNING-or-higher incident, severity escalation or source-verified recovery creates an immutable notice and audit event in one Guardian transaction. Repeated outage updates, reconnect-only states, normal no-setup decisions and near-valid candidates do not generate more notices. Recovery is not a Guardian intervention. Remote push/email/Telegram delivery is **not configured or implemented**; no destination or delivery secret is sent anywhere. `guardian_reports` and `guardian_notifications` heartbeats reflect these local processors, not trading health.
@@ -65,6 +122,7 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | GET | `/v1/decision-traces?limit=50&lab=SMC` | separate read key | bounded latest observed decision snapshots, deduplicated by lab/session/correlation; near-valid flags are unproven |
 | GET | `/v1/instance-decision-traces?limit=50&instance_id=...` | separate read key | bounded latest post-install persisted instance gate states; strategy verdict and downstream gate result are distinct, broker fills unverified |
 | GET | `/v1/instance-ledger` | separate read key | latest paper-pair snapshot and current probe age; stale/failed risk masked; no global or verified-currency exposure |
+| GET | `/v1/lab-execution` | separate read key | separate PA/SMC paper order/fill/position observations, bounded integrity findings, source age and masked stale amounts |
 | GET | `/v1/reports` | separate read key | most recent 20 immutable closed-window evidence revisions; unknown economics remain null |
 | GET | `/v1/notifications` | separate read key | newest 50 deduplicated in-app incident notices; no remote send or remediation |
 | GET | `/v1/research/hypotheses` and `/v1/research/<64-hex-id>` | separate read key | bounded hypotheses/results/reviews with provenance and methods unverified |
@@ -117,8 +175,29 @@ No live-routing, risk, strategy, deployment, or automatic-recovery change is par
 
 ## Local validation (2026-10-04)
 
-The final repository Python suite passed **4,265 tests, 15 skipped** (284 seconds; 96 existing FastAPI/aiohttp deprecation warnings). The 82 incident-intelligence/service/incident tests passed, as did 64 SMC-protection/architecture tests. The separate local Chromium fixture test passed dependency/anomaly/risk masking on refresh failure, sparse evidence, failure-fact versus causal-confidence wording, text-only investigation rendering, retry, stale evidence, report rendering, mobile containment, key/evidence clearing on disconnect and zero JavaScript page errors. An isolated 5,001-event scan disclosed the 5,000-row bound and suppressed conclusions in 0.027 seconds; this is not a production load benchmark. Both SMC source/behaviour locks passed; protected SMC, PA and strategy directories and protection baselines have no diff from `804a7c0`. These are **local code/fixture results**, not VPS, real source-provider, exchange, profitability, research-method or completed-PRD certification. Nothing in this Guardian slice has been deployed.
+The final repository Python suite passed **4,323 tests, 15 skipped** (327 seconds;
+96 existing FastAPI/aiohttp deprecation warnings), including 58 new cases in this
+lab-execution slice. Run from the repository root using absolute paths:
+`PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" /private/tmp/guardian-hub-venv/bin/python -m pytest -q`.
+The initial relative-path invocation failed one fresh-interpreter startup test
+because its changed working directory could not import `bot`; the correct absolute
+path invocation passed without changing that test or trading code. The temporary
+venv path is local validation infrastructure, not a deployment requirement.
+
+Real isolated PA/SMC broker fixtures cover resting, partial, full, reduced and
+protectively closed positions; weighted fill/quantity mismatches; session and setup
+journal linkage; missing protection; legitimate trailing stops; old position origins;
+bounded history/query work; WAL concurrent reads; persistent locks and retry;
+checkpoint rollback; 100 unchanged polls; restart deduplication; stale/future/wrong-lab
+evidence; scoped authentication and redirect rejection. A failed PA collector was
+also verified not to suppress the SMC collector. The Chromium fixture run passed
+separate lab account rendering, risk masking on failed/stale refresh, text-only
+rendering, retry, mobile containment, clearing on disconnect and zero JavaScript errors.
+Both SMC source/behaviour locks passed; protected SMC, PA and strategy directories
+and protection baselines have no diff from `804a7c0`. These are **local code/fixture
+results**, not VPS, real source-provider, exchange, profitability, research-method
+or completed-PRD certification. Nothing in this Guardian slice has been deployed.
 
 ## PRD completion boundary
 
-Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), PA and all-instance execution/journal/exit adapters, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.
+Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

@@ -77,6 +77,25 @@ def test_spoofed_source_and_conflicting_replay_cannot_change_evidence(app):
     assert app.store.count() == 1
 
 
+def test_lab_execution_view_is_read_scoped_and_unknown_before_observation(app, monkeypatch):
+    route = "/v1/lab-execution"
+    assert _request(app, "GET", route)[0] == 401
+    assert _request(app, "GET", route, key=SOURCE_KEY)[0] == 401
+    status, body, headers = _request(app, "GET", route, key=READ_KEY)
+    assert status == 200
+    assert headers["Cache-Control"] == "no-store"
+    assert body["global_risk_amount"] is None
+    assert {row["lab"] for row in body["labs"]} == {"PRICE_ACTION", "SMC"}
+    assert all(row["observation_state"] == "UNKNOWN" for row in body["labs"])
+    assert _request(app, "POST", route, payload={}, key=READ_KEY)[0] == 405
+    def fail(*args, **kwargs):
+        raise sqlite3.OperationalError("fixture lock")
+    monkeypatch.setattr(app.store, "observed_snapshot", fail)
+    status, body, _ = _request(app, "GET", route, key=READ_KEY)
+    assert status == 503
+    assert body["error"] == "PERSISTENCE_UNAVAILABLE"
+
+
 def test_invalid_schema_unknown_fields_and_secret_text_are_rejected(app):
     payload = json.loads(_event().canonical_json())
     for changed in (

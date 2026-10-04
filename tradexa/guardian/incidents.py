@@ -197,6 +197,42 @@ def _instance_ledger_signals(event: dict) -> list[IncidentSignal]:
     return signals
 
 
+def _lab_paper_signals(event: dict) -> list[IncidentSignal]:
+    if event.get("event_type") != "lab_paper_execution_observed":
+        return []
+    evidence = event.get("evidence") or {}
+    component = {"PRICE_ACTION": "pa_paper_execution", "SMC": "smc_paper_execution"}.get(evidence.get("lab"))
+    if (not component or event.get("source_component") != component or
+            event.get("source_service") != "guardian_" + component + "_probe" or
+            evidence.get("atomic_snapshot") is not True or
+            (event.get("metadata") or {}).get("paper_only") is not True):
+        return []
+    account, findings = evidence.get("account_id"), evidence.get("findings")
+    if (not isinstance(account, str) or not 1 <= len(account) <= 256 or
+            not isinstance(findings, list) or len(findings) > 256):
+        return []
+    significant = {"ORDER_IDENTITY_MISMATCH", "ORDER_QUANTITY_MISMATCH", "EXIT_NOT_REDUCE_ONLY",
+                   "ENTRY_MARKED_REDUCE_ONLY", "FILLED_QUANTITY_MISMATCH",
+                   "FILLED_PRICE_MISMATCH", "ORDER_STATUS_QUANTITY_MISMATCH",
+                   "FILL_ORDER_IDENTITY_MISMATCH", "DUPLICATE_ORDER_KEY", "POSITION_STOP_UNVERIFIED"}
+    grouped = {}
+    for row in findings:
+        if (not isinstance(row, dict) or not isinstance(row.get("code"), str) or
+                row.get("record_type") not in {"order", "position"} or
+                not isinstance(row.get("record_id"), str) or not 1 <= len(row["record_id"]) <= 256 or
+                row.get("confidence") not in {"CONFIRMED_RECORD_FACT", "UNVERIFIED"}):
+            return []
+        if row.get("code") in significant:
+            grouped.setdefault((row["record_type"], row["record_id"]), []).append(row)
+    return [IncidentSignal(
+        f"lab_paper:{component}:{account}:{kind}:{identity}",
+        "Isolated lab paper execution evidence", component,
+        "Paper record observation: " + ", ".join(sorted({row["code"] for row in rows})),
+        "CONFIRMED" if all(row["confidence"] == "CONFIRMED_RECORD_FACT" for row in rows) else "POSSIBLE",
+        "HIGH" if any(row["confidence"] == "CONFIRMED_RECORD_FACT" for row in rows) else "WARNING", "OPEN")
+        for (kind, identity), rows in sorted(grouped.items())]
+
+
 class GuardianIncidentEngine:
     def __init__(self, store: GuardianStore):
         self.store = store
@@ -259,7 +295,7 @@ class GuardianIncidentEngine:
                         conn.commit()
                         break
                     event = json.loads(row["payload_json"])
-                    signals = _instance_ledger_signals(event)
+                    signals = _instance_ledger_signals(event) + _lab_paper_signals(event)
                     signal = classify_incident(event)
                     if signal is not None:
                         signals.append(signal)

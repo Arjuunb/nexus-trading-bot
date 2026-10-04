@@ -25,6 +25,7 @@ from .instance_decisions import GuardianInstanceDecisions
 from .instance_decision_traces import instance_decision_traces
 from .instance_ledger_observer import GuardianInstanceLedgerObserver
 from .instance_ledger_view import instance_ledger_view
+from .lab_execution_observer import COMPONENTS, GuardianLabExecutionObserver, lab_execution_view
 from .lab_backfill import GuardianLabBackfill
 from .lab_lifecycle import GuardianLabLifecycle
 from .lab_feed_observer import GuardianLabFeedObserver
@@ -204,7 +205,7 @@ class GuardianService:
                                             observed_at=observed_at)
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
-                         "/v1/instance-decision-traces", "/v1/instance-ledger",
+                         "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution",
                          "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
@@ -225,6 +226,8 @@ class GuardianService:
                     return self._respond(start_response, 200, health)
                 if path == "/v1/instance-ledger":
                     return self._respond(start_response, 200, instance_ledger_view(self.store))
+                if path == "/v1/lab-execution":
+                    return self._respond(start_response, 200, lab_execution_view(self.store))
                 if path == "/v1/system-map":
                     return self._respond(start_response, 200, dependency_map(
                         self.store.heartbeats(), self.required_components))
@@ -292,7 +295,7 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger", "/v1/reports", "/v1/notifications",
+                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
@@ -483,6 +486,20 @@ def _instance_ledger_monitor(store: GuardianStore,
         stopped.wait(30)
 
 
+def _lab_execution_monitor(collectors: tuple, stopped: Event) -> None:
+    while not stopped.is_set():
+        for collector in collectors:
+            if stopped.is_set():
+                break
+            try:
+                collector.poll()
+            except Exception:
+                # poll invalidates its own freshness. A PA failure must not
+                # prevent observing SMC; a Guardian DB failure ages to UNKNOWN.
+                pass
+        stopped.wait(30)
+
+
 def main() -> None:
     """Run separately: python -m tradexa.guardian.service (loopback by default)."""
     source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
@@ -530,6 +547,10 @@ def main() -> None:
     instance_ledger_url = os.environ.get("GUARDIAN_INSTANCE_LEDGER_URL", "").strip()
     if instance_ledger_url and "guardian_instance_ledger_probe" not in required:
         required += ("guardian_instance_ledger_probe",)
+    lab_execution_url = os.environ.get("GUARDIAN_LAB_EXECUTION_URL", "").strip()
+    if lab_execution_url:
+        required += tuple("guardian_" + name + "_probe" for name in COMPONENTS.values()
+                          if "guardian_" + name + "_probe" not in required)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required, research_key=research_key, admin_key=admin_key)
@@ -584,7 +605,12 @@ def main() -> None:
         Thread(target=_instance_ledger_monitor,
                args=(store, instance_ledger_collector, stopped), daemon=True)
         if instance_ledger_collector else None)
+    lab_execution_monitor = (Thread(target=_lab_execution_monitor, args=(tuple(
+        GuardianLabExecutionObserver(store, lab_execution_url, lab_observer_key, lab)
+        for lab in COMPONENTS), stopped), daemon=True) if lab_execution_url else None)
     monitor.start()
+    if lab_execution_monitor:
+        lab_execution_monitor.start()
     incident_monitor.start()
     report_monitor.start()
     if public_monitor:
@@ -609,6 +635,8 @@ def main() -> None:
             server.serve_forever()
     finally:
         stopped.set()
+        if lab_execution_monitor:
+            lab_execution_monitor.join(timeout=2)
         monitor.join(timeout=2)
         incident_monitor.join(timeout=2)
         report_monitor.join(timeout=2)

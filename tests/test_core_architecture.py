@@ -356,6 +356,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # rows into a pure paper-pair observation. No trading control path consumes
     # its result, and Guardian never imports the trading ledger back.
     "automation-hub/services/guardian_instance_ledger_read_model.py",
+    # Guardian's PA/SMC GET-only adapter shares pure bounded validation, not
+    # the Guardian store or any trading instruction. Source files stay read-only.
+    "automation-hub/services/guardian_lab_execution_read_model.py",
 }
 
 

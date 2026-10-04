@@ -12,6 +12,7 @@
   let generation = 0;
   let requestSequence = 0;
   let lastInstanceLedger = null;
+  let lastLabExecution = null;
   let lastHealth = null;
 
   function setState(state) {
@@ -124,6 +125,50 @@
       textCell(row, [...(item.blocked_by || []).map((name) => `Blocked: ${name}`),
         ...(item.unknown_dependencies || []).map((name) => `Unknown: ${name}`)].join(" · "));
       byId("dependency-map").appendChild(row);
+    }
+  }
+
+  function renderLabExecution(page, failed = false) {
+    const host = byId("lab-execution");
+    host.replaceChildren();
+    if (!Array.isArray(page.labs) || !page.labs.length) {
+      const empty = document.createElement("p");
+      empty.textContent = "UNKNOWN · No fresh lab execution evidence.";
+      host.appendChild(empty);
+    }
+    for (const lab of page.labs || []) {
+      const current = !failed && lab.observation_state === "CURRENT";
+      const section = document.createElement("article");
+      section.className = "report";
+      const title = document.createElement("h3");
+      title.textContent = `${lab.lab} · ${current ? "CURRENT" : "UNKNOWN / cached evidence"}`;
+      const counts = document.createElement("p");
+      counts.textContent = `Account ${lab.account_id || "Unknown"} · Open orders ${current ? lab.open_orders ?? "Unknown" : "Unknown"} · Open positions ${current ? lab.open_positions ?? "Unknown" : "Unknown"} · Sampled fills ${lab.fills_sampled ?? "Unknown"} · Observation age ${lab.observation_age_seconds ?? "Unknown"}s`;
+      const scope = document.createElement("p");
+      scope.textContent = `${lab.fill_window_complete ? "All retained fills in sample" : "Partial / unknown fill history"} · Exit links ${lab.exit_link_state || "UNVERIFIED"} · Unlinked sampled fills ${lab.unlinked_sampled_fill_count ?? "Unknown"} · Global risk Unknown`;
+      section.append(title, counts, scope);
+      for (const position of lab.positions || []) {
+        const row = document.createElement("p");
+        row.className = "lab-position";
+        row.textContent = `${position.symbol} ${position.side} · Size ${position.size} · Entry ${position.entry_price} · Stop ${position.stop_loss ?? "Unknown"} · Target ${position.take_profit ?? "Unknown"} · Entry-to-stop amount ${current ? position.entry_to_stop_amount ?? "Unknown" : "Unknown"} source units · Origin ${position.entry_order_id || "Unknown"}`;
+        section.appendChild(row);
+      }
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = `Orders / integrity evidence (${(lab.findings || []).length} findings)`;
+      details.appendChild(summary);
+      for (const order of lab.orders || []) {
+        const row = document.createElement("p");
+        row.textContent = `${order.order_id} · ${order.symbol} ${order.status} · Filled ${order.filled}/${order.quantity} · ${order.action || "Action unknown"} · Reduce only ${order.reduce_only} · Session ${order.session_id || "Unverified"} · Execution ${order.execution_key || "Unverified"} · Setup journal ${order.setup_journal_id || "Unverified / not applicable"}`;
+        details.appendChild(row);
+      }
+      for (const finding of lab.findings || []) {
+        const row = document.createElement("p");
+        row.textContent = `${finding.code} · ${finding.confidence} · ${finding.record_id}`;
+        details.appendChild(row);
+      }
+      section.appendChild(details);
+      host.appendChild(section);
     }
   }
 
@@ -430,7 +475,7 @@
     const current = generation;
     const request = ++requestSequence;
     try {
-      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger, notices, reports, research, systemMap, anomalies] = await Promise.all([
+      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger, notices, reports, research, systemMap, anomalies, labExecution] = await Promise.all([
         read("/v1/health"), read("/v1/events?limit=50"), read("/v1/incidents?limit=50"),
         read("/v1/decision-traces?limit=50"),
         read("/v1/instance-decision-traces?limit=50"),
@@ -438,6 +483,7 @@
         read("/v1/notifications"), read("/v1/reports"),
         read("/v1/research/hypotheses"),
         read("/v1/system-map"), read("/v1/anomalies"),
+        read("/v1/lab-execution"),
       ]);
       if (current !== generation || request !== requestSequence || !readKey) return;
       lastHealth = health;
@@ -454,6 +500,8 @@
       renderResearch(research);
       renderDependencies(systemMap);
       renderAnomalies(anomalies);
+      lastLabExecution = labExecution;
+      renderLabExecution(labExecution);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);
@@ -470,6 +518,7 @@
       renderInstanceLedger({ ...(lastInstanceLedger || {}), observation_state: "UNKNOWN" });
       renderDependencies({});
       renderAnomalies({});
+      renderLabExecution(lastLabExecution || {}, true);
       byId("last-checked").textContent = "Unavailable";
       message.textContent = error.message === "READ_KEY_REJECTED"
         ? "Read key rejected. Reconnect with the correct key." : "Guardian evidence unavailable. Prior observations may be stale.";
@@ -484,6 +533,8 @@
     generation += 1;
     readKey = null;
     lastInstanceLedger = null;
+    lastLabExecution = null;
+    byId("lab-execution").replaceChildren();
     lastHealth = null;
     keyInput.value = "";
     clearInterval(refreshTimer);
