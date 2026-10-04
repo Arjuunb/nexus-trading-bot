@@ -15,9 +15,12 @@ from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
 from .events import GuardianEvent, GuardianEventError, MAX_EVENT_BYTES
+from .anomalies import latency_anomalies
+from .dependencies import dependency_map
 from .decision_traces import decision_traces
 from .health import component_health
 from .incidents import GuardianIncidentEngine
+from .investigations import incident_investigation
 from .instance_decisions import GuardianInstanceDecisions
 from .instance_decision_traces import instance_decision_traces
 from .instance_ledger_observer import GuardianInstanceLedgerObserver
@@ -202,7 +205,8 @@ class GuardianService:
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger",
-                         "/v1/reports", "/v1/notifications", "/v1/research/hypotheses") or
+                         "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
+                         "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
@@ -221,6 +225,11 @@ class GuardianService:
                     return self._respond(start_response, 200, health)
                 if path == "/v1/instance-ledger":
                     return self._respond(start_response, 200, instance_ledger_view(self.store))
+                if path == "/v1/system-map":
+                    return self._respond(start_response, 200, dependency_map(
+                        self.store.heartbeats(), self.required_components))
+                if path == "/v1/anomalies":
+                    return self._respond(start_response, 200, latency_anomalies(self.store))
                 if path == "/v1/reports":
                     return self._respond(start_response, 200, {"reports": self.reports.list()})
                 if path == "/v1/notifications":
@@ -264,12 +273,17 @@ class GuardianService:
                     return self._respond(start_response, 200, {
                         "incidents": self.incidents.list(limit=limit, state=state)})
                 if path.startswith("/v1/incidents/"):
-                    match = re.fullmatch(r"/v1/incidents/([0-9a-f]{32})/timeline", path)
+                    match = re.fullmatch(r"/v1/incidents/([0-9a-f]{32})/(timeline|investigation)", path)
                     if match is None:
                         raise _HTTPError(404, "NOT_FOUND")
                     incident = self.incidents.get(match.group(1))
                     if incident is None:
                         raise _HTTPError(404, "NOT_FOUND")
+                    if match.group(2) == "investigation":
+                        investigation = incident_investigation(self.store, match.group(1))
+                        if investigation is None:
+                            raise _HTTPError(404, "NOT_FOUND")
+                        return self._respond(start_response, 200, investigation)
                     return self._respond(start_response, 200, {
                         "incident": incident,
                         "updates": self.incidents.timeline(match.group(1))})
@@ -278,7 +292,8 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger", "/v1/reports", "/v1/notifications"):
+                        "/v1/instance-ledger", "/v1/reports", "/v1/notifications",
+                        "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
         except _HTTPError as exc:

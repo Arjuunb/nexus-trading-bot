@@ -145,12 +145,38 @@ def test_persistence_outage_returns_structured_unavailable(app, monkeypatch):
     assert status == 503 and data == {"error": "PERSISTENCE_UNAVAILABLE"}
 
 
-@pytest.mark.parametrize("path", ["/v1/reports", "/v1/notifications"])
+@pytest.mark.parametrize("path", ["/v1/reports", "/v1/notifications", "/v1/system-map", "/v1/anomalies"])
 def test_reports_and_notices_are_read_only_and_read_key_only(app, path):
     for key in ("", SOURCE_KEY):
         assert _request(app, "GET", path, key=key)[0] == 401
     assert _request(app, "GET", path, key=READ_KEY)[0] == 200
     assert _request(app, "POST", path, payload={}, key=READ_KEY)[0] == 405
+    assert app.store.count() == 0
+
+
+def test_authenticated_investigation_is_bounded_read_only_and_truthful(app):
+    app.store.append(_event(event_type="worker_crashed"))
+    app.incidents.scan()
+    [incident] = app.incidents.list()
+    path = f"/v1/incidents/{incident['incident_id']}/investigation"
+    assert _request(app, "GET", path, key=SOURCE_KEY)[0] == 401
+    status, result, _ = _request(app, "GET", path, key=READ_KEY)
+    assert status == 200 and len(result["timeline"]) == 1
+    assert result["causal_chain_verified"] is False and result["automatic_action_allowed"] is False
+    assert _request(app, "GET", f"/v1/incidents/{'0' * 32}/investigation", key=READ_KEY)[0] == 404
+    assert _request(app, "POST", path, payload={}, key=READ_KEY)[0] in (404, 405)
+    assert app.store.count() == 1
+
+
+@pytest.mark.parametrize("path", ["/v1/system-map", "/v1/anomalies"])
+def test_analysis_persistence_failure_is_structured_then_retry_works(app, path, monkeypatch):
+    original = app.store._connect
+    def locked():
+        raise sqlite3.OperationalError("database locked")
+    monkeypatch.setattr(app.store, "_connect", locked)
+    assert _request(app, "GET", path, key=READ_KEY)[:2] == (503, {"error": "PERSISTENCE_UNAVAILABLE"})
+    monkeypatch.setattr(app.store, "_connect", original)
+    assert _request(app, "GET", path, key=READ_KEY)[0] == 200
     assert app.store.count() == 0
 
 

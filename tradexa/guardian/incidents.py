@@ -235,6 +235,8 @@ class GuardianIncidentEngine:
                 );
                 INSERT OR IGNORE INTO guardian_analysis_cursor(name, last_event_sequence)
                 VALUES ('incidents_v1', 0);
+                CREATE INDEX IF NOT EXISTS guardian_incident_timeline
+                  ON guardian_incident_updates(incident_id, sequence);
             """)
             conn.commit()
 
