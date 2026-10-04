@@ -79,6 +79,30 @@
       </div>
     </section>
 
+    <section class="panel" aria-labelledby="dependencies-title">
+      <p class="eyebrow">DECLARED OPERATING DEPENDENCIES</p>
+      <h2 id="dependencies-title">System map</h2>
+      <p id="dependency-coverage" class="metric-detail">Connect to load dependency evidence.</p>
+      <p class="metric-detail">A blocked prerequisite does not prove the strategy is broken. Probe health never certifies its subject. Edges are declared, not runtime-verified; this view changes no trading gates.</p>
+      <details class="report"><summary>Show components and prerequisites</summary>
+        <div class="table-wrap"><table>
+          <thead><tr><th scope="col">Component</th><th scope="col">Observed state</th><th scope="col">Dependency readiness</th><th scope="col">Requires</th><th scope="col">Blocked / unknown prerequisites</th></tr></thead>
+          <tbody id="dependency-map"><tr><td colspan="5" class="empty">No dependency evidence loaded.</td></tr></tbody>
+        </table></div>
+      </details>
+    </section>
+
+    <section class="panel" aria-labelledby="anomalies-title">
+      <p class="eyebrow">CLOSED-WINDOW OPERATIONAL BASELINES</p>
+      <h2 id="anomalies-title">Latency observations</h2>
+      <p id="anomaly-coverage" class="metric-detail">Connect to load typed latency evidence.</p>
+      <p class="metric-detail">WATCH is a deviation, not a failure. Separate source/version/config/account baselines; no inferred signal frequency, trading danger or automatic recovery.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th scope="col">Source / metric</th><th scope="col">Market / owner</th><th scope="col">Observation</th><th scope="col">Baseline / current samples</th><th scope="col">Current median / threshold</th><th scope="col">Evidence</th></tr></thead>
+        <tbody id="anomalies"><tr><td colspan="6" class="empty">No latency evidence loaded.</td></tr></tbody>
+      </table></div>
+    </section>
+
     <section class="panel" aria-labelledby="incidents-title">
       <div class="section-heading">
         <div>
@@ -89,7 +113,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th scope="col">Last observed</th><th scope="col">State</th><th scope="col">Incident</th><th scope="col">Root cause / confidence</th><th scope="col">Evidence</th><th scope="col">Timeline</th></tr></thead>
+          <thead><tr><th scope="col">Last observed</th><th scope="col">State</th><th scope="col">Incident</th><th scope="col">Failure fact / confidence</th><th scope="col">Evidence</th><th scope="col">Investigation</th></tr></thead>
           <tbody id="incidents"><tr><td colspan="6" class="empty">Connect to load incidents.</td></tr></tbody>
         </table>
       </div>

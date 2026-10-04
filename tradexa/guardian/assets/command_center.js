@@ -98,6 +98,55 @@
       ? observed.toLocaleString() : "Unknown time";
   }
 
+  function emptyTable(id, columns, text) {
+    const body = byId(id);
+    body.replaceChildren();
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = columns;
+    cell.className = "empty";
+    cell.textContent = text;
+    row.appendChild(cell);
+    body.appendChild(row);
+  }
+
+  function renderDependencies(page) {
+    const nodes = Array.isArray(page.nodes) ? page.nodes : [];
+    byId("dependency-coverage").textContent = `${page.required_dependency_readiness || "UNKNOWN"} · Declared prerequisites only; runtime topology and trading health unverified.`;
+    byId("dependency-map").replaceChildren();
+    if (!nodes.length) emptyTable("dependency-map", 5, "No fresh dependency evidence available.");
+    for (const item of nodes) {
+      const row = document.createElement("tr");
+      textCell(row, item.component);
+      textCell(row, item.observed_state || "UNKNOWN");
+      textCell(row, item.dependency_readiness || "UNKNOWN");
+      textCell(row, (item.requires || []).join(", "));
+      textCell(row, [...(item.blocked_by || []).map((name) => `Blocked: ${name}`),
+        ...(item.unknown_dependencies || []).map((name) => `Unknown: ${name}`)].join(" · "));
+      byId("dependency-map").appendChild(row);
+    }
+  }
+
+  function renderAnomalies(page) {
+    const rows = Array.isArray(page.anomalies) ? page.anomalies : [];
+    byId("anomaly-coverage").textContent = page.cutoff
+      ? `Closed cutoff ${displayTime(page.cutoff)} · ${page.scan_truncated ? "Scan truncated; conclusions unavailable" : "Partial typed-metric coverage only"}`
+      : "INSUFFICIENT_EVIDENCE · No fresh typed latency observation available.";
+    byId("anomalies").replaceChildren();
+    if (!rows.length) emptyTable("anomalies", 6, "Insufficient evidence. No metric samples is not proof of normal operation.");
+    for (const item of rows) {
+      const row = document.createElement("tr");
+      const identity = item.identity || {};
+      textCell(row, `${identity.source_service || "Unknown"} / ${identity.source_component || "Unknown"} · ${identity.latency_kind || "Unknown"}`);
+      textCell(row, `${identity.symbol || "—"} ${identity.timeframe || ""} · ${identity.instance_id || identity.session_id || identity.lab_id || "Source only"} · ${identity.strategy_version || "—"}`);
+      textCell(row, `${item.state || "INSUFFICIENT_EVIDENCE"} · ${item.severity || "INFO"} · ${(item.reasons || []).join(", ")}`);
+      textCell(row, `${item.baseline_samples ?? "Unknown"} / ${item.current_samples ?? "Unknown"}`);
+      textCell(row, `${item.current_median_ms == null ? "Unknown" : `${item.current_median_ms} ms`} / ${item.threshold_ms == null ? "Unknown" : `${item.threshold_ms} ms`}`);
+      textCell(row, (item.current_evidence_ids || []).join(", "));
+      byId("anomalies").appendChild(row);
+    }
+  }
+
   function renderIncidents(incidents, activeSummary) {
     const body = byId("incidents");
     body.replaceChildren();
@@ -131,7 +180,7 @@
       detailRow.hidden = true;
       const detailCell = document.createElement("td");
       detailCell.colSpan = 6;
-      detailCell.textContent = "Loading timeline…";
+      detailCell.textContent = "Loading investigation…";
       detailRow.appendChild(detailCell);
       button.addEventListener("click", async () => {
         if (!detailRow.hidden) {
@@ -143,21 +192,35 @@
         button.textContent = "Hide evidence";
         const current = generation;
         try {
-          const result = await read(`/v1/incidents/${encodeURIComponent(incident.incident_id)}/timeline`);
+          const result = await read(`/v1/incidents/${encodeURIComponent(incident.incident_id)}/investigation`);
           if (current !== generation || !readKey || detailRow.hidden) return;
           detailCell.replaceChildren();
+          const scope = document.createElement("p");
+          scope.textContent = "Possible correlations—not a verified causal chain or strategy defect. No automatic action.";
+          detailCell.appendChild(scope);
+          for (const candidate of result.root_cause_candidates || []) {
+            const fact = document.createElement("p");
+            fact.textContent = `${candidate.summary} · Failure fact: ${candidate.failure_fact_confidence} · Cause: ${candidate.causal_confidence} · ${(candidate.evidence_ids || []).join(", ")}`;
+            detailCell.appendChild(fact);
+          }
+          const coverage = result.coverage || {};
+          if (coverage.direct_evidence_truncated || coverage.context_scan_truncated) {
+            const warning = document.createElement("p");
+            warning.textContent = "Bounded investigation was truncated; earlier or contextual evidence may be missing.";
+            detailCell.appendChild(warning);
+          }
           const list = document.createElement("ol");
           list.className = "timeline-list";
-          for (const update of result.updates || []) {
+          for (const update of result.timeline || []) {
             const item = document.createElement("li");
-            item.textContent = `${displayTime(update.observed_at)} · ${update.transition} · ${update.summary} · ${update.event_id}`;
+            item.textContent = `Source ${displayTime(update.source_time)} · Received ${displayTime(update.received_at)} · ${update.clock_valid ? update.relationship : "INVALID CLOCK"} · ${update.event_type} · ${update.reason || "—"} · ${update.event_id}`;
             list.appendChild(item);
           }
           if (!list.children.length) detailCell.textContent = "No timeline evidence returned.";
           else detailCell.appendChild(list);
         } catch (_error) {
           if (current === generation && !detailRow.hidden) {
-            detailCell.textContent = "Timeline unavailable; retry after evidence service recovers.";
+            detailCell.textContent = "Investigation unavailable; retry after evidence service recovers.";
           }
         }
       });
@@ -367,13 +430,14 @@
     const current = generation;
     const request = ++requestSequence;
     try {
-      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger, notices, reports, research] = await Promise.all([
+      const [health, eventPage, incidentPage, decisionPage, instanceDecisionPage, instanceLedger, notices, reports, research, systemMap, anomalies] = await Promise.all([
         read("/v1/health"), read("/v1/events?limit=50"), read("/v1/incidents?limit=50"),
         read("/v1/decision-traces?limit=50"),
         read("/v1/instance-decision-traces?limit=50"),
         read("/v1/instance-ledger"),
         read("/v1/notifications"), read("/v1/reports"),
         read("/v1/research/hypotheses"),
+        read("/v1/system-map"), read("/v1/anomalies"),
       ]);
       if (current !== generation || request !== requestSequence || !readKey) return;
       lastHealth = health;
@@ -388,6 +452,8 @@
       renderNotifications(notices);
       renderReports(reports);
       renderResearch(research);
+      renderDependencies(systemMap);
+      renderAnomalies(anomalies);
       const observed = health.components && Object.keys(health.components).length > 0;
       setState(health.state === "HEALTHY" && (!health.evidence_complete || !observed)
         ? "UNKNOWN" : health.state);
@@ -402,6 +468,8 @@
         }])) });
       byId("incident-count").textContent = "—";
       renderInstanceLedger({ ...(lastInstanceLedger || {}), observation_state: "UNKNOWN" });
+      renderDependencies({});
+      renderAnomalies({});
       byId("last-checked").textContent = "Unavailable";
       message.textContent = error.message === "READ_KEY_REJECTED"
         ? "Read key rejected. Reconnect with the correct key." : "Guardian evidence unavailable. Prior observations may be stale.";
@@ -458,6 +526,10 @@
     byId("notifications").replaceChildren();
     byId("reports").replaceChildren();
     byId("research").replaceChildren();
+    byId("dependency-coverage").textContent = "Connect to load dependency evidence.";
+    byId("dependency-map").replaceChildren();
+    byId("anomaly-coverage").textContent = "Connect to load typed latency evidence.";
+    byId("anomalies").replaceChildren();
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;
