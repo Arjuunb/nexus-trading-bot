@@ -242,3 +242,52 @@ def test_no_candles_is_reported_not_invented(monkeypatch, tmp_path, capsys):
     [market] = json.loads(out.read_text())["markets"]
     assert market["error"].startswith("no real candles") and "on" not in market
     assert "0 trades in total" in capsys.readouterr().out
+
+
+def test_adaptive_mtf_runs_with_its_native_context_not_on_bare_5m_candles(monkeypatch, capsys):
+    """It used to read the 5m store alone and run with no 15m/1h/4h context:
+    0 trades with the gate on and off, which said nothing about the strategy."""
+    script = _script()
+    rows = generate_bars(n=900, timeframe="5m", seed=4)
+    native = {"15m": ["ctx"], "1h": ["ctx"], "4h": ["ctx"]}
+    seen = {}
+    monkeypatch.setattr(backtest_lab, "_fetch_for_strategy",
+                        lambda strategy, *_a, **_k: (rows, "Market Data V2 (native Binance USD-M futures)", native))
+
+    def metrics_on(strategy, symbol, timeframe, tuning, segment, custom_spec=None, *, native_context=None):
+        seen["native"] = native_context
+        return None
+    monkeypatch.setattr(backtest_lab, "_metrics_on", metrics_on)
+    for name in ("out_of_sample", "walk_forward", "monte_carlo"):
+        monkeypatch.setattr(backtest_lab, name, lambda *_a, **_k: {"available": False,
+                                                                   "error": "not run in this test"})
+    market = script.run_market(script.ADAPTIVE, "SOLUSDT", "5m", 900, ["on"], do_sync=False, runs=10)
+    assert seen["native"] is native
+    assert market["source"].startswith("Market Data V2")
+
+
+def test_missing_native_history_is_reported_with_its_reason(monkeypatch, capsys):
+    script = _script()
+    why = "Native Adaptive MTF history unavailable: no verified LINKUSDT 1h history"
+    monkeypatch.setattr(backtest_lab, "_fetch_for_strategy", lambda *_a, **_k: ([], why, None))
+    market = script.run_market(script.ADAPTIVE, "LINKUSDT", "5m", 900, ["on"], do_sync=False, runs=10)
+    assert market["error"] == f"no real candles ({why})"
+    report = {"gates": ["on"], "markets": [{"symbol": "SOLUSDT", "timeframe": "5m", "on": {
+        "whole_period": {"trades": 0}, "streak_pauses": None, "refusals": None,
+        "out_of_sample": {"available": False, "error": why}, "walk_forward": {}, "monte_carlo": {}}}]}
+    assert f"out-of-sample unavailable — {why}" in "\n".join(script.summary_rows(report))
+
+
+def test_the_native_sync_downloads_all_four_timeframes(monkeypatch):
+    script = _script()
+    calls = []
+
+    class Service:
+        def __init__(self, _path):
+            pass
+
+        def download(self, symbol, timeframe, *, candles):
+            calls.append((symbol, timeframe, candles))
+    monkeypatch.setattr("data.market_data_v2.MarketDataService", Service)
+    assert script._sync_native("SOLUSDT", 10000).startswith("synced native 5m, 15m, 1h, 4h")
+    assert [(tf, n) for _, tf, n in calls] == [("5m", 10600), ("15m", 3933), ("1h", 1433), ("4h", 808)]

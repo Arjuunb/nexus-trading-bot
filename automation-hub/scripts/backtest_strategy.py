@@ -73,6 +73,28 @@ def _sync(symbol: str, timeframe: str, bars: int) -> str:
     return f"synced {res.get('fetched', 0)} candles from Binance"
 
 
+#: Adaptive MTF decides on 5m with 15m, 1h and 4h context, all read from the
+#: native Binance USD-M cache (Market Data V2), never from the 5m store alone.
+ADAPTIVE = "Adaptive MTF Trend Pullback"
+_ADAPTIVE_TIMEFRAMES = {"5m": 1, "15m": 3, "1h": 12, "4h": 48}
+
+
+def _sync_native(symbol: str, bars: int) -> str:
+    """Download the 5m entry candles and their 15m/1h/4h context into the
+    native cache: closed candles only, added, never removed."""
+    from config import settings
+    from data.market_data_v2 import MarketDataService
+    service = MarketDataService(settings.market_data_v2_dir)
+    done = []
+    for timeframe, per in _ADAPTIVE_TIMEFRAMES.items():
+        try:
+            service.download(symbol, timeframe, candles=bars // per + 600)
+            done.append(timeframe)
+        except Exception as exc:  # noqa: BLE001 -- report and carry on with what is cached
+            return f"native sync failed on {timeframe} ({type(exc).__name__}: {exc}); using the cached candles"
+    return f"synced native {', '.join(done)} candles from Binance USD-M"
+
+
 def _when(bar) -> str:
     return bar.timestamp.strftime("%Y-%m-%d")
 
@@ -83,15 +105,19 @@ def run_market(strategy: str, symbol: str, timeframe: str, bars: int, gates: lis
 
     out: dict = {"symbol": symbol, "timeframe": timeframe}
     if do_sync:
-        out["sync"] = _sync(symbol, timeframe, bars)
-    rows, source = lab._fetch(symbol, timeframe, bars)
+        out["sync"] = (_sync_native(symbol, bars) if strategy == ADAPTIVE
+                       else _sync(symbol, timeframe, bars))
+    # The lab's own loader: Adaptive MTF gets its native higher-timeframe
+    # context here. Without it the strategy cannot decide at all and a run
+    # reports 0 trades, which says nothing about the strategy.
+    rows, source, native = lab._fetch_for_strategy(strategy, symbol, timeframe, bars)
     if not rows:
         out["error"] = f"no real candles ({source})"
         return out
     out.update({"source": source, "candles": len(rows), "from": _when(rows[0]), "to": _when(rows[-1])})
     for gate in gates:
         tuning = lab._gate(gate)
-        whole = lab._metrics_on(strategy, symbol, timeframe, tuning, rows)
+        whole = lab._metrics_on(strategy, symbol, timeframe, tuning, rows, native_context=native)
         out[gate] = {
             "whole_period": whole[0] if whole else None,
             "streak_pauses": streak_pauses(whole[1]) if whole else None,
@@ -181,6 +207,11 @@ def summary_rows(report: dict) -> list[str]:
     for market in report["markets"]:
         for gate in report["gates"]:
             part = market.get(gate) or {}
+            for check in ("out_of_sample", "walk_forward", "monte_carlo"):
+                error = (part.get(check) or {}).get("error")
+                if error:
+                    lines.append(f"  ! {market['symbol']} {market['timeframe']} gate {gate}: "
+                                 f"{check.replace('_', '-')} unavailable — {error}")
             refused = part.get("refusals")
             if not refused:
                 continue
