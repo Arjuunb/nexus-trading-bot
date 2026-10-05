@@ -216,10 +216,67 @@ or verified historical count/P&L added. `full_lifecycle_verified`,
 `execution_integrity_verified`, `source_history_immutable_verified`,
 `currency_verified` and `net_pnl_verified` remain false.
 
-Remaining Phase 4 gaps include retained execution-intent transitions, authoritative
-broker fill/exit/position links to every journal close, cross-account currency/risk,
-and production fault/load validation. This milestone is local observation coverage,
+Remaining Phase 4 gaps include authoritative broker fill/exit/position links to
+every journal close, cross-account currency/risk, and production fault/load
+validation. This milestone is local observation coverage,
 not full lifecycle or live/exchange certification.
+
+### Retained SMC Agent execution-intent transitions
+
+Optional `GUARDIAN_SMC_INTENT_HISTORY_URL=http://app:8000/guardian/smc-intent-events`
+imports at most 32 committed `execution_intent_events` rows per poll across all
+retained sessions. This is disabled by default and uses the independent
+`GUARDIAN_LAB_OBSERVER_KEY`. It does not attach to or reconcile an Agent, approve
+a decision, submit/cancel an order, or alter an execution gate.
+
+The source endpoint is GET-only, requires `X-Guardian-Observer-Key`, and reads
+`settings.smc_agent_journal_db` through a separate query-only SQLite connection.
+It never constructs a journal writer, broker or runtime. Reads have a 250 ms
+busy timeout and a bounded query deadline; each page is one atomic read snapshot.
+Missing/locked/malformed sources or changed cursor anchors return structured
+`503 PERSISTENCE_BLOCKED / SMC_INTENT_HISTORY_UNAVAILABLE`, with no paths or raw
+errors. Short WAL writes do not block these reads. No source database, schema,
+journal triggers or retention policy is changed.
+
+Paging uses source rowid (`after`) plus a projection hash (`anchor`), not the
+event timestamp. Late-dated events remain discoverable. The first retained
+transition anchors the origin; that first projection plus the last consumed
+transition anchors each checkpoint. A removed/replaced/changed origin or last
+consumed event fails closed without rewinding or resetting evidence. Manual
+source compaction/VACUUM may invalidate rowid anchors and needs reviewed recovery.
+This is not an audit of the immutability of every previously consumed source row.
+
+Each projection preserves the original event ID, execution key, recorded state,
+order ID, trade ID and timestamp. Only frozen parent identity is added: intent ID,
+session, symbol, timeframe, decision candle and proposal ID. Today's parent state,
+late-bound decision ID and latest order/trade links never overwrite historical
+event facts. Raw JSON payloads and error text are excluded; `error_recorded` is
+only a boolean. Distinct preparation events may correctly share the recorded
+`EXECUTION_PENDING` state without being duplicate events.
+
+Guardian commits its immutable projections and monotonic checkpoint together in
+its own database. Event IDs hash the source origin and original event ID, so
+unchanged polls, crash replay and restarts do not append duplicates. A concurrent
+collector cannot skip a page: checkpoint compare-and-swap rejects its stale page
+and the next poll retries from durable progress. Guardian has no trading data
+volume mount and retrieves bounded JSON only (256 KiB maximum, redirects refused).
+
+`GET /v1/smc-intent-events?after=0` uses `X-Guardian-Key` with the separate read
+key and pages Guardian's own sequence, 32 events at a time. Its `next_after` is
+not the source cursor; `source_cursor` separately reports import progress.
+`IMPORTING` means more retained rows remain; `CAUGHT_UP_AT_LAST_POLL` means only
+that no next row was observed at the last successful poll. Missing, failed or
+stale probes return `UNKNOWN` while preserving cached historical evidence.
+Invalid queries return 400, persistence errors 503 and mutations 405.
+
+Recorded states are `DECISION_APPROVED`, `EXECUTION_PENDING`, `EXECUTED`,
+`EXECUTION_FAILED`, `EXECUTION_UNCERTAIN`, `RECONCILED` and `COMPLETE`. They are
+historical journal claims, not current execution status or verified broker truth.
+No predecessor state, fill, position, cause, trade finalization or P&L is inferred.
+`execution_integrity_verified`, `full_lifecycle_verified` and
+`source_history_immutable_verified` remain false, including for recorded
+`EXECUTED`/`RECONCILED`/`COMPLETE` events. This extends retained observation
+coverage without certifying the full execution lifecycle or live routing.
 
 ### Resumable retained PA/SMC fill evidence
 
@@ -300,6 +357,7 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | GET | `/v1/lab-execution` | separate read key | separate PA/SMC paper order/fill/position observations, bounded integrity findings, source age and masked stale amounts |
 | GET | `/v1/lab-fills?lab=SMC&after=0` | separate read key | resumable imported fill evidence, 32 rows per page, per-lab import freshness; not verified trade/P&L accounting |
 | GET | `/v1/smc-journal?after=0` | separate read key | imported immutable closed Agent journal projections; late closes found by repeat scans, not verified broker exits or P&L |
+| GET | `/v1/smc-intent-events?after=0` | separate read key | retained recorded Agent transitions with original execution/order/trade links; not verified broker execution or current status |
 | GET | `/v1/reports` | separate read key | most recent 20 immutable closed-window evidence revisions; unknown economics remain null |
 | GET | `/v1/notifications` | separate read key | newest 50 deduplicated in-app incident notices; no remote send or remediation |
 | GET | `/v1/research/hypotheses` and `/v1/research/<64-hex-id>` | separate read key | bounded hypotheses/results/reviews with provenance and methods unverified |
@@ -400,6 +458,33 @@ Both SMC source/behaviour locks passed; protected SMC, PA and strategy directori
 and protection baselines have no diff from `804a7c0`. These are **local code/fixture
 results**, not VPS, real source-provider, exchange, profitability, research-method
 or completed-PRD certification. Nothing in this Guardian slice has been deployed.
+
+## Retained intent-transition milestone validation (2026-10-05)
+
+The complete local Python suite passed **4,539 tests, 15 skipped** in 330 seconds
+(95 existing deprecation warnings). The broader Guardian, execution, architecture
+and SMC-lock regression run passed 623 cases. This slice adds 48 cases: 45 retained
+intent integration cases and three Guardian API/startup cases. Both SMC source
+and behaviour freezes pass; protected SMC/PA strategy files, baselines, Agent,
+journal writer, runtime and broker implementation are unchanged in this slice.
+
+The retained-history fixture imports 135 original events across 27 decisions in
+32-row pages; restart continues from the saved checkpoint and 100 unchanged polls
+append nothing. Tests cover historical link preservation after late decision
+binding/current-state changes, all recorded states including legacy `RECONCILED`,
+distinct market/session/execution identities, late timestamps, stale/malformed/
+oversized evidence, missing parent identity, source anchor corruption/reset,
+WAL concurrent reads, persistent lock and retry, scoped keys, GET-only APIs,
+bounded transport and redirect rejection, opt-in startup/shutdown, page rollback
+before/during checkpoint writes, post-commit restart and concurrent collectors.
+Source history remains unchanged by reads; corruption injections affect only
+disposable fixtures. No real broker execution is inferred from these fixtures.
+
+Focused invocation from the repository root:
+`PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" python -m pytest -q automation-hub/tests/test_guardian_smc_intent_history.py tests/test_guardian_service.py tests/test_core_architecture.py`.
+This milestone is local on `codex/guardian-foundation`, not pushed or deployed.
+No dashboard, live-routing, account reset, strategy tuning or automatic recovery
+was added. Recorded transition coverage is not full execution/exit/P&L validation.
 
 ## PRD completion boundary
 

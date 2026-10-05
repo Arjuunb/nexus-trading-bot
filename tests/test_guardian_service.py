@@ -175,28 +175,36 @@ def test_invalid_schema_unknown_fields_and_secret_text_are_rejected(app):
     assert app.store.count() == 0
 
 
-def test_smc_journal_history_read_authority_unknown_state_and_errors(app, monkeypatch):
-    route = "/v1/smc-journal"
+@pytest.mark.parametrize("route,page_method", [
+    ("/v1/smc-journal", "smc_journal_history_page"),
+    ("/v1/smc-intent-events", "smc_intent_history_page"),
+])
+def test_smc_retained_history_read_authority_unknown_state_and_errors(app, monkeypatch, route, page_method):
     assert _request(app, "GET", route)[0] == 401
     assert _request(app, "GET", route, key=SOURCE_KEY)[0] == 401
     status, body, headers = _request(app, "GET", route, key=READ_KEY)
     assert status == 200 and headers["Cache-Control"] == "no-store"
     assert body["history_state"] == "UNKNOWN" and body["events"] == []
-    assert body["execution_integrity_verified"] is body["net_pnl_verified"] is False
-    assert body["whole_scan_atomic"] is False
+    assert body["execution_integrity_verified"] is body["full_lifecycle_verified"] is False
+    assert body["source_history_immutable_verified"] is False
+    if route == "/v1/smc-journal":
+        assert body["whole_scan_atomic"] is body["net_pnl_verified"] is False
+    else:
+        assert body["source_cursor"] == {"after": 0, "anchor": ""}
     assert _request(app, "POST", route, payload={}, key=READ_KEY)[0] == 405
     for query in ("after=-1", "after=wat", "after=", "after=9999999999999999999999",
                   "after=1&after=2", "limit=999", "lab=PRICE_ACTION", "cycle=0"):
         assert _request(app, "GET", route, key=READ_KEY, query=query)[0] == 400
     def fail(**kwargs):
         raise sqlite3.OperationalError("fixture failure")
-    monkeypatch.setattr(app.store, "smc_journal_history_page", fail)
+    monkeypatch.setattr(app.store, page_method, fail)
     status, body, _ = _request(app, "GET", route, key=READ_KEY)
     assert status == 503 and body["error"] == "PERSISTENCE_UNAVAILABLE"
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-def test_smc_journal_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled):
+@pytest.mark.parametrize("kind", ["JOURNAL", "INTENT"])
+def test_smc_history_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled, kind):
     import os
     import tradexa.guardian.service as service
     for key in list(os.environ):
@@ -207,7 +215,8 @@ def test_smc_journal_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled)
     monkeypatch.setenv("GUARDIAN_READ_KEY", READ_KEY)
     monkeypatch.setenv("GUARDIAN_SOURCE_KEYS_JSON", json.dumps({"guardian_probe": SOURCE_KEY}))
     if enabled:
-        monkeypatch.setenv("GUARDIAN_SMC_JOURNAL_HISTORY_URL", "http://app:8000/guardian/smc-journal")
+        suffix = "smc-journal" if kind == "JOURNAL" else "smc-intent-events"
+        monkeypatch.setenv(f"GUARDIAN_SMC_{kind}_HISTORY_URL", "http://app:8000/guardian/" + suffix)
         monkeypatch.setenv("GUARDIAN_LAB_OBSERVER_KEY", "independent-observer-key-123456789")
     threads, apps = [], []
     class FakeThread:
@@ -235,10 +244,12 @@ def test_smc_journal_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled)
     observers = [t for t in threads if t.target == service._lab_execution_monitor]
     assert len(observers) == int(enabled)
     assert all(t.started and t.joined for t in threads)
-    assert (service.JOURNAL_PROBE in apps[0].required_components) == enabled
+    probe = service.JOURNAL_PROBE if kind == "JOURNAL" else service.INTENT_PROBE
+    assert (probe in apps[0].required_components) == enabled
     if enabled:
         [collector] = observers[0].args[0]
-        assert isinstance(collector, service.GuardianSMCJournalHistory)
+        expected = service.GuardianSMCJournalHistory if kind == "JOURNAL" else service.GuardianSMCIntentHistory
+        assert isinstance(collector, expected)
 
 
 def test_health_is_unknown_without_evidence_then_source_bound_heartbeat(app):

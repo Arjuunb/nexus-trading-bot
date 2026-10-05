@@ -87,6 +87,9 @@ class GuardianStore:
                 CREATE INDEX IF NOT EXISTS events_smc_closed_journal ON events(sequence)
                   WHERE source_service='guardian_smc_journal_history'
                     AND event_type='smc_closed_journal_observed';
+                CREATE INDEX IF NOT EXISTS events_smc_intent_history ON events(sequence)
+                  WHERE source_service='guardian_smc_intent_history'
+                    AND event_type='smc_intent_transition_observed';
             """)
             conn.commit()
 
@@ -392,6 +395,19 @@ class GuardianStore:
                 "SELECT sequence,received_at,payload_json FROM events "
                 "WHERE source_service=? AND event_type='lab_paper_fill_observed' AND sequence>? "
                 "ORDER BY sequence LIMIT 33", (source_service, after)).fetchall()
+        events = [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
+                   "guardian_sequence": row["sequence"]} for row in rows[:32]]
+        return {"events": events, "after": after, "has_more": len(rows) > 32,
+                "next_after": events[-1]["guardian_sequence"] if events else after}
+
+    def smc_intent_history_page(self, *, after: int = 0) -> dict:
+        if type(after) is not int or not 0 <= after <= 2**63 - 1:
+            raise ValueError("Invalid intent history cursor")
+        with closing(self._connect()) as conn:
+            rows = conn.execute("SELECT sequence,received_at,payload_json FROM events "
+                                "WHERE source_service='guardian_smc_intent_history' "
+                                "AND event_type='smc_intent_transition_observed' AND sequence>? "
+                                "ORDER BY sequence LIMIT 33", (after,)).fetchall()
         events = [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
                    "guardian_sequence": row["sequence"]} for row in rows[:32]]
         return {"events": events, "after": after, "has_more": len(rows) > 32,

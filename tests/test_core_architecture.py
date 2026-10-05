@@ -365,6 +365,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Closed Agent journal repeat-scan export shares a pure projection/cursor
     # contract only. It does not import Guardian storage or trading authority.
     "automation-hub/services/guardian_smc_journal_read_model.py",
+    # Retained intent-event GET export shares pure validation/hash helpers only.
+    # Guardian persistence and broker/runtime authority remain separate.
+    "automation-hub/services/guardian_smc_intent_read_model.py",
 }
 
 

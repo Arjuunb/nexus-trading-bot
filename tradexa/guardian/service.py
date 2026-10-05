@@ -37,6 +37,7 @@ from .reports import GuardianReports
 from .research import GuardianResearch
 from .smc_execution_observer import GuardianSMCExecutionObserver
 from .smc_journal_history import GuardianSMCJournalHistory, PROBE as JOURNAL_PROBE, smc_journal_history_view
+from .smc_intent_history import GuardianSMCIntentHistory, PROBE as INTENT_PROBE, smc_intent_history_view
 from .store import GuardianStore
 
 _STATUSES = {
@@ -208,7 +209,7 @@ class GuardianService:
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
-                         "/v1/smc-journal", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
+                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
@@ -241,6 +242,17 @@ class GuardianService:
                     if not 0 <= after <= 2**63 - 1:
                         raise _HTTPError(400, "INVALID_JOURNAL_HISTORY_CURSOR")
                     return self._respond(start_response, 200, smc_journal_history_view(self.store, after=after))
+                if path == "/v1/smc-intent-events":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) - {"after"} or any(len(v) != 1 for v in query.values()):
+                        raise _HTTPError(400, "INVALID_INTENT_HISTORY_QUERY")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_INTENT_HISTORY_CURSOR") from exc
+                    if not 0 <= after <= 2**63 - 1:
+                        raise _HTTPError(400, "INVALID_INTENT_HISTORY_CURSOR")
+                    return self._respond(start_response, 200, smc_intent_history_view(self.store, after=after))
                 if path == "/v1/lab-fills":
                     query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
                     if (set(query) - {"lab", "after"} or any(len(v) != 1 for v in query.values()) or
@@ -321,7 +333,7 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/reports", "/v1/notifications",
+                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
@@ -584,6 +596,9 @@ def main() -> None:
     journal_history_url = os.environ.get("GUARDIAN_SMC_JOURNAL_HISTORY_URL", "").strip()
     if journal_history_url and JOURNAL_PROBE not in required:
         required += (JOURNAL_PROBE,)
+    intent_history_url = os.environ.get("GUARDIAN_SMC_INTENT_HISTORY_URL", "").strip()
+    if intent_history_url and INTENT_PROBE not in required:
+        required += (INTENT_PROBE,)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required, research_key=research_key, admin_key=admin_key)
@@ -647,7 +662,12 @@ def main() -> None:
     journal_history_monitor = (Thread(target=_lab_execution_monitor, args=((
         GuardianSMCJournalHistory(store, journal_history_url, lab_observer_key),), stopped),
         daemon=True) if journal_history_url else None)
+    intent_history_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCIntentHistory(store, intent_history_url, lab_observer_key),), stopped),
+        daemon=True) if intent_history_url else None)
     monitor.start()
+    if intent_history_monitor:
+        intent_history_monitor.start()
     if journal_history_monitor:
         journal_history_monitor.start()
     if fill_history_monitor:
@@ -678,6 +698,8 @@ def main() -> None:
             server.serve_forever()
     finally:
         stopped.set()
+        if intent_history_monitor:
+            intent_history_monitor.join(timeout=2)
         if journal_history_monitor:
             journal_history_monitor.join(timeout=2)
         if fill_history_monitor:
