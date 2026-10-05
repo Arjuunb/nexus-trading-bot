@@ -1189,11 +1189,14 @@ class TradingInstanceManager:
                  session_start: int = 0, session_end: int = 24,
                  max_weekly_loss_pct: float = 0.0, max_trades_per_day: int = 0,
                  trading_days_mask: int = 127, full_reboot_timeout_s: float | None = None,
-                 market_hub=None, symbol_rules_provider=None):
+                 market_hub=None, symbol_rules_provider=None, trade_journal=None):
         self.ledger, self.store = ledger, InstanceStore(ledger)
         self.strategy_factory, self.live, self.live_poll_s, self.fetcher = strategy_factory, live, live_poll_s, fetcher
         self.decision_store = decision_store
         self.decision_journal = decision_journal
+        # Canonical trade journal recorder; every worker's pipeline registers
+        # decisions and every worker's engine reports fills into it.
+        self.trade_journal = trade_journal
         self.trade_memory = trade_memory
         self.skipped_store = skipped_store
         self.cycle_store = cycle_store
@@ -1581,9 +1584,13 @@ class TradingInstanceManager:
                         InstanceLedger(self.ledger, instance_id, owning_session),
                         inst.starting_equity,
                         fill_model=fill_model_from_name(inst.fill_model))
+                    engine.journal = self.trade_journal
                 try:
                     fill = engine.close(symbol=row["symbol"], exit_price=float(row["mark"]),
-                                        execution_id=f"dispose:{instance_id}:{row['position_id']}")
+                                        execution_id=f"dispose:{instance_id}:{row['position_id']}",
+                                        exit_context={"exit_reason": "MANUAL_CLOSE",
+                                                      "exit_reason_source": "OPERATOR_DISPOSAL",
+                                                      "actor": initiated_by or "operator"})
                 except Exception as exc:
                     # The paper engine is fail-closed: a position whose trade
                     # row is missing makes it refuse rather than guess. That is
@@ -1610,6 +1617,26 @@ class TradingInstanceManager:
                       detail=(f"{len(closed)} open paper position(s) realised at a fresh "
                               f"observed mark before deletion; {len(remaining)} left open"))
             return {"instance_id": instance_id, "closed": closed, "remaining": remaining}
+
+    def journal_identity(self, instance_id: str) -> dict:
+        """Server-owned identity for journal reconciliation of a ledger row
+        whose live journal hook never ran. Unknown instances give {}."""
+        inst = self._instances.get(instance_id)
+        if inst is None:
+            return {}
+        forward = inst.mode == "trading"
+        return {
+            "instance_id": inst.id,
+            "instance_name": f"{inst.symbol} {inst.strategy_label} {inst.timeframe} #{inst.id[:6].upper()}",
+            "strategy_id": inst.strategy_key, "strategy_name": inst.strategy_label,
+            "strategy_version": inst.strategy_version, "timeframe": inst.timeframe,
+            "execution_mode": inst.execution_mode,
+            "market_data_mode": "forward_paper" if forward else "replay",
+            "exchange": ("binance_usdm" if self.market_hub is not None and forward
+                         else inst.exchange if inst.exchange != "inherit" else None),
+            "instrument_type": ("perpetual" if self.market_hub is not None and forward
+                                else inst.instrument_type),
+        }
 
     def delete(self, instance_id: str, *, owner_id: str | None = None) -> str:
         """Delete one stopped instance without touching any sibling worker."""
@@ -1793,6 +1820,8 @@ class TradingInstanceManager:
             # lifecycle as the legacy pipeline, but retain immutable instance
             # provenance so evidence is never silently blended.
             pipeline.journal = self.decision_journal
+            pipeline.trade_journal = self.trade_journal
+            paper.journal = self.trade_journal
             pipeline.trade_memory = self.trade_memory
             pipeline.skipped = self.skipped_store
             # Learning evidence is scoped to this worker's ledger/history. A
@@ -1835,6 +1864,10 @@ class TradingInstanceManager:
                                     if self.market_hub is not None and forward
                                     else inst.instrument_type),
             })
+            # Fills that arrive without a registered decision (a recovered
+            # intent from an older build) still carry this instance's identity.
+            paper.journal_provenance = {**pipeline.journal_context,
+                                        "timeframe": inst.timeframe}
             if forward:
                 if self.symbol_rules_provider is not None:
                     pipeline.symbol_rules_provider = self.symbol_rules_provider
@@ -2613,6 +2646,16 @@ class TradingInstanceManager:
             inst.simulation_session_number = int(result["session_number"])
             self._metric_fingerprints.pop(instance_id, None)
 
+            if self.trade_journal is not None:
+                try:
+                    self.trade_journal.cancel_open_for_instance(
+                        instance_id,
+                        reason="Paper position terminated by simulation account restart; no execution fill was fabricated.")
+                except Exception as exc:  # noqa: BLE001 - the ledger reset already committed
+                    self.ledger.log(
+                        level="warning", stage="simulation_account_restart",
+                        message=f"Trade journal reset annotation failed: {type(exc).__name__}",
+                        symbol=inst.symbol, instance_id=inst.id)
             if self.decision_journal is not None:
                 try:
                     self.decision_journal.store.cancel_open_for_instance(

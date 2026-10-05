@@ -109,6 +109,7 @@ class SMCStrategy(HubStrategy):
                          reason=f"SMC long — sweep+CHoCH+FVG, HTF {bias_name}")
             sig.confidence = self._confidence(strength)
             sig.snapshot = {"mtf_evidence": dict(self._native_mtf_evidence)}
+            sig.journal_setup = self._journal_setup("bullish", i, bias_name, strength, bull_pin)
             return sig
 
         if short_ok:
@@ -121,8 +122,51 @@ class SMCStrategy(HubStrategy):
                          reason=f"SMC short — sweep+CHoCH+FVG, HTF {bias_name}")
             sig.confidence = self._confidence(strength)
             sig.snapshot = {"mtf_evidence": dict(self._native_mtf_evidence)}
+            sig.journal_setup = self._journal_setup("bearish", i, bias_name, strength, bear_pin)
             return sig
         return None
+
+    def _journal_setup(self, direction: str, i: int, bias_name: str, strength: float,
+                       rejection: bool) -> dict:
+        """The conditions this model actually evaluated for the emitted signal.
+
+        Journal evidence only: every value is read from state ``generate``
+        already used to decide, after the decision was made."""
+        p = self.params
+        long = direction == "bullish"
+        sweep_at = self._last_sweep_low if long else self._last_sweep_high
+        struct_at = self._last_bull_struct if long else self._last_bear_struct
+        fvg_at = self._last_bull_fvg if long else self._last_bear_fvg
+        side = "lows" if long else "highs"
+        conditions = [
+            {"key": "htf_context", "name": f"HTF bias {direction}", "status": "Passed", "required": True,
+             "detail": f"native HTF {bias_name} (strength {strength:.2f})"},
+            {"key": "liquidity_sweep", "name": f"Liquidity sweep of {side}", "status": "Passed",
+             "required": True, "detail": f"{i - sweep_at} bar(s) ago (window {p['sweep_lookback']})"},
+            {"key": "structure_break", "name": "Structure break (BOS/CHoCH)", "status": "Passed",
+             "required": True, "detail": f"{i - struct_at} bar(s) ago (window {p['choch_lookback']})"},
+            {"key": "fvg", "name": "Fair-value gap", "status": "Passed", "required": True,
+             "detail": f"{i - fvg_at} bar(s) ago (window {p['fvg_lookback']})"},
+            {"key": "rejection", "name": "Rejection candle",
+             "status": ("Passed" if rejection else "Not checked") if p["use_rejection"] else "Not checked",
+             "required": bool(p["use_rejection"]),
+             "detail": "pin bar on the signal candle" if p["use_rejection"] else "disabled in this configuration"},
+        ]
+        not_used = {"status": "NOT_EVALUATED", "detail": "not part of this model"}
+        structure = {"status": "PASSED",
+                     "detail": "close broke the last confirmed swing; this model does not separate BOS from CHoCH"}
+        return {
+            "conditions": conditions,
+            "strategy_state": "CONFLUENCE_COMPLETE",
+            "fields": {
+                "market_structure": {"status": "PASSED",
+                                     "detail": f"internal bias {'bullish' if self._bias > 0 else 'bearish' if self._bias < 0 else 'neutral'}"},
+                "bos": structure, "choch": structure,
+                "order_block": not_used, "eqh_eql": not_used, "premium_discount": not_used,
+                "poi": not_used, "volume_confirmation": not_used,
+                "entry_confirmation_candle": {"status": "PASSED", "detail": "signal candle close"},
+            },
+        }
 
     # ----------------------------------------------------------- internals
     def _update_pivots(self, bars, i, L):

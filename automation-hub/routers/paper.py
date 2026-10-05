@@ -215,7 +215,9 @@ def paper_close(body: ClosePosition,
     if price is None or price <= 0:
         raise HTTPException(503, "Could not determine a current market price to close at. "
                                  "Try again once market data is reachable.")
-    res = _wa.paper.close(symbol=symbol, exit_price=price)
+    res = _wa.paper.close(symbol=symbol, exit_price=price,
+                          exit_context={"exit_reason": "MANUAL_CLOSE",
+                                        "exit_reason_source": "OPERATOR", "actor": "operator"})
     if getattr(res, "action", "") != "closed":
         raise HTTPException(409, f"Could not close {symbol} — position not open.")
     _wa.ledger.log(level="info", stage="execution",

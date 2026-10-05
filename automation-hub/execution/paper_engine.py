@@ -63,6 +63,43 @@ class PaperExecutionEngine:
         # attribution, and is reported as the ACCOUNT's rather than any one
         # strategy's — see strategy_history().
         self.strategy_id = ""
+        # Canonical trade journal (services.trade_journal.TradeJournalRecorder).
+        # The engine is the one place every fill passes through -- immediate
+        # fills, forward-paper quote fills, scale-outs, closes from any caller
+        # and protection changes -- so it reports them here. Optional and
+        # never allowed to block execution.
+        self.journal = None
+        #: server-owned provenance used when a fill arrives with no registered
+        #: decision (set by the instance worker; empty for the legacy account).
+        self.journal_provenance: dict = {}
+
+    # --------------------------------------------------------------- journal
+    #: The paper account is unleveraged cash: a position's notional is its
+    #: cost (see _reject_unaffordable). The journal records that as 1x with
+    #: its source so it is never mistaken for an exchange leverage setting.
+    LEVERAGE = 1.0
+    LEVERAGE_SOURCE = "UNLEVERAGED_CASH_MODEL"
+
+    def _journal_scope(self) -> str:
+        return str(getattr(self.ledger, "instance_id", "") or "")
+
+    def _journal(self, method: str, event: dict) -> None:
+        journal = self.journal
+        if journal is None:
+            return
+        try:
+            getattr(journal, method)({"scope": self._journal_scope(),
+                                      "simulation_session_id": str(getattr(
+                                          self.ledger, "simulation_session_id", "") or ""),
+                                      "provenance": dict(self.journal_provenance or {}),
+                                      **event})
+        except Exception as exc:  # noqa: BLE001 — the journal must never block execution
+            try:
+                self.ledger.log(level="warning", stage="journal",
+                                message=f"journal {method} failed: {type(exc).__name__}: {exc}"[:400],
+                                symbol=str(event.get("symbol") or ""))
+            except Exception:  # noqa: BLE001
+                pass
 
     # --------------------------------------------------------------- queries
     def open_position(self, symbol: str) -> Optional[dict]:
@@ -96,13 +133,25 @@ class PaperExecutionEngine:
     def update_stop(self, symbol: str, stop: float) -> int:
         """Persist a new stop on the OPEN position for a symbol (manual on-chart
         adjust) through this engine's own ledger. Returns rows updated."""
-        return self.ledger.update_position_stop(symbol=symbol, stop=stop)
+        rows = self.ledger.update_position_stop(symbol=symbol, stop=stop)
+        if rows:
+            self._journal("on_protection_change", {
+                "symbol": symbol, "stop": stop, "reason": "MANUAL", "actor": "operator",
+                "at": datetime.now(timezone.utc).isoformat()})
+        return rows
 
     def update_management(self, symbol: str, *, stop=None, target=None,
-                          management=None) -> int:
+                          management=None, reason: Optional[str] = None) -> int:
         """Persist the complete live trade plan through the scoped ledger."""
-        return self.ledger.update_position_management(
+        rows = self.ledger.update_position_management(
             symbol=symbol, stop=stop, target=target, management=management)
+        if rows and (stop is not None or target is not None):
+            self._journal("on_protection_change", {
+                "symbol": symbol, "stop": stop, "target": target,
+                "management": management if isinstance(management, dict) else None,
+                "reason": reason, "actor": "operator" if reason == "MANUAL" else "position-manager",
+                "at": datetime.now(timezone.utc).isoformat()})
+        return rows
 
     def realized_pnl(self) -> float:
         return sum((t.get("pnl") or 0.0) for t in self.history())
@@ -202,6 +251,7 @@ class PaperExecutionEngine:
              alert_id: str = "", maker: bool = False,
              sizing_context: Optional[dict] = None) -> FillResult:
         direction = _dir(side)
+        requested_entry = entry
         # Return the result the guard built. Re-deriving it here called
         # float(entry) on exactly the unparseable input the guard exists to
         # catch, turning a clean rejection into a crashed decision cycle.
@@ -250,6 +300,15 @@ class PaperExecutionEngine:
             execution_id=execution_id,
         )
         self._invalidate_history()
+        self._journal("on_entry_fill", {
+            "ledger_trade_id": tid, "position_id": pid, "execution_id": execution_id,
+            "order_id": alert_id, "symbol": symbol, "side": direction, "quantity": size,
+            "price": entry, "requested_price": requested_entry, "stop": stop,
+            "target": target, "maker": bool(maker), "fee_rate": self._fee_rate(maker=bool(maker)),
+            "filled_at": datetime.now(timezone.utc).isoformat(), "context": entry_sizing,
+            "strategy_id": self.strategy_id, "leverage": self.LEVERAGE,
+            "leverage_source": self.LEVERAGE_SOURCE,
+        })
         return FillResult("opened", symbol, direction, size, entry, 0.0, pid, tid,
                           execution_id=execution_id)
 
@@ -262,6 +321,7 @@ class PaperExecutionEngine:
         if pos is None or not (0.0 < fraction < 1.0):
             return FillResult("noop", symbol, "", 0.0, exit_price)
         closed_size = pos["size"] * fraction
+        requested_exit = exit_price
         f = self.fill_model.apply("sell" if pos["side"] == "long" else "buy",
                                   exit_price, closed_size,
                                   allow_reject=False, allow_partial=False)
@@ -296,7 +356,7 @@ class PaperExecutionEngine:
         if not callable(atomic_reduce):
             raise RuntimeError("Ledger does not support atomic paper position reduction")
         execution_id = self._execution_id("REDUCE", execution_id)
-        atomic_reduce(
+        reduced = atomic_reduce(
             position=pos, trade_id=open_trade["id"],
             remainder_position={
                 "symbol": symbol, "side": pos["side"], "size": remainder,
@@ -308,16 +368,30 @@ class PaperExecutionEngine:
             equity_after_close=equity_before_close + pnl,
             execution_id=execution_id,
         )
+        remainder_pid, remainder_tid = (reduced if isinstance(reduced, tuple) and len(reduced) == 2
+                                        else (None, None))
         self._invalidate_history()
         self._persist_account_snapshot()
+        self._journal("on_partial_exit", {
+            "ledger_trade_id": open_trade["id"], "remainder_trade_id": remainder_tid,
+            "remainder_position_id": remainder_pid, "execution_id": execution_id,
+            "symbol": symbol, "quantity": closed_size, "price": exit_price,
+            "requested_price": requested_exit, "gross_pnl": gross, "fee": fee,
+            "fee_rate": self._fee_rate(maker=False), "fee_split": "round_trip",
+            "size_before": pos["size"], "remaining_size": remainder,
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+        })
         return FillResult("reduced", symbol, pos["side"], closed_size, exit_price,
                           pnl, pos["id"], fee=fee, execution_id=execution_id)
 
     def close(self, *, symbol: str, exit_price: float,
-              execution_id: str = "") -> FillResult:
+              execution_id: str = "", exit_context: Optional[dict] = None) -> FillResult:
+        """Close the open position. ``exit_context`` (exit reason, excursions,
+        actor) is journal evidence only; it never changes the fill."""
         pos = self.open_position(symbol)
         if pos is None:
             return FillResult("noop", symbol, "", 0.0, exit_price)
+        requested_exit = exit_price
         # exits cross the spread the other way; never reject/partial an exit
         action = "sell" if pos["side"] == "long" else "buy"
         f = self.fill_model.apply(action, exit_price, pos["size"],
@@ -350,6 +424,14 @@ class PaperExecutionEngine:
             )
         self._invalidate_history()
         self._persist_account_snapshot()
+        self._journal("on_exit_fill", {
+            "ledger_trade_id": open_trade["id"], "execution_id": execution_id,
+            "symbol": symbol, "quantity": pos["size"], "price": exit_price,
+            "requested_price": requested_exit, "gross_pnl": gross, "fee": fee,
+            "fee_rate": self._fee_rate(maker=False), "fee_split": "round_trip",
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "exit_context": dict(exit_context or {}),
+        })
         return FillResult("closed", symbol, pos["side"], pos["size"], exit_price,
                           pnl, pos["id"], fee=fee, execution_id=execution_id)
 

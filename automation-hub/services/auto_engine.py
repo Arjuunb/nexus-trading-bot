@@ -1409,13 +1409,22 @@ class AutoStrategyEngine:
             "best", "age", "mfe", "mae",
         )}
 
-    def _checkpoint_managed(self, sym: str, mt) -> None:
-        """Persist protection + lifecycle after each mutation, scoped per instance."""
+    def _checkpoint_managed(self, sym: str, mt, *, reason: Optional[str] = None) -> None:
+        """Persist protection + lifecycle after each mutation, scoped per instance.
+
+        ``reason`` labels a deliberate change (an operator edit) for the trade
+        journal; routine per-bar checkpoints leave it to the journal to infer
+        break-even / trailing from the management state."""
         if not hasattr(self, "paper"):  # permits pure-state unit construction
             return
-        self.paper.update_management(
-            sym, stop=mt.stop, target=mt.target,
-            management=self._managed_dict(mt))
+        if reason is None:
+            self.paper.update_management(
+                sym, stop=mt.stop, target=mt.target,
+                management=self._managed_dict(mt))
+        else:
+            self.paper.update_management(
+                sym, stop=mt.stop, target=mt.target,
+                management=self._managed_dict(mt), reason=reason)
 
     def _auto_execution_id(self, sym: str, timestamp, action: str) -> str:
         """Return a permanent key in forward mode and a run key in research.
@@ -1530,6 +1539,10 @@ class AutoStrategyEngine:
                 "side": "CLOSE", "entry": exit_price, "stop": None,
                 "exit_reason": why,          # real exit cause for the journal
                 "mfe_r": mfe_r, "mae_r": mae_r,   # lifecycle telemetry
+                # the tracked extremes themselves, so the journal can state the
+                # excursion in price and currency, not only in R
+                "mfe_price": getattr(mt, "mfe", None) if mt is not None else None,
+                "mae_price": getattr(mt, "mae", None) if mt is not None else None,
                 "timestamp": bar.timestamp.isoformat(),
             })
             if res is not None and res.accepted:
@@ -1604,7 +1617,7 @@ class AutoStrategyEngine:
                 if target is not None:
                     mt.target = float(target)
                     self._targets[symbol] = float(target)
-                self._checkpoint_managed(symbol, mt)
+                self._checkpoint_managed(symbol, mt, reason="MANUAL")
                 return {"stop": mt.stop, "target": mt.target,
                         "side": mt.side, "entry": mt.entry}
             # No managed state (adopt needs a stop to define R). Still honour the
@@ -1613,7 +1626,7 @@ class AutoStrategyEngine:
             if target is not None:
                 self._targets[symbol] = float(target)
             if hasattr(self, "paper"):
-                self.paper.update_management(symbol, stop=stop, target=target)
+                self.paper.update_management(symbol, stop=stop, target=target, reason="MANUAL")
             return {"stop": (float(stop) if stop is not None else None),
                     "target": self._targets.get(symbol),
                     "side": None, "entry": None}
@@ -1780,6 +1793,9 @@ class AutoStrategyEngine:
             # later market data.
             "journal_quality_gate": v.to_dict() if v is not None else None,
             "journal_decision_id": decision_id,
+            # structured, strategy-specific setup evidence (conditions the
+            # strategy itself evaluated on this candle), when it reports any
+            "journal_setup": getattr(signal, "journal_setup", None),
             "strategy": self.strategy_label,
             "timeframe": self.timeframe,
             "mode": "live" if self.live else "paper",
@@ -1793,8 +1809,11 @@ class AutoStrategyEngine:
         # spread. Flips/closes (opposite side of an open position) stay
         # immediate — exits are never left resting.
         if pos is not None:   # opposite side of an open position -> this routes as a close
-            _mfe, _mae = self._mfe_mae_r(self._managed.get(sym))
+            _mt = self._managed.get(sym)
+            _mfe, _mae = self._mfe_mae_r(_mt)
             payload["mfe_r"], payload["mae_r"] = _mfe, _mae
+            payload["mfe_price"] = getattr(_mt, "mfe", None) if _mt is not None else None
+            payload["mae_price"] = getattr(_mt, "mae", None) if _mt is not None else None
         # Trading-mode gate: FULL AUTO executes immediately; SEMI-AUTO queues a
         # NEW ENTRY for human approval; SIGNAL records the idea as an alert
         # only. Exits/flips (pos is not None) ALWAYS execute automatically — a

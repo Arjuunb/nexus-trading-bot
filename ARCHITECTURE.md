@@ -56,7 +56,7 @@ and turned into a **unified decision object** *before* anything else happens:
 |---|---|
 | `decisions.db` | every accept/reject decision object |
 | `ledger.db` / Supabase | positions, paper trades, logs, alerts (source of truth) |
-| `journal.db` | full decision journal per executed trade (entry→exit→review) |
+| `journal.db` | canonical trade journal (`journal_*` tables: one structured, immutable record per executed trade with fills, fees, modifications, frozen decision snapshot, timeline, reviews and corrections) plus the legacy decision journal; see [TRADE_JOURNAL_ARCHITECTURE.md](TRADE_JOURNAL_ARCHITECTURE.md) |
 | `skipped.db` | pipeline rejections with failed gate + snapshot |
 | `account.db` | initial capital + current equity snapshot |
 | `safety_state.json` | emergency-stop verification record |
@@ -70,6 +70,7 @@ and turned into a **unified decision object** *before* anything else happens:
 | `GET /decisions/state` | composite: bot state, risk status, active positions, latest decisions |
 | `GET /engine/diagnostics` | feed status + plain-English "why isn't it trading" |
 | `GET /safety/live-readiness` | the enforced live-trading gate (locked by default) |
+| `GET /journal/v2/*` | canonical trade journal: filtered trades, trade detail, server-side analytics, weekly review |
 
 ## Safety invariants (unchanged, enforced in code + tests)
 

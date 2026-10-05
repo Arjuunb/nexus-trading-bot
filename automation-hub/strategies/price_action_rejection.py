@@ -218,11 +218,58 @@ class PriceActionRejectionStrategy(HubStrategy):
             f"at {proposal.entry:.8f}, stop {proposal.stop:.8f} "
             f"({proposal.rr_ratio:.2f}R)"
         )
-        return Signal(
+        signal = Signal(
             timestamp=bar.timestamp, symbol=self.symbol, type=direction,
             entry=proposal.entry, stop_loss=proposal.stop,
             take_profit=proposal.target, reason=self.last_reason,
         )
+        signal.journal_setup = self._journal_setup(proposal)
+        return signal
+
+    def _journal_setup(self, proposal: ProposedTrade) -> dict:
+        """The engine's own frozen setup evidence for this proposal, for the
+        trade journal. Read after the decision; it changes nothing."""
+        engine = self._engine
+        setup = engine.setups.get(proposal.setup_id) if engine is not None else None
+        if setup is None:
+            return {"conditions": [], "strategy_state": "PROPOSAL_EMITTED", "fields": {}}
+        context = dict(setup.context_snapshot or {})
+        zone = context.get("zone") or {}
+        event = context.get("trigger_event") or {}
+        patterns = [row.get("pattern") or row.get("name") for row in (setup.pattern_metadata or [])
+                    if isinstance(row, dict)]
+        conditions = [{"key": "reason", "name": str(reason), "status": "Passed"} for reason in setup.reasons]
+        conditions += [{"key": "missing", "name": str(item), "status": "Missing"}
+                       for item in setup.missing_conditions]
+        dominance = [p for p in patterns if p and "dominan" in str(p).lower()]
+        rejection = [p for p in patterns if p and "dominan" not in str(p).lower()]
+        not_used = {"status": "NOT_EVALUATED", "detail": "not part of this strategy"}
+        return {
+            "conditions": conditions,
+            "strategy_state": str(getattr(setup.phase, "value", setup.phase)),
+            "fields": {
+                "support_resistance_level": {
+                    "status": "PASSED" if zone else "NOT_EVALUATED",
+                    "detail": (f"{zone.get('role', 'zone')} {zone.get('low')}–{zone.get('high')} "
+                               f"(touches {zone.get('touch_count')})") if zone else "zone not captured"},
+                "rejection_level": {"status": "PASSED" if event else "NOT_EVALUATED",
+                                    "detail": (f"{event.get('event_type')} at {event.get('level')}"
+                                               if event else "trigger event not captured")},
+                "flip_retest": {"status": "PASSED" if zone.get("flipped") else "NOT_EVALUATED",
+                                "detail": "flipped zone retest" if zone.get("flipped") else "zone not flipped"},
+                "trend_direction": {"status": "PASSED" if context.get("structure_state") else "NOT_EVALUATED",
+                                    "detail": str(context.get("structure_state") or "not captured")},
+                "rejection_candle": {"status": "PASSED" if rejection else "NOT_EVALUATED",
+                                     "detail": ", ".join(str(p) for p in rejection) or "no pattern recorded"},
+                "dominance_candle": {"status": "PASSED" if dominance else "NOT_EVALUATED",
+                                     "detail": ", ".join(str(p) for p in dominance) or "not recorded for this setup"},
+                "ema_relationship": not_used, "volume_confirmation": not_used,
+                "liquidity_sweep": not_used,
+                "entry_trigger": {"status": "PASSED",
+                                  "detail": f"{proposal.entry_model}; trigger {proposal.trigger_low}–"
+                                            f"{proposal.trigger_high}; {proposal.rr_ratio:.2f}R plan"},
+            },
+        }
 
 
 class PriceActionFlipRetestStrategy(PriceActionRejectionStrategy):

@@ -175,6 +175,10 @@ class FactoryResetService:
         )
         for store, tables in stores:
             self._clear_sqlite(store, tables)
+        # The canonical journal's tables are trigger-protected against
+        # deletion; only its own audited reset may clear them.
+        if getattr(r, "trade_journal_store", None) is not None:
+            r.trade_journal_store.factory_reset()
 
         # JSON operational stores. Credential stores (providers/alert channels)
         # are intentionally absent.
