@@ -312,10 +312,11 @@ the next existing fill import without requiring another intent event.
 intent has not yet recorded its order ID; its link remains `UNVERIFIED`, never
 `MISSED` or "No order was placed". A recorded journal close is linked only by
 explicit order **and** trade IDs plus market identity. It does not certify that
-the broker exited. The broker's current fill schema does not retain the original
-entry/position identity on every synthetic protective/remediation fill, and its
-position table contains only current net positions. This slice does not invent
-those historical associations from timestamps, prices, sizes, symbol or P&L.
+the broker exited. This retained importer/link projection does not consume the
+new source-side `fill_position_json` described below. Legacy fill rows lack that
+origin evidence, and the position table contains only current net positions.
+The view does not invent historical associations from timestamps, prices, sizes,
+symbol or P&L; it remains entry-only pending a separate provenance importer.
 
 Conflicting keys/orders/trades/markets/directions, repeated source IDs, different
 intent origins or multiple paper accounts yield `CONFLICTING_EVIDENCE` and no
@@ -427,6 +428,7 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | GET | `/v1/smc-journal?after=0` | separate read key | imported immutable closed Agent journal projections; late closes found by repeat scans, not verified broker exits or P&L |
 | GET | `/v1/smc-intent-events?after=0` | separate read key | retained recorded Agent transitions with original execution/order/trade links; not verified broker execution or current status |
 | GET | `/v1/smc-execution-links?execution_key=<original-key>` | separate read key | bounded exact retained entry-fill/order/trade links; no invented exit or position lifecycle, no accounting certification |
+| GET | app `/guardian/smc-fill-transitions?after=0&anchor=` | independent `X-Guardian-Observer-Key` | query-only source page of at most 32 retained fill-position projections; not a Guardian `/v1` view or collector |
 | GET | `/v1/reports` | separate read key | most recent 20 immutable closed-window evidence revisions; unknown economics remain null |
 | GET | `/v1/notifications` | separate read key | newest 50 deduplicated in-app incident notices; no remote send or remediation |
 | GET | `/v1/research/hypotheses` and `/v1/research/<64-hex-id>` | separate read key | bounded hypotheses/results/reviews with provenance and methods unverified |
@@ -591,8 +593,122 @@ The full invocation uses the same absolute `PYTHONPATH` with `python -m pytest -
 This milestone is local on `codex/guardian-foundation`, not pushed or deployed.
 Backend/API and testing skills guided scoped read access and failure coverage.
 No UI, strategy, trading authority, live-routing, source-schema, account-reset,
-weekly-review or automatic-recovery change was made. Complete durable exit and
-position-origin evidence remains a separate, unimplemented requirement.
+weekly-review or automatic-recovery change was made. At that milestone, complete
+durable exit and position-origin evidence remained unimplemented; the subsequent
+source slice below captures post-install net-position transitions, not complete
+Guardian lifecycle coverage.
+
+## Source-side SMC paper fill-position provenance
+
+`PaperBrokerV2` now adds nullable `v2_fills.fill_position_json` through its existing
+schema migration. The shared broker schema gains the column, but **only an
+SMC_LAB account with SMC_LAB execution engine captures a payload**. PA_LAB and
+ordinary PAPER fills retain null. Existing fills are never reconstructed,
+rewritten, compacted or deleted: null/missing-column evidence exports as
+`UNVERIFIED_LEGACY_FILL`. The query-only endpoint itself never installs schema.
+
+Capture occurs around the broker's existing `_fill()` net-position mutation and
+is included in the **same existing fill INSERT and broker transaction**. There is
+no extra outbox row, independent commit, Guardian write, network call, agent
+approval or strategy evaluation in this path. Guardian outages cannot reach the
+capture helper. The payload is canonical, finite JSON capped at 8 KiB, with no
+rolling candles, quote window, heartbeat, UI state, journal prose or raw errors.
+It records account/fill/order/market identity, executed side/quantity/price,
+reduce-only and persisted-order flags, plus the actual before/after net-position
+ID, originating entry order, available original execution key/timeframe,
+side/size/weighted entry price. Parent keys come from an exact entry-order ID
+lookup with matching account, engine, market and direction; missing/foreign
+parents never supply an invented execution key. A synthetic protective,
+remediation or liquidation fill can therefore retain the original position
+identity even when that position disappears at close.
+
+`OPEN`, `INCREASE`, `REDUCE`, `CLOSE`, `REVERSE` and `UNCHANGED` describe those
+recorded before/after snapshots. They are **not entry-lot allocation, complete
+order execution, stop/target history, journal reconciliation, currency/P&L or
+live-exchange certification**. Capture precedes any caller's later protection
+update; stop/target geometry is deliberately not part of this position projection.
+Partial additions keep the broker's original net-position origin; a reversal
+records both original and new position IDs. Source rows remain owner/restore
+mutable, not independently verified append-only or tamper-proof evidence.
+
+The existing rollback guard now also wraps paper `process_mark()` liquidation.
+A failure after position/account mutation but before fill/order persistence rolls
+back the event, preserving the prior committed position and fills. Liquidation
+price calculations and order, fee, size, stop/target and RR rules are unchanged.
+This is a persistence safety repair, not a new liquidation model.
+
+`GET /guardian/smc-fill-transitions?after=0&anchor=` reads
+`settings.smc_paper_db` using the separate observer key, not a trading control key
+or dashboard login. It takes a query-only SQLite snapshot with 250 ms busy
+timeout and 500 ms SQL deadline; each page contains at most 32 fills, plus bounded
+first/previous cursor anchors. Paging uses rowid and an account-scoped material
+hash rather than source timestamps, so late-dated fills remain discoverable.
+Changed origin/last row, a removed cursor, or an account swap fails closed without
+rewinding. Owner restore/VACUUM may invalidate the cursor and requires reviewed
+recovery; the API never resets it. Payload/schema/identity/quantity validation and
+secret-pattern redaction run only in this read projection, never as trading gates.
+WAL readers see committed evidence during short writes. Persistent locks, missing
+or malformed evidence return sanitized
+`503 PERSISTENCE_BLOCKED / SMC_FILL_TRANSITIONS_UNAVAILABLE`. Successful reads use
+`Cache-Control: no-store` and make no source writes. Recorded payloads are labelled
+`RECORDED_SOURCE_TRANSITION`, not verified execution integrity.
+
+The response keeps `execution_integrity_verified=false` and
+`full_lifecycle_verified=false`. **No Guardian collector, new environment flag,
+execution-link aggregation, dashboard, incident recovery or production rollout is
+added in this slice.** Next work is the independently resumable Guardian importer
+and bounded exact-ID link view, preserving legacy uncertainty and per-account
+isolation. Do not enable a collector until its contract and replay tests exist.
+No automatic evidence cleanup/VACUUM or active-database raw copy is introduced;
+any future backup must use a consistent SQLite snapshot/online backup procedure.
+
+## Source fill-position milestone validation (2026-10-05)
+
+The complete local Python suite passed **4,640 tests, 15 skipped** in 324 seconds
+(95 existing deprecation warnings; zero failures/errors). The final suite includes
+the malformed-Unicode read/API regressions and non-SMC account export rejection.
+
+This slice adds 53 source broker/export/API cases. The final focused source,
+architecture and SMC-lock run passed 117 cases; broader Guardian, paper broker,
+crash/recovery, architecture and freeze regressions passed 707 cases. Source and
+behaviour locks both match the unchanged baseline (all 10 decision-path freeze
+and 17 Agent protection cases). Protected source files and freeze baselines have
+no diff from `804a7c0`; strategy directories and Agent/runtime/journal writers
+have no diff in this milestone. Backend/API and testing skills guided bounded
+authenticated exports and red/green persistence-failure coverage.
+
+The following are **isolated fixture outcomes**, not VPS/exchange evidence.
+Every provenance payload below is stored with its existing fill row, not a
+separate journal revision. Counts are retained broker orders/open positions/fills.
+
+| Injected boundary or replay | Orders | Open positions | Fills | Result |
+| --- | --- | --- | --- | --- |
+| Formatting, fill INSERT, post-INSERT trigger or order-update failure | 1 | 0 | 0 | Accepted entry remains open; account/position/fill changes roll back together |
+| Entry retry after removing fault | 1 | 1 | 1 | One captured origin; no duplicate fill |
+| Protective/remediation/liquidation fill persistence failure | 1 | 1 | 1 | Original position and committed entry provenance preserved; no transaction left open |
+| Close retry after removing fault | 1 | 0 | 2 | Exit retains original position/order/decision identity |
+| Duplicate quote replay after broker restart | 1 | 1 | 1 | Replayed quote rejected; original captured JSON unchanged |
+
+Other cases cover partial long/short protective exits, additions/reductions and
+new same-symbol positions, reversal with distinct origin IDs, byte-identical
+restart, compatible same-account snapshot restore, legacy null/pre-column data,
+foreign/missing parent links, no Guardian write/network dependency, retained
+pagination beyond one page and late timestamps. Read failures cover changed or
+deleted cursor origins, invalid limits, account isolation, huge numbers,
+credential-like metadata, malformed/deep/oversized JSON and invalid UTF-8
+identities. Authentication/control-key isolation, WAL reads during uncommitted
+writes, persistent lock with sanitized 503 and retry, missing-file no-creation,
+and 100 unchanged source/API refreshes preserve source history. Failure injection
+found and repaired the previously missing liquidation rollback guard; an invalid
+Unicode regression also proved the export must reject malformed text before
+response encoding. Neither change alters strategy or fill-price mathematics.
+
+Focused invocation from the repository root:
+`PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" python -m pytest -q automation-hub/tests/test_smc_fill_position_provenance.py automation-hub/tests/test_smc_decision_path_freeze.py automation-hub/tests/test_smc_agent_cannot_touch_the_strategy.py tests/test_core_architecture.py`.
+Full validation uses the same absolute `PYTHONPATH` with `python -m pytest -q`.
+This milestone is local on `codex/guardian-foundation`, not pushed or deployed.
+No main, production configuration, live-routing flag, account history, strategy,
+dashboard, weekly-review or autonomous-recovery change is made.
 
 ## PRD completion boundary
 

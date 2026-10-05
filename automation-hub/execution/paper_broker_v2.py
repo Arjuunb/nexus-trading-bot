@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from data.sqlite_runtime import runtime_connection
+from execution.paper_fill_provenance import encode_transition
 
 
 ORDER_TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
@@ -162,6 +163,7 @@ class PaperBrokerV2:
                 ("account_id", "TEXT"), ("execution_engine", "TEXT"),
                 ("candle_id", "TEXT"), ("blocker", "TEXT"),
                 ("quote_event_id", "TEXT"), ("fill_key", "TEXT"),
+                ("fill_position_json", "TEXT"),
             ):
                 if name not in fill_columns:
                     self._c.execute(f"ALTER TABLE v2_fills ADD COLUMN {name} {ddl}")
@@ -771,6 +773,21 @@ class PaperBrokerV2:
             self._fill(order, exit_side, raw, bar, events, True, persisted=False)
         return events
 
+    def _position_provenance(self, position, account_id):
+        """Exact source IDs around a fill; never join by time/market proximity."""
+        if position is None:
+            return None
+        row = dict(position)
+        parent = self._c.execute("SELECT symbol,side,account_id,execution_engine,candle_id,timeframe "
+                                 "FROM v2_orders WHERE id=?", (row.get("entry_order_id"),)).fetchone()
+        linked = (parent is not None and parent["account_id"] == account_id
+                  and parent["execution_engine"] == "SMC_LAB" and parent["symbol"] == row["symbol"]
+                  and parent["side"] == ("buy" if row["side"] == "long" else "sell"))
+        return {"position_id": row.get("position_id") or None, "entry_order_id": row.get("entry_order_id") or None,
+                "entry_execution_key": (parent["candle_id"] or None) if linked else None,
+                "entry_timeframe": (parent["timeframe"] or None) if linked else None,
+                "side": row["side"], "size": row["size"], "entry_price": row["entry_price"]}
+
     def _fill(self, order: dict, side: str, raw_price: float, bar: dict, events: list,
               reduce_only: bool, *, persisted: bool = True,
               fill_timestamp: str | None = None) -> None:
@@ -820,8 +837,16 @@ class PaperBrokerV2:
         take_profit = order.get("protection_take_profit")
         risk_amount = (abs(float(price) - float(stop_loss)) * quantity
                        if stop_loss is not None else None)
+        position_json = None
+        if account["account_type"] == "SMC_LAB" and self.execution_engine == "SMC_LAB":
+            after = self._c.execute("SELECT * FROM v2_positions WHERE symbol=?", (order["symbol"],)).fetchone()
+            position_json = encode_transition(
+                account_id=account["account_id"], fill_id=fid, order_id=order["id"], symbol=order["symbol"],
+                side=side, quantity=quantity, price=price, reduce_only=bool(reduce_only),
+                persisted_order=bool(persisted), before=self._position_provenance(pos, account["account_id"]),
+                after=self._position_provenance(after, account["account_id"]))
         self._c.execute(
-            "INSERT INTO v2_fills(id,order_id,symbol,side,quantity,price,fee,realized_pnl,timestamp,signal_timestamp,decision_timestamp,order_timestamp,fill_timestamp,signal_price,requested_price,spread,slippage,commission,funding,stop_loss,take_profit,risk_amount,position_size,strategy,strategy_version,timeframe,market_data_source,account_id,execution_engine,candle_id,blocker,quote_event_id,fill_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO v2_fills(id,order_id,symbol,side,quantity,price,fee,realized_pnl,timestamp,signal_timestamp,decision_timestamp,order_timestamp,fill_timestamp,signal_price,requested_price,spread,slippage,commission,funding,stop_loss,take_profit,risk_amount,position_size,strategy,strategy_version,timeframe,market_data_source,account_id,execution_engine,candle_id,blocker,quote_event_id,fill_key,fill_position_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (fid, order["id"], order["symbol"], side, quantity, price, fee, pnl,
              filled_at, order.get("signal_timestamp"), order.get("decision_timestamp"),
              order.get("created_at"), filled_at, signal_price, requested_price,
@@ -830,7 +855,7 @@ class PaperBrokerV2:
              order.get("timeframe"), order.get("market_data_source"),
              order.get("account_id") or self._account_row()["account_id"],
              order.get("execution_engine") or self.execution_engine,
-             order.get("candle_id"), "NONE", quote_event_id, fill_key),
+             order.get("candle_id"), "NONE", quote_event_id, fill_key, position_json),
         )
         if persisted:
             filled, remaining = float(order["filled"]) + quantity, float(order["remaining"]) - quantity
@@ -994,7 +1019,7 @@ class PaperBrokerV2:
         symbol, mark = symbol.upper(), float(mark_price)
         if mark <= 0:
             raise ValueError("mark price must be positive")
-        with self._lock:
+        with self._lock, self._rollback_failed_event():
             position = next((row for row in self.positions() if row["symbol"] == symbol), None)
             if not position or position["estimated_liquidation_price"] is None:
                 return {"liquidated": False, "symbol": symbol}
@@ -1079,7 +1104,7 @@ class PaperBrokerV2:
                             "take_profit", "risk_amount", "position_size", "strategy",
                             "strategy_version", "timeframe", "market_data_source", "account_id",
                             "execution_engine", "candle_id", "blocker", "quote_event_id",
-                            "fill_key")
+                            "fill_key", "fill_position_json")
                     self._c.execute(
                         f"INSERT INTO v2_fills({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
                         tuple(row.get(k) for k in keys),

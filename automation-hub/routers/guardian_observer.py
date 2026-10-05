@@ -15,12 +15,30 @@ from services.guardian_lab_execution_read_model import lab_paper_execution_snaps
 from services.guardian_lab_fill_read_model import lab_fill_page
 from services.guardian_smc_journal_read_model import smc_journal_page
 from services.guardian_smc_intent_read_model import smc_intent_event_page
+from services.guardian_smc_fill_transition_read_model import smc_fill_transition_page
 from services.guardian_instance_read_model import instance_decision_page
 from services.guardian_instance_ledger_read_model import instance_paper_ledger_snapshot
 from services.guardian_lab_feed_read_model import lab_feed_snapshot
 from services.guardian_read_model import lab_decision_page, lab_decision_snapshot, lab_lifecycle_page
 
 router = APIRouter(tags=["guardian-observer"])
+
+
+@router.get("/guardian/smc-fill-transitions")
+def guardian_smc_fill_transitions(
+        after: int = Query(0, ge=0, le=2**63 - 1),
+        anchor: str = Query("", max_length=64),
+        x_guardian_observer_key: Optional[str] = Header(default=None)):
+    _require_observer_key(x_guardian_observer_key)
+    try:
+        page = smc_fill_transition_page(settings.smc_paper_db, after=after, anchor=anchor)
+    except (sqlite3.Error, ValueError, TypeError) as exc:
+        raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED",
+                                  "code": "SMC_FILL_TRANSITIONS_UNAVAILABLE"}) from exc
+    return JSONResponse({"schema_version": 1, "scope": "RETAINED_SMC_PAPER_FILL_POSITION_TRANSITIONS",
+                         "observed_at": datetime.now(timezone.utc).isoformat(),
+                         "execution_integrity_verified": False, "page": page},
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/guardian/smc-intent-events")

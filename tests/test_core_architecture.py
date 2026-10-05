@@ -368,6 +368,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Retained intent-event GET export shares pure validation/hash helpers only.
     # Guardian persistence and broker/runtime authority remain separate.
     "automation-hub/services/guardian_smc_intent_read_model.py",
+    # Fill-position source export reuses pure bounds/hash/redaction contracts;
+    # source capture never imports Guardian and stays in the broker ledger.
+    "automation-hub/services/guardian_smc_fill_transition_read_model.py",
 }
 
 
