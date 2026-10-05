@@ -96,6 +96,56 @@ This slice does not complete Phase 4: authoritative cross-account currency/expos
 correlation, every fill/exit's durable lifecycle, and full journal/reconciliation coverage
 remain required. Production installation and fault/load verification remain separate.
 
+### Resumable retained PA/SMC fill evidence
+
+`GUARDIAN_LAB_FILL_HISTORY_URL=http://app:8000/guardian/lab-fills` optionally imports
+retained `v2_fills` rows, independently for each lab, using the existing dedicated
+observer key. It is disabled by default. Each collector imports at most 32 rows per
+30-second poll. The source uses query-only SQLite, one read transaction, a 250 ms
+busy timeout and a 500 ms SQL progress deadline. Rowid keyset seeks replace full
+table scans, offsets and timestamp cursors. A late-inserted fill with an old event
+timestamp is still observed. No schema, broker order, position, journal or strategy
+is modified on the source. No trading hot-path writes or network calls are added.
+
+The source endpoint is `GET /guardian/lab-fills?lab=SMC&after=0&anchor=` (or
+`lab=PRICE_ACTION`), authenticated with `X-Guardian-Observer-Key`. It returns a
+bounded atomic page, `next_after`, `next_anchor` and `has_more`; lock, missing-source,
+malformed-evidence and changed-cursor failures return a redacted 503
+`PERSISTENCE_BLOCKED / LAB_FILL_HISTORY_UNAVAILABLE`. The account, first retained
+fill and last consumed fill's material content are SHA-256 bound into the anchor.
+Detected reset/deletion/replacement never silently resets the cursor or skips rows.
+The outer application middleware denies an unconfigured observer with 401.
+
+Each Guardian event has a stable SHA-256 identity over the schema namespace, lab,
+account and original fill ID. It preserves fill/order identity, timestamp, quantity,
+price, recorded costs, stop/target and optional decision-candle/quote provenance.
+Empty optional legacy metadata remains empty, not fabricated. Evidence and the
+page checkpoint commit atomically in Guardian's own store. A crash before commit
+replays the page; a crash after commit resumes after it. Conflicting IDs, malformed
+pages or a concurrently moved checkpoint fail closed. Unchanged polling/restarting
+creates no extra event. Source failure in one lab does not suppress the other.
+
+`GET /v1/lab-fills?lab=SMC&after=0`, using the separate `X-Guardian-Key` read key,
+pages the imported evidence in **Guardian ingestion sequence**, 32 rows per page.
+Use its `next_after` only on this endpoint, not as the source cursor. Missing or
+stale evidence is `UNKNOWN`; a backlog is `IMPORTING`; a successful exhausted source
+page is `CAUGHT_UP_AT_LAST_POLL`. The latter means only that the retained fill table
+had no next row at that poll, **not** that execution, accounting or trading is healthy.
+Read failures return 503 `PERSISTENCE_UNAVAILABLE`; invalid pagination returns 400;
+mutations return 405. Cached immutable history remains readable during source outages.
+The existing raw event view also shows imported fills; a dedicated history UI is not
+part of this slice.
+
+Coverage limits are intentional: these are retained fill records, not reconstructed
+position lifetimes or finalized journal trades. Protective/remediation fills can
+legitimately lack a persisted order row. No exit-parent or session link is inferred
+from symbol, timestamps or an order-ID prefix. There is no historical total, verified
+net P&L, currency aggregation or live/exchange certification. Funding and costs outside
+the fill row remain outside this evidence. Historical deletes/edits between the two
+checked anchor rows are not detected by this bounded reader; it is not a whole-table
+cryptographic audit or a guarantee that source history was always immutable. Guardian
+retains what it already observed and never repairs the broker to agree with it.
+
 Closed-UTC daily and Monday-to-Monday weekly reports are generated independently at startup and checked hourly. Only the last closed day and week are scheduled; older windows are an explicit offline call to `GuardianReports.generate`, not an unbounded startup backfill. Each report scans at most 10,000 events / 8 MiB, records coverage/truncation, deduplicates material decision snapshots by source identity, and keeps separate owner/strategy/version/config/market groups. Source coverage is not complete: uptime, trade count, P&L, win rate, average R, drawdown, excursions, global exposure and successful interventions are null. Late source evidence creates a new immutable content-addressed revision; unchanged polls/restarts create none. Report plus its audit event commit atomically; a failure rolls both back. No strategy, backtest, model, credential or trading runtime is invoked.
 
 In-app incident notices have a durable transactional cursor. A new WARNING-or-higher incident, severity escalation or source-verified recovery creates an immutable notice and audit event in one Guardian transaction. Repeated outage updates, reconnect-only states, normal no-setup decisions and near-valid candidates do not generate more notices. Recovery is not a Guardian intervention. Remote push/email/Telegram delivery is **not configured or implemented**; no destination or delivery secret is sent anywhere. `guardian_reports` and `guardian_notifications` heartbeats reflect these local processors, not trading health.
@@ -104,7 +154,7 @@ The research registry is **governance, not a research runner or certification sy
 
 Only a separate owner key can reject a hypothesis or approve development after all seven reported stages. Reviews bind the current evidence digest, fail on stale evidence, and are immutable/idempotent. Approval ends at `APPROVED_FOR_DEVELOPMENT_NO_DEPLOYMENT`, never modifies code/risk/orders or deploys. Hypothesis/result/review plus audit event commit atomically; failure rolls all changes back. `GUARDIAN_RESEARCH_KEY` and `GUARDIAN_ADMIN_KEY` are optional, independent of ingestion/read/observer/control credentials, and disabled by default. The Command Center is still read-only; it displays provenance, reported stages and unresolved verification. Do not send exchange secrets, raw generated code, commands, file paths or live-routing requests into this registry.
 
-Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON object mapping each source service to its own long random key), and a distinct `GUARDIAN_READ_KEY`. Optional settings: `GUARDIAN_REQUIRED_COMPONENTS`, `GUARDIAN_BIND_HOST`, `GUARDIAN_PORT`, `GUARDIAN_PUBLIC_STATUS_URL`, `GUARDIAN_LAB_OBSERVER_URL`, `GUARDIAN_LAB_BACKFILL_URL`, `GUARDIAN_LAB_LIFECYCLE_URL`, `GUARDIAN_INSTANCE_DECISION_URL`, `GUARDIAN_INSTANCE_LEDGER_URL`, `GUARDIAN_LAB_FEED_URL`, `GUARDIAN_SMC_EXECUTION_URL`, and `GUARDIAN_LAB_OBSERVER_KEY`. The service rejects reuse of `HUB_CONTROL_KEY` when it is present in its environment and refuses a lab observer key shared with its read/source keys. Keep the database in a dedicated owner-only directory and supply secrets through a protected environment mechanism, not source control or shell history. With the public or lab collectors enabled, their own probes are required for overall health; `pa_lab` and `smc_lab` remain `UNKNOWN` until independent lab-health telemetry exists.
+Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON object mapping each source service to its own long random key), and a distinct `GUARDIAN_READ_KEY`. Optional settings: `GUARDIAN_REQUIRED_COMPONENTS`, `GUARDIAN_BIND_HOST`, `GUARDIAN_PORT`, `GUARDIAN_PUBLIC_STATUS_URL`, `GUARDIAN_LAB_OBSERVER_URL`, `GUARDIAN_LAB_BACKFILL_URL`, `GUARDIAN_LAB_LIFECYCLE_URL`, `GUARDIAN_INSTANCE_DECISION_URL`, `GUARDIAN_INSTANCE_LEDGER_URL`, `GUARDIAN_LAB_EXECUTION_URL`, `GUARDIAN_LAB_FILL_HISTORY_URL`, `GUARDIAN_LAB_FEED_URL`, `GUARDIAN_SMC_EXECUTION_URL`, and `GUARDIAN_LAB_OBSERVER_KEY`. The service rejects reuse of `HUB_CONTROL_KEY` when it is present in its environment and refuses a lab observer key shared with its read/source keys. Keep the database in a dedicated owner-only directory and supply secrets through a protected environment mechanism, not source control or shell history. With the public or lab collectors enabled, their own probes are required for overall health; `pa_lab` and `smc_lab` remain `UNKNOWN` until independent lab-health telemetry exists.
 
 | Method | Path | Authority | Result |
 | --- | --- | --- | --- |
@@ -123,6 +173,7 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | GET | `/v1/instance-decision-traces?limit=50&instance_id=...` | separate read key | bounded latest post-install persisted instance gate states; strategy verdict and downstream gate result are distinct, broker fills unverified |
 | GET | `/v1/instance-ledger` | separate read key | latest paper-pair snapshot and current probe age; stale/failed risk masked; no global or verified-currency exposure |
 | GET | `/v1/lab-execution` | separate read key | separate PA/SMC paper order/fill/position observations, bounded integrity findings, source age and masked stale amounts |
+| GET | `/v1/lab-fills?lab=SMC&after=0` | separate read key | resumable imported fill evidence, 32 rows per page, per-lab import freshness; not verified trade/P&L accounting |
 | GET | `/v1/reports` | separate read key | most recent 20 immutable closed-window evidence revisions; unknown economics remain null |
 | GET | `/v1/notifications` | separate read key | newest 50 deduplicated in-app incident notices; no remote send or remediation |
 | GET | `/v1/research/hypotheses` and `/v1/research/<64-hex-id>` | separate read key | bounded hypotheses/results/reviews with provenance and methods unverified |
@@ -173,7 +224,33 @@ The Command Center asks for the separate read key when opened. It holds that key
 
 No live-routing, risk, strategy, deployment, or automatic-recovery change is part of this foundation.
 
-## Local validation (2026-10-04)
+## Retained fill-history milestone validation (2026-10-05)
+
+The final complete Python suite passed **4,393 tests, 15 skipped** in 337 seconds
+(95 existing deprecation warnings). This slice adds 70 cases: 67 isolated PA/SMC
+fill-history integration cases and three Guardian API/startup cases. The targeted
+execution/architecture/SMC-lock run passed 208 cases before the final timestamp
+regressions; the final history/service run passed 97 cases. Both SMC source and
+behaviour protection locks pass in the full suite. Protected SMC and PA strategy
+files and freeze baselines remain unchanged from `804a7c0`.
+
+Validation covers imports beyond the prior 128-fill sample, partial/full/reducing/
+protective fills, late timestamps, 100 unchanged polls, restarts, page rollback
+before/during checkpoint persistence, restart after commit, concurrent collectors,
+changed account/first/last source anchors, malformed or oversized evidence,
+out-of-range UTC timestamps, WAL reads, persistent locks and retry, scoped keys,
+bounded transport with redirect rejection, per-lab outage isolation, source data
+remaining unchanged and opt-in startup/shutdown wiring. The implementation caught
+and corrected blank optional metadata rejection; it preserves that metadata as
+recorded. The app's existing auth denial remains intact. No UI assets changed in
+this slice, and no new browser or production acceptance result is claimed.
+
+These results validate local code and fixtures. Retained fills remain distinct
+from complete position/journal lifecycles, verified P&L, currency risk and live
+execution evidence. This milestone is committed locally on
+`codex/guardian-foundation`; it has not been pushed or deployed.
+
+## Previous lab-execution milestone validation (2026-10-04)
 
 The final repository Python suite passed **4,323 tests, 15 skipped** (327 seconds;
 96 existing FastAPI/aiohttp deprecation warnings), including 58 new cases in this

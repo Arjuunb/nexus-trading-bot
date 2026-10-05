@@ -48,6 +48,8 @@ class GuardianStore:
                 );
                 CREATE INDEX IF NOT EXISTS events_timestamp ON events(timestamp);
                 CREATE INDEX IF NOT EXISTS events_source ON events(source_service, source_component);
+                CREATE INDEX IF NOT EXISTS events_lab_fill_history ON events(source_service,sequence)
+                  WHERE event_type='lab_paper_fill_observed';
                 CREATE INDEX IF NOT EXISTS events_lab_decision_scan ON events(sequence DESC)
                   WHERE source_service IN ('guardian_lab_probe','guardian_lab_backfill')
                     AND event_type IN ('lab_evaluation_observed','lab_evaluation_backfilled');
@@ -311,6 +313,21 @@ class GuardianStore:
             ).fetchall()
         return [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
                  "guardian_sequence": row["sequence"]} for row in rows]
+
+    def lab_fill_history_page(self, source_service: str, *, after: int = 0) -> dict:
+        """Page immutable observed fills by Guardian sequence, not source time."""
+        if (source_service not in {"guardian_pa_fill_history", "guardian_smc_fill_history"} or
+                type(after) is not int or not 0 <= after <= 2**63 - 1):
+            raise ValueError("Invalid lab history cursor")
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT sequence,received_at,payload_json FROM events "
+                "WHERE source_service=? AND event_type='lab_paper_fill_observed' AND sequence>? "
+                "ORDER BY sequence LIMIT 33", (source_service, after)).fetchall()
+        events = [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
+                   "guardian_sequence": row["sequence"]} for row in rows[:32]]
+        return {"events": events, "after": after, "has_more": len(rows) > 32,
+                "next_after": events[-1]["guardian_sequence"] if events else after}
 
     def count(self) -> int:
         with closing(self._connect()) as conn:

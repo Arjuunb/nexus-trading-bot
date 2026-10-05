@@ -96,6 +96,74 @@ def test_lab_execution_view_is_read_scoped_and_unknown_before_observation(app, m
     assert body["error"] == "PERSISTENCE_UNAVAILABLE"
 
 
+def test_lab_fill_history_is_read_scoped_paged_and_unknown_until_polled(app, monkeypatch):
+    route = "/v1/lab-fills"
+    assert _request(app, "GET", route, query="lab=SMC")[0] == 401
+    assert _request(app, "GET", route, query="lab=SMC", key=SOURCE_KEY)[0] == 401
+    status, body, headers = _request(app, "GET", route, query="lab=SMC", key=READ_KEY)
+    assert status == 200 and headers["Cache-Control"] == "no-store"
+    assert body["history_state"] == "UNKNOWN"
+    assert body["events"] == [] and body["next_after"] == 0
+    assert body["full_lifecycle_verified"] is body["net_pnl_verified"] is False
+    assert _request(app, "POST", route, payload={}, key=READ_KEY)[0] == 405
+    for query in ("", "lab=OTHER", "lab=SMC&after=-1", "lab=SMC&after=wat",
+                  "lab=SMC&after=999999999999999999999999", "lab=SMC&after=",
+                  "lab=SMC&lab=PRICE_ACTION", "lab=SMC&unknown=1", "lab=SMC&limit=900"):
+        assert _request(app, "GET", route, query=query, key=READ_KEY)[0] == 400
+    def fail(*args, **kwargs):
+        raise sqlite3.OperationalError("fixture lock")
+    monkeypatch.setattr(app.store, "lab_fill_history_page", fail)
+    status, body, _ = _request(app, "GET", route, query="lab=SMC", key=READ_KEY)
+    assert status == 503 and body["error"] == "PERSISTENCE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_fill_history_startup_is_opt_in_and_tracks_both_labs(tmp_path, monkeypatch, enabled):
+    import os
+    import tradexa.guardian.service as service
+    for key in list(os.environ):
+        if key.startswith("GUARDIAN_"):
+            monkeypatch.delenv(key)
+    monkeypatch.delenv("HUB_CONTROL_KEY", raising=False)
+    monkeypatch.setenv("GUARDIAN_DB_PATH", str(tmp_path / "guardian.db"))
+    monkeypatch.setenv("GUARDIAN_READ_KEY", READ_KEY)
+    monkeypatch.setenv("GUARDIAN_SOURCE_KEYS_JSON", json.dumps({"guardian_probe": SOURCE_KEY}))
+    if enabled:
+        monkeypatch.setenv("GUARDIAN_LAB_FILL_HISTORY_URL", "http://app:8000/guardian/lab-fills")
+        monkeypatch.setenv("GUARDIAN_LAB_OBSERVER_KEY", "independent-observer-key-123456789")
+    threads, apps = [], []
+    class FakeThread:
+        def __init__(self, *, target, args, daemon):
+            self.target, self.args, self.started, self.joined = target, args, False, False
+            threads.append(self)
+        def start(self):
+            self.started = True
+        def join(self, timeout):
+            assert timeout == 2
+            self.joined = True
+    class Server:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def serve_forever(self):
+            return None
+    def make_server(host, port, instance):
+        apps.append(instance)
+        return Server()
+    monkeypatch.setattr(service, "Thread", FakeThread)
+    monkeypatch.setattr(service, "make_server", make_server)
+    service.main()
+    history = [t for t in threads if t.target == service._lab_execution_monitor]
+    assert len(history) == int(enabled)
+    assert all(t.started and t.joined for t in threads)
+    for probe in ("guardian_pa_fill_history", "guardian_smc_fill_history"):
+        assert (probe in apps[0].required_components) == enabled
+    if enabled:
+        assert {c.lab for c in history[0].args[0]} == {"PRICE_ACTION", "SMC"}
+        assert all(isinstance(c, service.GuardianLabFillHistory) for c in history[0].args[0])
+
+
 def test_invalid_schema_unknown_fields_and_secret_text_are_rejected(app):
     payload = json.loads(_event().canonical_json())
     for changed in (

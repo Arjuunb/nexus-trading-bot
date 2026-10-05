@@ -359,6 +359,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Guardian's PA/SMC GET-only adapter shares pure bounded validation, not
     # the Guardian store or any trading instruction. Source files stay read-only.
     "automation-hub/services/guardian_lab_execution_read_model.py",
+    # Retained fill export reuses validation/identity hashing only. The query-
+    # only HTTP path never opens Guardian storage or invokes a trading runtime.
+    "automation-hub/services/guardian_lab_fill_read_model.py",
 }
 
 
