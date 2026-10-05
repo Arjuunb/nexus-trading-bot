@@ -22,7 +22,7 @@ Status: local foundation, independently runnable service, read-only Command Cent
 - Optional `GET /guardian/lab-feeds` uses the same independent observer key. It reads active PA/SMC session identity on query-only SQLite connections and each attached stream's local, time-evaluated status snapshot. It calls no exchange/network provider, chart hydration, strategy evaluation, broker, or journal. SMC reports feed `HEALTHY` only when its chart reconciler also agrees on the latest closed-candle timestamp; transport-only green remains `BLOCKED`. An intentional replay session has `UNKNOWN` live-feed health, not a false outage. The response excludes quotes, raw errors, credentials, and account data. `GUARDIAN_LAB_FEED_URL=http://app:8000/guardian/lab-feeds` enables separate `pa_feed` and `smc_feed` Guardian heartbeats. Feed health is **not** lab execution health, so `pa_lab` and `smc_lab` remain `UNKNOWN` until fuller evidence exists. A failed poll marks the probe `FAILED`.
 - Set `GUARDIAN_LAB_BACKFILL_URL=http://app:8000/guardian/evaluations` together with the separate `GUARDIAN_LAB_OBSERVER_KEY` to opt in. Guardian imports one bounded page per lab per poll. It commits immutable evidence and each lab's cursor in **one transaction in Guardian's own database**. An insert failure leaves the cursor unchanged; restart replays the page without duplicate evidence. `guardian_lab_backfill=DEGRADED` means there are more retained rows to catch up, not that trading is unhealthy. It becomes `HEALTHY` only when both sources are currently caught up. This proves **retained decision identity coverage after a polling outage** while the source rows remain intact; it does **not** recover deleted evaluations, earlier state transitions overwritten before observation, order/journal truth, or feed health. The recent snapshot observer remains necessary for material updates to recent rows. Manual source VACUUM/compaction can invalidate rowid anchoring and requires a reviewed recovery procedure; never reset the cursor automatically.
 
-- Optional `GET /guardian/smc-execution` uses the same independent observer key to read the SMC Agent intent database and isolated SMC paper broker database with query-only SQLite connections. It observes all outstanding intents (at most 64; more fails closed) plus the eight most recent complete and eight most recent failed intents. It matches recorded order IDs, can discover a committed entry order by its stable execution key even when the intent did not record the order ID, and checks linked journal trade and open-position ownership. It never submits, cancels, fills, or reconciles an order. `GUARDIAN_SMC_EXECUTION_URL=http://app:8000/guardian/smc-execution` enables an independent poller that saves deduplicated observations in Guardian's database. Its probe health means only that this read succeeded, **not** that SMC trading is healthy or execution integrity is proven.
+- Optional `GET /guardian/smc-execution` uses the same independent observer key to read the SMC Agent intent database and isolated SMC paper broker database with query-only SQLite connections. Its version 2 contract covers all outstanding intents (maximum 64), all open Agent journal trades (maximum 64), their linked intents even when older than the terminal sample, plus the eight most recent complete and eight most recent failed intents. Overflow fails closed. It matches recorded order IDs, can discover a committed entry order by its stable execution key even when the intent did not record the order ID, and checks linked journal trade and open-position ownership. It never submits, cancels, fills, or reconciles an order. `GUARDIAN_SMC_EXECUTION_URL=http://app:8000/guardian/smc-execution` enables an independent poller that saves deduplicated observations in Guardian's database. Its probe health means only that this read succeeded, **not** that SMC trading is healthy or execution integrity is proven.
 - SMC execution observations are **cross-database and non-atomic**. `BROKER_ORDER_UNRECORDED` means an entry order exists in the paper broker but the intent's order ID is empty; it must never be interpreted as “no order placed.” `FILLED_ORDER_JOURNAL_PENDING` means a filled broker entry has no linked journal trade yet. `ORDER_AWAITING_FILL` means the order has not filled; `AGENT_TRADE_PRECEDES_FILL` means an agent trade journal row exists but **no broker fill or position is proven**, even if the intent says `COMPLETE`. `JOURNAL_SIZE_EXCEEDS_BROKER_FILL` means a partially filled order has less executed size than its still-open agent trade record. `EXECUTION_UNCERTAIN`, `ORDER_ID_NOT_FOUND`, `ORDER_IDENTITY_MISMATCH`, `TRADE_ID_NOT_FOUND`, `TRADE_IDENTITY_MISMATCH`, `OPEN_TRADE_POSITION_UNVERIFIED`, and `DUPLICATE_EXECUTION_KEY` all require operator investigation and source-authoritative reconciliation. `PENDING` is **not** proof of no broker order when an intent has no recorded ID. The exporter does not declare incidents or recovery based on one racing snapshot. A durable source outbox and repeated source-authoritative verification are still required before claiming complete execution coverage.
 - The incident analyzer now groups SMC execution-integrity observations by execution key. An unfilled order alone, a pending intent, or a normal no-trade decision is not an incident. A trade journal row before any fill, a journal size larger than a partial fill, and other mismatches open a **POSSIBLE**, paper-only investigation; the severity is WARNING or HIGH according to the observed relationship. The broker and journal are read separately, so even a later `CONSISTENT` read only moves the incident to `RECOVERING`. It does **not** close it as verified. The source must provide an independently validated reconciliation event before any `RECOVERED` claim. The underlying SMC agent currently finalizes a trade journal row on broker order acceptance; this known execution/journal semantic defect is not repaired by Guardian observing it.
 - Identical SMC execution snapshots replay with the same Guardian event ID. A new durable intent `updated_at`, even if the projected fields look unchanged, receives a new ID so the event store does not reject the new source timestamp as a conflicting replay. Resting orders without fills are informational, not warnings.
@@ -38,6 +38,62 @@ Status: local foundation, independently runnable service, read-only Command Cent
 - Significant paper-pair findings create one incident per instance. Atomic, coverage-verified SQLite rows can confirm a **paper accounting** mismatch only; non-atomic remote reads remain `POSSIBLE`. Unverified legacy execution links and ordinary no-trade states do not trigger incident spam. A later matching pair moves an existing incident to `RECOVERING`, never to certified `RECOVERED`; no broker, stop order, repair, or live exposure is certified.
 
 ## Local service contract
+
+### SMC open Agent journal links
+
+The SMC execution source and collector must be upgraded together: the collector
+rejects the old version 1 coverage claim rather than treating it as complete open
+journal coverage. Version 2 declares
+`ALL_OUTSTANDING_AND_OPEN_JOURNAL_PLUS_RECENT_TERMINAL`. The execution list is a
+deduplicated union, at most 144 rows: 64 outstanding, 16 recent terminal and at
+most 64 additional intents linked to open trades. `extra_open_intent_count`
+counts only those additional rows. `open_journal_trades` includes all open Agent
+trades across retained sessions, at most 64, with the exact reverse link keys.
+The linked intent bound is also enforced; no overflow produces a healthy partial
+sample. Journal reads share one transaction; the broker remains a separate read.
+
+An early durable intent may have no assigned decision/session link yet. The
+collector retains those missing values explicitly; its stable execution key is
+still observed, without inventing a correlation or claiming execution integrity.
+
+`JOURNAL_INTENT_NOT_FOUND` is a missing authoritative link, not proof of no order
+or a corrupt legacy journal. Guardian records it by paper account and trade ID
+without inventing an execution key. `MULTIPLE_INTENTS_FOR_TRADE` reports two or
+more intents claiming the same journal trade. Market identity checks cover symbol,
+timeframe and direction, not just matching order IDs. `POSITION_SIDE_MISMATCH`
+and `CLOSED_TRADE_POSITION_STILL_OPEN` are investigation findings only; the latter
+requires the **same entry order**, not merely another position on the same symbol.
+The frozen journal entry/stop/target/RR are the approved plan: slippage or subsequent
+stop management does not by itself constitute an identity mismatch. This projection
+does not certify their execution geometry or a complete exit chain.
+
+Execution and open-journal link observations have versioned, account-scoped material
+hashes. Execution hashes also include decision/session/market identity and the
+durable intent update time. An unchanged refresh or Guardian restart imports no
+duplicate evidence. Guardian write failure can leave a partially imported snapshot;
+replay completes its individually immutable events idempotently and marks the probe
+failed until successful. There is **no cross-file atomic import/reconciliation claim**.
+Significant findings create `POSSIBLE` incidents in the existing incident API. A
+later link-found read moves an existing link incident only to `RECOVERING`, never
+certified `RECOVERED`. Account/record delimiters are escaped to avoid merging scopes.
+Previously retained version 1 events are unchanged; unscoped legacy incidents are
+not automatically resolved by version 2 evidence.
+
+The source selects only bounded identity/count/quantity fields, never intent JSON,
+journal prose or candle windows. It adds no source table/index or hot-path write.
+Read connections use `mode=ro`, `query_only`, a 250 ms busy timeout and a 500 ms SQL
+progress deadline. A blocked/unavailable/oversized source returns sanitized 503
+`PERSISTENCE_BLOCKED`. WAL reads remain available during a short write; no durability
+pragma is changed. The collector rejects redirects, bounds HTTP responses at 1 MiB,
+checks link back-references before importing any event, and marks a failed poll
+`FAILED` rather than retaining a fresh healthy probe.
+
+This closes the **older still-open journal trade** sampling gap only. It does not
+backfill every closed Agent trade or every intent transition, certify protective
+exit parentage, or recover transitions missed during a polling outage. PA setup
+journals, automatic SMC Lab executions outside the Agent and live accounts retain
+their separate contracts. Full journal/position lifecycle coverage, verified
+cross-account currency/exposure and production acceptance remain Phase 4 work.
 
 ### Isolated lab execution / risk evidence
 

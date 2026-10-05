@@ -226,6 +226,45 @@ def test_smc_execution_observation_rejects_untrusted_or_unverified_contract(guar
     assert engine.list() == []
 
 
+def test_smc_account_and_key_delimiters_cannot_merge_unrelated_incidents(guardian):
+    store, engine = guardian
+    _execution_observation(store, "smc_account_scope_01", "b:c", "EXECUTION_UNCERTAIN",
+                           evidence={"broker_account_id": "a"})
+    _execution_observation(store, "smc_account_scope_02", "c", "EXECUTION_UNCERTAIN",
+                           evidence={"broker_account_id": "a:b"})
+    engine.scan()
+    assert {row["fingerprint"] for row in engine.list()} == {
+        "smc_execution_integrity:a:b%3Ac", "smc_execution_integrity:a%3Ab:c"}
+
+
+@pytest.mark.parametrize("damage", ["source", "component", "paper", "atomic", "identity", "count", "code"])
+def test_untrusted_open_journal_link_does_not_create_an_incident(guardian, damage):
+    store, engine = guardian
+    values = dict(source_service="guardian_smc_probe", source_component="smc_agent_journal",
+                  reason="JOURNAL_INTENT_NOT_FOUND", metadata={"paper_only": True}, evidence={
+                      "trade_id": "trade-1", "broker_account_id": "paper-account",
+                      "execution_keys": [], "matching_intent_count": 0,
+                      "integrity_code": "JOURNAL_INTENT_NOT_FOUND",
+                      "cross_database_atomic": False, "execution_integrity_verified": False})
+    if damage == "source":
+        values["source_service"] = "smc_lab"
+    elif damage == "component":
+        values["source_component"] = "smc_agent"
+    elif damage == "paper":
+        values["metadata"]["paper_only"] = False
+    elif damage == "atomic":
+        values["evidence"]["cross_database_atomic"] = True
+    elif damage == "identity":
+        values["evidence"]["trade_id"] = ""
+    elif damage == "count":
+        values["evidence"]["matching_intent_count"] = 1
+    elif damage == "code":
+        values["evidence"]["integrity_code"] = "INTENT_LINK_FOUND"
+    _append(store, f"smc_journal_bad_{damage}", "agent_journal_integrity_observed", **values)
+    engine.scan()
+    assert engine.list() == []
+
+
 def test_active_incident_count_is_not_truncated_to_visible_page(guardian):
     store, engine = guardian
     for number in range(55):

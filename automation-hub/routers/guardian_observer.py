@@ -226,7 +226,7 @@ def guardian_smc_execution(x_guardian_observer_key: Optional[str] = Header(defau
         raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED",
                                   "code": "EXECUTION_EVIDENCE_UNAVAILABLE"}) from exc
     return JSONResponse({
-        "schema_version": 1,
+        "schema_version": 2,
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "feed_health_verified": False,
         "execution_integrity_verified": False,

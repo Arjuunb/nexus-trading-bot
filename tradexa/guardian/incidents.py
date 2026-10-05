@@ -12,6 +12,7 @@ import uuid
 from contextlib import closing
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 
 from .store import GuardianStore
 
@@ -26,12 +27,14 @@ _SMC_EXECUTION_WARNINGS = frozenset({
     "OPEN_TRADE_POSITION_UNVERIFIED", "BROKER_ORDER_UNRECORDED",
     "ORDER_ID_UNRECORDED", "TRADE_ID_NOT_FOUND",
     "COMPLETE_INTENT_TRADE_UNRECORDED", "EXECUTION_UNCERTAIN",
+    "CLOSED_TRADE_POSITION_STILL_OPEN",
 })
 _SMC_EXECUTION_HIGH = frozenset({
     "FILLED_ORDER_JOURNAL_PENDING", "DUPLICATE_EXECUTION_KEY",
     "ORDER_ID_NOT_FOUND", "ORDER_IDENTITY_MISMATCH",
     "TRADE_IDENTITY_MISMATCH", "ENTRY_MARKED_REDUCE_ONLY",
     "FAILED_INTENT_WITH_ORDER_ID",
+    "MULTIPLE_INTENTS_FOR_TRADE", "POSITION_SIDE_MISMATCH",
 })
 _INSTANCE_LEDGER_HIGH = frozenset({
     "MISSING_STOP", "STOP_GEOMETRY_INVALID", "POSITION_GEOMETRY_INVALID",
@@ -78,7 +81,11 @@ def classify_incident(event: dict) -> IncidentSignal | None:
                 evidence.get("execution_key") != key or
                 code != event.get("reason")):
             return None
-        fingerprint = f"smc_execution_integrity:{key}"
+        account = evidence.get("broker_account_id")
+        if account is not None and (not isinstance(account, str) or not 1 <= len(account) <= 256):
+            return None
+        fingerprint = (f"smc_execution_integrity:{quote(account, safe='')}:{quote(key, safe='')}" if account else
+                       f"smc_execution_integrity:{key}")
         if code == "CONSISTENT":
             # A later non-atomic healthy-looking read cannot close an incident.
             # Source-authoritative reconciliation must do that explicitly.
@@ -91,6 +98,28 @@ def classify_incident(event: dict) -> IncidentSignal | None:
         return IncidentSignal(fingerprint, "SMC paper execution integrity",
                               "smc_agent", f"SMC paper execution observation: {code}; broker and journal reads are non-atomic",
                               "POSSIBLE", severity, "OPEN")
+    if kind == "agent_journal_integrity_observed":
+        evidence = event.get("evidence") or {}
+        code, trade_id, account = (evidence.get(name) for name in
+                                   ("integrity_code", "trade_id", "broker_account_id"))
+        keys, count = evidence.get("execution_keys"), evidence.get("matching_intent_count")
+        if (source != "guardian_smc_probe" or component != "smc_agent_journal" or
+                (event.get("metadata") or {}).get("paper_only") is not True or
+                evidence.get("cross_database_atomic") is not False or
+                evidence.get("execution_integrity_verified") is not False or
+                any(not isinstance(value, str) or not 1 <= len(value) <= 256
+                    for value in (trade_id, account)) or
+                not isinstance(keys, list) or type(count) is not int or not 0 <= count <= 64 or
+                len(keys) != count or any(not isinstance(key, str) or not key for key in keys) or
+                len(set(keys)) != count or code != event.get("reason") or
+                code != ({0: "JOURNAL_INTENT_NOT_FOUND", 1: "INTENT_LINK_FOUND"}.get(
+                    count, "MULTIPLE_INTENTS_FOR_TRADE"))):
+            return None
+        return IncidentSignal(
+            f"smc_journal_link:{quote(account, safe='')}:{quote(trade_id, safe='')}", "SMC open journal execution link",
+            "smc_agent_journal", f"SMC open journal observation: {code}; execution truth is not certified",
+            "POSSIBLE", "HIGH" if count > 1 else "WARNING",
+            "RECOVERING" if count == 1 else "OPEN")
     if kind in {"websocket_disconnected", "stale_candle", "stale_htf_candle",
                 "candle_missing", "sequence_gap", "websocket_reconnected",
                 "feed_synchronized"}:

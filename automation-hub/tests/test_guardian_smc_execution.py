@@ -1,6 +1,7 @@
 """Guardian observes SMC paper evidence without becoming an order authority."""
 from datetime import datetime, timedelta, timezone
 import sqlite3
+from urllib.parse import quote
 
 from fastapi.testclient import TestClient
 
@@ -197,15 +198,16 @@ def test_real_resting_order_with_premature_trade_opens_possible_incident(tmp_pat
     observer = GuardianSMCExecutionObserver(
         store, URL, KEY,
         fetch=lambda: {**smc_execution_integrity_snapshot(journal_path, broker_path),
-                       "schema_version": 1,
+                       "schema_version": 2,
                        "observed_at": datetime.now(timezone.utc).isoformat(),
                        "feed_health_verified": False,
                        "execution_integrity_verified": False})
-    assert observer.poll() == 1
+    assert observer.poll() == 2  # execution plus its open-journal reverse link
     engine = GuardianIncidentEngine(store)
-    assert engine.scan() == 1
+    assert engine.scan() == 2
     [incident] = engine.list()
-    assert incident["fingerprint"] == "smc_execution_integrity:decision-1"
+    account_id = broker.account()["account_id"]
+    assert incident["fingerprint"] == f"smc_execution_integrity:{quote(account_id, safe='')}:decision-1"
     assert incident["severity"] == "WARNING"
     assert incident["confidence"] == "POSSIBLE"
     assert len(broker.orders()) == 1
@@ -223,7 +225,7 @@ def test_source_update_with_unchanged_projection_is_not_event_id_collision(tmp_p
     source["executions"][0]["updated_at"] = first_update.isoformat()
 
     def fetch():
-        return {**source, "schema_version": 1,
+        return {**source, "schema_version": 2,
                 "observed_at": datetime.now(timezone.utc).isoformat(),
                 "feed_health_verified": False,
                 "execution_integrity_verified": False}
@@ -250,7 +252,7 @@ def test_resting_order_without_trade_is_normal_guardian_info(tmp_path):
     observer = GuardianSMCExecutionObserver(
         store, URL, KEY,
         fetch=lambda: {**smc_execution_integrity_snapshot(journal_path, broker_path),
-                       "schema_version": 1,
+                       "schema_version": 2,
                        "observed_at": datetime.now(timezone.utc).isoformat(),
                        "feed_health_verified": False,
                        "execution_integrity_verified": False})
