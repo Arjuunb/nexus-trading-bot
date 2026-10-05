@@ -710,6 +710,142 @@ This milestone is local on `codex/guardian-foundation`, not pushed or deployed.
 No main, production configuration, live-routing flag, account history, strategy,
 dashboard, weekly-review or autonomous-recovery change is made.
 
+## Guardian retained SMC fill-position importer and exact-ID view
+
+The next local slice imports the source projection above without changing its
+broker capture, schema, Agent, journal writer, runtime or strategy. It is off by
+default. Explicitly configuring
+`GUARDIAN_SMC_FILL_POSITIONS_URL=http://app:8000/guardian/smc-fill-transitions`
+starts an independent read-only collector using `GUARDIAN_LAB_OBSERVER_KEY` and
+the source's `X-Guardian-Observer-Key` header. This is not `HUB_CONTROL_KEY`, an
+exchange key, Guardian ingestion key or Guardian API read key. The existing
+startup credential separation remains in force. No deployment config was changed.
+
+Each poll imports at most 32 fills. Guardian validates the v1 source contract,
+8 KiB material payload, aware timestamps, fresh observation, account/fill/order
+identities, finite numbers, snapshot shape and before/after effect. Its transport
+has a 3-second timeout, internal HTTP host/port/path allowlist, no redirects and
+a 384 KiB response cap (including bounded first/previous anchor snapshots).
+Malformed, oversized, stale, foreign or credential-like evidence never advances
+the checkpoint. No quote, rolling candle window or journal prose is imported.
+
+The immutable event ID hashes the versioned **account ID + fill ID**; the original
+execution key remains inside its recorded position origin, not an invented
+current execution-state header. One existing Guardian SQLite transaction commits
+the entire event page and its account/material cursor using compare-and-swap.
+An event INSERT or cursor failure rolls both back. Failure after that commit but
+before the separate heartbeat retains the imported facts/checkpoint and marks the
+observer unavailable. Restart resumes the same source sequence; replay cannot
+skip or duplicate a fill. Conflicting same-ID payloads fail rather than overwrite.
+Changed/deleted origin/predecessor, account swap or invalid cursor fails closed;
+there is no automatic rewind, source rewrite, cleanup or account reset.
+
+New Guardian read endpoints, authenticated only with `X-Guardian-Key` and
+`GUARDIAN_READ_KEY`, are:
+
+- `GET /v1/smc-fill-transitions?after=0`: pages Guardian's own retained events
+  by Guardian sequence, at most 32 rows. The imported source cursor, observer
+  health and page are read in one query-only Guardian snapshot.
+- `GET /v1/smc-position-links?execution_key=<original-key>`: indexed exact-key
+  intent/order lookup, followed by exact **account ID + original position ID**
+  associations. No market/time/price proximity joins and no source DB scan.
+
+The existing `/v1/smc-execution-links` entry-only contract is unchanged. The new
+position view reads at most 128 intent rows and 128 position rows, at most 2 MiB
+of unique event JSON, and rejects individual events over 16 KiB. It has a 1-second
+SQL deadline and 250 ms busy timeout. Read endpoints never recreate a missing
+Guardian DB or install a schema, and perform no writes. WAL reads remain
+available during short writes; persistent locks return sanitized
+`503 PERSISTENCE_UNAVAILABLE`. Invalid cached evidence returns sanitized
+`503 FILL_POSITION_EVIDENCE_UNAVAILABLE`. Retry after lock release works without
+resetting evidence. Missing/stale/failed/importing probes produce `UNKNOWN`, not
+a trading-system health certificate. `CAUGHT_UP_AT_LAST_POLL` means only that
+the last source page was read successfully, not that an exchange is safe.
+
+Position-link states deliberately describe **recorded relationships**, not
+verified current positions or complete trade lifecycle:
+
+| State | Meaning |
+| --- | --- |
+| `EXPLICIT_POSITION_LINKS_OBSERVED` | Retained intent/order and account/position-origin IDs agree in the available records |
+| `EXPLICIT_POSITION_EXIT_LINKS_OBSERVED` | Those IDs also occur on a recorded opposing reduce-only REDUCE/CLOSE fill |
+| `INSUFFICIENT_EVIDENCE` | Legacy/missing intent, order or origin evidence cannot establish all requested relationships |
+| `CONFLICTING_EVIDENCE` | Recorded account, session, order, trade, market, origin or reduce-only relationships contradict |
+| `UNKNOWN` | Source observation is unavailable/stale/importing or bounded evidence is truncated |
+
+A scale-in decision's exact order fill remains visible as
+`EXPLICIT_ORDER_ID_OBSERVED`, but it does **not** adopt the net position's earlier
+origin or certify allocation of the later exit to that decision. A reversal
+retains both old/new position IDs; the old origin is not joined to later exits
+of the new position. A non-reduce-only reversal is not labelled a protective exit.
+Same-symbol later positions and same-position strings in another account are
+not merged. `UNVERIFIED_LEGACY_FILL` stays null/unverified; history is never
+reconstructed. Missing evidence is never reported as MISSED or no order placed.
+
+All current-position, exit-verification, position/full-lifecycle, execution-
+integrity, paper-account binding, net-P&L and currency certification flags remain
+**false**. Retained source snapshots are not source immutability proof, stop/
+target history, entry-lot allocation, current exposure or a verified journal
+close. Guardian's own snapshot is atomic; different source databases are not.
+Conflicts/truncation suppress observed exit conclusions. Cached rows remain
+historical when source health is unknown.
+
+Only Guardian-owned partial indexes are installed. No trading data volume or
+trading dependency is added to Guardian's standalone image, and Guardian is not
+called by the broker hot path. Backend/API and testing skills guided bounded
+authenticated reads and crash/lock/replay tests. No UI, incident recovery,
+weekly-review, alpha, trading permission, live routing or production change is
+part of this local milestone.
+
+## Fill-position importer milestone validation (2026-10-05)
+
+The complete final local Python suite passed **4,737 tests, 15 skipped** in
+305.50 seconds, with zero failures/errors and 95 deprecation warnings. No
+background worker warning occurred in this final full run. Its JUnit evidence
+is `/private/tmp/guardian-smc-fill-position-import-complete-suite.xml`.
+
+This slice adds 97 regression cases: real isolated broker/Agent-journal import
+fixtures, standalone contract/view/HTTP tests, and opt-in monitor/read-contract
+coverage. The final narrowly focused run passed 137 cases; broader Guardian,
+paper-broker, crash-boundary and protection-lock checks passed 685 cases. The
+unchanged source-provenance, architecture and both SMC-lock systems passed 117
+cases (including all 10 decision-path and 17 Agent protection checks).
+
+The broader run emitted one background SMC test-worker warning in addition to
+five deprecation warnings. The affected source-observer lock test passed in
+isolation with only deprecation warnings; no warning filter or runtime change
+was used to suppress it. This is recorded separately from importer correctness,
+not treated as production feed/reconciliation evidence.
+
+Key **temporary fixture** results (orders/open positions/fills, never VPS counts):
+
+| Boundary or replay | Broker counts | Guardian result |
+| --- | --- | --- |
+| Guardian event or cursor INSERT failure | 1 / 1 / 1 | Zero imported events, zero checkpoint; retry imports one |
+| Failure after page commit, before heartbeat | 1 / 1 / 1 | One retained event/checkpoint; restart imports zero duplicates |
+| Synthetic protective close and 100 unchanged polls/reads after Guardian restart | 1 / 0 / 2 | Two retained events, one recorded exit association; broker/journal dumps unchanged |
+| Partial fills, separate scale decision, reductions/close and later same-symbol entry | 4 / 1 / 7 | Original origin has six rows/two reduce-only exits; later position excluded and scale decision not assigned original net ownership |
+| Reversal followed by new-position protective close | 2 / 0 / 3 | Old/new origin IDs separate; new exit never joined to old origin |
+
+Other regressions cover 32/32/6 retained paging across Guardian restart, late
+source timestamps, compare-and-swap races, conflicting same-ID replay, changed
+source account/origin/predecessor with no reset, null legacy evidence, stale/
+failed/importing probes, exact account isolation, impossible reduce-only
+relationships, conflicting session/market/order/trade IDs, oversized rows and
+128-row truncation, indexed older-history reads, numeric booleans/overflow/NaN,
+invalid Unicode, raw credential-like fields, independent-key auth, no redirects,
+missing-file no-creation, persistent SQLite lock/retry, WAL reads during short
+writes, and 100 read refreshes with no evidence or cursor writes. Standalone
+Guardian service imports do not load source execution/services/bot packages.
+
+Focused invocation from the repository root:
+`PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" python -m pytest -q automation-hub/tests/test_guardian_smc_fill_position_import.py tests/test_guardian_smc_fill_positions.py tests/test_guardian_service.py`.
+Complete validation uses the same absolute `PYTHONPATH` with `python -m pytest -q`.
+Protected strategy files and freeze baselines remain byte-unchanged from
+`804a7c0`; no source broker/Agent/runtime/journal/strategy writer changed from
+the prior local `304ff1c` milestone. This remains a local-only read-model phase,
+not a production rollout or complete execution/journal/lifecycle certification.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

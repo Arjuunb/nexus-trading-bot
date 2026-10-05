@@ -105,6 +105,22 @@ class GuardianStore:
                 CREATE INDEX IF NOT EXISTS smc_link_journal_trade
                   ON events(json_extract(payload_json,'$.evidence.trade.id'),sequence)
                   WHERE source_service='guardian_smc_journal_history' AND event_type='smc_closed_journal_observed';
+                CREATE INDEX IF NOT EXISTS smc_position_history ON events(sequence)
+                  WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_position_order ON events(json_extract(payload_json,'$.order_id'),sequence)
+                  WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_position_before_key
+                  ON events(json_extract(payload_json,'$.evidence.fill.transition.before.entry_execution_key'),sequence)
+                  WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_position_after_key
+                  ON events(json_extract(payload_json,'$.evidence.fill.transition.after.entry_execution_key'),sequence)
+                  WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_position_before_id
+                  ON events(json_extract(payload_json,'$.evidence.account_id'),json_extract(payload_json,'$.evidence.fill.transition.before.position_id'),sequence)
+                  WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_position_after_id
+                  ON events(json_extract(payload_json,'$.evidence.account_id'),json_extract(payload_json,'$.evidence.fill.transition.after.position_id'),sequence)
+                  WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
             """)
             conn.commit()
 
@@ -488,6 +504,95 @@ class GuardianStore:
             heartbeats = {r["component"]: dict(r) for r in db.execute(
                 "SELECT component,state,reason,observed_at FROM heartbeats WHERE component IN (?,?,?)", PROBES)}
         return {"intent_events": intents, "fill_events": fills, "journal_events": trades,
+                "heartbeats": heartbeats, "truncated": truncated}
+
+    def smc_fill_positions_page(self, *, after: int = 0) -> dict:
+        """Own imported history only; missing files are never recreated by GET."""
+        from .smc_fill_positions import COMPONENT, PROBE
+        if type(after) is not int or not 0 <= after <= 2**63-1:
+            raise ValueError("Invalid fill-position history cursor")
+        with closing(sqlite3.connect(self.path.resolve().as_uri()+"?mode=ro", uri=True, timeout=.25)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA busy_timeout=250")
+            db.execute("BEGIN")
+            rows = db.execute("SELECT sequence,received_at,length(CAST(payload_json AS BLOB)) AS bytes,"
+                              "substr(payload_json,1,16385) AS payload FROM events "
+                              "WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed' "
+                              "AND sequence>? ORDER BY sequence LIMIT 33", (after,)).fetchall()
+            if any(r["bytes"] > 16384 for r in rows):
+                raise ValueError("Fill-position history evidence exceeds bound")
+            events = [{**json.loads(r["payload"]), "guardian_sequence": r["sequence"], "received_at": r["received_at"]} for r in rows[:32]]
+            heartbeat = db.execute("SELECT * FROM heartbeats WHERE component=?", (PROBE,)).fetchone()
+            cursor = db.execute("SELECT source_sequence,anchor_id FROM observer_cursors WHERE component=?", (COMPONENT,)).fetchone()
+        return {"events": events, "after": after, "next_after": events[-1]["guardian_sequence"] if events else after,
+                "has_more": len(rows)>32, "guardian_snapshot_atomic": True,
+                "source_cursor": {"after": cursor["source_sequence"] if cursor else 0, "anchor": cursor["anchor_id"] if cursor else ""},
+                "heartbeats": {PROBE: dict(heartbeat)} if heartbeat else {}}
+
+    def smc_position_link_snapshot(self, execution_key: str) -> dict:
+        """Indexed exact key/account-position associations, never time/price joins."""
+        from time import monotonic
+        from .smc_position_links import MAX_ROWS, MAX_BYTES, PROBES
+        from .smc_execution_links import validate_key
+        from .smc_fill_positions import project_fill_position
+        key = validate_key(execution_key)
+        total, truncated, loaded = 0, False, set()
+        with closing(sqlite3.connect(self.path.resolve().as_uri()+"?mode=ro", uri=True, timeout=.25)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA busy_timeout=250")
+            deadline = monotonic()+1
+            db.set_progress_handler(lambda: int(monotonic()>deadline), 1000)
+            db.execute("BEGIN")
+
+            def select(source, kind, field, values, account=None):
+                nonlocal total, truncated
+                if not values or truncated:
+                    return []
+                slots = ",".join("?" for _ in values)
+                clause = " AND json_extract(payload_json,'$.evidence.account_id')=?" if account else ""
+                rows = db.execute("SELECT sequence,length(CAST(payload_json AS BLOB)) AS bytes,substr(payload_json,1,16385) AS payload "
+                                  f"FROM events WHERE source_service='{source}' AND event_type='{kind}' "
+                                  f"AND json_extract(payload_json,'{field}') IN ({slots})"+clause+" ORDER BY sequence LIMIT ?",
+                                  (*values, *((account,) if account else ()), MAX_ROWS+1))
+                result = []
+                for row in rows:
+                    if row["sequence"] in loaded:
+                        continue
+                    if row["bytes"]>16384:
+                        raise ValueError("Position-link event exceeds bound")
+                    if len(result)==MAX_ROWS or total+row["bytes"]>MAX_BYTES:
+                        truncated = True
+                        break
+                    loaded.add(row["sequence"])
+                    total += row["bytes"]
+                    result.append({**json.loads(row["payload"]), "guardian_sequence": row["sequence"]})
+                return result
+
+            intents = select(PROBES[0], "smc_intent_transition_observed", "$.execution_id", (key,))
+            transitions = []
+            orders = sorted({e.get("order_id") for e in intents if e.get("order_id")})
+            transitions += select(PROBES[1], "smc_fill_position_observed", "$.order_id", orders)
+            for side in ("before", "after"):
+                transitions += select(PROBES[1], "smc_fill_position_observed", f"$.evidence.fill.transition.{side}.entry_execution_key", (key,))
+            seeds = set()
+            for e in transitions:
+                account = e["evidence"]["account_id"]
+                fill = project_fill_position(e["evidence"]["fill"], account)
+                for side in ("before", "after"):
+                    pos = fill["transition"][side] if fill["transition"] else None
+                    if pos and pos["entry_execution_key"]==key and pos["position_id"]:
+                        seeds.add((account, pos["position_id"]))
+            if len(seeds)>MAX_ROWS:
+                truncated = True
+            for account, position in sorted(seeds)[:MAX_ROWS]:
+                for side in ("before", "after"):
+                    transitions += select(PROBES[1], "smc_fill_position_observed", f"$.evidence.fill.transition.{side}.position_id", (position,), account)
+            if len(transitions)>MAX_ROWS:
+                truncated = True
+            heartbeats = {r["component"]: dict(r) for r in db.execute("SELECT * FROM heartbeats WHERE component IN (?,?)", PROBES)}
+        return {"intent_events": intents, "position_events": sorted(transitions, key=lambda e:e["guardian_sequence"])[:MAX_ROWS],
                 "heartbeats": heartbeats, "truncated": truncated}
 
     def count(self) -> int:

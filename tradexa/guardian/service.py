@@ -39,6 +39,8 @@ from .smc_execution_observer import GuardianSMCExecutionObserver
 from .smc_journal_history import GuardianSMCJournalHistory, PROBE as JOURNAL_PROBE, smc_journal_history_view
 from .smc_intent_history import GuardianSMCIntentHistory, PROBE as INTENT_PROBE, smc_intent_history_view
 from .smc_execution_links import smc_execution_links_view, validate_key
+from .smc_fill_positions import GuardianSMCFillPositions, PROBE as POSITION_PROBE, smc_fill_positions_view
+from .smc_position_links import smc_position_links_view
 from .store import GuardianStore
 
 _STATUSES = {
@@ -210,7 +212,7 @@ class GuardianService:
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
-                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
+                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
@@ -255,6 +257,33 @@ class GuardianService:
                         view = smc_execution_links_view(self.store, key)
                     except (ValueError, TypeError, KeyError) as exc:
                         raise _HTTPError(503, "EXECUTION_LINK_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
+                if path in ("/v1/smc-fill-transitions", "/v1/smc-position-links"):
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if path == "/v1/smc-position-links":
+                        if set(query) != {"execution_key"} or len(query["execution_key"])!=1:
+                            raise _HTTPError(400, "INVALID_POSITION_LINK_QUERY")
+                        try:
+                            key = validate_key(query["execution_key"][0])
+                        except ValueError as exc:
+                            raise _HTTPError(400, "INVALID_POSITION_LINK_IDENTITY") from exc
+                        arguments = {"execution_key": key}
+                        read_view = smc_position_links_view
+                    else:
+                        if set(query)-{"after"} or any(len(v)!=1 for v in query.values()):
+                            raise _HTTPError(400, "INVALID_FILL_POSITION_HISTORY_QUERY")
+                        try:
+                            after = int(query.get("after", ["0"])[0])
+                            if not 0<=after<=2**63-1:
+                                raise ValueError("cursor range")
+                        except ValueError as exc:
+                            raise _HTTPError(400, "INVALID_FILL_POSITION_HISTORY_CURSOR") from exc
+                        arguments = {"after": after}
+                        read_view = smc_fill_positions_view
+                    try:
+                        view = read_view(self.store, **arguments)
+                    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                        raise _HTTPError(503, "FILL_POSITION_EVIDENCE_UNAVAILABLE") from exc
                     return self._respond(start_response, 200, view)
                 if path == "/v1/smc-intent-events":
                     query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
@@ -347,7 +376,7 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/reports", "/v1/notifications",
+                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
@@ -613,6 +642,9 @@ def main() -> None:
     intent_history_url = os.environ.get("GUARDIAN_SMC_INTENT_HISTORY_URL", "").strip()
     if intent_history_url and INTENT_PROBE not in required:
         required += (INTENT_PROBE,)
+    position_url = os.environ.get("GUARDIAN_SMC_FILL_POSITIONS_URL", "").strip()
+    if position_url and POSITION_PROBE not in required:
+        required += (POSITION_PROBE,)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required, research_key=research_key, admin_key=admin_key)
@@ -679,7 +711,12 @@ def main() -> None:
     intent_history_monitor = (Thread(target=_lab_execution_monitor, args=((
         GuardianSMCIntentHistory(store, intent_history_url, lab_observer_key),), stopped),
         daemon=True) if intent_history_url else None)
+    position_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCFillPositions(store, position_url, lab_observer_key),), stopped),
+        daemon=True) if position_url else None)
     monitor.start()
+    if position_monitor:
+        position_monitor.start()
     if intent_history_monitor:
         intent_history_monitor.start()
     if journal_history_monitor:
@@ -712,6 +749,8 @@ def main() -> None:
             server.serve_forever()
     finally:
         stopped.set()
+        if position_monitor:
+            position_monitor.join(timeout=2)
         if intent_history_monitor:
             intent_history_monitor.join(timeout=2)
         if journal_history_monitor:
