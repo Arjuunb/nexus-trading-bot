@@ -362,6 +362,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Retained fill export reuses validation/identity hashing only. The query-
     # only HTTP path never opens Guardian storage or invokes a trading runtime.
     "automation-hub/services/guardian_lab_fill_read_model.py",
+    # Closed Agent journal repeat-scan export shares a pure projection/cursor
+    # contract only. It does not import Guardian storage or trading authority.
+    "automation-hub/services/guardian_smc_journal_read_model.py",
 }
 
 

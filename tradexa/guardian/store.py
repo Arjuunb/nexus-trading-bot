@@ -79,6 +79,14 @@ class GuardianStore:
                     event_id TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS observer_scan_state (
+                    component TEXT PRIMARY KEY,
+                    cursor_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS events_smc_closed_journal ON events(sequence)
+                  WHERE source_service='guardian_smc_journal_history'
+                    AND event_type='smc_closed_journal_observed';
             """)
             conn.commit()
 
@@ -221,6 +229,66 @@ class GuardianStore:
             except Exception:
                 conn.rollback()
                 raise
+
+    def observer_scan_cursor(self, component: str) -> dict:
+        from .smc_journal_history import COMPONENT, INITIAL_CURSOR, validate_cursor
+        if component != COMPONENT:
+            raise ValueError("Invalid journal scan component")
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT cursor_json FROM observer_scan_state WHERE component=?",
+                               (component,)).fetchone()
+        return validate_cursor(json.loads(row[0]) if row else dict(INITIAL_CURSOR))
+
+    def append_observed_scan_page(self, component: str, *, expected: dict,
+                                  next_cursor: dict, events: list[GuardianEvent]) -> int:
+        """A repeat scan may advance through open rows with no evidence to insert.
+
+        Its finite-pass reset is different from the monotonic append-only fill
+        cursor. Both immutable close events and the CAS checkpoint commit here.
+        """
+        from .smc_journal_history import COMPONENT, INITIAL_CURSOR, PROBE, validate_cursor
+        expected, next_cursor = validate_cursor(expected), validate_cursor(next_cursor)
+        if (component != COMPONENT or len(events) > 32 or
+                any(e.source_component != COMPONENT or e.source_service != PROBE or
+                    e.event_type != "smc_closed_journal_observed" for e in events)):
+            raise ValueError("Invalid journal scan events")
+        same_pass = (next_cursor["cycle"] == expected["cycle"] and
+                     next_cursor["after"] > expected["after"] and
+                     (not expected["upper"] or next_cursor["upper"] == expected["upper"]))
+        finished = next_cursor["cycle"] == expected["cycle"] + 1 and next_cursor["after"] == 0
+        if not (same_pass or finished) or (expected["origin"] and next_cursor["origin"] != expected["origin"]):
+            raise ValueError("Invalid journal scan transition")
+        now = datetime.now(timezone.utc).isoformat()
+        with closing(self._connect()) as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute("SELECT cursor_json FROM observer_scan_state WHERE component=?",
+                                   (component,)).fetchone()
+                actual = json.loads(row[0]) if row else INITIAL_CURSOR
+                if actual != expected:
+                    raise ValueError("Journal scan checkpoint changed concurrently")
+                appended = sum(self._append_in_transaction(conn, event, now) for event in events)
+                conn.execute("INSERT INTO observer_scan_state(component,cursor_json,updated_at) VALUES (?,?,?) "
+                             "ON CONFLICT(component) DO UPDATE SET cursor_json=excluded.cursor_json,updated_at=excluded.updated_at",
+                             (component, json.dumps(next_cursor, sort_keys=True), now))
+                conn.commit()
+                return appended
+            except Exception:
+                conn.rollback()
+                raise
+
+    def smc_journal_history_page(self, *, after: int = 0) -> dict:
+        if type(after) is not int or not 0 <= after <= 2**63 - 1:
+            raise ValueError("Invalid journal history cursor")
+        with closing(self._connect()) as conn:
+            rows = conn.execute("SELECT sequence,received_at,payload_json FROM events "
+                                "WHERE source_service='guardian_smc_journal_history' "
+                                "AND event_type='smc_closed_journal_observed' AND sequence>? "
+                                "ORDER BY sequence LIMIT 33", (after,)).fetchall()
+        events = [{**json.loads(row["payload_json"]), "received_at": row["received_at"],
+                   "guardian_sequence": row["sequence"]} for row in rows[:32]]
+        return {"events": events, "after": after, "has_more": len(rows) > 32,
+                "next_after": events[-1]["guardian_sequence"] if events else after}
 
     def append_observed_snapshot(self, component: str, digest: str,
                                  event: GuardianEvent) -> bool:

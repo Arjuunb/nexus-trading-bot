@@ -152,6 +152,75 @@ This slice does not complete Phase 4: authoritative cross-account currency/expos
 correlation, every fill/exit's durable lifecycle, and full journal/reconciliation coverage
 remain required. Production installation and fault/load verification remain separate.
 
+### Retained closed SMC Agent journal observations
+
+Optional `GUARDIAN_SMC_JOURNAL_HISTORY_URL=http://app:8000/guardian/smc-journal`
+imports **recorded journal closes**, not broker execution truth. It is disabled by
+default and uses the existing independent observer key. Its scope is
+`CYCLIC_RETAINED_SMC_AGENT_CLOSED_TRADES`. No SMC rule, agent, journal writer,
+runtime, paper broker, session, source schema/index or source transaction is changed.
+Guardian never opens the journal for writing or runs its migration/constructor.
+
+An append-only rowid cursor alone would miss an older trade that closes after the
+cursor has passed it. Instead, each finite pass captures a maximum trade rowid,
+reads at most **32 trade rows per 30-second poll**, then starts a new pass at zero.
+Open rows advance the scan but create no immutable event. Concurrent new opens do
+not extend the current pass, so they cannot starve the revisit of earlier rows.
+A late close behind the cursor is observed when the next pass reaches it; detection
+is **eventual**, not immediate. For a fixed N-row retained table, a pass takes
+`ceil(N/32)` successful polls. Outages postpone coverage; no completeness is claimed
+for a whole pass because different pages have different read snapshots.
+
+`GET /guardian/smc-journal` accepts the exact returned `next_cursor` fields as
+query parameters: `cycle`, `after`, `upper`, `origin`, `anchor`. Initial values are
+zero/empty. The source uses query-only SQLite, a 250 ms busy timeout, a 500 ms SQL
+progress deadline, one snapshot per page and bounded scalar projections. It never
+loads candle windows, market/condition JSON, free-form trade rationale or credentials.
+The first retained trade's frozen plan anchors the origin; the pass upper row and
+predecessor's frozen plans anchor progression. Close fields are deliberately absent
+from anchors, so closing these rows does not break continuation. A detected origin,
+upper or predecessor change fails rather than silently resetting the scan. These
+anchors detect changes at the sampled boundaries, **not every possible source edit**.
+Lock/missing-source/malformed evidence returns a redacted 503
+`PERSISTENCE_BLOCKED / SMC_JOURNAL_HISTORY_UNAVAILABLE`. Negative/out-of-range
+numeric HTTP parameters return 422; malformed semantic cursors fail closed with 503.
+Authentication is `X-Guardian-Observer-Key`; it grants GET only, not control access.
+
+Closed rows become `smc_closed_journal_observed` events. Identity is SHA-256 over
+the versioned namespace, source origin and original journal trade ID. Each preserves
+recorded decision/order IDs, symbol/timeframe/direction, frozen entry/stop/target/RR/
+size, sizing metadata, strategy fingerprint, open/close timestamps, recorded exit,
+result and realised R. A frozen entry is **not** an actual fill price. Empty optional
+provenance is not fabricated, and no execution key, session, account, currency,
+position or exit-parent identity is inferred. Closed rows are immutable under the
+existing journal writer; a changed reimport under the same event ID is a hard collision,
+not an overwrite. These observations do not automatically finalize or repair journals.
+
+The events and repeat-scan checkpoint commit atomically, with compare-and-swap,
+in **Guardian's own** `observer_scan_state` and evidence tables. Failed inserts or
+checkpoint writes roll back both. Restart resumes the current finite pass; repeat
+passes and 100 unchanged refreshes create no additional evidence. Only the compact
+checkpoint/heartbeat changes on successful polls. No source revisions are generated.
+Redirects, untrusted URLs and responses exceeding 256 KiB are rejected. Collector
+failure marks its probe failed; it cannot stop or gate any trading worker.
+
+`GET /v1/smc-journal?after=0` uses the independent `X-Guardian-Key` read key and
+pages imported closes by **Guardian ingestion sequence**, 32 per page. Do not use
+that `after` as a source scan cursor. History remains readable during source outages.
+The response includes the durable scan cursor and probe age; `SCANNING` means a
+finite pass is in progress, `PASS_COMPLETED_AT_LAST_POLL` means only the last pass
+finished, and missing/failed/stale evidence is `UNKNOWN`. Probe `HEALTHY` means
+the bounded source read succeeded, never that the strategy or broker is healthy.
+Invalid queries return 400, persistence errors 503, mutations 405. There is no UI
+or verified historical count/P&L added. `full_lifecycle_verified`,
+`execution_integrity_verified`, `source_history_immutable_verified`,
+`currency_verified` and `net_pnl_verified` remain false.
+
+Remaining Phase 4 gaps include retained execution-intent transitions, authoritative
+broker fill/exit/position links to every journal close, cross-account currency/risk,
+and production fault/load validation. This milestone is local observation coverage,
+not full lifecycle or live/exchange certification.
+
 ### Resumable retained PA/SMC fill evidence
 
 `GUARDIAN_LAB_FILL_HISTORY_URL=http://app:8000/guardian/lab-fills` optionally imports
@@ -210,7 +279,7 @@ The research registry is **governance, not a research runner or certification sy
 
 Only a separate owner key can reject a hypothesis or approve development after all seven reported stages. Reviews bind the current evidence digest, fail on stale evidence, and are immutable/idempotent. Approval ends at `APPROVED_FOR_DEVELOPMENT_NO_DEPLOYMENT`, never modifies code/risk/orders or deploys. Hypothesis/result/review plus audit event commit atomically; failure rolls all changes back. `GUARDIAN_RESEARCH_KEY` and `GUARDIAN_ADMIN_KEY` are optional, independent of ingestion/read/observer/control credentials, and disabled by default. The Command Center is still read-only; it displays provenance, reported stages and unresolved verification. Do not send exchange secrets, raw generated code, commands, file paths or live-routing requests into this registry.
 
-Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON object mapping each source service to its own long random key), and a distinct `GUARDIAN_READ_KEY`. Optional settings: `GUARDIAN_REQUIRED_COMPONENTS`, `GUARDIAN_BIND_HOST`, `GUARDIAN_PORT`, `GUARDIAN_PUBLIC_STATUS_URL`, `GUARDIAN_LAB_OBSERVER_URL`, `GUARDIAN_LAB_BACKFILL_URL`, `GUARDIAN_LAB_LIFECYCLE_URL`, `GUARDIAN_INSTANCE_DECISION_URL`, `GUARDIAN_INSTANCE_LEDGER_URL`, `GUARDIAN_LAB_EXECUTION_URL`, `GUARDIAN_LAB_FILL_HISTORY_URL`, `GUARDIAN_LAB_FEED_URL`, `GUARDIAN_SMC_EXECUTION_URL`, and `GUARDIAN_LAB_OBSERVER_KEY`. The service rejects reuse of `HUB_CONTROL_KEY` when it is present in its environment and refuses a lab observer key shared with its read/source keys. Keep the database in a dedicated owner-only directory and supply secrets through a protected environment mechanism, not source control or shell history. With the public or lab collectors enabled, their own probes are required for overall health; `pa_lab` and `smc_lab` remain `UNKNOWN` until independent lab-health telemetry exists.
+Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON object mapping each source service to its own long random key), and a distinct `GUARDIAN_READ_KEY`. Optional settings: `GUARDIAN_REQUIRED_COMPONENTS`, `GUARDIAN_BIND_HOST`, `GUARDIAN_PORT`, `GUARDIAN_PUBLIC_STATUS_URL`, `GUARDIAN_LAB_OBSERVER_URL`, `GUARDIAN_LAB_BACKFILL_URL`, `GUARDIAN_LAB_LIFECYCLE_URL`, `GUARDIAN_INSTANCE_DECISION_URL`, `GUARDIAN_INSTANCE_LEDGER_URL`, `GUARDIAN_LAB_EXECUTION_URL`, `GUARDIAN_LAB_FILL_HISTORY_URL`, `GUARDIAN_LAB_FEED_URL`, `GUARDIAN_SMC_EXECUTION_URL`, `GUARDIAN_SMC_JOURNAL_HISTORY_URL`, and `GUARDIAN_LAB_OBSERVER_KEY`. The service rejects reuse of `HUB_CONTROL_KEY` when it is present in its environment and refuses a lab observer key shared with its read/source keys. Keep the database in a dedicated owner-only directory and supply secrets through a protected environment mechanism, not source control or shell history. With the public or lab collectors enabled, their own probes are required for overall health; `pa_lab` and `smc_lab` remain `UNKNOWN` until independent lab-health telemetry exists.
 
 | Method | Path | Authority | Result |
 | --- | --- | --- | --- |
@@ -230,6 +299,7 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | GET | `/v1/instance-ledger` | separate read key | latest paper-pair snapshot and current probe age; stale/failed risk masked; no global or verified-currency exposure |
 | GET | `/v1/lab-execution` | separate read key | separate PA/SMC paper order/fill/position observations, bounded integrity findings, source age and masked stale amounts |
 | GET | `/v1/lab-fills?lab=SMC&after=0` | separate read key | resumable imported fill evidence, 32 rows per page, per-lab import freshness; not verified trade/P&L accounting |
+| GET | `/v1/smc-journal?after=0` | separate read key | imported immutable closed Agent journal projections; late closes found by repeat scans, not verified broker exits or P&L |
 | GET | `/v1/reports` | separate read key | most recent 20 immutable closed-window evidence revisions; unknown economics remain null |
 | GET | `/v1/notifications` | separate read key | newest 50 deduplicated in-app incident notices; no remote send or remediation |
 | GET | `/v1/research/hypotheses` and `/v1/research/<64-hex-id>` | separate read key | bounded hypotheses/results/reviews with provenance and methods unverified |

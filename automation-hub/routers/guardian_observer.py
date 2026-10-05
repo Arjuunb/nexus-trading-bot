@@ -13,12 +13,35 @@ from config import settings
 from services.guardian_execution_read_model import smc_execution_integrity_snapshot
 from services.guardian_lab_execution_read_model import lab_paper_execution_snapshot
 from services.guardian_lab_fill_read_model import lab_fill_page
+from services.guardian_smc_journal_read_model import smc_journal_page
 from services.guardian_instance_read_model import instance_decision_page
 from services.guardian_instance_ledger_read_model import instance_paper_ledger_snapshot
 from services.guardian_lab_feed_read_model import lab_feed_snapshot
 from services.guardian_read_model import lab_decision_page, lab_decision_snapshot, lab_lifecycle_page
 
 router = APIRouter(tags=["guardian-observer"])
+
+
+@router.get("/guardian/smc-journal")
+def guardian_smc_journal(
+        cycle: int = Query(0, ge=0, le=2**63 - 1),
+        after: int = Query(0, ge=0, le=2**63 - 1),
+        upper: int = Query(0, ge=0, le=2**63 - 1),
+        origin: str = Query("", max_length=64),
+        anchor: str = Query("", max_length=64),
+        x_guardian_observer_key: Optional[str] = Header(default=None)):
+    """Closed Agent journal evidence only; no runtime, migration or broker calls."""
+    _require_observer_key(x_guardian_observer_key)
+    try:
+        page = smc_journal_page(settings.smc_agent_journal_db, cursor={
+            "cycle": cycle, "after": after, "upper": upper, "origin": origin, "anchor": anchor})
+    except (sqlite3.Error, ValueError, TypeError) as exc:
+        raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED",
+                                  "code": "SMC_JOURNAL_HISTORY_UNAVAILABLE"}) from exc
+    return JSONResponse({"schema_version": 1, "scope": "CYCLIC_RETAINED_SMC_AGENT_CLOSED_TRADES",
+                         "observed_at": datetime.now(timezone.utc).isoformat(),
+                         "execution_integrity_verified": False, "page": page},
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/guardian/lab-fills")

@@ -175,6 +175,72 @@ def test_invalid_schema_unknown_fields_and_secret_text_are_rejected(app):
     assert app.store.count() == 0
 
 
+def test_smc_journal_history_read_authority_unknown_state_and_errors(app, monkeypatch):
+    route = "/v1/smc-journal"
+    assert _request(app, "GET", route)[0] == 401
+    assert _request(app, "GET", route, key=SOURCE_KEY)[0] == 401
+    status, body, headers = _request(app, "GET", route, key=READ_KEY)
+    assert status == 200 and headers["Cache-Control"] == "no-store"
+    assert body["history_state"] == "UNKNOWN" and body["events"] == []
+    assert body["execution_integrity_verified"] is body["net_pnl_verified"] is False
+    assert body["whole_scan_atomic"] is False
+    assert _request(app, "POST", route, payload={}, key=READ_KEY)[0] == 405
+    for query in ("after=-1", "after=wat", "after=", "after=9999999999999999999999",
+                  "after=1&after=2", "limit=999", "lab=PRICE_ACTION", "cycle=0"):
+        assert _request(app, "GET", route, key=READ_KEY, query=query)[0] == 400
+    def fail(**kwargs):
+        raise sqlite3.OperationalError("fixture failure")
+    monkeypatch.setattr(app.store, "smc_journal_history_page", fail)
+    status, body, _ = _request(app, "GET", route, key=READ_KEY)
+    assert status == 503 and body["error"] == "PERSISTENCE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_smc_journal_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled):
+    import os
+    import tradexa.guardian.service as service
+    for key in list(os.environ):
+        if key.startswith("GUARDIAN_"):
+            monkeypatch.delenv(key)
+    monkeypatch.delenv("HUB_CONTROL_KEY", raising=False)
+    monkeypatch.setenv("GUARDIAN_DB_PATH", str(tmp_path / "guardian.db"))
+    monkeypatch.setenv("GUARDIAN_READ_KEY", READ_KEY)
+    monkeypatch.setenv("GUARDIAN_SOURCE_KEYS_JSON", json.dumps({"guardian_probe": SOURCE_KEY}))
+    if enabled:
+        monkeypatch.setenv("GUARDIAN_SMC_JOURNAL_HISTORY_URL", "http://app:8000/guardian/smc-journal")
+        monkeypatch.setenv("GUARDIAN_LAB_OBSERVER_KEY", "independent-observer-key-123456789")
+    threads, apps = [], []
+    class FakeThread:
+        def __init__(self, *, target, args, daemon):
+            self.target, self.args, self.started, self.joined = target, args, False, False
+            threads.append(self)
+        def start(self):
+            self.started = True
+        def join(self, timeout):
+            assert timeout == 2
+            self.joined = True
+    class Server:
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def serve_forever(self):
+            return None
+    def make_server(host, port, instance):
+        apps.append(instance)
+        return Server()
+    monkeypatch.setattr(service, "Thread", FakeThread)
+    monkeypatch.setattr(service, "make_server", make_server)
+    service.main()
+    observers = [t for t in threads if t.target == service._lab_execution_monitor]
+    assert len(observers) == int(enabled)
+    assert all(t.started and t.joined for t in threads)
+    assert (service.JOURNAL_PROBE in apps[0].required_components) == enabled
+    if enabled:
+        [collector] = observers[0].args[0]
+        assert isinstance(collector, service.GuardianSMCJournalHistory)
+
+
 def test_health_is_unknown_without_evidence_then_source_bound_heartbeat(app):
     status, self_health, _ = _request(app, "GET", "/healthz")
     assert status == 200 and self_health["self_state"] == "HEALTHY"
