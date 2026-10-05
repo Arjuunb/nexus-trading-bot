@@ -278,6 +278,74 @@ No predecessor state, fill, position, cause, trade finalization or P&L is inferr
 `EXECUTED`/`RECONCILED`/`COMPLETE` events. This extends retained observation
 coverage without certifying the full execution lifecycle or live routing.
 
+### Retained SMC explicit entry-fill and journal links
+
+`GET /v1/smc-execution-links?execution_key=<original-key>` requires the separate
+Guardian read key (`X-Guardian-Key`). It reads **Guardian's own imported evidence**,
+not a trading database, broker, runtime or current strategy. It uses the retained
+SMC intent, SMC fill and closed Agent journal collectors already documented above.
+No additional source endpoint, collector, environment flag or trading authority
+is introduced. No PA record, generic producer or time/market-only match can supply
+an SMC link.
+
+Lookups are by exact original execution key, original order IDs and recorded trade
+IDs using Guardian-owned partial JSON indexes. Every query is bound and indexed;
+large unrelated history does not evict an older execution merely because it is no
+longer recent. The view takes one query-only Guardian snapshot, including probe
+ages, with 250 ms busy timeout, a one-second query deadline, 128 rows per evidence
+category, a 2 MiB read budget and 16 KiB maximum per related event. Overflow sets
+`truncated=true`, makes the link state `UNKNOWN` and masks quantities and the last
+recorded state. Malformed or oversized evidence returns a redacted 503. No reads
+append events, checkpoints, incidents, trades or orders. A missing Guardian file
+is not recreated by this read path.
+
+`EXPLICIT_ENTRY_FILL_LINKS_OBSERVED` means the captured fill records match one
+recorded order ID, the original execution key and market identity, with no observed
+account/link conflict and fresh caught-up intent/fill probes. The quantity and
+weighted price describe **only captured entry-linked fill records**: not an open
+position size, complete order fill, realized return or certified trade. Resting
+orders may already have a `COMPLETE` Agent journal row but no fill; that is
+`INSUFFICIENT_EVIDENCE`, never a synthetic fill. A fill arriving later is seen by
+the next existing fill import without requiring another intent event.
+
+`BROKER_FILL_UNRECORDED_ON_INTENT` preserves a discovered broker fill when the
+intent has not yet recorded its order ID; its link remains `UNVERIFIED`, never
+`MISSED` or "No order was placed". A recorded journal close is linked only by
+explicit order **and** trade IDs plus market identity. It does not certify that
+the broker exited. The broker's current fill schema does not retain the original
+entry/position identity on every synthetic protective/remediation fill, and its
+position table contains only current net positions. This slice does not invent
+those historical associations from timestamps, prices, sizes, symbol or P&L.
+
+Conflicting keys/orders/trades/markets/directions, repeated source IDs, different
+intent origins or multiple paper accounts yield `CONFLICTING_EVIDENCE` and no
+quantity/price aggregate. `UNKNOWN` takes precedence for stale/failed/importing
+intent or fill probes and truncated reads. Cached historical records remain
+visible; a failed close-journal probe labels close evidence `UNKNOWN` without
+hiding independently observed entry fills. `latest_recorded_state` is journal
+history, never a verified current runtime state. All no-match findings mean
+"not observed", not proof of no execution.
+
+Important finding codes include `FILL_ORDER_LINK_CONFLICT`,
+`FILL_EXECUTION_KEY_CONFLICT`, `FILL_MARKET_CONFLICT`, `FILL_SIDE_CONFLICT`,
+`MULTIPLE_PAPER_ACCOUNTS`, `MULTIPLE_JOURNAL_ORIGINS`, `INTENT_IDENTITY_CONFLICT`,
+`JOURNAL_ORDER_LINK_CONFLICT`, `JOURNAL_TRADE_LINK_CONFLICT`,
+`JOURNAL_MARKET_CONFLICT`, `JOURNAL_DIRECTION_CONFLICT`,
+`FAILED_INTENT_WITH_RECORDED_FILL` and `LINK_EVIDENCE_TRUNCATED`. They are bounded
+record findings, not proven causes, incidents or recovery commands.
+Missing legacy fill keys/timeframes or journal order IDs remain `UNVERIFIED`,
+not confirmed identity conflicts; missing entry links mask the aggregate.
+
+`guardian_snapshot_atomic=true` refers only to Guardian's own snapshot;
+`cross_database_atomic=false` explicitly preserves the independent import boundary.
+`execution_integrity_verified`, `full_lifecycle_verified`,
+`position_lifecycle_verified`, `exit_link_verified`,
+`paper_account_binding_verified`, `currency_verified`, `net_pnl_verified` and
+`observed_quantity_is_complete` remain false. Query errors return 400, missing
+read authority 401, mutations 405 and persistence/evidence failures 503. The whole
+Guardian execution/journal PRD is still incomplete; durable exit/position origin
+evidence, complete lifecycles and production fault acceptance remain required.
+
 ### Resumable retained PA/SMC fill evidence
 
 `GUARDIAN_LAB_FILL_HISTORY_URL=http://app:8000/guardian/lab-fills` optionally imports
@@ -358,6 +426,7 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | GET | `/v1/lab-fills?lab=SMC&after=0` | separate read key | resumable imported fill evidence, 32 rows per page, per-lab import freshness; not verified trade/P&L accounting |
 | GET | `/v1/smc-journal?after=0` | separate read key | imported immutable closed Agent journal projections; late closes found by repeat scans, not verified broker exits or P&L |
 | GET | `/v1/smc-intent-events?after=0` | separate read key | retained recorded Agent transitions with original execution/order/trade links; not verified broker execution or current status |
+| GET | `/v1/smc-execution-links?execution_key=<original-key>` | separate read key | bounded exact retained entry-fill/order/trade links; no invented exit or position lifecycle, no accounting certification |
 | GET | `/v1/reports` | separate read key | most recent 20 immutable closed-window evidence revisions; unknown economics remain null |
 | GET | `/v1/notifications` | separate read key | newest 50 deduplicated in-app incident notices; no remote send or remediation |
 | GET | `/v1/research/hypotheses` and `/v1/research/<64-hex-id>` | separate read key | bounded hypotheses/results/reviews with provenance and methods unverified |
@@ -485,6 +554,45 @@ Focused invocation from the repository root:
 This milestone is local on `codex/guardian-foundation`, not pushed or deployed.
 No dashboard, live-routing, account reset, strategy tuning or automatic recovery
 was added. Recorded transition coverage is not full execution/exit/P&L validation.
+
+## Retained SMC entry-link milestone validation (2026-10-05)
+
+The complete local Python suite passed **4,587 tests, 15 skipped** in 332 seconds
+(95 existing deprecation warnings; zero failures/errors). This slice adds 48
+cases: 40 bounded evidence-link tests, four real paper-broker/Agent-journal fixture
+integrations and four authenticated API/failure cases. The final targeted run
+passed 121 cases; broader Guardian, crash/recovery, architecture and SMC-lock
+regressions passed 644 cases. Both source and behaviour freezes pass, including
+all 10 decision-path freeze and 17 agent strategy-protection tests. The protected
+source files and freeze baselines have no diff from `804a7c0`; the Agent, broker,
+journal writer and runtime are unchanged in this slice.
+
+Real isolated fixtures exercise a filled entry, an accepted resting order whose
+fill arrives after journal finalization, a broker fill before the intent records
+its order ID, and a journal close with a synthetic protective fill that cannot
+prove an originating exit link. The fixtures preserve one broker entry order and
+one open position after the delayed fill; before journal finalization they retain
+one order/position and zero trade journal rows without reporting MISSED or no order.
+The protective-close fixture has two broker fills and zero open positions, but
+Guardian exposes only the explicitly linked entry fill and recorded journal IDs;
+it deliberately does not certify the exit chain. These are fixture outcomes,
+not production broker/reconciliation evidence.
+
+Tests also cover partial-fill weighted prices, duplicate IDs, conflicting keys,
+markets, sessions, orders, trades and accounts, missing legacy provenance,
+independent probe failure, stale/importing observations, 128-row and byte bounds,
+invalid arithmetic, indexed older-history reads, missing database files, query
+authentication/redaction, WAL concurrent reads, persistent locks and retry, 100
+unchanged reads and Guardian-store restart with no new evidence or source writes.
+
+Focused invocation from the repository root:
+`PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" python -m pytest -q automation-hub/tests/test_guardian_smc_entry_links.py tests/test_guardian_smc_execution_links.py tests/test_guardian_service.py tests/test_core_architecture.py`.
+The full invocation uses the same absolute `PYTHONPATH` with `python -m pytest -q`.
+This milestone is local on `codex/guardian-foundation`, not pushed or deployed.
+Backend/API and testing skills guided scoped read access and failure coverage.
+No UI, strategy, trading authority, live-routing, source-schema, account-reset,
+weekly-review or automatic-recovery change was made. Complete durable exit and
+position-origin evidence remains a separate, unimplemented requirement.
 
 ## PRD completion boundary
 

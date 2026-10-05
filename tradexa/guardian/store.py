@@ -90,6 +90,21 @@ class GuardianStore:
                 CREATE INDEX IF NOT EXISTS events_smc_intent_history ON events(sequence)
                   WHERE source_service='guardian_smc_intent_history'
                     AND event_type='smc_intent_transition_observed';
+                CREATE INDEX IF NOT EXISTS smc_link_intent_key
+                  ON events(json_extract(payload_json,'$.execution_id'),sequence)
+                  WHERE source_service='guardian_smc_intent_history' AND event_type='smc_intent_transition_observed';
+                CREATE INDEX IF NOT EXISTS smc_link_fill_key
+                  ON events(json_extract(payload_json,'$.evidence.fill.candle_id'),sequence)
+                  WHERE source_service='guardian_smc_fill_history' AND event_type='lab_paper_fill_observed';
+                CREATE INDEX IF NOT EXISTS smc_link_fill_order
+                  ON events(json_extract(payload_json,'$.order_id'),sequence)
+                  WHERE source_service='guardian_smc_fill_history' AND event_type='lab_paper_fill_observed';
+                CREATE INDEX IF NOT EXISTS smc_link_journal_order
+                  ON events(json_extract(payload_json,'$.order_id'),sequence)
+                  WHERE source_service='guardian_smc_journal_history' AND event_type='smc_closed_journal_observed';
+                CREATE INDEX IF NOT EXISTS smc_link_journal_trade
+                  ON events(json_extract(payload_json,'$.evidence.trade.id'),sequence)
+                  WHERE source_service='guardian_smc_journal_history' AND event_type='smc_closed_journal_observed';
             """)
             conn.commit()
 
@@ -412,6 +427,68 @@ class GuardianStore:
                    "guardian_sequence": row["sequence"]} for row in rows[:32]]
         return {"events": events, "after": after, "has_more": len(rows) > 32,
                 "next_after": events[-1]["guardian_sequence"] if events else after}
+
+    def smc_execution_link_snapshot(self, execution_key: str) -> dict:
+        """Bounded indexed ID lookups and probe age in one Guardian read snapshot.
+
+        No trading database is opened. The separate source imports are not
+        thereby made atomic. Overflow preserves partial evidence, not claims.
+        """
+        from time import monotonic
+        from .smc_execution_links import MAX_ROWS, MAX_BYTES, MAX_EVENT_BYTES, PROBES, validate_key
+        from .smc_intent_history import project_transition
+        key = validate_key(execution_key)
+        total, truncated = 0, False
+        with closing(sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=.25)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA busy_timeout=250")
+            deadline = monotonic() + 1
+            db.set_progress_handler(lambda: int(monotonic() > deadline), 1000)
+            db.execute("BEGIN")
+
+            def select(source, kind, field, values):
+                nonlocal total, truncated
+                if not values:
+                    return []
+                slots = ",".join("?" for _ in values)
+                rows = db.execute("SELECT sequence,length(CAST(payload_json AS BLOB)) AS bytes,"
+                                  "substr(payload_json,1,16385) AS payload FROM events "
+                                  f"WHERE source_service='{source}' AND event_type='{kind}' "
+                                  f"AND json_extract(payload_json,'{field}') IN ({slots}) "
+                                  "ORDER BY sequence LIMIT ?", (*values, MAX_ROWS + 1))
+                result = []
+                for row in rows:
+                    if row["bytes"] > MAX_EVENT_BYTES:
+                        raise ValueError("Retained linkage event exceeded size bound")
+                    if len(result) == MAX_ROWS or total + row["bytes"] > MAX_BYTES:
+                        truncated = True
+                        break
+                    total += row["bytes"]
+                    result.append({**json.loads(row["payload"]), "guardian_sequence": row["sequence"]})
+                return result
+
+            intents = select(PROBES[0], "smc_intent_transition_observed", "$.execution_id", (key,))
+            projected = [project_transition(e.get("evidence", {}).get("transition")) for e in intents]
+            order_ids = sorted({e.get("order_id") for e in intents if e.get("order_id")})
+            trade_ids = sorted({e["trade_id"] for e in projected if e["trade_id"]})
+            fills = select(PROBES[1], "lab_paper_fill_observed", "$.evidence.fill.candle_id", (key,))
+            fills += select(PROBES[1], "lab_paper_fill_observed", "$.order_id", order_ids)
+            trades = select(PROBES[2], "smc_closed_journal_observed", "$.order_id", order_ids)
+            trades += select(PROBES[2], "smc_closed_journal_observed", "$.evidence.trade.id", trade_ids)
+
+            def unique(rows):
+                nonlocal truncated
+                result = {r["guardian_sequence"]: r for r in rows}
+                if len(result) > MAX_ROWS:
+                    truncated = True
+                return [result[k] for k in sorted(result)[:MAX_ROWS]]
+
+            fills, trades = unique(fills), unique(trades)
+            heartbeats = {r["component"]: dict(r) for r in db.execute(
+                "SELECT component,state,reason,observed_at FROM heartbeats WHERE component IN (?,?,?)", PROBES)}
+        return {"intent_events": intents, "fill_events": fills, "journal_events": trades,
+                "heartbeats": heartbeats, "truncated": truncated}
 
     def count(self) -> int:
         with closing(self._connect()) as conn:

@@ -38,6 +38,7 @@ from .research import GuardianResearch
 from .smc_execution_observer import GuardianSMCExecutionObserver
 from .smc_journal_history import GuardianSMCJournalHistory, PROBE as JOURNAL_PROBE, smc_journal_history_view
 from .smc_intent_history import GuardianSMCIntentHistory, PROBE as INTENT_PROBE, smc_intent_history_view
+from .smc_execution_links import smc_execution_links_view, validate_key
 from .store import GuardianStore
 
 _STATUSES = {
@@ -209,7 +210,7 @@ class GuardianService:
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
-                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
+                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
@@ -242,6 +243,19 @@ class GuardianService:
                     if not 0 <= after <= 2**63 - 1:
                         raise _HTTPError(400, "INVALID_JOURNAL_HISTORY_CURSOR")
                     return self._respond(start_response, 200, smc_journal_history_view(self.store, after=after))
+                if path == "/v1/smc-execution-links":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) != {"execution_key"} or len(query["execution_key"]) != 1:
+                        raise _HTTPError(400, "INVALID_EXECUTION_LINK_QUERY")
+                    try:
+                        key = validate_key(query["execution_key"][0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_EXECUTION_LINK_IDENTITY") from exc
+                    try:
+                        view = smc_execution_links_view(self.store, key)
+                    except (ValueError, TypeError, KeyError) as exc:
+                        raise _HTTPError(503, "EXECUTION_LINK_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
                 if path == "/v1/smc-intent-events":
                     query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
                     if set(query) - {"after"} or any(len(v) != 1 for v in query.values()):
@@ -333,7 +347,7 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/reports", "/v1/notifications",
+                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")

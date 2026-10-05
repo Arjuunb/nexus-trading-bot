@@ -252,6 +252,38 @@ def test_smc_history_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled,
         assert isinstance(collector, expected)
 
 
+def test_smc_execution_links_auth_query_limits_and_read_only_contract(app, monkeypatch):
+    route, query = "/v1/smc-execution-links", "execution_key=decision-1"
+    for key in ("", SOURCE_KEY):
+        assert _request(app, "GET", route, key=key, query=query)[0] == 401
+    status, view, headers = _request(app, "GET", route, key=READ_KEY, query=query)
+    assert status == 200 and headers["Cache-Control"] == "no-store"
+    assert view["link_state"] == "UNKNOWN" and view["entry_fills"] == []
+    assert view["guardian_snapshot_atomic"] is True
+    assert view["cross_database_atomic"] is view["execution_integrity_verified"] is False
+    assert view["observed_entry_quantity"] is None
+    for bad in ("", "execution_key=", "execution_key=a&execution_key=b", "execution_key=a&limit=999",
+                "execution_key=a/b", "execution_key=" + "a" * 257, "execution_key=Bearer%20credential"):
+        assert _request(app, "GET", route, key=READ_KEY, query=bad)[0] == 400
+    assert _request(app, "POST", route, key=READ_KEY, payload={})[0] == 405
+    assert app.store.count() == 0
+    def unavailable(*args):
+        raise sqlite3.OperationalError("private fixture path and key")
+    monkeypatch.setattr(app.store, "smc_execution_link_snapshot", unavailable)
+    assert _request(app, "GET", route, key=READ_KEY, query=query)[:2] == (
+        503, {"error": "PERSISTENCE_UNAVAILABLE"})
+
+
+@pytest.mark.parametrize("error", [ValueError, TypeError, KeyError])
+def test_smc_execution_links_invalid_evidence_returns_redacted_unavailable(app, monkeypatch, error):
+    def fail(*args):
+        raise error("private source identity")
+    monkeypatch.setattr(app.store, "smc_execution_link_snapshot", fail)
+    status, body, _ = _request(app, "GET", "/v1/smc-execution-links", key=READ_KEY,
+                             query="execution_key=decision-1")
+    assert status == 503 and body == {"error": "EXECUTION_LINK_EVIDENCE_UNAVAILABLE"}
+
+
 def test_health_is_unknown_without_evidence_then_source_bound_heartbeat(app):
     status, self_health, _ = _request(app, "GET", "/healthz")
     assert status == 200 and self_health["self_state"] == "HEALTHY"
