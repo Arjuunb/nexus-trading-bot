@@ -223,7 +223,10 @@ class PriceActionRejectionStrategy(HubStrategy):
             entry=proposal.entry, stop_loss=proposal.stop,
             take_profit=proposal.target, reason=self.last_reason,
         )
-        signal.journal_setup = self._journal_setup(proposal)
+        try:
+            signal.journal_setup = self._journal_setup(proposal)
+        except Exception:  # noqa: BLE001 — journal evidence must never affect the signal
+            signal.journal_setup = None
         return signal
 
     def _journal_setup(self, proposal: ProposedTrade) -> dict:

@@ -102,7 +102,11 @@ idempotent and isolated from the others.
    - applies ledger closes the live hook missed.
 
    Rows younger than two minutes are left to the live hooks.
-3. **Lab ingestion**: rebuilds round trips from each lab's stored `v2_fills` (scale-ins, partial exits and reversals), and joins the order metadata and the setup each lab froze at placement. Funding events inside the trip window are attached. The exit reason is inferred from the protective fill price and labelled `INFERRED_FROM_FILL_PRICE`.
+3. **Lab ingestion**: rebuilds round trips from each lab's stored `v2_fills` (scale-ins, partial exits and reversals), and joins the order metadata and the setup each lab froze at placement.
+   - **Stop and target** are the levels the lab broker actually armed on the position. With a frozen target R, `PaperBrokerV2` re-anchors the target to the real average fill. The journal applies the same rule (`PaperBrokerV2._resolved_protection`) to the same stored inputs, so `initial_target` and `planned_rr` match the broker. The order's pre-fill target is kept in the snapshot as `risk.pre_fill_target`.
+   - **Funding** goes to the trip whose position the broker charged. A lab broker holds one position per symbol, so a funding event belongs to the trip on its symbol that opened at or before it and before the next trip on that symbol opened. All events of one broker `position_id` stay together. This covers funding booked between the exit quote's receipt and its processing.
+   - **Exit reason** is inferred from the protective fill price and labelled `INFERRED_FROM_FILL_PRICE`.
+   - **Steady state**: one query fetches the already-finalised lab fills and those trips are skipped, so a pass does not grow with closed history. Lab evidence (PA excursions, the SMC candidate evaluation) is read one record at a time, only for trips being created or finalised.
 4. **Replay journal**: imported as `BACKTEST`, R only.
 
 ## 5. Sessions and time (`services/journal_sessions.py`)
@@ -186,3 +190,6 @@ Journal tabs:
 - **SMC instance strategy:** its structure-break condition does not distinguish BOS from CHoCH, and the journal says so.
 - **Account equity before entry:** recorded only when it is knowable, i.e. no other position open, or the lab captured it at placement.
 - **Migrated legacy records:** keep NULL for every field they never captured. Records without provenance stay `UNKNOWN` mode.
+- **Legs repaired by reconciliation:** when a live hook was missed, the ledger row supplies the fee amount but not the commission rate, so that leg's fee `rate` is NULL. A `paper_trades` row carries no position id, so the remainder is linked by its ledger trade id only, with no `LEDGER_POSITION` link.
+- **Manual protection edits inside a lab** (`set_protection` on a lab position) are audited by the lab, but they are not in the broker fills the journal ingests. A lab trade's `current_stop` / `current_target` therefore stay at the armed levels.
+- **Factory reset** clears the journal together with the ledger, as the audited operator reset always has. No other path deletes a journal record.

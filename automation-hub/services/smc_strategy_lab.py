@@ -613,7 +613,10 @@ class SMCPaperAccount:
                                    market_data_source="Binance USD-M public WebSocket",
                                    candle_id=idempotency_key)
         now = _iso()
-        account_before = self.broker.account(persist_metrics=False)
+        try:
+            account_before = self.broker.account(persist_metrics=False)
+        except Exception:  # noqa: BLE001 — journal evidence must never affect placement
+            account_before = {}
         config = {"reference_price": entry, "stop_loss": protective_stop,
                   "target_1": target_1, "target_2": target_2,
                   "target_1_r": target_1_r, "target_2_r": target_2_r, "rules": rules,
@@ -1374,20 +1377,27 @@ class SMCPaperAccount:
                 except (TypeError, ValueError):
                     item["config"] = {}
                 meta[item["order_id"]] = item
-            candidates = {}
-            for row in self._db.execute(
-                    "SELECT proposal_id, model_id, status, payload, created_at FROM smc_candidates "
-                    "WHERE proposal_id IN (SELECT proposal_id FROM smc_order_meta WHERE proposal_id IS NOT NULL)"):
-                try:
-                    payload = json.loads(row["payload"] or "{}")
-                except (TypeError, ValueError):
-                    payload = {}
-                candidates[row["proposal_id"]] = {"model_id": row["model_id"], "status": row["status"],
-                                                  "created_at": row["created_at"], "payload": payload}
             sessions = {row["id"]: dict(row) for row in self._db.execute(
                 "SELECT id, mode, symbol, timeframe, started_at, status, risk_pct FROM smc_sessions")}
-        return {**export, "lab_id": "SMC_LAB", "meta": meta, "candidates": candidates,
+        return {**export, "lab_id": "SMC_LAB", "meta": meta,
+                "candidate_lookup": self._journal_candidate,
                 "sessions": sessions, "strategy_version": STRATEGY_VERSION}
+
+    def _journal_candidate(self, proposal_id: str) -> dict:
+        """The candidate evaluation frozen at decision time for ONE proposal,
+        by a targeted read (never every candidate on every sync pass)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT proposal_id, model_id, status, payload, created_at FROM smc_candidates "
+                "WHERE proposal_id=?", (proposal_id,)).fetchone()
+        if not row:
+            return {}
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        return {"model_id": row["model_id"], "status": row["status"],
+                "created_at": row["created_at"], "payload": payload}
 
     def journal(self, session_id: str | None = None) -> dict:
         session_ids = ([session_id] if session_id else

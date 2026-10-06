@@ -109,7 +109,7 @@ class SMCStrategy(HubStrategy):
                          reason=f"SMC long — sweep+CHoCH+FVG, HTF {bias_name}")
             sig.confidence = self._confidence(strength)
             sig.snapshot = {"mtf_evidence": dict(self._native_mtf_evidence)}
-            sig.journal_setup = self._journal_setup("bullish", i, bias_name, strength, bull_pin)
+            sig.journal_setup = self._safe_journal_setup("bullish", i, bias_name, strength, bull_pin)
             return sig
 
         if short_ok:
@@ -122,9 +122,15 @@ class SMCStrategy(HubStrategy):
                          reason=f"SMC short — sweep+CHoCH+FVG, HTF {bias_name}")
             sig.confidence = self._confidence(strength)
             sig.snapshot = {"mtf_evidence": dict(self._native_mtf_evidence)}
-            sig.journal_setup = self._journal_setup("bearish", i, bias_name, strength, bear_pin)
+            sig.journal_setup = self._safe_journal_setup("bearish", i, bias_name, strength, bear_pin)
             return sig
         return None
+
+    def _safe_journal_setup(self, *args) -> dict | None:
+        try:
+            return self._journal_setup(*args)
+        except Exception:  # noqa: BLE001 — journal evidence must never affect the signal
+            return None
 
     def _journal_setup(self, direction: str, i: int, bias_name: str, strength: float,
                        rejection: bool) -> dict:

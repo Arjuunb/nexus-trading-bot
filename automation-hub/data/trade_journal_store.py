@@ -619,6 +619,14 @@ class TradeJournalStore:
             return {r[0] for r in self._c.execute(
                 "SELECT ref FROM journal_trade_links WHERE link_type=?", (link_type,))}
 
+    def finalised_refs(self, link_type: str) -> set[str]:
+        """Refs of one link type whose trade is already finalised — one query,
+        so a sync pass can skip closed history without a lookup per trade."""
+        with self._lock:
+            return {r[0] for r in self._c.execute(
+                "SELECT l.ref FROM journal_trade_links l JOIN journal_trades t ON t.trade_id = l.trade_id "
+                "WHERE l.link_type=? AND t.finalised_at IS NOT NULL", (link_type,))}
+
     # ------------------------------------------------------------- executions
     def add_execution(self, trade_id: str, execution: dict) -> bool:
         """Append one fill. Returns False when the execution id is already

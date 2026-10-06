@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from execution.paper_broker_v2 import PaperBrokerV2
 from services.journal_sessions import timing_fields
 from services.trade_journal import (
     TradeJournalRecorder, _iso, _now, _num, normalize_exit_reason, risk_fields,
@@ -76,6 +77,16 @@ def _research(export: dict, order_id: str) -> dict:
         except Exception:  # noqa: BLE001 — enrichment only
             return {}
     return (export.get("research") or {}).get(order_id) or {}
+
+
+def _candidate(export: dict, proposal_id: Optional[str]) -> dict:
+    lookup = export.get("candidate_lookup")
+    if callable(lookup) and proposal_id:
+        try:
+            return lookup(proposal_id) or {}
+        except Exception:  # noqa: BLE001 — enrichment only
+            return {}
+    return (export.get("candidates") or {}).get(proposal_id) or {}
 
 
 def _fill_time(fill: dict) -> Optional[str]:
@@ -142,7 +153,7 @@ def _lab_snapshot(lab_id: str, meta: dict, export: dict, decided_at: Optional[st
             "source": lab_id,
         }
     # SMC
-    candidate = (export.get("candidates") or {}).get(meta.get("proposal_id")) or {}
+    candidate = _candidate(export, meta.get("proposal_id"))
     evaluation = (candidate.get("payload") or {}).get("evaluation") or {}
     conditions = evaluation.get("ordered_condition_results") or []
     passed, failed, missing = split_conditions(conditions)
@@ -168,6 +179,25 @@ def _lab_snapshot(lab_id: str, meta: dict, export: dict, decided_at: Optional[st
     }
 
 
+def _armed_protection(direction: str, entry_price: float, order: dict,
+                      stop: Optional[float], target: Optional[float]) -> tuple[Optional[float], Optional[float]]:
+    """The stop and target the lab broker actually armed on the position.
+
+    When an order carries a frozen target R the broker re-anchors the target to
+    the real average fill (``PaperBrokerV2._resolved_protection``), so the
+    order's pre-fill target is only the plan. The same rule is applied here to
+    the same stored inputs; anything else keeps the stored plan."""
+    if order.get("protection_stop_loss") is None or order.get("protection_target_r") is None:
+        return stop, target
+    try:
+        return PaperBrokerV2._resolved_protection(
+            {"side": "long" if direction == "LONG" else "short", "entry_price": entry_price},
+            {"stop_loss": order["protection_stop_loss"], "take_profit": order.get("protection_take_profit"),
+             "target_r": order["protection_target_r"], "tick_size": order.get("protection_tick_size")})
+    except (TypeError, ValueError):
+        return stop, target
+
+
 def _exit_reason(fill: dict, meta: dict, stop: Optional[float], target: Optional[float],
                  orders: dict) -> tuple[str, str]:
     order_id = str(fill.get("order_id") or "")
@@ -189,6 +219,44 @@ def _exit_reason(fill: dict, meta: dict, stop: Optional[float], target: Optional
     return "UNKNOWN", "NOT_RECORDED"
 
 
+def _funding_owners(trips: list[dict], funding: list[dict]) -> dict[int, list[dict]]:
+    """Attribute each booked funding event to the round trip it was charged to.
+
+    A lab broker holds at most one position per symbol, and funding is only
+    booked while that position is open, so an event belongs to the trip on
+    its symbol that opened at or before it and before the next trip on that
+    symbol opened. Events of one broker position always stay together."""
+    windows: list[tuple[str, Optional[str], Optional[str]]] = []
+    last: dict[str, int] = {}
+    for i, trip in enumerate(trips):
+        start = _fill_time(trip["entries"][0])
+        if trip["symbol"] in last:
+            j = last[trip["symbol"]]
+            windows[j] = (windows[j][0], windows[j][1], start)
+        windows.append((trip["symbol"], start, None))
+        last[trip["symbol"]] = i
+    owner_of: dict[int, int] = {}
+    position_owner: dict[str, int] = {}
+    ordered = sorted(enumerate(funding), key=lambda item: _iso(item[1].get("funding_timestamp")
+                                                                or item[1].get("created_at")) or "")
+    for k, event in ordered:
+        at = _iso(event.get("funding_timestamp") or event.get("created_at"))
+        position = event.get("position_id")
+        if position and position in position_owner:
+            owner_of[k] = position_owner[position]
+            continue
+        for i, (symbol, start, end) in enumerate(windows):
+            if symbol == event.get("symbol") and at and start and at >= start and (end is None or at < end):
+                owner_of[k] = i
+                if position:
+                    position_owner[position] = i
+                break
+    out: dict[int, list[dict]] = {}
+    for k, i in owner_of.items():
+        out.setdefault(i, []).append(funding[k])
+    return out
+
+
 def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
     """Bring one lab's stored round trips into the canonical journal."""
     store = recorder.store
@@ -200,8 +268,11 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
     meta_by_order = export.get("meta") or {}
     sessions = export.get("sessions") or {}
     summary = {"created": 0, "exits_added": 0, "finalised": 0}
+    trips = round_trips(export.get("fills") or [])
+    funding_by_trip = _funding_owners(trips, export.get("funding") or [])
     with recorder._lock:
-        for trip in round_trips(export.get("fills") or []):
+        finished = store.finalised_refs("LAB_FILL")
+        for index, trip in enumerate(trips):
             first = trip["entries"][0]
             entry_order_id = str(first.get("order_id") or "")
             meta = meta_by_order.get(entry_order_id) or {}
@@ -209,11 +280,9 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
             config = meta.get("config") or {}
             session = sessions.get(meta.get("session_id")) or {}
             key = f"{account_id}:{first['id']}"
+            if trip["closed"] and str(first["id"]) in finished:
+                continue   # a finished trip can gain no new fills
             trade_id = store.resolve_link("LAB_FILL", str(first["id"]))
-            if trade_id is not None and trip["closed"]:
-                known = store.get_trade(trade_id)
-                if known is not None and known.get("finalised_at"):
-                    continue   # a finished trip can gain no new fills
             direction = trip["direction"]
             entry_qty = sum(float(f["quantity"]) for f in trip["entries"])
             entry_price = sum(float(f["quantity"]) * float(f["price"]) for f in trip["entries"]) / entry_qty
@@ -222,6 +291,9 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
             target = _num(meta.get("target") if meta.get("target") is not None else
                           (meta.get("target_2") if meta.get("target_2") is not None else config.get("target"))) \
                 or _num(order.get("protection_take_profit"))
+            planned_target = target
+            stop, target = _armed_protection(direction, entry_price, order, stop, target)
+            stop, target = _num(stop), _num(target)
             entry_complete = bool(trip["exits"]) or str(order.get("status") or "") in (
                 "filled", "cancelled", "expired", "rejected") or not order
             if trade_id is None:
@@ -278,6 +350,10 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                     summary["created"] += 1
                     if meta:
                         snapshot = _lab_snapshot(lab_id, meta, export, fields["order_created_at"])
+                        snapshot["risk"] = {**(snapshot.get("risk") or {}),
+                                            "pre_fill_target": planned_target, "armed_stop": stop,
+                                            "armed_target": target,
+                                            "target_r": _num(order.get("protection_target_r"))}
                         store.save_snapshot(trade_id, snapshot)
                         mtf_primary = ((snapshot.get("market_context") or {}).get("mtf_evidence") or {})
                         mtf_primary = mtf_primary.get("primary") if isinstance(mtf_primary, dict) else None
@@ -303,7 +379,7 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                         "executed_at": _fill_time(fill), "source_ref": str(fill["id"]), "liquidity": "TAKER"}):
                     if _num(fill.get("fee")):
                         store.add_fee(trade_id, fee_type="ENTRY_COMMISSION", amount=float(fill["fee"]),
-                                      source_ref=f"lab:{fill['id']}",
+                                      source_ref=f"lab:{fill['id']}", rate=_num(export.get("fee_rate")),
                                       basis=float(fill["quantity"]) * float(fill["price"]))
                     store.add_event(trade_id, "order-filled", f"entry {float(fill['quantity']):.8g} @ {fill['price']}",
                                     ts=_fill_time(fill), actor=lab_id)
@@ -316,6 +392,8 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                                         leverage=trade.get("leverage"))
                 store.update_trade(trade_id, {
                     "entry_price": entry_price, "quantity": entry_qty,
+                    "initial_stop": stop, "initial_target": target,
+                    "current_stop": stop, "current_target": target,
                     **{k: v for k, v in refreshed.items()
                        if v is not None and k not in ("max_allowed_risk_pct", "risk_rule_status")
                        and not (k == "risk_pct" and trade.get("account_equity_before") is None)},
@@ -332,7 +410,7 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                     summary["exits_added"] += 1
                     if _num(fill.get("fee")):
                         store.add_fee(trade_id, fee_type="EXIT_COMMISSION", amount=float(fill["fee"]),
-                                      source_ref=f"lab:{fill['id']}",
+                                      source_ref=f"lab:{fill['id']}", rate=_num(export.get("fee_rate")),
                                       basis=float(fill["quantity"]) * float(fill["price"]))
                     reason, _source = _exit_reason(fill, meta_by_order.get(str(fill.get("order_id"))) or {},
                                                    stop, target, orders)
@@ -343,17 +421,12 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                         current = store.get_trade(trade_id)
                         store.update_trade(trade_id, {"partial_exit_count": int(current["partial_exit_count"] or 0) + 1,
                                                       "status": "PARTIALLY_CLOSED"})
-            # funding booked while this trip was open
-            start = _fill_time(first)
-            end = _fill_time(trip["exits"][-1]) if trip["closed"] and trip["exits"] else None
-            for event in export.get("funding") or []:
-                if event.get("symbol") != trip["symbol"]:
-                    continue
-                at = _iso(event.get("funding_timestamp") or event.get("created_at"))
-                if at and start and at >= start and (end is None or at <= end):
-                    recorder.add_funding(trade_id, amount=float(event["amount"]),
-                                         source_ref=f"funding:{event.get('funding_key')}", at=at,
-                                         rate=_num(event.get("rate")))
+            # funding the broker charged to this trip's position
+            for event in funding_by_trip.get(index, []):
+                recorder.add_funding(trade_id, amount=float(event["amount"]),
+                                     source_ref=f"funding:{event.get('funding_key')}",
+                                     at=_iso(event.get("funding_timestamp") or event.get("created_at")),
+                                     rate=_num(event.get("rate")))
             trade = store.get_trade(trade_id)
             if trip["exits"] and not trade.get("finalised_at"):
                 recorder._aggregate(trade_id, final=False)

@@ -1101,8 +1101,11 @@ class SignalPipeline:
                 leverage_source=getattr(self.paper, "LEVERAGE_SOURCE", None),
                 preferred_window=(self.session_start, self.session_end))
         except Exception as exc:  # noqa: BLE001 — journaling must never block trading
-            self.ledger.log(level="warning", stage="journal", symbol=symbol,
-                            message=f"journal decision capture failed: {type(exc).__name__}: {exc}"[:400])
+            try:
+                self.ledger.log(level="warning", stage="journal", symbol=symbol,
+                                message=f"journal decision capture failed: {type(exc).__name__}: {exc}"[:400])
+            except Exception:  # noqa: BLE001
+                pass
             return None
 
     def _journal_order_outcome(self, journal_trade_id: Optional[str], outcome: str, reason: str) -> None:
