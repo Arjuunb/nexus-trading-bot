@@ -643,6 +643,185 @@ def test_funding_attribution_matches_the_window_rule_on_random_histories():
         assert got == reference(trips, funding), case
 
 
+def _thin_broker(path):
+    """A lab broker on the candle path with participation limits, so entry
+    orders can fill in parts across candles (the labs use this path)."""
+    from execution.paper_broker_v2 import PaperBrokerV2
+    return PaperBrokerV2(str(path), starting_balance=10_000, account_type="PA_LAB", execution_engine="PA_LAB",
+                         fee_rate=0.0004, spread_bps=0, slippage_bps=0, participation_rate=0.5)
+
+
+def _broker_totals(broker) -> dict:
+    account = dict(broker._account_row())
+    return {"gross": account["realized_pnl"], "fees": account["fees_paid"],
+            "net": account["balance"] - account["starting_balance"]}
+
+
+def _journal_totals(store) -> dict:
+    trades = store.list_trades(modes=["ALL"])
+    return {"gross": sum(t["gross_pnl"] or 0 for t in trades), "fees": sum(t["fees_total"] or 0 for t in trades),
+            "net": sum(t["net_pnl"] or 0 for t in trades)}
+
+
+def test_one_entry_order_that_opens_two_positions_gives_two_trades(tmp_path):
+    """A partially filled entry is stopped out, then the order's remainder
+    fills as a NEW position: two broker positions, two journal trades, and
+    nothing of the second one is lost or folded into the first."""
+    broker = _thin_broker(tmp_path / "lab.db")
+    broker.submit(symbol="BTCUSDT", side="buy", order_type="market", quantity=2.0, protection_stop_loss=95.0,
+                  protection_take_profit=110.0, protection_target_r=2.0, protection_tick_size=0.1,
+                  requested_price=100.0, decision_timestamp="2026-10-05T09:00:00+00:00")
+    broker.process_candle("BTCUSDT", {"open": 100.0, "high": 101.0, "low": 94.0, "close": 96.0, "volume": 2.0,
+                                      "timestamp": "2026-10-05T09:05:00+00:00"})      # 1.0 fills, stopped at 95
+    broker.process_candle("BTCUSDT", {"open": 97.0, "high": 98.0, "low": 96.5, "close": 97.5, "volume": 2.0,
+                                      "timestamp": "2026-10-05T09:10:00+00:00"})      # remainder 1.0 @97: a new position
+    armed_second = broker.positions()[0]["take_profit"]
+    broker.submit(symbol="BTCUSDT", side="sell", order_type="market", quantity=1.0, reduce_only=True,
+                  requested_price=99.0, decision_timestamp="2026-10-05T09:12:00+00:00")
+    broker.process_candle("BTCUSDT", {"open": 99.0, "high": 99.5, "low": 98.5, "close": 99.0, "volume": 4.0,
+                                      "timestamp": "2026-10-05T09:15:00+00:00"})
+    store = TradeJournalStore(":memory:")
+    recorder = TradeJournalRecorder(store)
+    export = {**broker.journal_export(), "lab_id": "PRICE_ACTION_LAB", "meta": {}, "sessions": {}}
+    assert ingest_v2_lab(recorder, export)["created"] == 2
+    assert ingest_v2_lab(recorder, export) == {"created": 0, "exits_added": 0, "finalised": 0}
+    first, second = store.list_trades(modes=["ALL"], order="asc")
+    assert (first["quantity"], first["entry_price"], first["exit_price"]) == (1.0, 100.0, 95.0)
+    assert (second["quantity"], second["entry_price"], second["exit_price"]) == (1.0, 97.0, 99.0)
+    assert second["initial_target"] == armed_second
+    for trade in (first, second):
+        assert trade["status"] == "CLOSED" and trade["entry_locked"] == 1
+        fee_rows = sum(f["amount"] for f in store.fees(trade["trade_id"]))
+        assert trade["fees_total"] == pytest.approx(fee_rows, abs=1e-12)   # child rows agree with the totals
+    ledger, journal = _broker_totals(broker), _journal_totals(store)
+    assert journal == {k: pytest.approx(v, abs=1e-9) for k, v in ledger.items()}
+
+
+def test_entry_fills_after_a_scale_out_keep_the_entry_facts_true(tmp_path):
+    """The entry order keeps filling after a T1-style partial exit: quantity,
+    entry, risk, armed target and R follow every entry fill (the broker
+    re-averages over the size still open), and settle when the trip closes."""
+    broker = _thin_broker(tmp_path / "lab.db")
+    broker.submit(symbol="BTCUSDT", side="buy", order_type="limit", quantity=2.0, limit_price=100.0,
+                  protection_stop_loss=95.0, protection_take_profit=110.0, protection_target_r=2.0,
+                  protection_tick_size=0.1, requested_price=100.0, decision_timestamp="2026-10-05T09:00:00+00:00")
+    store = TradeJournalStore(":memory:")
+    recorder = TradeJournalRecorder(store)
+
+    def sync():
+        return ingest_v2_lab(recorder, {**broker.journal_export(), "lab_id": "SMC_LAB", "meta": {}, "sessions": {}})
+
+    broker.process_candle("BTCUSDT", {"open": 100.5, "high": 101.0, "low": 99.8, "close": 100.4, "volume": 2.0})
+    broker.submit(symbol="BTCUSDT", side="sell", order_type="limit", quantity=0.5, limit_price=105.0, reduce_only=True)
+    sync()
+    broker.process_candle("BTCUSDT", {"open": 103.0, "high": 105.5, "low": 102.0, "close": 104.0, "volume": 2.0})
+    sync()
+    (trade,) = store.list_trades(modes=["ALL"])
+    # scaled out while the entry order is still working: the entry facts stay open
+    assert trade["status"] == "PARTIALLY_CLOSED" and trade["entry_locked"] == 0 and trade["quantity"] == 1.0
+    assert store.lab_entry_pending("SMC_LAB")
+    broker.process_candle("BTCUSDT", {"open": 98.0, "high": 98.6, "low": 97.5, "close": 98.2, "volume": 2.0})
+    sync()                                                   # the remainder fills below the limit, after T1
+    position = broker.positions()[0]
+    (trade,) = store.list_trades(modes=["ALL"])
+    entries = [f for f in broker.journal_export()["fills"] if f["side"] == "buy"]
+    qty = sum(f["quantity"] for f in entries)
+    vwap = sum(f["quantity"] * f["price"] for f in entries) / qty
+    # the entry order is now filled, so the entry facts carry every fill and lock
+    assert trade["entry_locked"] == 1 and trade["status"] == "PARTIALLY_CLOSED"
+    assert trade["quantity"] == pytest.approx(qty) == 2.0 and trade["entry_price"] == pytest.approx(vwap)
+    assert trade["initial_target"] == position["take_profit"]                 # what the broker armed
+    assert position["entry_price"] != pytest.approx(vwap)                     # the re-averaged basis differs
+    assert trade["risk_amount"] == pytest.approx(abs(vwap - 95.0) * qty)
+    # stop out the rest; the trip closes and its entry facts lock with the exit facts
+    for _ in range(3):
+        broker.process_candle("BTCUSDT", {"open": 96.0, "high": 96.5, "low": 94.0, "close": 95.0, "volume": 2.0})
+    sync()
+    (trade,) = store.list_trades(modes=["ALL"])
+    assert trade["status"] == "CLOSED" and trade["entry_locked"] == 1 and trade["finalised_at"]
+    ledger = _broker_totals(broker)
+    assert trade["net_pnl"] == pytest.approx(ledger["net"], abs=1e-9)
+    assert trade["realised_r"] == pytest.approx(ledger["net"] / (abs(vwap - 95.0) * qty), rel=1e-12)
+    with pytest.raises(sqlite3.DatabaseError):
+        store.update_trade(trade["trade_id"], {"quantity": 1.0})            # finalised entry facts are locked
+
+
+def test_legacy_migration_reads_history_outside_the_recorder_lock(tmp_path):
+    """An explicit sync (POST /journal/v2/sync) runs the legacy migration at any
+    time; its history reads must never hold the lock live fill hooks need."""
+    import threading
+
+    from tests.test_journal_verify_lifecycles import _rig, _signal
+    legacy = JournalStore(str(tmp_path / "legacy.db"))
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    rig = _rig(ledger=ledger, legacy_store=legacy)
+    assert _signal(rig).accepted
+    recorder = rig.rec
+    reading, release = threading.Event(), threading.Event()
+    real_list = legacy.list
+
+    def slow_list(*args, **kwargs):
+        reading.set()
+        assert release.wait(5)
+        return real_list(*args, **kwargs)
+
+    legacy.list = slow_list
+    worker = threading.Thread(target=lambda: recorder.migrate_legacy(legacy, ledger))
+    worker.start()
+    assert reading.wait(5)
+    got = recorder._lock.acquire(timeout=1)       # a live hook needs this lock now
+    assert got, "the recorder lock is held during the legacy history read"
+    recorder._lock.release()
+    release.set()
+    worker.join(5)
+    assert recorder.migrate_legacy(legacy, ledger) == {"migrated": 0, "already": 1}
+
+
+def test_initial_capital_reset_ends_open_paper_engine_trades(tmp_path, monkeypatch):
+    """The capital reset deletes every paper trade and position; the journal's
+    open paper-engine trades end CANCELLED (no fabricated fill, partial exits
+    kept, operational). Lab trades and pending orders are left alone."""
+    import types
+
+    from fastapi.testclient import TestClient
+
+    import app as appmod
+    import webhook_api as wa
+    from config import settings
+    from tests.test_journal_verify_lifecycles import _rig, _signal
+    store = TradeJournalStore(":memory:")
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    rig = _rig(ledger=ledger, store=store)
+    assert _signal(rig).accepted
+    assert rig.paper.reduce(symbol="BTCUSDT", exit_price=106.0, fraction=0.5).action == "reduced"
+    lab_id, _ = store.create_trade({"source_system": "PRICE_ACTION_LAB", "source_trade_key": "lab-open",
+                                    "lab_id": "PRICE_ACTION_LAB", "trading_mode": "ISOLATED_FORWARD_PAPER",
+                                    "status": "OPEN", "symbol": "ETHUSDT", "direction": "LONG", "entry_locked": 1})
+    pending_id, _ = store.create_trade({"source_system": "PIPELINE", "source_trade_key": "pending",
+                                        "trading_mode": "FORWARD_PAPER", "status": "PENDING",
+                                        "symbol": "SOLUSDT", "direction": "LONG"})
+    engine_trade = next(t for t in store.list_trades(modes=["ALL"]) if t["symbol"] == "BTCUSDT")
+    monkeypatch.setattr(wa, "ledger", ledger)
+    monkeypatch.setattr(wa, "paper", rig.paper)
+    monkeypatch.setattr(wa, "trade_journal", rig.rec)
+    monkeypatch.setattr(wa, "trade_journal_store", store)
+    monkeypatch.setattr(wa, "account_store", types.SimpleNamespace(set_initial_capital=lambda *a, **k: None,
+                                                                   get=lambda: {}))
+    client = TestClient(appmod.app)
+    resp = client.post("/paper/initial-capital", json={"amount": 5000, "confirm": True},
+                       headers={"x-webhook-secret": settings.admin_key})
+    assert resp.status_code == 200, resp.text
+    assert ledger.get_paper_trades() == []
+    ended = store.get_trade(engine_trade["trade_id"])
+    assert (ended["status"], ended["result"], ended["exit_reason"]) == ("CANCELLED", "CANCELLED", "SIMULATION_RESET")
+    assert ended["is_operational"] and not ended["counts_in_stats"]
+    assert ended["finalised_at"] and ended["entry_locked"] == 1
+    assert ended["gross_pnl"] == pytest.approx(engine_trade["gross_pnl"])        # the realised partial is kept
+    assert [e["kind"] for e in store.events(ended["trade_id"])].count("paper-account-reset") == 1
+    assert store.get_trade(lab_id)["status"] == "OPEN"
+    assert store.get_trade(pending_id)["status"] == "PENDING"
+
+
 def test_replay_import_has_no_per_entry_lookup(tmp_path):
     from services.journal import JournalStore as ReplayStore
     from services.journal_ingest import ingest_replay_journal

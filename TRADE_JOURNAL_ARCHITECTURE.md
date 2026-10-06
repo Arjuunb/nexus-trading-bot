@@ -46,7 +46,7 @@ SQLite triggers enforce, regardless of which code path writes:
 
 - identity facts (symbol, direction, strategy, mode, …) cannot change once set;
 - entry and risk facts are frozen once `entry_locked = 1`;
-- exit facts are frozen once `finalised_at` is set;
+- exit facts are frozen once `finalised_at` is set. Finalising a trade also sets `entry_locked`, so a closed trade's entry facts are frozen too;
 - locks cannot be released, and journal trades cannot be deleted;
 - snapshots, executions, fees, modifications, events, reviews, corrections and notes are append-only.
 
@@ -95,7 +95,7 @@ PaperExecutionEngine.close (any caller) ───► on_exit_fill ─► CLOSED,
 seconds (default 60; `HUB_JOURNAL_SYNC=0` disables the timer). Every step is
 idempotent and isolated from the others.
 
-1. **Legacy migration**: maps each `trade_decision_journal` row once. Fields it did not record stay NULL; for example, leverage is never invented for history.
+1. **Legacy migration**: maps each `trade_decision_journal` row once. Fields it did not record stay NULL; for example, leverage is never invented for history. It runs at boot and on an explicit sync. Both histories are read before the recorder lock is taken, and the lock covers only rows that still need linking, so a sync never makes a live fill hook wait.
 2. **Ledger reconciliation**:
    - creates records for ledger trades the journal never saw (`RECONCILED_FROM_LEDGER`, no snapshot);
    - links partial-exit remainder rows to their parent;
@@ -103,7 +103,9 @@ idempotent and isolated from the others.
 
    Rows younger than two minutes are left to the live hooks. The ledger is read before the recorder lock is taken, so a live fill hook never waits behind a history read.
 3. **Lab ingestion**: rebuilds round trips from each lab's stored `v2_fills` (scale-ins, partial exits and reversals), and joins the order metadata and the setup each lab froze at placement.
-   - **Stop and target** are the levels the lab broker actually armed on the position. With a frozen target R, `PaperBrokerV2` re-anchors the target to the real average fill. The journal applies the same rule (`PaperBrokerV2._resolved_protection`) to the same stored inputs, so `initial_target` and `planned_rr` match the broker. The order's pre-fill target is kept in the snapshot as `risk.pre_fill_target`.
+   - **One trip, one record**: a trip is identified by its first fill. One entry order can open two positions: on the participation-limited candle path, its remainder can fill after the first position already closed. Each position is then its own trade; the `LAB_ORDER` link points at the order's first trip only.
+   - **Entry facts** (quantity, average entry, risk, planned RR) follow every entry fill until the entry order settles (filled, cancelled, expired or rejected) or the trip closes. A scale-out before the order has finished filling does not freeze them.
+   - **Stop and target** are the levels the lab broker actually armed on the position. With a frozen target R, `PaperBrokerV2` re-anchors the target to the position's entry after each entry fill. That entry is re-averaged over the size still open, so an exit between entry fills changes the weights. The journal replays that averaging and applies the same rule (`PaperBrokerV2._resolved_protection`) to the same stored inputs, so `initial_target` and `planned_rr` match the broker. The order's pre-fill target is kept in the snapshot as `risk.pre_fill_target`.
    - **Funding** goes to the trip whose position the broker charged. A lab broker holds one position per symbol, so a funding event belongs to the trip on its symbol that opened at or before it and before the next trip on that symbol opened. All events of one broker `position_id` stay together. This covers funding booked between the exit quote's receipt and its processing. A lab trade with no funding booked records `0`, because the lab broker books every funding charge; the Trading Instance engine does not model funding, so its trades keep NULL.
    - **Exit reason** is inferred from the protective fill price and labelled `INFERRED_FROM_FILL_PRICE`.
    - **Steady state**: one query fetches the already-finalised lab fills and those trips are skipped, so a pass does not grow with closed history. Lab evidence (PA excursions, the SMC candidate evaluation) is read one record at a time, only for trips being created or finalised.
@@ -206,3 +208,4 @@ Journal tabs:
 - **Manual protection edits inside a lab** (`set_protection` on a lab position) are audited by the lab, but they are not in the broker fills the journal ingests. A lab trade's `current_stop` / `current_target` therefore stay at the armed levels. **Follow-up:** ingest the lab's protection-change audit events as `journal_modifications` rows.
 - **R definitions:** the journal's R is measured against the original risk at entry (`|entry fill − initial stop| × quantity`). `realised_r` is net P&L over that risk, and `gross_r` is gross P&L over it. The ledger's own `paper_trades.rr` column is a different figure: gross R against the stop *at close*, rounded to 3 dp. The two agree only while the stop has not moved.
 - **Factory reset** clears the journal together with the ledger, as the audited operator reset always has. No other path deletes a journal record.
+- **Paper account reset** (an initial-capital change with `reset_trades`) deletes every paper trade and position, across instances. The journal ends each open paper-engine trade as `CANCELLED` / `SIMULATION_RESET`: operational, with no fabricated fill, keeping realised partial exits. Lab trades and pending orders are not touched.

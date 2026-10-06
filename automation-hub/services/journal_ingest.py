@@ -45,16 +45,19 @@ def round_trips(fills: list[dict]) -> list[dict]:
         trip = current.get(symbol)
         if trip is None:
             trip = {"symbol": symbol, "direction": "LONG" if signed > 0 else "SHORT",
-                    "entries": [], "exits": [], "position": 0.0, "closed": False}
+                    "entries": [], "exits": [], "sequence": [], "position": 0.0, "closed": False}
             current[symbol] = trip
             trips.append(trip)
         same_way = (signed > 0) == (trip["position"] > 0) or abs(trip["position"]) <= _EPS
         if same_way:
             trip["entries"].append(fill)
+            trip["sequence"].append(("entry", fill))
             trip["position"] += signed
             continue
         closing = min(abs(signed), abs(trip["position"]))
-        trip["exits"].append({**fill, "quantity": closing})
+        exit_fill = {**fill, "quantity": closing}
+        trip["exits"].append(exit_fill)
+        trip["sequence"].append(("exit", exit_fill))
         trip["position"] += closing if signed > 0 else -closing
         if abs(trip["position"]) <= _EPS * max(1.0, qty):
             trip["closed"] = True
@@ -62,10 +65,11 @@ def round_trips(fills: list[dict]) -> list[dict]:
             remainder = abs(signed) - closing
             if remainder > _EPS:
                 # a reversal fill: the excess opens a new trip
+                opening = {**fill, "quantity": remainder, "realized_pnl": 0.0, "fee": 0.0,
+                           "id": f"{fill['id']}:flip"}
                 flip = {"symbol": symbol, "direction": "LONG" if signed > 0 else "SHORT",
-                        "entries": [{**fill, "quantity": remainder, "realized_pnl": 0.0, "fee": 0.0,
-                                     "id": f"{fill['id']}:flip"}],
-                        "exits": [], "position": remainder if signed > 0 else -remainder, "closed": False}
+                        "entries": [opening], "exits": [], "sequence": [("entry", opening)],
+                        "position": remainder if signed > 0 else -remainder, "closed": False}
                 current[symbol] = flip
                 trips.append(flip)
     return trips
@@ -179,6 +183,23 @@ def _lab_snapshot(lab_id: str, meta: dict, export: dict, decided_at: Optional[st
         "raw": {"proposal_id": meta.get("proposal_id"), "setup_id": meta.get("setup_id")},
         "source": lab_id,
     }
+
+
+def _position_entry(trip: dict) -> tuple[float, dict]:
+    """The broker's position entry price after the trip's last entry fill,
+    and that fill. PaperBrokerV2 re-averages the entry on each entry fill over
+    the size still open, so an exit between two entry fills changes the
+    weights; the protection it arms is resolved from this price."""
+    size, entry, last = 0.0, None, None
+    for kind, fill in trip.get("sequence") or [("entry", f) for f in trip["entries"]]:
+        qty, price = float(fill["quantity"]), float(fill["price"])
+        if kind == "entry":
+            entry = price if (entry is None or size <= _EPS) else (entry * size + price * qty) / (size + qty)
+            size += qty
+            last = fill
+        else:
+            size -= qty
+    return entry, last
 
 
 def _armed_protection(direction: str, entry_price: float, order: dict,
@@ -295,9 +316,14 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                           (meta.get("target_2") if meta.get("target_2") is not None else config.get("target"))) \
                 or _num(order.get("protection_take_profit"))
             planned_target = target
-            stop, target = _armed_protection(direction, entry_price, order, stop, target)
+            position_entry, last_entry = _position_entry(trip)
+            armed_by = orders.get(str(last_entry.get("order_id") or "")) or order
+            stop, target = _armed_protection(direction, position_entry, armed_by, stop, target)
             stop, target = _num(stop), _num(target)
-            entry_complete = bool(trip["exits"]) or str(order.get("status") or "") in (
+            # Entry facts settle when the entry order does (or the trip has
+            # closed), not at the first exit: a partially filled order can keep
+            # adding to the same position after a scale-out.
+            entry_complete = trip["closed"] or str(order.get("status") or "") in (
                 "filled", "cancelled", "expired", "rejected") or not order
             if trade_id is None:
                 filled_at = _fill_time(first)
@@ -347,9 +373,13 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                     "entry_locked": 1 if entry_complete else 0,
                     **{k: v for k, v in timing_fields(filled_at).items() if k != "duration_s"},
                 }
-                trade_id, created = store.create_trade(fields, links=[("LAB_FILL", str(first["id"])),
-                                                                      ("LAB_ORDER", entry_order_id)])
+                # A trip's identity is its first fill. One entry order can open two
+                # positions (its remainder fills after the first closed), so the
+                # order id must not dedupe trips; it is linked to its first trip only.
+                trade_id, created = store.create_trade(fields, links=[("LAB_FILL", str(first["id"]))])
                 if created:
+                    if entry_order_id:
+                        store.add_link(trade_id, "LAB_ORDER", entry_order_id)
                     summary["created"] += 1
                     if meta:
                         snapshot = _lab_snapshot(lab_id, meta, export, fields["order_created_at"])

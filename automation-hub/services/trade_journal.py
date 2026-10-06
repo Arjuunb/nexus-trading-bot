@@ -576,7 +576,7 @@ class TradeJournalRecorder:
             self.store.update_trade(trade_id, {
                 "status": status, "result": outcome, "result_reason": reason[:500] or None,
                 "is_operational": 1, "counts_in_stats": 0,
-                **({"finalised_at": now} if status != "UNCERTAIN" else {}),
+                **({"finalised_at": now, "entry_locked": 1} if status != "UNCERTAIN" else {}),
             })
             self.store.add_event(trade_id, {"REJECTED": "order-rejected", "EXECUTION_FAILED": "execution-failed",
                                             "CANCELLED": "order-cancelled",
@@ -923,7 +923,7 @@ class TradeJournalRecorder:
             "counts_in_stats": 1 if result else 0, "is_operational": 0,
             "rule_violation": 1 if violations else 0, "rule_violation_count": len(violations),
             **{k: v for k, v in excursions.items() if trade.get(k) is None},
-            "finalised_at": _now(),
+            "entry_locked": 1, "finalised_at": _now(),
         })
         final = self.store.get_trade(trade_id)
         net = final.get("net_pnl")
@@ -1011,10 +1011,26 @@ class TradeJournalRecorder:
     # ------------------------------------------------------------ operator actions
     def cancel_open_for_instance(self, instance_id: str, *, reason: str) -> int:
         """Simulation account restart: open trades end without a fabricated fill."""
+        return self._cancel_open(
+            ("PENDING", "OPEN", "PARTIALLY_CLOSED", "UNCERTAIN"),
+            lambda trade: (trade.get("instance_id") or "") == instance_id,
+            reason=reason, event="simulation-account-restarted")
+
+    def cancel_open_engine_trades(self, *, reason: str) -> int:
+        """Paper account reset (initial-capital change): the paper ledger lost
+        every trade and position, across instances, so each open paper-engine
+        trade ends without a fabricated fill. Lab trades are untouched; they
+        live in their own ledgers. Pending orders keep their own lifecycle."""
+        return self._cancel_open(
+            ("OPEN", "PARTIALLY_CLOSED"),
+            lambda trade: trade.get("source_system") in ENGINE_SOURCES,
+            reason=reason, event="paper-account-reset")
+
+    def _cancel_open(self, statuses, include, *, reason: str, event: str) -> int:
         with self._lock:
             count = 0
-            for trade in self.store.trades_with_status(("PENDING", "OPEN", "PARTIALLY_CLOSED", "UNCERTAIN")):
-                if (trade.get("instance_id") or "") != instance_id:
+            for trade in self.store.trades_with_status(statuses):
+                if not include(trade):
                     continue
                 now = _now()
                 partial = trade["status"] == "PARTIALLY_CLOSED"
@@ -1022,9 +1038,9 @@ class TradeJournalRecorder:
                 self.store.update_trade(trade["trade_id"], {
                     "status": "CANCELLED", "result": "CANCELLED", "exit_reason": "SIMULATION_RESET",
                     "exit_reason_source": "OPERATOR", "result_reason": reason[:500],
-                    "is_operational": 1, "counts_in_stats": 0, "finalised_at": now,
+                    "is_operational": 1, "counts_in_stats": 0, "entry_locked": 1, "finalised_at": now,
                 })
-                self.store.add_event(trade["trade_id"], "simulation-account-restarted",
+                self.store.add_event(trade["trade_id"], event,
                                      reason + (" Realised partial exits are kept." if partial else ""),
                                      ts=now, actor="operator")
                 count += 1
@@ -1211,21 +1227,30 @@ class TradeJournalRecorder:
         """Map every ``trade_decision_journal`` row into the canonical journal,
         once. Fields the legacy row did not record stay NULL."""
         summary = {"migrated": 0, "already": 0}
+        # Both histories are read before the recorder lock is taken: an explicit
+        # sync can run at any time, and live fill hooks must never wait on a
+        # history read. The lock covers only rows that still need linking.
+        ledger_rows = {}
+        if ledger is not None:
+            try:
+                ledger_rows = {r["id"]: r for r in ledger.get_paper_trades()}
+            except Exception:  # noqa: BLE001 — enrichment is optional
+                ledger_rows = {}
+        legacy_rows = legacy_store.list(limit=1_000_000)
+        known = self.store.linked_refs("LEGACY_JOURNAL")
+        pending = [row for row in legacy_rows if row["trade_id"] not in known]
+        summary["already"] = len(legacy_rows) - len(pending)
+        if not pending:
+            return summary
         with self._lock:
-            ledger_rows = {}
-            if ledger is not None:
-                try:
-                    ledger_rows = {r["id"]: r for r in ledger.get_paper_trades()}
-                except Exception:  # noqa: BLE001 — enrichment is optional
-                    ledger_rows = {}
-            already = self.store.linked_refs("LEGACY_JOURNAL")
-            for legacy in legacy_store.list(limit=1_000_000):
-                if legacy["trade_id"] in already:
+            known = self.store.linked_refs("LEGACY_JOURNAL")   # re-checked under the lock
+            for legacy in pending:
+                if legacy["trade_id"] in known:
                     summary["already"] += 1
                     continue
-                if self.store.resolve_link("LEDGER_TRADE", legacy["trade_id"]):
+                owner = self.store.resolve_link("LEDGER_TRADE", legacy["trade_id"])
+                if owner:
                     # the live recorder already owns this trade; just link it
-                    owner = self.store.resolve_link("LEDGER_TRADE", legacy["trade_id"])
                     self.store.add_link(owner, "LEGACY_JOURNAL", legacy["trade_id"])
                     summary["already"] += 1
                     continue
