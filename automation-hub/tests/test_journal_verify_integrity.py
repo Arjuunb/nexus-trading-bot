@@ -15,6 +15,7 @@ import json
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -777,6 +778,144 @@ def test_legacy_migration_reads_history_outside_the_recorder_lock(tmp_path):
     assert recorder.migrate_legacy(legacy, ledger) == {"migrated": 0, "already": 1}
 
 
+class _HoldProbe:
+    """Stands in for the recorder lock and counts the trades created inside
+    each outermost hold. Live fill hooks need this lock, so an import must
+    release it between items."""
+
+    def __init__(self, recorder):
+        self._inner, self._depth, self.holds, self.unheld = recorder._lock, 0, [], 0
+        recorder._lock = self
+        create = recorder.store.create_trade
+
+        def counted(*args, **kwargs):
+            trade_id, created = create(*args, **kwargs)
+            if created and self._depth:
+                self.holds[-1] += 1
+            elif created:
+                self.unheld += 1
+            return trade_id, created
+
+        recorder.store.create_trade = counted
+
+    def __enter__(self):
+        self._inner.acquire()
+        self._depth += 1
+        if self._depth == 1:
+            self.holds.append(0)
+        return self
+
+    def __exit__(self, *exc):
+        self._depth -= 1
+        self._inner.release()
+
+    def let_waiters_through(self, *args, **kwargs):
+        self._inner.let_waiters_through(*args, **kwargs)
+
+
+def test_a_waiting_fill_hook_goes_before_the_next_import_item():
+    """Python locks are not fair, so releasing per item is not enough: an
+    import that takes the lock straight back would still starve a hook."""
+    import threading
+    recorder = TradeJournalRecorder(TradeJournalStore(":memory:"))
+    order, holding = [], threading.Event()
+
+    def hook():
+        assert holding.wait(5)
+        with recorder._lock:                    # a live fill hook
+            order.append("hook")
+
+    worker = threading.Thread(target=hook)
+    worker.start()
+    with recorder.bulk_item():                  # import item 1
+        holding.set()
+        deadline = time.monotonic() + 5
+        while recorder._lock._waiting == 0 and time.monotonic() < deadline:
+            time.sleep(0.001)                   # until the hook is queued
+        assert recorder._lock._waiting == 1
+    with recorder.bulk_item():                  # import item 2
+        order.append("item 2")
+    worker.join(5)
+    assert order == ["hook", "item 2"]
+
+
+def test_bulk_imports_take_the_recorder_lock_per_item(tmp_path):
+    """Lab, replay, ledger and legacy imports hold the lock for one item at a
+    time, so a live fill hook waits for one item's writes, never an import."""
+    from services.journal import JournalStore as ReplayStore
+    from services.journal_ingest import ingest_replay_journal
+
+    def probed():
+        recorder = TradeJournalRecorder(TradeJournalStore(":memory:"))
+        return recorder, _HoldProbe(recorder)
+
+    recorder, probe = probed()
+    assert ingest_v2_lab(recorder, _bulk_lab_export(30))["created"] == 30
+    assert probe.unheld == 0 and len(probe.holds) >= 30 and max(probe.holds) == 1, probe.holds
+
+    replay = ReplayStore(str(tmp_path / "replay.json"))
+    for i in range(30):
+        replay.add({"id": f"r{i}", "symbol": "BTCUSDT", "side": "long", "entry": 100, "exit": 101,
+                    "rr": 0.5, "strategy": "SMC Lab", "timeframe": "5m",
+                    "created_at": f"2026-10-05T09:{i:02d}:00+00:00"})
+    recorder, probe = probed()
+    assert ingest_replay_journal(recorder, replay)["created"] == 30
+    assert probe.unheld == 0 and len(probe.holds) == 30 and max(probe.holds) == 1, probe.holds
+
+    ledger, legacy, _store = _engine_world(tmp_path)
+    recorder, probe = probed()
+    summary = recorder.reconcile_ledger(ledger, grace_s=0)
+    assert (summary["created"], summary["linked_remainders"], summary["closed"]) == (3, 1, 1), summary
+    assert probe.unheld == 0 and max(probe.holds) == 1, probe.holds
+    assert recorder.reconcile_ledger(ledger, grace_s=0)["created"] == 0     # still idempotent
+
+    recorder, probe = probed()
+    assert recorder.migrate_legacy(legacy, ledger)["migrated"] == 3
+    assert probe.unheld == 0 and max(probe.holds) == 1, probe.holds
+    assert recorder.migrate_legacy(legacy, ledger) == {"migrated": 0, "already": 3}
+
+
+def test_journal_file_store_commits_in_wal_mode_beside_the_legacy_journal(tmp_path):
+    """The canonical journal shares journal.db with the legacy decision
+    journal. WAL with synchronous=NORMAL drops the fsync from every hook
+    commit, and the legacy connection keeps working on the same file."""
+    path = str(tmp_path / "journal.db")
+    legacy = JournalStore(path)                      # opened first, as at boot
+    store = TradeJournalStore(path)
+    assert store._c.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert store._c.execute("PRAGMA synchronous").fetchone()[0] == 1          # NORMAL
+    legacy.record_entry({"trade_id": "t1", "created_at": "2026-10-06T10:00:00+00:00", "mode": "paper",
+                         "symbol": "BTCUSDT", "side": "long", "strategy": "x", "timeframe": "5m",
+                         "entry": 100, "stop": 95, "target": 110, "size": 1, "risk_amount": 5,
+                         "planned_rr": 2, "confidence": 0.5, "brain_score": 1, "regime": "r", "sections": {}})
+    _trade_id, created = store.create_trade({"source_system": "TEST", "source_trade_key": "k1",
+                                             "symbol": "BTCUSDT", "direction": "LONG", "status": "OPEN",
+                                             "trading_mode": "FORWARD_PAPER"}, links=[("TEST", "k1")])
+    assert created and [r["trade_id"] for r in legacy.list(limit=10)] == ["t1"]
+    assert len(store.list_trades(modes=["ALL"])) == 1
+    assert store._c.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_boot_sync_pass_runs_on_the_sync_thread_not_the_caller():
+    """Startup never waits for the boot pass: start() returns while the pass
+    (with legacy migration) runs on the sync thread."""
+    import threading
+    sync = JournalSync(TradeJournalRecorder(TradeJournalStore(":memory:")), interval_s=10)
+    release, calls = threading.Event(), []
+
+    def run_once(*, include_legacy=True):
+        calls.append((threading.current_thread().name, include_legacy))
+        assert release.wait(5)          # a caller running the pass would block here
+        return {}
+
+    sync.run_once = run_once
+    sync.start(timer=False)             # returns while the pass waits on the sync thread
+    release.set()
+    sync._thread.join(5)
+    assert calls == [("journal-sync", True)]
+    assert not sync.status()["running"]
+
+
 def test_initial_capital_reset_ends_open_paper_engine_trades(tmp_path, monkeypatch):
     """The capital reset deletes every paper trade and position; the journal's
     open paper-engine trades end CANCELLED (no fabricated fill, partial exits
@@ -948,8 +1087,9 @@ def test_aggregates_and_composed_filters_match_independent_arithmetic(api):
          lambda r: r["strategy_name"] == "Price Action Lab" and r["direction"] == "SHORT" and r["net_pnl"] > 0),
         ({"session": "LONDON_NY_OVERLAP", "leverage_min": "2"},
          lambda r: r["session"] == "LONDON_NY_OVERLAP" and r["leverage"] >= 2),
-        ({"date_from": "2026-10-06", "date_to": "2026-10-06"},
-         lambda r: r["entry_filled_at"].startswith("2026-10-06")),
+        ({"date_from": "2026-10-06", "date_to": "2026-10-06"},           # a London calendar day
+         lambda r: datetime.fromisoformat(r["entry_filled_at"]).astimezone(ZoneInfo("Europe/London"))
+         .date().isoformat() == "2026-10-06"),
         ({"rr_min": "2", "rr_max": "2.5", "pnl_min": "0"},
          lambda r: 2 <= r["planned_rr"] <= 2.5 and r["net_pnl"] >= 0),
         ({"realised_r_max": "-1", "exit_reason": "STOP_LOSS"},
@@ -1199,7 +1339,8 @@ def test_trade_list_and_analytics_have_no_n_plus_one(api):
             per_endpoint[url] = len(trace.statements)
         counts[n] = per_endpoint
     weekly = "/journal/v2/weekly-review?week=2026-W41"
-    assert counts[10][weekly] == 3 + 1 and counts[1000][weekly] == 3 + 2   # reviews batched 500 ids/statement
+    # one trade list serves the week and the week before; reviews batched 500 ids/statement
+    assert counts[10][weekly] == 2 + 1 and counts[1000][weekly] == 2 + 2
     for url in counts[10]:
         if url != weekly:
             assert counts[10][url] == counts[1000][url], url  # independent of the trade count
@@ -1207,14 +1348,25 @@ def test_trade_list_and_analytics_have_no_n_plus_one(api):
 
 
 def test_filtered_queries_use_indexes():
+    """The SQL the API generates (``_where``), not a hand-written stand-in. The
+    API always sends a trading mode, so every list is bounded by the mode
+    index; symbol, instance and status have their own. A date range or a
+    strategy is then evaluated within that mode's rows."""
     store = TradeJournalStore(":memory:")
     plans = {}
+    for name, filters in (
+            ("mode+date", {"modes": ["FORWARD_PAPER"], "date_from": "2026-10-01", "date_to": "2026-10-07"}),
+            ("mode+strategy", {"modes": ["FORWARD_PAPER"], "strategy": "SMC Lab"}),
+            ("mode+symbol", {"modes": ["FORWARD_PAPER"], "symbol": "btcusdt"}),
+            ("mode+instance", {"modes": ["SIMULATION"], "instance_id": "x"}),
+            ("status", {"modes": ["ALL"], "status": "OPEN"})):
+        where, args = TradeJournalStore._where(**filters)
+        plan = " | ".join(r[-1] for r in store._c.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM journal_trades WHERE " + " AND ".join(where), args))
+        assert "SCAN journal_trades" not in plan and "INDEX" in plan, (name, plan)
+        plans[name] = plan
     for name, sql, args in (
-            ("mode+date", "SELECT * FROM journal_trades WHERE trading_mode IN (?) AND entry_filled_at >= ?",
-             ("FORWARD_PAPER", "2026-01-01")),
-            ("symbol", "SELECT * FROM journal_trades WHERE symbol=?", ("BTCUSDT",)),
-            ("instance", "SELECT * FROM journal_trades WHERE instance_id=?", ("x",)),
-            ("status", "SELECT * FROM journal_trades WHERE status IN ('OPEN','PARTIALLY_CLOSED')", ()),
+            ("open-trades", "SELECT * FROM journal_trades WHERE status IN ('OPEN','PARTIALLY_CLOSED')", ()),
             ("link", "SELECT trade_id FROM journal_trade_links WHERE link_type=? AND ref=?", ("LAB_FILL", "f")),
             ("links-of-trade", "SELECT * FROM journal_trade_links WHERE trade_id=?", ("t",)),
             ("executions", "SELECT * FROM journal_executions WHERE trade_id=? ORDER BY executed_at", ("t",)),
@@ -1306,3 +1458,148 @@ def test_funding_booked_in_the_close_race_stays_with_its_position():
     assert second["net_pnl"] == pytest.approx(-1.0 - 0.08 - 0.5)
     assert first["net_pnl"] + second["net_pnl"] == pytest.approx(sum(f["realized_pnl"] - f["fee"]
                                                                     for f in export["fills"]) - 0.75)
+
+
+# ============================================================ SECTION 14 — release-gate review: truthful output
+def _fact_trade(store, key: str, **fields) -> str:
+    """A closed, counted trade with exactly the facts given (nothing else)."""
+    base = {"source_system": "VERIFY", "source_trade_key": key, "trading_mode": "FORWARD_PAPER",
+            "symbol": "BTCUSDT", "direction": "LONG", "status": "CLOSED", "strategy_name": "SMC Lab",
+            "counts_in_stats": 1, "entry_locked": 1, "entry_filled_at": "2026-10-06T09:00:00+00:00",
+            "exit_at": "2026-10-06T10:00:00+00:00"}
+    trade_id, _ = store.create_trade({**base, **fields})
+    return trade_id
+
+
+def test_unrecorded_pnl_fees_and_funding_stay_unknown_in_aggregates(tmp_path, api):
+    """Never a $0.00 for a figure nobody recorded: an R-only backtest has no
+    P&L, fees or funding, and a Trading Instance models no funding."""
+    from services.journal import JournalStore as ReplayStore
+    from services.journal_ingest import ingest_replay_journal
+    store = TradeJournalStore(":memory:")
+    replay = ReplayStore(str(tmp_path / "replay.json"))
+    replay.add({"id": "r1", "symbol": "BTCUSDT", "side": "long", "entry": 100, "exit": 103, "rr": 1.5,
+                "strategy": "SMC Lab", "timeframe": "5m", "created_at": "2026-10-06T09:00:00+00:00"})
+    assert ingest_replay_journal(TradeJournalRecorder(store), replay)["created"] == 1
+    client, auth = api(store)
+    summary = client.get("/journal/v2/summary?modes=BACKTEST", headers=auth).json()
+    assert summary["total_trades"] == 1 and summary["avg_r"] == 1.5
+    assert summary["net_pnl"] is None and summary["total_fees"] is None
+    m = summary["metrics"]
+    assert (m["gross_profit"], m["gross_loss"], m["total_funding"], m["max_drawdown"]) == (None, None, None, None)
+    analytics = client.get("/journal/v2/analytics?modes=BACKTEST", headers=auth).json()
+    assert [p["cumulative_pnl"] for p in analytics["equity_curve"]] == [None]
+    assert [p["cumulative_r"] for p in analytics["equity_curve"]] == [1.5]
+    assert analytics["trend"]["weekly"][0]["net_pnl"] is None
+    assert analytics["trend"]["weekly"][0]["cumulative_pnl"] is None
+    week = client.get("/journal/v2/weekly-review?modes=BACKTEST&week=2026-W41", headers=auth).json()
+    texts = " ".join(o["text"] for o in week["observations"])
+    assert "$0.00" not in texts and "+1.50R" in texts
+    # an engine trade with fees but no modelled funding; a lab trade that booked none
+    instance = TradeJournalStore(":memory:")
+    _fact_trade(instance, "i1", source_system="PAPER_ENGINE", net_pnl=-4.0, fees_total=0.4, result="LOSS")
+    assert journal_analytics.metrics(instance.list_trades())["total_funding"] is None
+    assert journal_analytics.metrics(instance.list_trades())["total_fees"] == 0.4
+    _fact_trade(instance, "l1", source_system="PRICE_ACTION_LAB", net_pnl=2.0, fees_total=0.1,
+                funding_total=0.0, result="WIN")
+    assert journal_analytics.metrics(instance.list_trades())["total_funding"] == 0.0   # a booked zero
+
+
+def test_a_dashboard_read_never_holds_the_lock_fill_hooks_need(tmp_path):
+    """Trade lists, counts and facets run on their own WAL reader and decode
+    outside any lock, so a poll over a long history cannot delay a hook."""
+    import threading
+    store = TradeJournalStore(str(tmp_path / "journal.db"))
+    for i in range(200):
+        _fact_trade(store, f"k{i}", net_pnl=1.0, result="WIN")
+    assert store._read is not store._c and store._read_lock is not store._lock
+    reading = threading.Event()
+
+    def slow_decode(row):
+        reading.set()
+        time.sleep(0.01)                             # 200 rows: a two-second poll
+        return TradeJournalStore._decode(row)
+
+    store._decode = slow_decode
+    poll = threading.Thread(target=lambda: store.list_trades(modes=["ALL"]))
+    poll.start()
+    assert reading.wait(5)
+    _trade_id, created = store.create_trade({"source_system": "VERIFY", "source_trade_key": "hook",
+                                             "trading_mode": "FORWARD_PAPER", "symbol": "ETHUSDT",
+                                             "direction": "SHORT", "status": "OPEN"})
+    assert created and poll.is_alive()               # the hook's write did not wait for the poll
+    poll.join(10)
+
+
+def test_dates_and_weeks_are_london_calendar_days(api):
+    """Every time on screen is London time, so a date filter is a London day
+    and a weekly review is a London ISO week (as the trend table uses)."""
+    from services.journal_sessions import iso_week_key, week_bounds
+    store = TradeJournalStore(":memory:")
+    times = {"late-oct5": "2026-10-05T23:30:00+00:00",    # 00:30 BST on the 6th
+             "oct6": "2026-10-06T22:30:00+00:00",         # 23:30 BST on the 6th
+             "late-oct6": "2026-10-06T23:30:00+00:00",    # 00:30 BST on the 7th
+             "sun-oct4": "2026-10-04T23:30:00+00:00",     # Monday 00:30 BST: week 41
+             "sun-oct11": "2026-10-11T23:30:00+00:00"}    # Monday 00:30 BST: week 42
+    ids = {key: _fact_trade(store, key, entry_filled_at=at, exit_at=at, net_pnl=1.0, result="WIN")
+           for key, at in times.items()}
+    client, auth = api(store)
+    day = client.get("/journal/v2/trades?date_from=2026-10-06&date_to=2026-10-06", headers=auth).json()
+    assert {t["trade_id"] for t in day["trades"]} == {ids["late-oct5"], ids["oct6"]}
+    assert client.get("/journal/v2/trades?date_from=2026-13-01", headers=auth).status_code == 400
+    week = client.get("/journal/v2/weekly-review?week=2026-W41", headers=auth).json()
+    assert week["metrics"]["total_trades"] == 4                     # all but Sunday-night 11 Oct
+    trend = journal_analytics.trend(store.list_trades())["weekly"]
+    assert {w["week"]: w["trades"] for w in trend} == {"2026-W41": 4, "2026-W42": 1}
+    assert {iso_week_key(at) for at in times.values()} == {"2026-W41", "2026-W42"}
+    # the week the clocks go back is 169 hours long
+    assert week_bounds("2026-W43") == ("2026-10-18T23:00:00+00:00", "2026-10-26T00:00:00+00:00")
+
+
+def test_realised_r_distribution_buckets_are_true_and_ordered():
+    store = TradeJournalStore(":memory:")
+    for i, r in enumerate((-3.5, -3.0, -2.5, -0.5, 0.0, 3.99, 4.0)):
+        _fact_trade(store, f"r{i}", realised_r=r, net_pnl=r, result="WIN" if r > 0 else "LOSS")
+    got = journal_analytics.rr_analysis(store.list_trades())["realised_r_distribution"]
+    assert list(got.items()) == [("< -3R", 1), ("-3R to -2R", 2), ("-1R to 0R", 1), ("0R to 1R", 1),
+                                 ("3R to 4R", 1), ("≥ 4R", 1)]
+
+
+def test_rules_followed_filter_excludes_trades_never_checked(api):
+    store = TradeJournalStore(":memory:")
+    followed = _fact_trade(store, "ok", rule_violation=0, net_pnl=1.0, result="WIN")
+    broken = _fact_trade(store, "bad", rule_violation=1, net_pnl=-1.0, result="LOSS")
+    _fact_trade(store, "unchecked", net_pnl=1.0, result="WIN")             # rule check never ran
+    client, auth = api(store)
+    for value, want in (("false", {followed}), ("true", {broken})):
+        listed = client.get(f"/journal/v2/trades?rule_violation={value}", headers=auth).json()
+        assert {t["trade_id"] for t in listed["trades"]} == want and listed["total"] == len(want)
+
+
+def test_csv_export_carries_every_matching_trade(api):
+    store = TradeJournalStore(":memory:")
+    with store._lock:
+        store._c.executemany(
+            "INSERT INTO journal_trades (trade_id, trade_ref, source_system, source_trade_key, symbol, direction, "
+            "status, trading_mode, counts_in_stats, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [(f"t{i}", f"TRD-X{i:06d}", "VERIFY", f"k{i}", "BTCUSDT", "LONG", "CLOSED", "FORWARD_PAPER", 1,
+              "2026-10-06T09:00:00+00:00", "2026-10-06T09:00:00+00:00") for i in range(20_001)])
+        store._c.commit()
+    client, auth = api(store)
+    text = client.get("/journal/v2/trades.csv", headers=auth).text
+    assert len(text.strip().splitlines()) == 1 + 20_001             # header + every trade
+
+
+def test_trade_summary_facts_never_print_none_or_float_noise(api):
+    store = TradeJournalStore(":memory:")
+    trade_id, _ = store.create_trade({"source_system": "VERIFY", "source_trade_key": "open",
+                                      "trading_mode": "FORWARD_PAPER", "symbol": "BTCUSDT", "direction": "LONG",
+                                      "status": "OPEN", "entry_price": 100.10000000000001,
+                                      "quantity": 0.30000000000000004, "initial_stop": 95.0,
+                                      "entry_filled_at": "2026-10-06T09:00:00+00:00"})
+    client, auth = api(store)
+    facts = {f["q"]: f["a"] for f in client.get(f"/journal/v2/trades/{trade_id}", headers=auth).json()["facts"]}
+    assert facts["Strategy"] is None
+    assert facts["Entry / exit price"] == "100.1 → —"
+    assert facts["Quantity"] == "0.3" and facts["Stop loss"] == "95" and facts["Take profit"] is None
+    assert not any(isinstance(a, str) and "None" in a for a in facts.values()), facts

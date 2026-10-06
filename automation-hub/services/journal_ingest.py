@@ -294,9 +294,13 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
     summary = {"created": 0, "exits_added": 0, "finalised": 0}
     trips = round_trips(export.get("fills") or [])
     funding_by_trip = _funding_owners(trips, export.get("funding") or [])
-    with recorder._lock:
-        finished = store.finalised_refs("LAB_FILL")
-        for index, trip in enumerate(trips):
+    finished = store.finalised_refs("LAB_FILL")
+    for index, trip in enumerate(trips):
+        if trip["closed"] and str(trip["entries"][0]["id"]) in finished:
+            continue   # a finished trip can gain no new fills
+        # One trip per lock hold: a live fill hook waits for at most one
+        # trip's writes, never for a whole import.
+        with recorder.bulk_item():
             first = trip["entries"][0]
             entry_order_id = str(first.get("order_id") or "")
             meta = meta_by_order.get(entry_order_id) or {}
@@ -304,8 +308,6 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
             config = meta.get("config") or {}
             session = sessions.get(meta.get("session_id")) or {}
             key = f"{account_id}:{first['id']}"
-            if trip["closed"] and str(first["id"]) in finished:
-                continue   # a finished trip can gain no new fills
             trade_id = store.resolve_link("LAB_FILL", str(first["id"]))
             direction = trip["direction"]
             entry_qty = sum(float(f["quantity"]) for f in trip["entries"])
@@ -485,12 +487,13 @@ def ingest_replay_journal(recorder: TradeJournalRecorder, replay_store) -> dict:
     store = recorder.store
     summary = {"created": 0}
     entries = replay_store.list()
-    with recorder._lock:
-        known = store.linked_refs("REPLAY_JOURNAL")
-        for entry in entries:
-            key = str(entry.get("id") or "")
-            if not key or key in known:
-                continue
+    known = store.linked_refs("REPLAY_JOURNAL")
+    for entry in entries:
+        key = str(entry.get("id") or "")
+        if not key or key in known:
+            continue
+        # one entry per lock hold, so a backlog never blocks live hooks
+        with recorder.bulk_item():
             direction = "LONG" if str(entry.get("side") or "").lower() in ("long", "buy") else "SHORT"
             rr = _num(entry.get("rr"))
             base, quote = split_symbol(entry.get("symbol") or "")
@@ -627,14 +630,18 @@ class JournalSync:
         return {"running": bool(self._thread and self._thread.is_alive()), "interval_s": self.interval_s,
                 "last": self._last}
 
-    def start(self) -> None:
+    def start(self, *, timer: bool = True) -> None:
+        """The boot pass (with legacy migration) runs on this thread, never on
+        the caller's: a large first import cannot delay startup. ``timer=False``
+        stops after the boot pass."""
         import threading
         if self._thread and self._thread.is_alive():
             return
         self._stop.clear()
 
         def loop():
-            while not self._stop.wait(self.interval_s):
+            self.run_once()
+            while timer and not self._stop.wait(self.interval_s):
                 self.run_once(include_legacy=False)
 
         self._thread = threading.Thread(target=loop, name="journal-sync", daemon=True)

@@ -40,10 +40,11 @@ import sqlite3
 import threading
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Iterable, Optional
 
+from data.sqlite_runtime import runtime_connection
 from data.tenant_scope import ensure_tenant_column
+from services.journal_sessions import london_day_bounds
 
 SCHEMA_VERSION = 1
 
@@ -238,15 +239,27 @@ class TradeJournalStore:
 
     def __init__(self, path: str = ":memory:", connection: Optional[sqlite3.Connection] = None):
         self.path = str(path)
+        own_file = connection is None and self.path != ":memory:"
         if connection is None:
-            if self.path != ":memory:":
-                Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-            connection = sqlite3.connect(self.path, check_same_thread=False)
+            if own_file:
+                # The runtime convention (WAL, synchronous=NORMAL, bounded busy
+                # wait): live fill hooks commit without an fsync per write, and
+                # readers never block the writer.
+                connection = runtime_connection(self.path)
+            else:
+                connection = sqlite3.connect(self.path, check_same_thread=False)
         self._c = connection
         self._c.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         with self._lock:
             self._schema()
+        # Dashboard reads (trade lists, counts, facets) use their own WAL
+        # reader, so a poll over a large history never holds the lock live
+        # fill hooks need. An in-memory store has one connection.
+        if own_file:
+            self._read, self._read_lock = runtime_connection(self.path, autocommit=True), threading.Lock()
+        else:
+            self._read, self._read_lock = self._c, self._lock
 
     # ------------------------------------------------------------------ schema
     def _schema(self) -> None:
@@ -906,36 +919,37 @@ class TradeJournalStore:
         if limit is not None:
             query += " LIMIT ? OFFSET ?"
             args.extend([int(limit), int(offset)])
-        with self._lock:
-            return [self._decode(r) for r in self._c.execute(query, args)]
+        with self._read_lock:
+            rows = self._read.execute(query, args).fetchall()
+        return [self._decode(r) for r in rows]
 
     def count_trades(self, **filters) -> int:
         where, args = self._where(**filters)
         query = "SELECT COUNT(*) FROM journal_trades"
         if where:
             query += " WHERE " + " AND ".join(where)
-        with self._lock:
-            return int(self._c.execute(query, args).fetchone()[0])
+        with self._read_lock:
+            return int(self._read.execute(query, args).fetchone()[0])
 
     def mode_counts(self) -> dict[str, int]:
-        with self._lock:
-            return {r[0]: r[1] for r in self._c.execute(
+        with self._read_lock:
+            return {r[0]: r[1] for r in self._read.execute(
                 "SELECT trading_mode, COUNT(*) FROM journal_trades GROUP BY trading_mode")}
 
     def facets(self) -> dict:
         """Distinct values for filter dropdowns."""
         out = {}
-        with self._lock:
+        with self._read_lock:
             for name in ("strategy_name", "instance_id", "lab_id", "trade_source", "symbol",
                          "timeframe", "entry_session", "exit_reason", "trading_mode",
                          "source_system"):
-                out[name] = [r[0] for r in self._c.execute(
+                out[name] = [r[0] for r in self._read.execute(
                     f"SELECT DISTINCT {name} FROM journal_trades WHERE {name} IS NOT NULL "
                     f"AND {name} != '' ORDER BY {name}")]
-            out["instances"] = [dict(r) for r in self._c.execute(
+            out["instances"] = [dict(r) for r in self._read.execute(
                 "SELECT instance_id, MAX(instance_name) AS instance_name FROM journal_trades "
                 "WHERE instance_id IS NOT NULL AND instance_id != '' GROUP BY instance_id")]
-            out["leverage"] = [r[0] for r in self._c.execute(
+            out["leverage"] = [r[0] for r in self._read.execute(
                 "SELECT DISTINCT leverage FROM journal_trades WHERE leverage IS NOT NULL ORDER BY leverage")]
         return out
 
@@ -953,13 +967,18 @@ class TradeJournalStore:
             where.append(f"trading_mode IN ({','.join('?' for _ in modes)})")
             args.extend(modes)
         when = "COALESCE(entry_filled_at, order_created_at, signal_at, created_at)"
+        # A bare date is a London calendar day (every time on screen is London
+        # time); date_to runs through the end of that day.
         if date_from:
             where.append(f"{when} >= ?")
-            args.append(date_from)
+            args.append(london_day_bounds(date_from)[0] if len(date_from) == 10 else date_from)
         if date_to:
-            # A bare date means "through the end of that day".
-            where.append(f"{when} <= ?")
-            args.append(date_to + "T23:59:59.999999+00:00" if len(date_to) == 10 else date_to)
+            if len(date_to) == 10:
+                where.append(f"{when} < ?")
+                args.append(london_day_bounds(date_to)[1])
+            else:
+                where.append(f"{when} <= ?")
+                args.append(date_to)
         if strategy:
             where.append("(strategy_id = ? OR strategy_name = ? OR strategy_family = ?)")
             args.extend([strategy, strategy, strategy])
@@ -1027,10 +1046,9 @@ class TradeJournalStore:
             where.append("net_pnl <= ?")
             args.append(float(pnl_max))
         if rule_violation is not None:
-            where.append("COALESCE(rule_violation, 0) = ?" if not rule_violation
-                         else "rule_violation = 1")
-            if not rule_violation:
-                args.append(0)
+            # a trade whose rule check has not run (NULL) is in neither group
+            where.append("rule_violation = ?")
+            args.append(1 if rule_violation else 0)
         if exit_reason:
             where.append("exit_reason = ?")
             args.append(exit_reason.upper())

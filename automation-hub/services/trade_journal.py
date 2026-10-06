@@ -22,6 +22,7 @@ and the trade's ``data_completeness`` says so.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import threading
@@ -376,6 +377,51 @@ def _freshness(reference: Optional[str], decided_at: Optional[str], timeframe: O
 
 
 # --------------------------------------------------------------- the recorder
+class _HooksFirstLock:
+    """The recorder lock. Python locks are not fair: a thread that releases a
+    lock and takes it straight back usually beats a thread already waiting,
+    so an import releasing per item could still starve a fill hook. Imports
+    therefore take it through ``TradeJournalRecorder.bulk_item``, which lets
+    every waiting caller through first."""
+
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._state = threading.Condition()
+        self._waiting = 0
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        if self._lock.acquire(blocking=False):
+            return True
+        if not blocking:
+            return False
+        with self._state:
+            self._waiting += 1
+        try:
+            return self._lock.acquire(timeout=timeout)
+        finally:
+            with self._state:
+                self._waiting -= 1
+                self._state.notify_all()
+
+    def release(self) -> None:
+        self._lock.release()
+
+    def __enter__(self):
+        self.acquire()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.release()
+
+    def let_waiters_through(self, timeout: float = 1.0) -> None:
+        """Wait until no caller is queued for the lock (bounded, so an import
+        always progresses). A no-op for a thread that already holds it."""
+        if self._lock._is_owned():
+            return
+        with self._state:
+            self._state.wait_for(lambda: not self._waiting, timeout)
+
+
 class TradeJournalRecorder:
     """Writes canonical journal records. Thread-safe."""
 
@@ -387,10 +433,18 @@ class TradeJournalRecorder:
         self.review_on_close = review_on_close
         self.logger = logger
         self.preferred_window = preferred_window
-        self._lock = threading.RLock()
+        self._lock = _HooksFirstLock()
         # current stop/target per open canonical trade, so a per-bar
         # management checkpoint only touches the database when a level moves.
         self._levels: dict[str, tuple[Optional[float], Optional[float]]] = {}
+
+    @contextlib.contextmanager
+    def bulk_item(self):
+        """Hold the lock for one item of an import (a lab trip, a ledger or
+        legacy row, a replay entry), after any waiting live hook has gone."""
+        self._lock.let_waiters_through()
+        with self._lock:
+            yield
 
     def _log(self, message: str) -> None:
         if self.logger is not None:
@@ -1065,15 +1119,22 @@ class TradeJournalRecorder:
         # never wait on a history read. Anything a hook records in between is
         # seen as linked/closed below; the grace window covers hooks in flight.
         rows = sorted(ledger.get_paper_trades(), key=lambda r: (r.get("opened_at") or "", r.get("id") or ""))
-        with self._lock:
-            cutoff = datetime.now(timezone.utc) - timedelta(seconds=grace_s)
-            linked = self.store.linked_refs("LEDGER_TRADE")
-            for row in rows:
-                if row["id"] in linked:
-                    continue
-                opened = parse_ts(row.get("opened_at"))
-                if opened is not None and opened > cutoff:
-                    summary["skipped_recent"] += 1
+        cutoff = datetime.now(timezone.utc) - timedelta(seconds=grace_s)
+        linked = self.store.linked_refs("LEDGER_TRADE")
+        for row in rows:
+            if row["id"] in linked:
+                continue
+            opened = parse_ts(row.get("opened_at"))
+            if opened is not None and opened > cutoff:
+                summary["skipped_recent"] += 1
+                continue
+            # One row per lock hold, so a live fill hook waits for at most one
+            # row's writes. Re-checked under the lock: a hook may have linked
+            # the row since the read. Rows run in opening order, so a parent
+            # is in ``linked`` before its remainder is reached.
+            with self.bulk_item():
+                if self.store.resolve_link("LEDGER_TRADE", row["id"]):
+                    linked.add(row["id"])
                     continue
                 parent = self._remainder_parent(row, rows, linked)
                 if parent is not None:
@@ -1086,9 +1147,15 @@ class TradeJournalRecorder:
                 self._create_from_ledger(row, mode_resolver)
                 linked.add(row["id"])
                 summary["created"] += 1
-            # apply ledger closes the live hook never delivered
-            by_id = {r["id"]: r for r in rows}
-            for trade in self.store.trades_with_status(("OPEN", "PARTIALLY_CLOSED")):
+        # apply ledger closes the live hook never delivered
+        by_id = {r["id"]: r for r in rows}
+        for listed in self.store.trades_with_status(("OPEN", "PARTIALLY_CLOSED")):
+            # one trade per lock hold, re-read under the lock: a live hook may
+            # have closed the trade or linked a new leg since the list was read
+            with self.bulk_item():
+                trade = self.store.get_trade(listed["trade_id"])
+                if trade is None or trade["status"] not in ("OPEN", "PARTIALLY_CLOSED"):
+                    continue
                 refs = [l["ref"] for l in self.store.links(trade["trade_id"]) if l["link_type"] == "LEDGER_TRADE"]
                 ledger_rows = [by_id[r] for r in refs if r in by_id]
                 if not ledger_rows:
@@ -1110,7 +1177,7 @@ class TradeJournalRecorder:
                                      "Close restored from the ledger after the live hook did not record it.",
                                      ts=_now(), actor="reconciliation")
                 summary["closed"] += 1
-            summary["uncertain"] = self.mark_stale_pending(pending_uncertain_after_s)
+        summary["uncertain"] = self.mark_stale_pending(pending_uncertain_after_s)
         return summary
 
     def mark_stale_pending(self, pending_uncertain_after_s: int = PENDING_UNCERTAIN_AFTER_S) -> int:
@@ -1229,7 +1296,7 @@ class TradeJournalRecorder:
         summary = {"migrated": 0, "already": 0}
         # Both histories are read before the recorder lock is taken: an explicit
         # sync can run at any time, and live fill hooks must never wait on a
-        # history read. The lock covers only rows that still need linking.
+        # history read. The lock covers one row that still needs linking.
         ledger_rows = {}
         if ledger is not None:
             try:
@@ -1240,12 +1307,11 @@ class TradeJournalRecorder:
         known = self.store.linked_refs("LEGACY_JOURNAL")
         pending = [row for row in legacy_rows if row["trade_id"] not in known]
         summary["already"] = len(legacy_rows) - len(pending)
-        if not pending:
-            return summary
-        with self._lock:
-            known = self.store.linked_refs("LEGACY_JOURNAL")   # re-checked under the lock
-            for legacy in pending:
-                if legacy["trade_id"] in known:
+        for legacy in pending:
+            full = legacy_store.get(legacy["trade_id"]) or legacy
+            # one row per lock hold, re-checked under the lock
+            with self.bulk_item():
+                if self.store.resolve_link("LEGACY_JOURNAL", legacy["trade_id"]):
                     summary["already"] += 1
                     continue
                 owner = self.store.resolve_link("LEDGER_TRADE", legacy["trade_id"])
@@ -1254,12 +1320,11 @@ class TradeJournalRecorder:
                     self.store.add_link(owner, "LEGACY_JOURNAL", legacy["trade_id"])
                     summary["already"] += 1
                     continue
-                self._migrate_one(legacy_store, legacy, ledger_rows.get(legacy["trade_id"]))
+                self._migrate_one(full, legacy, ledger_rows.get(legacy["trade_id"]))
                 summary["migrated"] += 1
         return summary
 
-    def _migrate_one(self, legacy_store, row: dict, ledger_row: Optional[dict]) -> str:
-        full = legacy_store.get(row["trade_id"]) or row
+    def _migrate_one(self, full: dict, row: dict, ledger_row: Optional[dict]) -> str:
         sections = full.get("sections") or {}
         provenance = sections.get("provenance") or {}
         if not full.get("instance_id") and not provenance:

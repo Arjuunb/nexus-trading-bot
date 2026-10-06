@@ -92,10 +92,25 @@ PaperExecutionEngine.close (any caller) ───► on_exit_fill ─► CLOSED,
 ## 4. Reconciliation and ingestion (`services/journal_ingest.py`)
 
 `JournalSync` runs once at boot and then every `HUB_JOURNAL_SYNC_INTERVAL`
-seconds (default 60; `HUB_JOURNAL_SYNC=0` disables the timer). Every step is
-idempotent and isolated from the others.
+seconds (default 60; `HUB_JOURNAL_SYNC=0` disables the timer). The boot pass
+runs on the sync thread, so a large first import never delays startup. Every
+step is idempotent and isolated from the others.
 
-1. **Legacy migration**: maps each `trade_decision_journal` row once. Fields it did not record stay NULL; for example, leverage is never invented for history. It runs at boot and on an explicit sync. Both histories are read before the recorder lock is taken, and the lock covers only rows that still need linking, so a sync never makes a live fill hook wait.
+**Execution never waits for an import.** Live fill hooks and imports share the
+recorder lock. An import reads its source history before taking the lock, then
+takes it for one item at a time (a lab trip, a ledger or legacy row, a replay
+entry), re-checking that item under the lock. Python locks are not fair: a
+thread that releases a lock and takes it straight back usually wins over one
+already waiting. So between items an import first lets every waiting hook
+through (`TradeJournalRecorder.bulk_item`). A hook therefore waits for at most
+one item's writes. Measured: a paper signal-to-open took 12.5 ms during a 300-trip
+lab import (4.7 ms idle), against 6.7 s before. A forward-paper fill price was
+unchanged with or without a concurrent 1,000-entry replay import.
+`journal.db` runs in WAL mode with `synchronous=NORMAL`, the convention for
+runtime databases, so hook commits do not fsync. The legacy decision journal
+shares the file and keeps working.
+
+1. **Legacy migration**: maps each `trade_decision_journal` row once. Fields it did not record stay NULL; for example, leverage is never invented for history. It runs at boot and on an explicit sync. Both histories are read before the recorder lock is taken, and the lock is taken per row, so a sync never makes a live fill hook wait.
 2. **Ledger reconciliation**:
    - creates records for ledger trades the journal never saw (`RECONCILED_FROM_LEDGER`, no snapshot);
    - links partial-exit remainder rows to their parent;
@@ -175,6 +190,13 @@ Writes require the control credential. Signed-in sessions supply it automaticall
 
 **Filters**, all combinable: `modes`, `date_from`, `date_to`, `strategy`, `instance_id`, `lab`, `trade_source`, `symbol`, `direction`, `result` (`WINS`, `LOSSES`, `OPEN`, `OPERATIONAL` or an exact result), `session`, `timeframe`, `leverage_min/max`, `rr_min/max`, `realised_r_min/max`, `pnl_min/max`, `rule_violation`, `exit_reason`, `status`.
 
+- **London time.** Every time on screen is London time. A bare `date_from` / `date_to` is a London calendar day, and a weekly review covers a London ISO week (Monday 00:00 London time), the same weeks the trend table uses. A trade belongs to the week it closed in; an order that never filled belongs to the week it was placed in.
+- **Rule check.** `rule_violation=false` means the rule check ran and passed. A trade whose check has not run (NULL) is in neither group.
+- **Unknown stays unknown.** Totals (net P&L, gross profit/loss, fees, funding) sum the recorded values only. When none was recorded, the total is NULL (shown as "—"), never `0`. The equity curve has no point for a trade without a recorded P&L.
+- **CSV export** carries every matching trade.
+- **Query plans.** The API always sends a trading mode, so every list is bounded by the trading-mode index. Symbol, instance and status filters have their own indexes. A date range or a strategy is evaluated within the mode's rows.
+- **Dashboard reads** (trade lists, counts, facets) use a separate WAL reader connection and decode rows outside any lock, so a poll over a long history never holds the lock the fill hooks need.
+
 ## 7. Reviews
 
 - **Trade review agent** (`services/journal_review.py`): runs on every close. It writes setup quality, execution quality, risk management, outcome, mistakes, what went well/wrong, improvement and rule violations, from journal facts only. Reviews are separate rows and cannot change the trade.
@@ -199,13 +221,14 @@ Journal tabs:
 ## 9. Known limits (stated, not hidden)
 
 - **Leverage and margin on instances:** the Trading Instance paper engine is unleveraged cash. Leverage is recorded as `1x` with `leverage_source = UNLEVERAGED_CASH_MODEL`, and margin equals notional.
-- **Funding on instances:** not modelled by the instance engine, so `funding_total` is NULL there, not 0. Lab funding is recorded.
+- **Funding on instances:** not modelled by the instance engine, so `funding_total` is NULL there, not 0, including in totals. Lab funding is recorded.
+- **Dashboard cost on long histories:** the summary and analytics endpoints recompute over the whole filtered history on each poll: about 1.8 s of CPU per request at 20,000 trades in one mode, 0.15 s at 2,000. A poll holds no lock a fill hook needs, so execution only shares the CPU: the worst hook store call during three 20,000-trade polls took 71 ms. Narrow the date range on very long histories.
 - **MFE/MAE coverage:** recorded where the execution path tracked them (closed-bar extremes for instances; research-engine R for PA). Elsewhere they are NULL and excluded from excursion statistics.
 - **SMC instance strategy:** its structure-break condition does not distinguish BOS from CHoCH, and the journal says so.
 - **Account equity before entry:** recorded only when it is knowable, i.e. no other position open, or the lab captured it at placement.
 - **Migrated legacy records:** keep NULL for every field they never captured. Records without provenance stay `UNKNOWN` mode.
 - **Legs repaired by reconciliation:** when a live hook was missed, the ledger row supplies the fee amount but not the commission rate, so that leg's fee `rate` is NULL. A `paper_trades` row carries no position id, so the remainder is linked by its ledger trade id only, with no `LEDGER_POSITION` link.
-- **Manual protection edits inside a lab** (`set_protection` on a lab position) are audited by the lab, but they are not in the broker fills the journal ingests. A lab trade's `current_stop` / `current_target` therefore stay at the armed levels. **Follow-up:** ingest the lab's protection-change audit events as `journal_modifications` rows.
+- **Stop/target edits on a lab position** (`set_protection`) change the broker position in place and leave no fill, so the journal does not see them. A lab trade's `current_stop` / `current_target` therefore stay at the armed levels. The SMC Lab audits a manual edit (`paper_position_protection_changed`). The PA Lab's endpoint edits the broker position directly, with no audit row. **Follow-up** ([issue 30](https://github.com/Arjuunb/nexus-trading-bot/issues/30)): record each protection change at the source and ingest it as a `journal_modifications` row.
 - **R definitions:** the journal's R is measured against the original risk at entry (`|entry fill − initial stop| × quantity`). `realised_r` is net P&L over that risk, and `gross_r` is gross P&L over it. The ledger's own `paper_trades.rr` column is a different figure: gross R against the stop *at close*, rounded to 3 dp. The two agree only while the stop has not moved.
 - **Factory reset** clears the journal together with the ledger, as the audited operator reset always has. No other path deletes a journal record.
 - **Paper account reset** (an initial-capital change with `reset_trades`) deletes every paper trade and position, across instances. The journal ends each open paper-engine trade as `CANCELLED` / `SIMULATION_RESET`: operational, with no fabricated fill, keeping realised partial exits. Lab trades and pending orders are not touched.

@@ -103,11 +103,11 @@ export default function JournalFiltersBar({ filters, setFilters, meta }: {
     <div className="tj-filters">
       <div className="tj-filter-row">
         <label className="tj-field">
-          <span>From</span>
+          <span>From (London)</span>
           <input aria-label="Date from" type="date" value={filters.date_from} onChange={(e) => set("date_from")(e.target.value)} />
         </label>
         <label className="tj-field">
-          <span>To</span>
+          <span>To (London)</span>
           <input aria-label="Date to" type="date" value={filters.date_to} onChange={(e) => set("date_to")(e.target.value)} />
         </label>
         <Select name="Strategy" value={filters.strategy} onChange={set("strategy")} options={opts(facets?.strategy_name)} />

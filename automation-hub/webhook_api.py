@@ -995,7 +995,8 @@ price_action_runtime = PriceActionLabRuntime(
     poll_seconds=settings.price_action_poll_s)
 # Keep the canonical journal complete: migrate the legacy decision journal,
 # reconcile against the ledger, and ingest the isolated lab ledgers and the
-# replay (backtest) journal. Once now, then on a timer outside tests.
+# replay (backtest) journal. Once at boot on the sync thread (so a large first
+# import never delays startup), then on a timer; tests run the boot pass inline.
 from services.journal_ingest import JournalSync  # noqa: E402
 journal_sync = JournalSync(
     trade_journal, legacy_store=decision_journal_store, ledger=ledger,
@@ -1003,10 +1004,12 @@ journal_sync = JournalSync(
     labs=(price_action_paper, smc_paper), replay_store=journal_store,
     interval_s=float(_os.environ.get("HUB_JOURNAL_SYNC_INTERVAL", "60")),
     logger=lambda message: ledger.log(level="warning", stage="journal", message=message[:400]))
-journal_sync.run_once()
-if ("PYTEST_CURRENT_TEST" not in _os.environ and
-        _os.environ.get("HUB_JOURNAL_SYNC", "1").strip().lower() not in ("0", "false", "no", "off")):
-    journal_sync.start()
+import sys as _sys  # noqa: E402
+if "PYTEST_CURRENT_TEST" in _os.environ or "pytest" in _sys.modules:
+    journal_sync.run_once()
+else:
+    journal_sync.start(timer=_os.environ.get("HUB_JOURNAL_SYNC", "1").strip().lower()
+                       not in ("0", "false", "no", "off"))
 price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
 price_action_research = PriceActionExperimentRunner(price_action_experiments)
 v2_market_update_job = MarketDataUpdateJob(v2_market_data)

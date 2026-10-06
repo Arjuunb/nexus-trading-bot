@@ -178,12 +178,28 @@ def iso_week_key(value) -> Optional[str]:
     return f"{year}-W{week:02d}"
 
 
+def _london_midnight_utc(day: date) -> datetime:
+    """00:00 London time on ``day``, in UTC. The clocks change at 01:00 UTC
+    on a Sunday, so the offset an hour before UTC midnight is the one that
+    applies at London midnight."""
+    midnight = datetime.combine(day, datetime.min.time(), timezone.utc)
+    return midnight - london_offset(midnight - timedelta(hours=1))
+
+
+def london_day_bounds(day_text: str) -> tuple[str, str]:
+    """UTC ISO bounds [start, end) of a London calendar day such as
+    ``2026-10-05``: the day a London time on screen falls on."""
+    day = date.fromisoformat(day_text)
+    return _london_midnight_utc(day).isoformat(), _london_midnight_utc(day + timedelta(days=1)).isoformat()
+
+
 def week_bounds(week_key: str) -> tuple[str, str]:
-    """UTC ISO bounds [start, end) of an ISO week key such as ``2026-W40``."""
+    """UTC ISO bounds [start, end) of a London ISO week such as ``2026-W40``
+    (Monday 00:00 London time), the weeks ``iso_week_key`` assigns."""
     year_text, week_text = week_key.upper().split("-W")
     monday = date.fromisocalendar(int(year_text), int(week_text), 1)
-    start = datetime.combine(monday, datetime.min.time(), timezone.utc)
-    return start.isoformat(), (start + timedelta(days=7)).isoformat()
+    return (_london_midnight_utc(monday).isoformat(),
+            _london_midnight_utc(monday + timedelta(days=7)).isoformat())
 
 
 def session_order(names: Iterable[str]) -> list[str]:

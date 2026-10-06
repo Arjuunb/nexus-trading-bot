@@ -21,8 +21,11 @@ type Saved = { reviews: { id: string; week_key: string; created_at: string; gene
   report: { observations: Observation[] }; scope: { modes?: string[] } }[] };
 
 function currentWeek(): string {
-  const now = new Date();
-  const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  // journal weeks are London ISO weeks (Monday 00:00 London time), like every time on screen
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "numeric", day: "numeric" })
+    .formatToParts(new Date());
+  const part = (type: string) => Number(parts.find((p) => p.type === type)?.value);
+  const date = new Date(Date.UTC(part("year"), part("month") - 1, part("day")));
   const day = date.getUTCDay() || 7;
   date.setUTCDate(date.getUTCDate() + 4 - day);
   const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));

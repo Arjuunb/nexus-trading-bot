@@ -7,7 +7,7 @@ import BarChart from "../components/chart/BarChart";
 import JournalFiltersBar, { ModeChips, useJournalFilters, useJournalMeta } from "../components/journal/JournalFilters";
 import { useLive } from "../lib/api";
 import {
-  MODE_LABELS, dash, filterQuery, fmtDuration, fmtLev, fmtMoney, fmtPct, fmtPF, fmtR, fmtRR, label, tone,
+  MODE_LABELS, dash, filterQuery, fmtDuration, fmtLev, fmtMoney, fmtPct, fmtPF, fmtR, fmtRR, isNum, label, tone,
   type GroupRow, type Scope, type Summary,
 } from "../lib/journal";
 
@@ -87,6 +87,8 @@ export default function JournalAnalytics() {
   const res = useLive<Analytics>(`/journal/v2/analytics?${filterQuery(filters)}`, 15000);
   const a = res.data;
   const strategies = a ? Object.keys(a.symbols.by_strategy) : [];
+  // trades with no recorded P&L have no point on the curve (never a flat $0 step)
+  const pnlCurve = a ? a.equity_curve.filter((p) => isNum(p.cumulative_pnl)) : [];
 
   return (
     <>
@@ -126,11 +128,11 @@ export default function JournalAnalytics() {
           <div className="grid-2-eq tj-grid">
             <Section title="Equity curve" subtitle="cumulative net P&L by exit time">
               <div style={{ height: 220 }}>
-                {a.equity_curve.length ? (
-                  <AreaLine labels={a.equity_curve.map((p) => p.trade_ref)}
-                    series={[{ name: "Net P&L", data: a.equity_curve.map((p) => p.cumulative_pnl ?? 0), color: "#eab54f" }]}
+                {pnlCurve.length ? (
+                  <AreaLine labels={pnlCurve.map((p) => p.trade_ref)}
+                    series={[{ name: "Net P&L", data: pnlCurve.map((p) => p.cumulative_pnl as number), color: "#eab54f" }]}
                     valueFormatter={(v) => fmtMoney(v)} />
-                ) : <div className="dim tj-pad">No closed trades.</div>}
+                ) : <div className="dim tj-pad">{a.equity_curve.length ? "No P&L was recorded for these trades." : "No closed trades."}</div>}
               </div>
             </Section>
             <Section title="Is it improving?" subtitle="recent trades vs the ones before, by average R">

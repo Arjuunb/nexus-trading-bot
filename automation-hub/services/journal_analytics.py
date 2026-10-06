@@ -77,6 +77,10 @@ def metrics(trades: Iterable[dict]) -> dict:
     loss_pnl = [_num(t.get("net_pnl")) for t in losses if _num(t.get("net_pnl")) is not None]
     r_values = [_num(t.get("realised_r")) for t in closed if _num(t.get("realised_r")) is not None]
     with_pnl = [t for t in closed if _num(t.get("net_pnl")) is not None]
+    # fees and funding: a sum of the recorded values; NULL when none was
+    # recorded (a Trading Instance models no funding, so it never shows 0)
+    fees = [_num(t.get("fees_total")) for t in closed if _num(t.get("fees_total")) is not None]
+    funding = [_num(t.get("funding_total")) for t in closed if _num(t.get("funding_total")) is not None]
     best = max(with_pnl, key=lambda t: float(t["net_pnl"]), default=None)
     worst = min(with_pnl, key=lambda t: float(t["net_pnl"]), default=None)
     dd = drawdown(closed)
@@ -90,8 +94,8 @@ def metrics(trades: Iterable[dict]) -> dict:
         "sample_warning": ("INSUFFICIENT_SAMPLE" if len(closed) < MIN_RELIABLE_SAMPLE else None),
         "total_trades": len(closed), "wins": len(wins), "losses": len(losses),
         "break_even": len(breakeven), "win_rate": _r(win_rate, 2), "loss_rate": _r(loss_rate, 2),
-        "net_pnl": _r(sum(pnl), 8) if pnl else (0.0 if closed else None),
-        "gross_profit": _r(gross_profit, 8), "gross_loss": _r(gross_loss, 8),
+        "net_pnl": _r(sum(pnl), 8) if pnl else None,
+        "gross_profit": _r(gross_profit, 8) if pnl else None, "gross_loss": _r(gross_loss, 8) if pnl else None,
         "profit_factor": _r(gross_profit / gross_loss, 4) if gross_loss > 0 else (None if not gross_profit else "INF"),
         "avg_win": _r(_avg(win_pnl), 8), "avg_loss": _r(_avg(loss_pnl), 8),
         "avg_r": _r(_avg(r_values)), "total_r": _r(sum(r_values)) if r_values else None,
@@ -103,8 +107,8 @@ def metrics(trades: Iterable[dict]) -> dict:
         "max_drawdown": dd["max_drawdown"] if pnl else None, "max_drawdown_at": dd["at"] if pnl else None,
         "max_drawdown_r": dd_r["max_drawdown"] if r_values else None,
         "avg_duration_s": _r(_avg(t.get("duration_s") for t in closed), 1),
-        "total_fees": _r(sum(_num(t.get("fees_total")) or 0 for t in closed), 8),
-        "total_funding": _r(sum(_num(t.get("funding_total")) or 0 for t in closed), 8),
+        "total_fees": _r(sum(fees), 8) if fees else None,
+        "total_funding": _r(sum(funding), 8) if funding else None,
         "avg_leverage": _r(_avg(t.get("leverage") for t in closed), 2),
         "avg_position_size": _r(_avg(t.get("notional_value") for t in closed), 4),
         "avg_quantity": _r(_avg(t.get("quantity") for t in closed), 8),
@@ -247,7 +251,9 @@ def _verdict(m: dict) -> str:
     exp = m.get("expectancy_r")
     if exp is None:
         exp = m.get("expectancy")
-    label = "PROFITABLE" if (exp or 0) > 0 else "LOSING" if (exp or 0) < 0 else "FLAT"
+    if exp is None:
+        return "NOT_RECORDED"
+    label = "PROFITABLE" if exp > 0 else "LOSING" if exp < 0 else "FLAT"
     if m["total_trades"] < MIN_RELIABLE_SAMPLE:
         label += "_EARLY_SAMPLE"
     return label
@@ -377,12 +383,14 @@ def rr_analysis(trades: list[dict]) -> dict:
         r = _num(t.get("realised_r"))
         if r is None:
             continue
-        edge = max(-3, min(4, int(r // 1)))
-        buckets[f"{edge}R to {edge + 1}R" if -3 < edge < 4 else ("≤ -3R" if edge <= -3 else "≥ 4R")] += 1
+        buckets[max(-4, min(4, int(r // 1)))] += 1          # -4 holds everything below -3R
+
+    def bucket_label(edge: int) -> str:
+        return "< -3R" if edge == -4 else "≥ 4R" if edge == 4 else f"{edge}R to {edge + 1}R"
     return {"overall": block(closed),
             "by_strategy": {name: block([t for t in closed if strategy_key(t) == name])
                             for name in sorted({strategy_key(t) for t in closed})},
-            "realised_r_distribution": dict(sorted(buckets.items()))}
+            "realised_r_distribution": {bucket_label(edge): buckets[edge] for edge in sorted(buckets)}}
 
 
 def excursion_analysis(trades: list[dict]) -> dict:
@@ -420,8 +428,11 @@ def equity_curve(trades: list[dict]) -> list[dict]:
         pnl, r = _num(t.get("net_pnl")), _num(t.get("realised_r"))
         total += pnl or 0.0
         total_r += r or 0.0
+        # a trade whose P&L (or R) was never recorded has no point on that
+        # series, rather than a flat step that reads as zero
         out.append({"at": _exit_key(t), "trade_ref": t.get("trade_ref"), "net_pnl": _r(pnl, 8),
-                    "cumulative_pnl": _r(total, 8), "cumulative_r": _r(total_r)})
+                    "cumulative_pnl": _r(total, 8) if pnl is not None else None,
+                    "cumulative_r": _r(total_r) if r is not None else None})
     return out
 
 
@@ -438,7 +449,8 @@ def trend(trades: list[dict]) -> dict:
         m = metrics(weeks[week])
         cumulative += m["net_pnl"] or 0.0
         weekly.append({"week": week, "trades": m["total_trades"], "net_pnl": m["net_pnl"],
-                       "win_rate": m["win_rate"], "avg_r": m["avg_r"], "cumulative_pnl": _r(cumulative, 8)})
+                       "win_rate": m["win_rate"], "avg_r": m["avg_r"],
+                       "cumulative_pnl": _r(cumulative, 8) if m["net_pnl"] is not None else None})
 
     def direction(rows_in):
         n = len(rows_in)
@@ -451,8 +463,11 @@ def trend(trades: list[dict]) -> dict:
         prior_r = _avg(t.get("realised_r") for t in prior)
         recent_m, prior_m = metrics(recent), metrics(prior)
         if recent_r is None or prior_r is None:
-            metric, a, b = "net_pnl", recent_m["net_pnl"] or 0, prior_m["net_pnl"] or 0
+            metric, a, b = "net_pnl", recent_m["net_pnl"], prior_m["net_pnl"]
             threshold = 0.0
+            if a is None or b is None:
+                return {"status": "INSUFFICIENT_DATA", "window": window, "detail":
+                        "neither R nor P&L was recorded for both windows."}
         else:
             metric, a, b, threshold = "avg_r", recent_r, prior_r, 0.1
         status = ("IMPROVING" if a - b > threshold else "DETERIORATING" if b - a > threshold else "STABLE")
@@ -490,6 +505,10 @@ def _pct(v) -> str:
     return "—" if v is None else f"{v:.0f}%"
 
 
+def _r_text(v) -> str:
+    return "R not recorded" if v is None else f"{v:+.2f}R"
+
+
 def _money(v) -> str:
     return "—" if not isinstance(v, (int, float)) else f"{'+' if v >= 0 else '-'}${abs(v):,.2f}"
 
@@ -512,7 +531,7 @@ def weekly_review(week_trades: list[dict], prior_trades: list[dict], reviews: di
     for row in comparison:
         observe("profitability",
                 f"{row['strategy']}: {row['trades']} trades, {_money(row['net_pnl'])}, "
-                f"{_pct(row['win_rate'])} win rate, average {row['avg_realised_r'] or 0:+.2f}R"
+                f"{_pct(row['win_rate'])} win rate, average {_r_text(row['avg_realised_r'])}"
                 + (f", profit factor {row['profit_factor']}" if row['profit_factor'] is not None else "") + ".",
                 strategy=row["strategy"], sample=row["trades"], evidence=row)
     if len(comparison) > 1:
@@ -578,7 +597,7 @@ def weekly_review(week_trades: list[dict], prior_trades: list[dict], reviews: di
     lev = [r for r in leverage_performance(week_trades) if r["leverage"] != "Not recorded"]
     if len(lev) > 1:
         observe("leverage", "Leverage varied this week (" + ", ".join(
-            f"{r['leverage']}: {r['trades']} trades, {r['avg_r'] or 0:+.2f}R avg" for r in lev)
+            f"{r['leverage']}: {r['trades']} trades, {_r_text(r['avg_r'])} avg" for r in lev)
             + "); compare strategies on R, not raw P&L.", sample=sum(r["trades"] for r in lev))
     violations = [t for t in closed if t.get("rule_violation")]
     if violations:
@@ -600,7 +619,7 @@ def weekly_review(week_trades: list[dict], prior_trades: list[dict], reviews: di
     prior = metrics(prior_trades)
     if prior["total_trades"] and m["total_trades"]:
         observe("week_over_week", f"Net P&L {_money(m['net_pnl'])} vs {_money(prior['net_pnl'])} the week before; "
-                                  f"average R {m['avg_r'] or 0:+.2f} vs {prior['avg_r'] or 0:+.2f}.",
+                                  f"average {_r_text(m['avg_r'])} vs {_r_text(prior['avg_r'])}.",
                 sample=m["total_trades"] + prior["total_trades"])
     if not closed:
         observe("activity", "No completed trades in this week for the selected modes.", sample=0)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Request
@@ -126,11 +126,20 @@ def _filters(request: Request) -> dict:
         except ValueError:
             raise HTTPException(400, f"{name} must be a number")
 
+    def day(name):
+        value = q.get(name) or None
+        if value and len(value) == 10:
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise HTTPException(400, f"{name} must look like 2026-10-05")
+        return value
+
     rule = q.get("rule_violation")
     modes, mixed = resolve_modes(q.get("modes") or q.get("mode"))
     return {
         "modes": modes, "_mixed": mixed,
-        "date_from": q.get("date_from") or None, "date_to": q.get("date_to") or None,
+        "date_from": day("date_from"), "date_to": day("date_to"),
         "strategy": q.get("strategy") or None, "instance_id": q.get("instance_id") or None,
         "lab": q.get("lab") or None, "trade_source": q.get("trade_source") or None,
         "symbol": q.get("symbol") or None, "direction": q.get("direction") or q.get("side") or None,
@@ -197,7 +206,7 @@ def journal_trades(request: Request, limit: int = Query(100, ge=1, le=1000), off
 @router.get("/trades.csv")
 def journal_trades_csv(request: Request):
     filters = _filters(request)
-    rows = _query(filters, limit=20000)
+    rows = _query(filters)                    # every matching trade: an export is never cut short
     buf = io.StringIO()
     columns = [c for c in TRADE_COLUMNS if c != "provenance"]
     writer = csv.DictWriter(buf, fieldnames=columns, extrasaction="ignore")
@@ -234,9 +243,14 @@ def _facts(trade: dict, snapshot: Optional[dict]) -> list[dict]:
     """The questions the journal must answer at a glance, from structured data."""
     def money(v):
         return None if v is None else round(float(v), 2)
+
+    def plain(v):
+        """A stored number as recorded, without float noise."""
+        return None if v is None else f"{round(float(v), 10):.10f}".rstrip("0").rstrip(".")
     passed = [c.get("name") for c in (snapshot or {}).get("conditions_passed") or []]
     return [
-        {"q": "Strategy", "a": f"{trade.get('strategy_name')} {trade.get('strategy_version') or ''}".strip()},
+        {"q": "Strategy", "a": " ".join(str(v) for v in (trade.get("strategy_name"), trade.get("strategy_version"))
+                                        if v) or None},
         {"q": "Bot / instance", "a": trade.get("instance_name") or trade.get("lab_id") or trade.get("bot_id")},
         {"q": "Why it entered", "a": (snapshot or {}).get("decision_reason")},
         {"q": "Conditions present", "a": ", ".join(passed) if passed else None},
@@ -246,13 +260,15 @@ def _facts(trade: dict, snapshot: Optional[dict]) -> list[dict]:
         {"q": "Session", "a": SESSION_LABELS.get(trade.get("entry_session") or "", trade.get("entry_session"))},
         {"q": "Entry time", "a": london_display(trade.get("entry_filled_at"))},
         {"q": "Exit time", "a": london_display(trade.get("exit_at"))},
-        {"q": "Entry / exit price", "a": f"{trade.get('entry_price')} → {trade.get('exit_price')}"},
-        {"q": "Quantity", "a": trade.get("quantity")},
+        {"q": "Entry / exit price", "a": (None if trade.get("entry_price") is None and trade.get("exit_price") is None
+                                          else f"{plain(trade.get('entry_price')) or '—'} → "
+                                               f"{plain(trade.get('exit_price')) or '—'}")},
+        {"q": "Quantity", "a": plain(trade.get("quantity"))},
         {"q": "Position / notional", "a": money(trade.get("notional_value"))},
         {"q": "Leverage", "a": (f"{trade['leverage']:g}x" if trade.get("leverage") is not None else None)},
         {"q": "Margin", "a": money(trade.get("margin_used"))},
-        {"q": "Stop loss", "a": trade.get("initial_stop")},
-        {"q": "Take profit", "a": trade.get("initial_target")},
+        {"q": "Stop loss", "a": plain(trade.get("initial_stop"))},
+        {"q": "Take profit", "a": plain(trade.get("initial_target"))},
         {"q": "Risked", "a": money(trade.get("risk_amount"))},
         {"q": "Risk %", "a": (round(trade["risk_pct"], 3) if trade.get("risk_pct") is not None else None)},
         {"q": "Planned RR", "a": (f"1:{trade['planned_rr']:.2f}" if trade.get("planned_rr") is not None else None)},
@@ -473,16 +489,22 @@ def _week_key(week: Optional[str]) -> str:
     return iso_week_key(datetime.now(timezone.utc).isoformat())
 
 
+def _review_time(trade: dict) -> str:
+    """A trade belongs to the week it closed in; an order that never filled,
+    to the week it was placed in."""
+    return (trade.get("exit_at") or trade.get("entry_filled_at") or trade.get("order_created_at")
+            or trade.get("signal_at") or trade.get("created_at") or "")
+
+
 def _weekly(request: Request, week: Optional[str]) -> tuple[dict, dict]:
     key = _week_key(week)
     start, end = week_bounds(key)
     filters = _filters(request)
     base = {k: v for k, v in filters.items() if not k.startswith("_") and k not in ("date_from", "date_to")}
-    in_week = [t for t in _store().list_trades(**base)
-               if start <= (t.get("exit_at") or t.get("entry_filled_at") or "") < end]
-    prior_start = (datetime.fromisoformat(start) - timedelta(days=7)).isoformat()
-    prior = [t for t in _store().list_trades(**base)
-             if prior_start <= (t.get("exit_at") or t.get("entry_filled_at") or "") < start]
+    prior_start = week_bounds(iso_week_key(datetime.fromisoformat(start) - timedelta(days=1)))[0]
+    trades = _store().list_trades(**base)
+    in_week = [t for t in trades if start <= _review_time(t) < end]
+    prior = [t for t in trades if prior_start <= _review_time(t) < start]
     reviews = _store().reviews_for(t["trade_id"] for t in in_week)
     report = analytics.weekly_review(in_week, prior, reviews, week_key=key)
     scope = {"week": key, "modes": filters["modes"], **{k: v for k, v in base.items() if v and k != "modes"}}
