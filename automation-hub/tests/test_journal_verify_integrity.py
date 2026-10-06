@@ -598,6 +598,51 @@ def test_open_lab_trade_carries_the_commission_and_funding_already_charged(tmp_p
     assert engine_trade["funding_total"] is None
 
 
+def test_funding_attribution_matches_the_window_rule_on_random_histories():
+    """_funding_owners places each event by binary search; it must give exactly
+    what the plain rule gives: the trip on the event's symbol that opened at or
+    before it and before the next trip on that symbol, one position together."""
+    import random
+
+    from services.journal_ingest import _fill_time, _funding_owners, round_trips
+
+    def reference(trips, funding):
+        out, position_owner = {}, {}
+        for k, event in sorted(enumerate(funding), key=lambda item: item[1]["funding_timestamp"]):
+            if event.get("position_id") in position_owner:
+                out.setdefault(position_owner[event["position_id"]], []).append(event["funding_key"])
+                continue
+            same = [(i, _fill_time(t["entries"][0])) for i, t in enumerate(trips) if t["symbol"] == event["symbol"]]
+            owner = None
+            for n, (i, start) in enumerate(same):
+                end = same[n + 1][1] if n + 1 < len(same) else None
+                if start <= event["funding_timestamp"] and (end is None or event["funding_timestamp"] < end):
+                    owner = i
+                    break
+            if owner is not None:
+                out.setdefault(owner, []).append(event["funding_key"])
+                if event.get("position_id"):
+                    position_owner[event["position_id"]] = owner
+        return {k: sorted(v) for k, v in out.items()}
+
+    rng, t0 = random.Random(11), datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for case in range(200):
+        fills, funding, t = [], [], t0
+        for step in range(rng.randint(1, 30)):
+            symbol = rng.choice(["BTCUSDT", "ETHUSDT"])
+            t += timedelta(minutes=rng.choice([0, 1, 5, 240]))
+            fills.append({"id": f"f{case}-{step}", "order_id": f"o{step}", "symbol": symbol,
+                          "side": rng.choice(["buy", "sell"]), "quantity": rng.choice([0.5, 1.0, 2.0]),
+                          "price": 100.0, "fill_timestamp": t.isoformat()})
+            if rng.random() < 0.6:
+                funding.append({"funding_key": f"k{step}", "symbol": rng.choice([symbol, symbol, "SOLUSDT"]),
+                                "position_id": rng.choice([None, f"P{symbol}{step // 3}"]), "amount": 0.01,
+                                "funding_timestamp": (t + timedelta(minutes=rng.choice([-10, 0, 2, 600]))).isoformat()})
+        trips = round_trips(fills)
+        got = {k: sorted(e["funding_key"] for e in v) for k, v in _funding_owners(trips, funding).items()}
+        assert got == reference(trips, funding), case
+
+
 def test_replay_import_has_no_per_entry_lookup(tmp_path):
     from services.journal import JournalStore as ReplayStore
     from services.journal_ingest import ingest_replay_journal

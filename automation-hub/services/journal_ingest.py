@@ -17,6 +17,7 @@ as forward performance.
 from __future__ import annotations
 
 import os
+from bisect import bisect_right
 from typing import Optional
 
 from execution.paper_broker_v2 import PaperBrokerV2
@@ -226,16 +227,16 @@ def _funding_owners(trips: list[dict], funding: list[dict]) -> dict[int, list[di
     A lab broker holds at most one position per symbol, and funding is only
     booked while that position is open, so an event belongs to the trip on
     its symbol that opened at or before it and before the next trip on that
-    symbol opened. Events of one broker position always stay together."""
-    windows: list[tuple[str, Optional[str], Optional[str]]] = []
-    last: dict[str, int] = {}
+    symbol opened. Events of one broker position always stay together.
+    Trips per symbol are in fill order, so each event is placed by a binary
+    search over their start times (O(events x log trips))."""
+    starts: dict[str, list[str]] = {}
+    owners: dict[str, list[int]] = {}
     for i, trip in enumerate(trips):
         start = _fill_time(trip["entries"][0])
-        if trip["symbol"] in last:
-            j = last[trip["symbol"]]
-            windows[j] = (windows[j][0], windows[j][1], start)
-        windows.append((trip["symbol"], start, None))
-        last[trip["symbol"]] = i
+        if start:
+            starts.setdefault(trip["symbol"], []).append(start)
+            owners.setdefault(trip["symbol"], []).append(i)
     owner_of: dict[int, int] = {}
     position_owner: dict[str, int] = {}
     ordered = sorted(enumerate(funding), key=lambda item: _iso(item[1].get("funding_timestamp")
@@ -246,12 +247,13 @@ def _funding_owners(trips: list[dict], funding: list[dict]) -> dict[int, list[di
         if position and position in position_owner:
             owner_of[k] = position_owner[position]
             continue
-        for i, (symbol, start, end) in enumerate(windows):
-            if symbol == event.get("symbol") and at and start and at >= start and (end is None or at < end):
-                owner_of[k] = i
-                if position:
-                    position_owner[position] = i
-                break
+        symbol = event.get("symbol")
+        j = bisect_right(starts[symbol], at) - 1 if (at and symbol in starts) else -1
+        if j < 0:
+            continue
+        owner_of[k] = owners[symbol][j]
+        if position:
+            position_owner[position] = owners[symbol][j]
     out: dict[int, list[dict]] = {}
     for k, i in owner_of.items():
         out.setdefault(i, []).append(funding[k])
