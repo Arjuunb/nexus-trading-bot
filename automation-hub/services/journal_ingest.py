@@ -579,10 +579,21 @@ class JournalSync:
             self._last = result
             return result
 
-    @staticmethod
-    def _watermark(source) -> Optional[tuple]:
+    def _watermark(self, source) -> Optional[tuple]:
+        """A source's change marker. None (a full pass) when it has none or
+        reading it fails, so a marker problem can only cost speed."""
         mark = getattr(source, "journal_watermark", None)
-        return mark() if callable(mark) else None
+        if not callable(mark):
+            return None
+        try:
+            return mark()
+        except Exception as exc:  # noqa: BLE001 — fall back to a full pass
+            if self.logger is not None:
+                try:
+                    self.logger(f"journal sync change marker failed, full pass: {type(exc).__name__}: {exc}")
+                except Exception:  # noqa: BLE001
+                    pass
+            return None
 
     def _ledger_step(self) -> dict:
         """Reconcile only when the ledger moved (a trade opened, reduced or

@@ -1603,3 +1603,96 @@ def test_trade_summary_facts_never_print_none_or_float_noise(api):
     assert facts["Entry / exit price"] == "100.1 → —"
     assert facts["Quantity"] == "0.3" and facts["Stop loss"] == "95" and facts["Take profit"] is None
     assert not any(isinstance(a, str) and "None" in a for a in facts.values()), facts
+
+
+# ============================================================ production ledger (Supabase) change marker
+class _FakePostgrest:
+    """Records each PostgREST query chain on ``paper_trades`` and answers it
+    from in-memory rows (``select('*')`` lists them; a one-row marker read
+    returns the newest non-null value of its column)."""
+
+    def __init__(self, rows: list, calls: list):
+        self.rows, self.calls, self.chain = rows, calls, []
+
+    def select(self, columns):
+        self.chain.append(("select", columns))
+        return self
+
+    @property
+    def not_(self):
+        self.chain.append(("not",))
+        return self
+
+    def is_(self, column, value):
+        self.chain.append(("is", column, value))
+        return self
+
+    def order(self, column, desc=False):
+        self.chain.append(("order", column, desc))
+        return self
+
+    def limit(self, n):
+        self.chain.append(("limit", n))
+        return self
+
+    def execute(self):
+        self.calls.append(list(self.chain))
+        columns = self.chain[0][1]
+        if columns == "*":
+            data = [dict(r) for r in self.rows]
+        else:
+            column = columns.split(",")[1]
+            ranked = sorted((r for r in self.rows if r.get(column)), key=lambda r: r[column], reverse=True)
+            data = [{"id": r["id"], column: r[column]} for r in ranked[:1]]
+        return type("Response", (), {"data": data})()
+
+
+def test_supabase_ledger_change_marker_keeps_idle_passes_off_the_history(tmp_path):
+    """Production runs SupabaseLedger. Without a change marker every 60 s
+    pass fetched every paper trade over the network; with it an idle pass
+    makes two one-row reads, and an open or a close still triggers a pass."""
+    from data.ledger import SupabaseLedger
+    ledger, _legacy, _store = _engine_world(tmp_path)
+    rows = ledger.get_paper_trades()                 # real ledger rows, served as Supabase
+    for row in rows:                                 # a day old: outside the reconcile grace window
+        for key in ("opened_at", "closed_at"):
+            if row.get(key):
+                row[key] = (datetime.fromisoformat(row[key]) - timedelta(days=1)).isoformat()
+    calls = []
+    remote = SupabaseLedger.__new__(SupabaseLedger)
+    remote._t = lambda name: _FakePostgrest(rows, calls) if name == "paper_trades" else None
+    opened = max(rows, key=lambda r: r["opened_at"])
+    closed = max((r for r in rows if r.get("closed_at")), key=lambda r: r["closed_at"])
+    assert remote.journal_watermark() == ((opened["id"], opened["opened_at"]), (closed["id"], closed["closed_at"]))
+    assert calls == [[("select", f"id,{c}"), ("not",), ("is", c, "null"), ("order", c, True), ("limit", 1)]
+                     for c in ("opened_at", "closed_at")]
+    sync = JournalSync(TradeJournalRecorder(TradeJournalStore(":memory:")), ledger=remote)
+    first = sync.run_once(include_legacy=False)["ledger_reconciliation"]
+    assert (first["created"], first["linked_remainders"], first["closed"]) == (3, 1, 1), first
+    calls.clear()
+    assert sync.run_once(include_legacy=False)["ledger_reconciliation"]["unchanged"] is True
+    assert [c[0] for c in calls] == [("select", "id,opened_at"), ("select", "id,closed_at")]   # no full read
+    still_open = next(r for r in rows if r["status"] == "open")
+    still_open.update(status="closed", closed_at="2099-01-01T00:00:00+00:00")
+    assert "unchanged" not in sync.run_once(include_legacy=False)["ledger_reconciliation"]
+    empty = SupabaseLedger.__new__(SupabaseLedger)
+    empty._t = lambda name: _FakePostgrest([], [])
+    assert empty.journal_watermark() == (None, None)
+
+
+def test_a_failing_change_marker_falls_back_to_a_full_pass():
+    """A marker read that raises costs speed, never a missed reconciliation."""
+    reads, logs = [], []
+
+    class _Ledger:
+        def journal_watermark(self):
+            raise RuntimeError("PostgREST 400")
+
+        def get_paper_trades(self):
+            reads.append(1)
+            return []
+
+    sync = JournalSync(TradeJournalRecorder(TradeJournalStore(":memory:")), ledger=_Ledger(), logger=logs.append)
+    for _ in range(2):
+        assert "error" not in sync.run_once(include_legacy=False)["ledger_reconciliation"]
+    assert len(reads) == 2 and any("change marker failed" in m for m in logs)

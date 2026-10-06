@@ -951,6 +951,18 @@ class SupabaseLedger:
             return q.order("opened_at", desc=True).execute()
         return remote_call_with_retry(query).data
 
+    def journal_watermark(self) -> tuple:
+        """Changes whenever a paper trade is opened (a reduce's remainder row
+        included) or closed, or the paper ledger is reset: the newest opening
+        and the newest close. Two one-row reads, whatever the history size."""
+        def newest(column):
+            def query():
+                return (self._t("paper_trades").select(f"id,{column}")
+                        .not_.is_(column, "null").order(column, desc=True).limit(1).execute())
+            rows = remote_call_with_retry(query).data or []
+            return (rows[0]["id"], rows[0][column]) if rows else None
+        return newest("opened_at"), newest("closed_at")
+
     def log(self, *, level, stage, message, symbol="", instance_id=""):  # pragma: no cover
         row = {"id": _id(), "ts": _now(), "symbol": symbol,
                "level": level, "stage": stage, "message": message}

@@ -132,11 +132,12 @@ Each source is re-read only when its own change marker moved since the last succ
 
 | Source | Marker (indexed reads, independent of history size) | Also re-read when |
 |---|---|---|
-| Engine ledger | newest `paper_trades` row and newest `paper_executions` row (rowid + id); every open, reduce and close writes one | the previous pass left rows inside the 2-minute grace window, or it is the first pass |
+| Engine ledger (SQLite) | newest `paper_trades` row and newest `paper_executions` row (rowid + id); every open, reduce and close writes one | the previous pass left rows inside the 2-minute grace window, or it is the first pass |
+| Engine ledger (Supabase, production) | newest opening and newest close in `paper_trades` (two one-row PostgREST reads) | as above |
 | Each lab | newest `v2_fills` row and newest `v2_funding_events` row | one of its trades is still waiting for its entry order to complete |
 | Replay journal | file modification time and size | — |
 
-An idle pass therefore costs those watermark reads, one status-indexed check, and the stale-`PENDING` check (which runs every pass). The first pass after a restart always does the full, idempotent reconciliation.
+An idle pass therefore costs those watermark reads, one status-indexed check, and the stale-`PENDING` check (which runs every pass). The first pass after a restart always does the full, idempotent reconciliation. If a marker cannot be read, that source gets a full pass (logged): a marker problem costs speed, never a missed reconciliation.
 
 ## 5. Sessions and time (`services/journal_sessions.py`)
 
