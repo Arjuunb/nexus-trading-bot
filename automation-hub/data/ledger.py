@@ -580,6 +580,17 @@ class SqliteLedger:
             self._c.commit()
             return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
+    def journal_watermark(self) -> tuple:
+        """Changes whenever a paper trade is opened, reduced or closed (each
+        writes a paper_trades or paper_executions row) or the paper ledger is
+        reset. Two indexed reads, independent of history size."""
+        with self._lock:
+            trade = self._c.execute(
+                "SELECT rowid, id FROM paper_trades ORDER BY rowid DESC LIMIT 1").fetchone()
+            execution = self._c.execute(
+                "SELECT rowid, execution_id FROM paper_executions ORDER BY rowid DESC LIMIT 1").fetchone()
+        return (tuple(trade) if trade else None, tuple(execution) if execution else None)
+
     def get_paper_trades(self, instance_id="", simulation_session_id=""):
         query = "SELECT * FROM paper_trades"
         where, args = [], []

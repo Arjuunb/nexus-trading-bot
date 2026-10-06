@@ -44,6 +44,8 @@ PENDING_UNCERTAIN_AFTER_S = 24 * 3600
 _EPS = 1e-9
 #: journal sources whose positions live in the paper execution engine ledger
 ENGINE_SOURCES = ("PIPELINE", "ENGINE", "LEDGER_RECONCILIATION", "LEGACY_DECISION_JOURNAL")
+#: sources whose ledger books funding (PaperBrokerV2 funding events)
+FUNDING_MODELLED_SOURCES = ("PRICE_ACTION_LAB", "SMC_LAB")
 
 EXIT_REASONS = ("STOP_LOSS", "TAKE_PROFIT", "PARTIAL_TAKE_PROFIT", "MANUAL_CLOSE",
                 "STRATEGY_CLOSE", "TRAILING_STOP", "BREAK_EVEN_STOP", "SAFETY_EXIT",
@@ -860,7 +862,11 @@ class TradeJournalRecorder:
         update = {
             "closed_quantity": closed_qty or None, "exit_price": exit_price, "gross_pnl": gross,
             "fees_total": commissions if (fees or gross is not None) else None,
-            "funding_total": funding if has_funding else None,
+            # A lab broker's funding ledger is the source of truth: nothing
+            # booked means this trade paid 0. The instance engine does not
+            # model funding at all, so there it stays unknown.
+            "funding_total": funding if has_funding else (
+                0.0 if trade.get("source_system") in FUNDING_MODELLED_SOURCES else None),
             "slippage_cost_total": sum(slip) if slip else None, "net_pnl": net,
             "gross_r": (gross / risk) if (gross is not None and risk) else None,
             "realised_r": (net / risk) if (net is not None and risk) else None,
@@ -1039,8 +1045,11 @@ class TradeJournalRecorder:
         running it twice (or after a restart) changes nothing the second time.
         """
         summary = {"created": 0, "linked_remainders": 0, "closed": 0, "uncertain": 0, "skipped_recent": 0}
+        # Read the ledger before taking the recorder lock, so live fill hooks
+        # never wait on a history read. Anything a hook records in between is
+        # seen as linked/closed below; the grace window covers hooks in flight.
+        rows = sorted(ledger.get_paper_trades(), key=lambda r: (r.get("opened_at") or "", r.get("id") or ""))
         with self._lock:
-            rows = sorted(ledger.get_paper_trades(), key=lambda r: (r.get("opened_at") or "", r.get("id") or ""))
             cutoff = datetime.now(timezone.utc) - timedelta(seconds=grace_s)
             linked = self.store.linked_refs("LEDGER_TRADE")
             for row in rows:
@@ -1085,6 +1094,14 @@ class TradeJournalRecorder:
                                      "Close restored from the ledger after the live hook did not record it.",
                                      ts=_now(), actor="reconciliation")
                 summary["closed"] += 1
+            summary["uncertain"] = self.mark_stale_pending(pending_uncertain_after_s)
+        return summary
+
+    def mark_stale_pending(self, pending_uncertain_after_s: int = PENDING_UNCERTAIN_AFTER_S) -> int:
+        """A PENDING order that has neither filled nor been cancelled within
+        the window becomes EXECUTION_UNCERTAIN. Reads only PENDING trades."""
+        marked = 0
+        with self._lock:
             stale = datetime.now(timezone.utc) - timedelta(seconds=pending_uncertain_after_s)
             for trade in self.store.trades_with_status(("PENDING",)):
                 created = parse_ts(trade.get("order_created_at") or trade.get("created_at"))
@@ -1092,8 +1109,8 @@ class TradeJournalRecorder:
                     self.mark_order_outcome(trade["trade_id"], "EXECUTION_UNCERTAIN",
                                             f"Order submitted {trade.get('order_created_at')} has neither filled "
                                             "nor been cancelled; execution state is unknown.")
-                    summary["uncertain"] += 1
-        return summary
+                    marked += 1
+        return marked
 
     @staticmethod
     def _remainder_parent(row: dict, rows: list[dict], linked: set) -> Optional[dict]:

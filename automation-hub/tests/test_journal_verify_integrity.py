@@ -257,7 +257,7 @@ def test_fin_smc_lab_trade_ledger_journal_api_agree(tmp_path, api):
     assert trade["net_pnl"] == pytest.approx(ledger["net"], abs=1e-9)
     assert trade["gross_pnl"] == pytest.approx(ledger["gross"], abs=1e-9)
     assert trade["fees_total"] == pytest.approx(ledger["fees"], abs=1e-8)
-    assert ledger["funding"] == 0 and trade["funding_total"] is None   # no funding event: unknown, not 0
+    assert ledger["funding"] == 0 and trade["funding_total"] == 0.0    # the lab books funding: none charged = 0
     assert trade["direction"] == "SHORT" and trade["leverage"] == 3.0
     assert trade["initial_stop"] == armed["stop_loss"] and trade["initial_target"] == armed["take_profit"]
     assert trade["planned_rr"] == pytest.approx(order["protection_target_r"], abs=1e-3)
@@ -312,6 +312,94 @@ def test_fin_trading_instance_trade_ledger_journal_api_agree(tmp_path, monkeypat
         manager.shutdown()
 
 
+# ------------------------------------------------ financial consistency gate
+GATE_FIELDS = ("quantity", "entry_price", "exit_price", "fees_total", "funding_total", "gross_pnl",
+               "net_pnl", "risk_amount", "planned_rr", "realised_r")
+
+
+def _lab_ledger_truth(acct, armed) -> dict:
+    """Every gate field from the lab broker alone: its fills, its account row
+    and the protection it armed on the position."""
+    fills = acct.journal_export()["fills"]
+    opening = fills[0]["side"]
+    entries = [f for f in fills if f["side"] == opening]
+    exits = [f for f in fills if f["side"] != opening]
+    qty = sum(f["quantity"] for f in entries)
+    entry = sum(f["quantity"] * f["price"] for f in entries) / qty
+    closed = sum(f["quantity"] for f in exits)
+    account = dict(acct.broker._account_row())
+    funding_rows = acct.journal_export()["funding"]
+    assert account["fees_paid"] == pytest.approx(sum(f["fee"] for f in fills), abs=1e-9)
+    assert account["realized_pnl"] == pytest.approx(sum(f["realized_pnl"] for f in fills), abs=1e-9)
+    assert account["funding_paid"] == pytest.approx(sum(r["amount"] for r in funding_rows), abs=1e-12)
+    risk = abs(entry - armed["stop_loss"]) * qty
+    net = account["balance"] - account["starting_balance"]
+    return {"quantity": qty, "entry_price": entry,
+            "exit_price": sum(f["quantity"] * f["price"] for f in exits) / closed,
+            "fees_total": account["fees_paid"], "funding_total": account["funding_paid"],
+            "gross_pnl": account["realized_pnl"], "net_pnl": net, "risk_amount": risk,
+            "planned_rr": abs(armed["take_profit"] - entry) / abs(entry - armed["stop_loss"]),
+            "realised_r": net / risk}
+
+
+def _instance_ledger_truth(row: dict) -> dict:
+    """Every gate field from the paper_trades row alone. The instance engine
+    does not model funding, so the truth is 'unknown' (None), never 0."""
+    entry, stop, target, size = (float(row[k]) for k in ("entry", "stop", "target", "size"))
+    risk = float(row["risk_amount_at_entry"])
+    assert risk == pytest.approx(abs(entry - stop) * size, rel=1e-12)
+    net = float(row["pnl"])
+    return {"quantity": size, "entry_price": entry, "exit_price": float(row["exit"]),
+            "fees_total": float(row["fees"]), "funding_total": None,
+            "gross_pnl": net + float(row["fees"]), "net_pnl": net, "risk_amount": risk,
+            "planned_rr": abs(target - entry) / abs(entry - stop), "realised_r": net / risk}
+
+
+def _gate(truth: dict, trade: dict, client, auth, mode: str) -> dict:
+    detail = client.get(f"/journal/v2/trades/{trade['trade_ref']}", headers=auth).json()["trade"]
+    listed = client.get(f"/journal/v2/trades?modes={mode}&limit=1000", headers=auth).json()["trades"]
+    row = next(r for r in listed if r["trade_id"] == trade["trade_id"])
+    for field in GATE_FIELDS:
+        want, got = truth[field], trade[field]
+        if want is None:
+            assert got is None, field
+        else:
+            assert got == pytest.approx(want, rel=1e-9, abs=1e-9), (field, got, want)
+        assert detail[field] == got and row[field] == got, field         # API carries the journal value
+    return {f: trade[f] for f in GATE_FIELDS}
+
+
+def test_financial_consistency_gate_ledger_equals_journal_equals_api(tmp_path, monkeypatch, api):
+    """BLOCKER gate: for a PA Lab, an SMC Lab and a Trading Instance trade,
+    every money/risk field equals the ledger and the API returns it unchanged."""
+    from tests.test_journal_verify_lifecycles import _bar, _instance_entry, _instance_rig
+    evidence = {}
+    pa, pa_armed, _ = _pa_lab_trade(tmp_path / "pa.db")
+    smc, smc_armed, _ = _smc_lab_trade(tmp_path / "smc.db")
+    rig, manager, instance, engine = _instance_rig(tmp_path, monkeypatch)
+    try:
+        _instance_entry(rig, instance, engine)
+        with engine._cycle_lock:
+            assert engine._check_exit("BTCUSDT", _bar(1, 101.0, 115.5, 100.5, 115.2)) is True
+        store = rig.store
+        for acct in (pa, smc):
+            ingest_v2_lab(rig.rec, acct.journal_export())
+        client, auth = api(store)
+        trades = {t["lab_id"] or "INSTANCE": t for t in store.list_trades(modes=["ALL"])}
+        evidence["PA"] = _gate(_lab_ledger_truth(pa, pa_armed), trades["PRICE_ACTION_LAB"], client, auth,
+                               "ISOLATED_FORWARD_PAPER")
+        evidence["SMC"] = _gate(_lab_ledger_truth(smc, smc_armed), trades["SMC_LAB"], client, auth,
+                                "ISOLATED_FORWARD_PAPER")
+        (row,) = rig.ledger.get_paper_trades(instance_id=instance.id)
+        evidence["INSTANCE"] = _gate(_instance_ledger_truth(row), trades["INSTANCE"], client, auth, "FORWARD_PAPER")
+        # the ledger's own rr column is GROSS R against the stop at close; with
+        # the stop never moved it equals the journal's gross R (rounded to 3 dp)
+        assert trades["INSTANCE"]["gross_r"] == pytest.approx(float(row["rr"]), abs=5e-4)
+        print("EVIDENCE FINANCIAL GATE " + json.dumps(evidence, sort_keys=True))
+    finally:
+        manager.shutdown()
+
+
 # ============================================================ SECTION 3 — reconciliation
 def _engine_world(tmp_path):
     """A ledger with closed, partially-closed and open engine trades, a
@@ -345,19 +433,35 @@ def test_reconcile_restart_is_idempotent_with_zero_mutations(tmp_path):
     assert first["legacy_migration"]["migrated"] == 0
     baseline = _dump(store)
     trades_before = {t["trade_id"]: t for t in store.list_trades(modes=["ALL"])}
-    for label, kwargs in (("boot", {}), ("timer", {"include_legacy": False}), ("boot-again", {})):
+    zero_ledger = {"created": 0, "linked_remainders": 0, "closed": 0, "uncertain": 0, "skipped_recent": 0}
+    zero_lab = {"created": 0, "exits_added": 0, "finalised": 0}
+    for label, kwargs in (("timer", {"include_legacy": False}), ("boot-again", {})):
         changes = store._c.total_changes
-        with _Trace(store._c) as trace:
+        with _Trace(store._c) as trace, _Trace(ledger._c) as ledger_trace, \
+                _Trace(pa.broker._c) as pa_trace, _Trace(smc.broker._c) as smc_trace, \
+                _Trace(pa._db) as pa_meta_trace, _Trace(smc._db) as smc_meta_trace:
             result = sync.run_once(**kwargs)
         assert store._c.total_changes == changes, label           # ZERO rows written
         assert trace.writes() == [], label
         assert _dump(store) == baseline, label
-        assert result["ledger_reconciliation"] == {"created": 0, "linked_remainders": 0, "closed": 0,
-                                                   "uncertain": 0, "skipped_recent": 0}
-        assert result["lab:PriceActionPaperAccount"] == {"created": 0, "exits_added": 0, "finalised": 0}
-        assert result["lab:SMCPaperAccount"] == {"created": 0, "exits_added": 0, "finalised": 0}
+        # nothing moved in any source, so no source history is read
+        assert result["ledger_reconciliation"] == {**zero_ledger, "unchanged": True}, label
+        assert result["lab:PriceActionPaperAccount"] == {**zero_lab, "unchanged": True}, label
+        assert result["lab:SMCPaperAccount"] == {**zero_lab, "unchanged": True}, label
+        assert len(pa_trace.statements) == len(smc_trace.statements) == 2, label   # the two watermark reads
+        assert pa_meta_trace.statements == [] and smc_meta_trace.statements == [], label
+        if label == "timer":
+            assert len(ledger_trace.statements) == 2, ledger_trace.statements
         if "legacy_migration" in result:
             assert result["legacy_migration"]["migrated"] == 0
+    # the full passes themselves (no change gate) are idempotent too
+    recorder = sync.recorder
+    changes = store._c.total_changes
+    assert recorder.reconcile_ledger(ledger, grace_s=0) == zero_ledger
+    assert ingest_v2_lab(recorder, pa.journal_export()) == zero_lab
+    assert ingest_v2_lab(recorder, smc.journal_export()) == zero_lab
+    assert recorder.migrate_legacy(legacy, ledger)["migrated"] == 0
+    assert store._c.total_changes == changes and _dump(store) == baseline
     # a second restart on top: still the same records, same TRD refs
     store._c.close()
     again = TradeJournalStore(str(tmp_path / "journal.db"))
@@ -367,6 +471,150 @@ def test_reconcile_restart_is_idempotent_with_zero_mutations(tmp_path):
         {k: v["trade_ref"] for k, v in trades_before.items()}
     print(f"EVIDENCE RECONCILE trades={len(trades_before)} digest={_digest(again)[:16]} "
           f"rows={ {t: len(r) for t, r in baseline.items()} }")
+
+
+class _FakeLab:
+    """A lab facade over a real PaperBrokerV2: the same export shape the
+    PA lab produces, with counters to prove when the ledger is re-read."""
+
+    def __init__(self, path, lab_id="PRICE_ACTION_LAB"):
+        from execution.paper_broker_v2 import PaperBrokerV2
+        self.broker = PaperBrokerV2(str(path), starting_balance=10_000, account_type="PA_LAB",
+                                    execution_engine="PA_LAB", fee_rate=0.0004, spread_bps=0,
+                                    slippage_bps=0, participation_rate=1)
+        self.lab_id, self.exports = lab_id, 0
+
+    def journal_export(self):
+        self.exports += 1
+        return {**self.broker.journal_export(), "lab_id": self.lab_id, "meta": {},
+                "sessions": {}, "strategy_version": "v1"}
+
+    def trade(self, at, *, entry=100.0, exit_=None, symbol="BTCUSDT"):
+        self.broker.submit(symbol=symbol, side="buy", order_type="market", quantity=1,
+                           decision_timestamp=at.isoformat(), signal_timestamp=at.isoformat(),
+                           requested_price=entry, strategy="PA1", strategy_version="v1", timeframe="5m")
+        self.broker.process_tick(symbol, {"bid": entry - 0.1, "ask": entry, "mark": entry,
+                                          "received_at": (at + timedelta(seconds=1)).isoformat()})
+        if exit_ is not None:
+            self.broker.submit(symbol=symbol, side="sell", order_type="market", quantity=1, reduce_only=True,
+                               decision_timestamp=(at + timedelta(minutes=1)).isoformat(),
+                               requested_price=exit_, strategy="PA1", strategy_version="v1", timeframe="5m")
+            self.broker.process_tick(symbol, {"bid": exit_, "ask": exit_ + 0.1, "mark": exit_,
+                                              "received_at": (at + timedelta(minutes=2)).isoformat()})
+
+
+def test_idle_sync_skips_unchanged_sources_but_never_misses_a_change(tmp_path, monkeypatch):
+    import functools
+
+    from data.trade_journal_store import TradeJournalStore as Store
+    from services.journal import JournalStore as ReplayStore
+    from tests.test_journal_verify_lifecycles import _rig, _signal
+
+    t0 = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)
+    store = Store(str(tmp_path / "journal.db"))
+    recorder = TradeJournalRecorder(store)
+    lab_a, lab_b = _FakeLab(tmp_path / "a.db"), _FakeLab(tmp_path / "b.db", lab_id="SMC_LAB")
+    lab_a.trade(t0, exit_=101.0)
+    replay = ReplayStore(str(tmp_path / "replay.json"))
+    replay.add({"id": "r1", "symbol": "BTCUSDT", "side": "long", "entry": 100, "exit": 103, "rr": 1.5,
+                "strategy": "SMC Lab", "timeframe": "5m", "created_at": "2026-10-05T09:00:00+00:00"})
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    rig = _rig(ledger=ledger, store=store, scope="inst-gate")
+    rig.rec = recorder
+    sync = JournalSync(recorder, ledger=ledger, labs=[lab_a, lab_b], replay_store=replay)
+    reads = []
+    monkeypatch.setattr(replay, "list", functools.partial(lambda orig: reads.append(1) or orig(), replay.list))
+    sync.run_once()
+    assert (lab_a.exports, lab_b.exports, len(reads)) == (1, 1, 1)
+    assert store.count_trades(modes=["ALL"]) == 2           # lab A trip + replay trade
+    # idle: nothing changed anywhere -> no export, no replay read, no reconcile read
+    idle = sync.run_once(include_legacy=False)
+    assert (lab_a.exports, lab_b.exports, len(reads)) == (1, 1, 1)
+    assert idle["ledger_reconciliation"].get("unchanged") is True
+    # (a) a new fill on lab A only -> lab A is re-read, lab B stays skipped
+    lab_a.trade(t0 + timedelta(hours=1))
+    sync.run_once(include_legacy=False)
+    assert (lab_a.exports, lab_b.exports) == (2, 1)
+    assert store.count_trades(modes=["ALL"], lab="PRICE_ACTION_LAB") == 2
+    # (b) the replay file changed -> re-read, and the new entry is imported once
+    replay.add({"id": "r2", "symbol": "ETHUSDT", "side": "short", "entry": 10, "exit": 9, "rr": 1.0,
+                "strategy": "SMC Lab", "timeframe": "5m", "created_at": "2026-10-05T10:00:00+00:00"})
+    sync.run_once(include_legacy=False)
+    assert len(reads) == 2 and store.count_trades(modes=["BACKTEST"]) == 2
+    sync.run_once(include_legacy=False)
+    assert len(reads) == 2
+    # (c) a live trade opened -> the ledger moved -> reconcile runs (and finds it already journaled)
+    assert _signal(rig).accepted
+    moved = sync.run_once(include_legacy=False)["ledger_reconciliation"]
+    assert "unchanged" not in moved and moved["created"] == 0
+    # (d) a close whose live hook was lost inside the grace window: the pass that
+    #     sees it defers it, and the following passes keep reconciling until applied
+    rig.paper.journal = None
+    rig.paper.close(symbol="BTCUSDT", exit_price=110.0)
+    deferred = sync.run_once(include_legacy=False)["ledger_reconciliation"]
+    assert deferred["skipped_recent"] == 1 and deferred["closed"] == 0
+    monkeypatch.setattr(recorder, "reconcile_ledger", functools.partial(recorder.reconcile_ledger, grace_s=0))
+    applied = sync.run_once(include_legacy=False)["ledger_reconciliation"]   # watermark unchanged, still runs
+    assert applied["closed"] == 1
+    assert sync.run_once(include_legacy=False)["ledger_reconciliation"].get("unchanged") is True
+    # (e) a lab trade still waiting for its entry order forces a re-read without a new fill
+    trade_id, _ = store.create_trade({"source_system": "SMC_LAB", "source_trade_key": "pending-entry",
+                                      "lab_id": "SMC_LAB", "trading_mode": "ISOLATED_FORWARD_PAPER",
+                                      "status": "OPEN", "symbol": "BTCUSDT", "direction": "LONG",
+                                      "entry_locked": 0})
+    before = lab_b.exports
+    sync.run_once(include_legacy=False)
+    assert lab_b.exports == before + 1 and lab_a.exports == 2
+    # (f) a stale PENDING order is still marked on an idle pass
+    store.create_trade({"source_system": "PIPELINE", "source_trade_key": "stale", "trading_mode": "FORWARD_PAPER",
+                        "status": "PENDING", "symbol": "SOLUSDT", "direction": "LONG",
+                        "order_created_at": "2026-10-01T00:00:00+00:00"})
+    idle = sync.run_once(include_legacy=False)["ledger_reconciliation"]
+    assert idle.get("unchanged") is True and idle["uncertain"] == 1
+
+
+def test_open_lab_trade_carries_the_commission_and_funding_already_charged(tmp_path):
+    """While a lab trip is open, the journal shows what the broker has charged
+    so far (entry commission, funding) instead of 'unknown'; P&L stays open."""
+    t0 = datetime(2026, 10, 5, 9, 0, tzinfo=timezone.utc)
+    lab = _FakeLab(tmp_path / "lab.db")
+    lab.trade(t0)                                            # entry only, no exit
+    funded = lab.broker.apply_funding("BTCUSDT", 0.0001, 100.0,
+                                      funding_timestamp=(t0 + timedelta(hours=1)).isoformat())
+    assert funded["applied"]
+    store = TradeJournalStore(":memory:")
+    ingest_v2_lab(TradeJournalRecorder(store), lab.journal_export())
+    (trade,) = store.list_trades(modes=["ALL"])
+    account = dict(lab.broker._account_row())
+    assert trade["status"] == "OPEN"
+    assert trade["fees_total"] == pytest.approx(account["fees_paid"], abs=1e-12)
+    assert trade["funding_total"] == pytest.approx(account["funding_paid"], abs=1e-12) == funded["funding"]
+    assert trade["net_pnl"] is None and trade["exit_price"] is None and trade["realised_r"] is None
+    # the instance engine models no funding: an open engine trade keeps it unknown
+    from tests.test_journal_verify_lifecycles import _rig, _signal
+    rig = _rig(store=store, scope="inst-open")
+    assert _signal(rig).accepted
+    engine_trade = next(t for t in store.list_trades(modes=["ALL"]) if t["instance_id"] == "inst-open")
+    assert engine_trade["funding_total"] is None
+
+
+def test_replay_import_has_no_per_entry_lookup(tmp_path):
+    from services.journal import JournalStore as ReplayStore
+    from services.journal_ingest import ingest_replay_journal
+    counts = {}
+    for n in (5, 200):
+        replay = ReplayStore(str(tmp_path / f"replay{n}.json"))
+        for i in range(n):
+            replay.add({"id": f"r{i}", "symbol": "BTCUSDT", "side": "long", "entry": 100, "exit": 101,
+                        "rr": 0.5, "strategy": "SMC Lab", "timeframe": "5m",
+                        "created_at": f"2026-10-05T09:{i % 60:02d}:00+00:00"})
+        store = TradeJournalStore(":memory:")
+        recorder = TradeJournalRecorder(store)
+        assert ingest_replay_journal(recorder, replay)["created"] == n
+        with _Trace(store._c) as trace:
+            assert ingest_replay_journal(recorder, replay) == {"created": 0}
+        counts[n] = len(trace.statements)
+    assert counts[5] == counts[200] == 1, counts           # one query for the known keys
 
 
 # ============================================================ SECTION 5 — aggregation and filters

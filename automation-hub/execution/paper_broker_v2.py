@@ -313,6 +313,17 @@ class PaperBrokerV2:
                 "account_id": account.get("account_id"), "fee_rate": self.fee_rate,
                 "leverage": self.leverage}
 
+    def journal_watermark(self) -> tuple:
+        """Changes whenever a fill or funding event is booked, or the ledger
+        is reset: the newest row of each (rowid and key). Two indexed reads
+        whatever the history size, so the journal sync can skip an idle lab."""
+        with self._lock:
+            fill = self._c.execute(
+                "SELECT rowid, id FROM v2_fills ORDER BY rowid DESC LIMIT 1").fetchone()
+            funding = self._c.execute(
+                "SELECT rowid, funding_key FROM v2_funding_events ORDER BY rowid DESC LIMIT 1").fetchone()
+        return (tuple(fill) if fill else None, tuple(funding) if funding else None)
+
     def factory_reset(self, starting_balance: float) -> None:
         amount = float(starting_balance)
         if amount <= 0:

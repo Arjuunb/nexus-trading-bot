@@ -1065,6 +1065,19 @@ class TradeJournalStore:
         with self._lock:
             return [self._decode(r) for r in self._c.execute(query, args)]
 
+    def lab_entry_pending(self, lab_id: Optional[str] = None) -> bool:
+        """Is a lab trade still waiting for its entry order to complete? Such a
+        trade can change without a new fill (the order is cancelled or
+        expires), so the sync must look at its lab again. Uses the status index."""
+        query = ("SELECT 1 FROM journal_trades WHERE status IN ('OPEN','PARTIALLY_CLOSED') "
+                 "AND entry_locked = 0 AND lab_id IS NOT NULL")
+        args: list = []
+        if lab_id:
+            query += " AND lab_id = ?"
+            args.append(lab_id)
+        with self._lock:
+            return self._c.execute(query + " LIMIT 1", args).fetchone() is not None
+
     def trades_with_status(self, statuses: Iterable[str]) -> list[dict]:
         values = list(statuses)
         with self._lock:

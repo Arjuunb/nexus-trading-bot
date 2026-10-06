@@ -16,6 +16,7 @@ as forward performance.
 """
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from execution.paper_broker_v2 import PaperBrokerV2
@@ -428,7 +429,9 @@ def ingest_v2_lab(recorder: TradeJournalRecorder, export: dict) -> dict:
                                      at=_iso(event.get("funding_timestamp") or event.get("created_at")),
                                      rate=_num(event.get("rate")))
             trade = store.get_trade(trade_id)
-            if trip["exits"] and not trade.get("finalised_at"):
+            if not trade.get("finalised_at"):
+                # commission and funding the broker has already charged count
+                # while the trip is still open, not only once it has exits
                 recorder._aggregate(trade_id, final=False)
             if trip["closed"] and not trade.get("finalised_at"):
                 last = trip["exits"][-1]
@@ -449,10 +452,12 @@ def ingest_replay_journal(recorder: TradeJournalRecorder, replay_store) -> dict:
     """Map replay (backtest) journal entries in as BACKTEST trades."""
     store = recorder.store
     summary = {"created": 0}
+    entries = replay_store.list()
     with recorder._lock:
-        for entry in replay_store.list():
+        known = store.linked_refs("REPLAY_JOURNAL")
+        for entry in entries:
             key = str(entry.get("id") or "")
-            if not key or store.resolve_link("REPLAY_JOURNAL", key):
+            if not key or key in known:
                 continue
             direction = "LONG" if str(entry.get("side") or "").lower() in ("long", "buy") else "SHORT"
             rr = _num(entry.get("rr"))
@@ -474,6 +479,7 @@ def ingest_replay_journal(recorder: TradeJournalRecorder, replay_store) -> dict:
                 "data_completeness": "REPLAY_JOURNAL_R_ONLY", "entry_locked": 1,
                 "created_at": entry.get("created_at"), "finalised_at": _now(),
             }, links=[("REPLAY_JOURNAL", key)])
+            known.add(key)
             if created:
                 summary["created"] += 1
                 store.add_event(trade_id, "backtest-trade", "Imported from the replay journal (BACKTEST).",
@@ -502,6 +508,11 @@ class JournalSync:
         self._thread = None
         self._lock = threading.Lock()
         self._last: dict = {}
+        # Change markers from the previous successful pass. A source whose
+        # marker has not moved is skipped, so an idle pass reads no history.
+        self._marks: dict = {}
+        self._lab_ids: dict = {}
+        self._ledger_recheck = True
 
     def run_once(self, *, include_legacy: bool = True) -> dict:
         """One pass. Legacy migration only needs to run at boot (and on an
@@ -513,13 +524,12 @@ class JournalSync:
                 steps.append(("legacy_migration",
                               lambda: self.recorder.migrate_legacy(self.legacy_store, self.ledger)))
             if self.ledger is not None:
-                steps.append(("ledger_reconciliation",
-                              lambda: self.recorder.reconcile_ledger(self.ledger, mode_resolver=self.mode_resolver)))
+                steps.append(("ledger_reconciliation", self._ledger_step))
             for lab in self.labs:
                 steps.append((f"lab:{getattr(lab, '__class__', type(lab)).__name__}",
-                              lambda lab=lab: ingest_v2_lab(self.recorder, lab.journal_export())))
+                              lambda lab=lab: self._lab_step(lab)))
             if self.replay_store is not None:
-                steps.append(("replay_journal", lambda: ingest_replay_journal(self.recorder, self.replay_store)))
+                steps.append(("replay_journal", self._replay_step))
             for name, step in steps:
                 try:
                     result[name] = step()
@@ -533,6 +543,53 @@ class JournalSync:
             result["finished_at"] = _now()
             self._last = result
             return result
+
+    @staticmethod
+    def _watermark(source) -> Optional[tuple]:
+        mark = getattr(source, "journal_watermark", None)
+        return mark() if callable(mark) else None
+
+    def _ledger_step(self) -> dict:
+        """Reconcile only when the ledger moved (a trade opened, reduced or
+        closed), when the last pass left rows inside the grace window, or on
+        the first pass. Stale PENDING orders are checked every pass."""
+        mark = self._watermark(self.ledger)
+        if mark is not None and not self._ledger_recheck and self._marks.get("ledger") == mark:
+            return {"created": 0, "linked_remainders": 0, "closed": 0,
+                    "uncertain": self.recorder.mark_stale_pending(), "skipped_recent": 0, "unchanged": True}
+        summary = self.recorder.reconcile_ledger(self.ledger, mode_resolver=self.mode_resolver)
+        self._marks["ledger"] = mark
+        self._ledger_recheck = bool(summary.get("skipped_recent"))
+        return summary
+
+    def _lab_step(self, lab) -> dict:
+        """Re-read a lab's ledger only when it booked a fill or funding event,
+        or when one of its trades still waits for its entry order to complete
+        (that can change without a fill)."""
+        mark = self._watermark(getattr(lab, "broker", None))
+        slot = id(lab)
+        if (mark is not None and self._marks.get(slot) == mark
+                and not self.recorder.store.lab_entry_pending(self._lab_ids.get(slot))):
+            return {"created": 0, "exits_added": 0, "finalised": 0, "unchanged": True}
+        export = lab.journal_export()
+        summary = ingest_v2_lab(self.recorder, export)
+        self._marks[slot] = mark
+        self._lab_ids[slot] = export.get("lab_id")
+        return summary
+
+    def _replay_step(self) -> dict:
+        """The replay journal is a JSON file: re-read it only when it changed."""
+        mark = None
+        try:
+            stat = os.stat(getattr(self.replay_store, "path"))
+            mark = (stat.st_mtime_ns, stat.st_size)
+        except (AttributeError, TypeError, OSError):
+            mark = None
+        if mark is not None and self._marks.get("replay") == mark:
+            return {"created": 0, "unchanged": True}
+        summary = ingest_replay_journal(self.recorder, self.replay_store)
+        self._marks["replay"] = mark
+        return summary
 
     def status(self) -> dict:
         return {"running": bool(self._thread and self._thread.is_alive()), "interval_s": self.interval_s,
