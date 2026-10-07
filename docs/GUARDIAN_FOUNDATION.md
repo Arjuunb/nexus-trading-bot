@@ -1320,6 +1320,151 @@ closed records also lack exact exit IDs. Automatic journal finalization or
 changes to stop persistence require a separately scoped repair, not an
 observability patch.
 
+## Guardian-only consistent backup / recovery rehearsal (2026-10-07)
+
+This local milestone follows stop-history observation at `4f8ee06`. The
+owner-run `python -m tradexa.guardian.backup` tool does not start Guardian,
+construct/migrate a store, use credentials, contact a network, run an Agent,
+change trading gates, or inspect a PA/SMC/instance ledger. It is **not** a
+production backup schedule, trading-account restore, service cutover or
+external audit anchor.
+
+### Consistent snapshot contract
+
+`backup --source PATH --output NEW_PATH` opens the existing Guardian database
+with SQLite `mode=ro`, `query_only`, a 250 ms busy timeout and a progress
+deadline. One read transaction pins the committed source snapshot. SQLite's
+online backup API copies that snapshot, including committed but
+uncheckpointed WAL records. Concurrent WAL commits cannot put a newer import
+cursor into a backup containing only older events; uncommitted transactions
+are excluded. No source checkpoint, journal-mode change, VACUUM, retention,
+backfill, rewrite or deletion occurs. A DELETE-mode source may hold off writes
+during this bounded read; WAL is preferred for a running Guardian.
+
+The entire known Guardian schema and all its present tables are included:
+events, heartbeats, observer cursors/snapshot/scan state, incident history and
+analysis cursor, notifications and cursor, reports, research records/reviews
+and SQLite sequence state. Unknown tables/views, missing core columns or
+missing/fake core immutability guards fail closed rather than silently lose
+data. Older/future incompatible schemas require deliberate compatibility
+review. This is SQLite/schema preservation, not semantic certification of
+every event or evidence of current trading safety.
+
+Before publication, the new private copy is converted to DELETE journal mode
+**after** online backup, because backup also copies a source WAL header.
+It is therefore a self-contained SQLite file, not a main file needing a
+separately copied WAL. SQLite integrity/foreign-key checks, exact schema,
+typed streaming logical SHA-256 and counts of every table must agree with
+the pinned source. Integer, real, text, blob and NULL values retain distinct
+identities. A separate file SHA-256 is returned for transport verification.
+No payload text, saved exceptions, credentials or filesystem paths are
+included in the structured receipt.
+
+Default limits are 30 seconds and 4 GiB for both SQLite pages and the
+streamed digest input, with a 2 MiB per-value bound. Oversize fails, never
+truncates. The owner may explicitly raise the time/size limits up to 300
+seconds / 64 GiB. SQL/progress/copy/hash loops check a cooperative deadline;
+this is not a guarantee that a stalled filesystem syscall can be preempted.
+Copying uses 128-page steps and requires estimated copy size plus a 64 MiB
+free-space reserve before starting; reserve exhaustion during copy fails.
+Long pinned WAL snapshots can retain incoming WAL traffic: choose a quiet
+window, monitor disk space and leave headroom on the source filesystem too.
+
+Source and output must be owner-controlled regular files/directories;
+existing source files are owner-only, regular and singly linked. Output
+directories must already exist, be owned by the invoking UID and have mode
+0700. Nothing is automatically chmodded/chowned. A generated mode-0600
+temporary file is validated and fsynced, then published with an atomic
+create-if-absent hard link (not `os.replace`) and directory fsync. Existing
+outputs, dangling symlinks, SQLite sidecar filenames or existing destination
+sidecars are rejected. Even an output-creation race cannot overwrite history.
+
+Only this invocation's unpublished generated temporary file is removed on
+an ordinary failure. Existing/published snapshots, source DB/WAL/SHM/history
+and other invocations' artifacts are never deleted. If publication succeeds
+but directory sync fails, `SNAPSHOT_PUBLICATION_UNCERTAIN` preserves the
+published file; do not treat it as absent. Cleanup failure reports
+`SNAPSHOT_PARTIAL_RETAINED`. A hard process/host crash can leave private
+`.guardian-snapshot-*.partial` artifacts, including a duplicate hard link
+around publication. No automatic sweep occurs. Preserve and review those
+specific files before any cleanup; incomplete files are not published
+backups. This tool is not protection from the filesystem owner or host admin
+altering a file; `external_authenticity_verified=false` stays explicit.
+
+### Verification and isolated recovery
+
+`verify --source SNAPSHOT [--expected-digest HEX]` is read-only and refuses a
+live WAL database or any existing SQLite sidecar. It validates the standalone
+snapshot without migrating/creating a database. Without a trusted external
+digest it proves structural consistency only, not historical authenticity.
+
+`restore --source SNAPSHOT --output NEW_PATH --expected-digest HEX` requires
+the original trusted logical digest, checks it **before** copying, then
+performs the same full copy/validation and no-overwrite publication. It never
+replaces the service database, changes a configured path, starts a container
+or creates trading records. All receipts keep
+`trading_integrity_verified=false`, `external_authenticity_verified=false`
+and `service_cutover_performed=false`. The original execution identities,
+unknown/failed evidence and import checkpoints are retained, not reset to
+HEALTHY. Reopening the disposable restored Guardian and resuming from its
+checkpoint preserves event-ID replay deduplication.
+
+Owner workflow (substitute existing **Guardian-only** paths; run as its
+database-owning UID, not with trading credentials):
+
+```sh
+python -m tradexa.guardian.backup backup \
+  --source /absolute/guardian/events.db \
+  --output /absolute/private-backups/guardian-snapshot.db
+
+# Keep the returned logical_sha256 receipt in an independent trusted location.
+SNAPSHOT_DIGEST=THE_LOGICAL_SHA256_FROM_THE_TRUSTED_RECEIPT
+python -m tradexa.guardian.backup verify \
+  --source /absolute/private-backups/guardian-snapshot.db \
+  --expected-digest "$SNAPSHOT_DIGEST"
+python -m tradexa.guardian.backup restore \
+  --source /absolute/private-backups/guardian-snapshot.db \
+  --output /absolute/private-recovery/guardian-rehearsal.db \
+  --expected-digest "$SNAPSHOT_DIGEST"
+```
+
+Use a new filename for each run. Do not switch the service to the rehearsal
+path automatically: a restored snapshot may lag newly received evidence;
+cutover requires explicit approval, downtime/replay planning and independent
+deployment validation. Offline owner receipts are not inserted into the
+source event store, because this operation must not mutate its snapshot.
+Remote retention, encryption, externally stored integrity anchors, schedule,
+RPO/RTO and VPS recovery drills still require operator policy and proof.
+
+### Local validation
+
+Failure-first tests exercise real uncheckpointed WAL commits, a real writer
+commit during page-by-page backup, event/cursor atomicity, uncommitted writes,
+all known tables, preserved uncertain/failed records, restored checkpoint
+resume, repeated restoration and replay, immutability, sidecars, symlinks,
+hardlinks, output races, locks/retry, corruption/digest mismatch, disk
+exhaustion, byte/value/time bounds, copy/validation/sync/publication failures,
+truthful uncertain publication, partial-cleanup failure and sanitized CLI
+receipts. Sentinel PA/SMC/Agent/instance histories remain byte-unchanged.
+No trading worker is imported and no store constructor is invoked by the tool.
+
+The **69 new backup/recovery cases** passed. Broader targeted validation
+passed **308 tests**, including both SMC protection systems and the P0
+crash-boundary tests, with five deprecation warnings in 8.83 seconds.
+Evidence: `/private/tmp/guardian-backup-targeted.xml`.
+The complete local suite passed **5,160 tests, 15 skipped**, with zero failures
+or errors and 94 deprecation warnings in 332.94 seconds. Complete evidence:
+`/private/tmp/guardian-backup-complete-suite.xml`.
+SMC source and behavior freezes passed. All protected decision-path files
+and both freeze manifests are byte-unchanged from `804a7c0`. All strategy,
+Agent/runtime/journal, execution/broker and data writers are unchanged from
+`4f8ee06`. `git diff --check` passed.
+
+Testing skill guided the failure-first recovery cases. This phase modifies
+only `tradexa/guardian/backup.py`, `tests/test_guardian_backup.py` and this
+document. It remains local-only: no push, deployment, main changes, production
+data operation, strategy/Agent/runtime/journal/broker change or live routing.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.
