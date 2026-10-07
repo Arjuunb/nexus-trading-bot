@@ -410,11 +410,12 @@ Configuration requires `GUARDIAN_DB_PATH`, `GUARDIAN_SOURCE_KEYS_JSON` (a JSON o
 | Method | Path | Authority | Result |
 | --- | --- | --- | --- |
 | GET | `/` and `/assets/command-center.*` | local shell only | static read-only Command Center; no evidence or key embedded |
-| GET | `/healthz` | local liveness probe | `self_state`, deliberately no claim that trading is healthy |
+| GET | `/healthz` | local liveness probe | `self_state=ALIVE`, `readiness_state=NOT_CHECKED`; no persistence access or health heartbeat write |
 | POST | `/v1/events` | source-specific `X-Guardian-Key` | 201 appended, 200 identical replay, 403 source mismatch, 422 invalid evidence, 503 persistence unavailable |
 | POST | `/v1/heartbeats` | source-specific `X-Guardian-Key` | current heartbeat for that source or a source-prefixed component |
 | GET | `/v1/events?limit=50&source_service=smc_lab` | separate read key | paged recent immutable evidence |
 | GET | `/v1/health` | separate read key | evidence-backed component health, with missing/stale components `UNKNOWN` |
+| GET | `/v1/self-health` | separate read key | configured Guardian monitor heartbeats and read-only own-storage diagnostics; no query parameters or trading authority |
 | GET | `/v1/incidents?limit=50&state=OPEN` | separate read key | derived incident summaries, filtered by state when requested |
 | GET | `/v1/incidents/<incident_id>/timeline` | separate read key | ordered source event references and state transitions |
 | GET | `/v1/incidents/<incident_id>/investigation` | separate read key | bounded source/receipt timeline, linked execution/decision/dependency context, failure facts and **unproven** causal candidates |
@@ -1464,6 +1465,154 @@ Testing skill guided the failure-first recovery cases. This phase modifies
 only `tradexa/guardian/backup.py`, `tests/test_guardian_backup.py` and this
 document. It remains local-only: no push, deployment, main changes, production
 data operation, strategy/Agent/runtime/journal/broker change or live routing.
+
+## Guardian self-monitoring / truthful liveness (2026-10-07)
+
+### Defect and separation of authority
+
+Previously, each `GET /healthz` called
+`record_heartbeat("guardian", "HEALTHY")`. Repeated container-health polling
+could overwrite a retained FAILED heartbeat and manufacture freshness even
+when the background self-monitor stopped. The regression reproduced that
+write before the repair.
+
+`/healthz` is now **HTTP-process liveness only**: 200, `self_state=ALIVE`,
+`readiness_state=NOT_CHECKED`, and
+`platform_state=UNKNOWN_UNTIL_EVIDENCE_CHECKED`. It performs no SQLite or
+filesystem operation. A readable HTTP server can remain alive during a
+persistence outage; that is deliberately not a readiness certificate.
+The existing container healthcheck only checks HTTP success, so its health
+means liveness, not working collectors, healthy trading or complete evidence.
+Only the existing background processors write their actual heartbeat result.
+Polls cannot refresh missing/stale heartbeats or erase FAILED ones.
+
+### Bounded read contract
+
+`GET /v1/self-health` requires the existing independent `X-Guardian-Key`
+**read** credential. Source/control/research/admin credentials grant no access.
+It accepts no query parameters or caller-selected filesystem path. Invalid
+queries return 400, unauthorized reads 401, and mutation methods 405, without
+inspecting storage. Successful diagnostics return **200 even when the reported
+state is UNKNOWN/BLOCKED/FAILED**; operators must inspect the JSON, not infer
+readiness from the HTTP status. Responses are `Cache-Control: no-store`.
+
+The reader selects only the `guardian` and `guardian_*` components from the
+configured required-component list, capped at 128 valid unique names. These
+are retained reports from configured local monitors, not a thread/process
+inventory. Other source health such as `smc_lab` is deliberately excluded
+from this own-service view. Each configured monitor missing a report, older
+than 90 seconds, ahead of the clock by more than five seconds, or carrying
+malformed evidence is UNKNOWN. A recently successful heartbeat does not prove
+the processor is still running within that freshness interval.
+`guardian_storage` is reserved for the computed own-storage diagnostic and
+cannot be configured as a reported monitor, avoiding a name collision that
+could hide an independent heartbeat failure.
+
+The configured **Guardian-owned** database is opened with `mode=ro`,
+`query_only=ON`, a 250 ms busy timeout, a 500 ms SQL progress/deadline bound,
+and one read transaction. Only bounded heartbeat fields and journal-mode
+metadata are selected; no event/candle/trade payloads or full table counts
+are loaded. Missing/corrupt schema, lock/deadline and unavailable files are
+reported with sanitized codes, not raw SQLite exceptions. A released lock
+is retried on the next read without rebuilding the database. A short WAL
+write does not require this reader to acquire the writer lock.
+Oversized metadata cells fail closed under a 4 KiB SQLite value/record limit.
+State/timestamp values are preserved or rejected, never clipped into valid
+evidence; embedded NULs cannot manufacture a HEALTHY heartbeat.
+
+Storage metadata covers only the database and its own WAL/SHM/rollback sidecars
+and the filesystem containing that path. Symlinked parents/files, hardlinks,
+nonregular files, wrong-owner files and group/world-readable database/sidecars
+are rejected as `UNSAFE_STORAGE_PATH`. The existing requirement remains an
+owner-only database directory and stable path under the Guardian UID; this is
+not an adversarial filesystem-swap proof or a scan of other ledgers/host disks.
+Filesystem metadata and the SQLite snapshot are sampled separately and are
+explicitly **not atomic together**. The response publishes counts, not local
+paths, credentials, event prose or arbitrary heartbeat reasons; only the
+documented local monitor reason codes are exposed.
+
+### States and fixed operational thresholds
+
+Storage HEALTHY means only that this bounded read succeeded, the database
+uses WAL, and the following **observed** headroom/pressure tests pass. It is
+not proof of future write durability, whole-database integrity or VPS health.
+
+| Observation after a successful database/metadata read | Storage state / reason |
+| --- | --- |
+| Read-only filesystem | BLOCKED / FILESYSTEM_READ_ONLY |
+| Available bytes <= 64 MiB | BLOCKED / LOW_DISK_HEADROOM |
+| Reported available inodes = 0 | BLOCKED / LOW_INODE_HEADROOM |
+| Available bytes > 64 MiB and <= 256 MiB | DEGRADED / LOW_DISK_HEADROOM |
+| Reported available inodes 1-15 | DEGRADED / LOW_INODE_HEADROOM |
+| WAL size >= 256 MiB | DEGRADED / WAL_PRESSURE |
+| Non-WAL journal mode | DEGRADED / JOURNAL_MODE_NOT_WAL |
+| Read and all observed headroom tests pass | HEALTHY / READABLE_WITH_OBSERVED_HEADROOM |
+| File/metadata missing or invalid | UNKNOWN / STORAGE_METADATA_UNAVAILABLE or UNSAFE_STORAGE_PATH |
+| SQLite busy/locked/read deadline | UNKNOWN / GUARDIAN_DB_READ_BLOCKED |
+| Other unavailable/corrupt SQLite read | UNKNOWN / GUARDIAN_DB_READ_FAILED |
+
+These byte thresholds are fixed Guardian operational warnings, not trading
+parameters, percentages of a VPS plan, or a new entry-risk policy. A filesystem
+that does not report inode capacity returns `filesystem_available_inodes=null`,
+not a false zero. WAL pressure is **not** a corruption diagnosis. Partial
+metadata remains visible during a failed read, but storage readiness stays
+UNKNOWN when the reader cannot complete its bounded check.
+
+The own-service aggregate uses FAILED > BLOCKED > DEGRADED > UNKNOWN > HEALTHY,
+preserving known failures alongside missing evidence.
+`/v1/health` includes the same diagnostics and a `guardian_storage` component:
+overall green cannot conceal stale/failed Guardian monitors or unverified
+storage. Existing upstream component states are not rewritten. An observed
+storage BLOCKED is a **Guardian finding**, never proof that an exchange order
+was blocked and never an automatic trading pause. Active-incident masking
+remains in place. Both `automatic_action_allowed` and
+`trading_integrity_verified` remain false; `write_durability_verified=false`.
+
+There is no cleanup, checkpoint, VACUUM, database creation, retention job,
+backup scheduler, recovery action, network call or source/broker mutation.
+CPU/RAM, remote disks, actual dropped/queued producer events, investigation
+duration, false-alert rates and production availability baselines remain
+unimplemented/unverified. This is the own-health/read-only storage portion of
+PRD self-monitoring, not completion of its full infrastructure scope.
+
+### Local validation
+
+Failure-first tests cover the false-health overwrite, missing/stale/failed
+monitors, independent source states, auth/method/query boundaries, free-space
+and inode thresholds, filesystem/SQL errors, locks and retry, corruption,
+unsafe paths, SQL time bounds, reason redaction, a committed WAL failure and
+recovery, and 100 repeated authenticated requests during a short uncommitted
+WAL write. Polling creates no events or new heartbeat versions and does not
+modify unrelated paper history. The broader validation also reruns Guardian
+backup/recovery, service/incidents/reports/deployment contracts, both SMC
+protection systems and P0 crash-boundary cases.
+
+The **60 new regression cases** passed. Broader targeted validation passed
+**263 tests**, with zero failures, skips or warnings, in 5.94 seconds.
+Evidence: `/private/tmp/guardian-self-health-targeted.xml`.
+After the final malformed-heartbeat/name-collision hardening, the complete
+local suite passed **5,220 tests, 15 skipped**, with zero failures/errors and
+95 deprecation warnings in 308.73 seconds. Complete evidence:
+`/private/tmp/guardian-self-health-complete-suite.xml`.
+SMC source and behavior freezes passed. All four protected decision-path
+files and both freeze manifests are byte-unchanged from `804a7c0`. All strategy,
+Agent/runtime/journal, data and execution/broker code is unchanged from
+`4f8ee06`; app/dashboard, SDK and deployment files are unchanged from the
+phase's starting commit `d64f5e2`. `git diff --check` passed.
+
+Exact changed files:
+
+- `tradexa/guardian/self_health.py`
+- `tradexa/guardian/service.py`
+- `tests/test_guardian_self_health.py`
+- `tests/test_guardian_service.py`
+- `docs/GUARDIAN_FOUNDATION.md`
+
+The backend/API and testing skills guided the separate authenticated,
+read-only diagnostic contract and failure-first verification. This phase is
+local-only and changes only the Guardian service/diagnostic module, its tests,
+and this document; no strategy, Agent, runtime, journal, broker, deployment
+configuration or live-routing control is modified.
 
 ## PRD completion boundary
 

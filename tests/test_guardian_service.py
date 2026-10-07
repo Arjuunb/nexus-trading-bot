@@ -291,10 +291,12 @@ def test_smc_execution_links_invalid_evidence_returns_redacted_unavailable(app, 
 
 def test_health_is_unknown_without_evidence_then_source_bound_heartbeat(app):
     status, self_health, _ = _request(app, "GET", "/healthz")
-    assert status == 200 and self_health["self_state"] == "HEALTHY"
+    assert status == 200 and self_health["self_state"] == "ALIVE"
     status, health, _ = _request(app, "GET", "/v1/health", key=READ_KEY)
     assert status == 200 and health["state"] == "UNKNOWN"
     assert health["components"]["smc_lab"]["state"] == "UNKNOWN"
+    assert health["components"]["guardian"]["state"] == "UNKNOWN"
+    app.store.record_heartbeat("guardian", "HEALTHY")
     payload = {"component": "smc_lab", "state": "BLOCKED", "reason": "NO_SETUP",
                "observed_at": datetime.now(timezone.utc).isoformat()}
     assert _request(app, "POST", "/v1/heartbeats", payload=payload, key=SOURCE_KEY)[0] == 200
@@ -305,8 +307,28 @@ def test_health_is_unknown_without_evidence_then_source_bound_heartbeat(app):
     assert health["evidence_complete"] is True
 
 
+def test_liveness_poll_cannot_create_or_overwrite_guardian_readiness(app, monkeypatch):
+    app.store.record_heartbeat("guardian", "FAILED", reason="MONITOR_FAILED")
+    before = app.store.heartbeats()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("liveness must not access persistence")
+
+    monkeypatch.setattr(app.store, "record_heartbeat", forbidden)
+    monkeypatch.setattr(app.store, "_connect", forbidden)
+    for _ in range(100):
+        status, body, headers = _request(app, "GET", "/healthz")
+        assert status == 200 and body["self_state"] == "ALIVE"
+        assert body["readiness_state"] == "NOT_CHECKED"
+        assert body["platform_state"] == "UNKNOWN_UNTIL_EVIDENCE_CHECKED"
+        assert headers["Cache-Control"] == "no-store"
+    monkeypatch.undo()
+    assert app.store.heartbeats() == before
+
+
 def test_open_incident_prevents_green_overall_health_but_does_not_claim_trading_block(app):
     assert _request(app, "GET", "/healthz")[0] == 200
+    app.store.record_heartbeat("guardian", "HEALTHY")
     heartbeat = {"component": "smc_lab", "state": "HEALTHY", "reason": "SOURCE_OBSERVED",
                  "observed_at": datetime.now(timezone.utc).isoformat()}
     assert _request(app, "POST", "/v1/heartbeats", payload=heartbeat,

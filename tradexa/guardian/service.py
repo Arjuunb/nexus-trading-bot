@@ -19,6 +19,7 @@ from .anomalies import latency_anomalies
 from .dependencies import dependency_map
 from .decision_traces import decision_traces
 from .health import component_health
+from .self_health import include_self_health, self_health
 from .incidents import GuardianIncidentEngine
 from .investigations import incident_investigation
 from .instance_decisions import GuardianInstanceDecisions
@@ -160,9 +161,9 @@ class GuardianService:
             if path == "/healthz":
                 if method != "GET":
                     raise _HTTPError(405, "METHOD_NOT_ALLOWED")
-                self.store.record_heartbeat("guardian", "HEALTHY")
                 return self._respond(start_response, 200, {
-                    "service": "guardian", "self_state": "HEALTHY",
+                    "service": "guardian", "self_state": "ALIVE",
+                    "readiness_state": "NOT_CHECKED",
                     "platform_state": "UNKNOWN_UNTIL_EVIDENCE_CHECKED",
                 })
             if path == "/v1/research/hypotheses" and method == "POST":
@@ -213,16 +214,22 @@ class GuardianService:
                                             reason=payload.get("reason", ""),
                                             observed_at=observed_at)
                 return self._respond(start_response, 200, {"result": "RECORDED"})
-            if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
+            if (path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
                          "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
+                if path == "/v1/self-health":
+                    if environ.get("QUERY_STRING", ""):
+                        raise _HTTPError(400, "INVALID_SELF_HEALTH_QUERY")
+                    return self._respond(start_response, 200,
+                                         self_health(self.store.path, self.required_components))
                 if path == "/v1/health":
                     health = component_health(
                         self.store.heartbeats(), self.required_components)
+                    include_self_health(health, self_health(self.store.path, self.required_components))
                     incidents = self.incidents.active_summary()
                     health["active_incidents"] = incidents
                     if health["state"] == "HEALTHY" and incidents["warning_or_higher"]:
@@ -420,7 +427,7 @@ class GuardianService:
                 source = query.get("source_service", [None])[0]
                 return self._respond(start_response, 200, {
                     "events": self.store.recent(limit, source_service=source)})
-            if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
+            if path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
                         "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
