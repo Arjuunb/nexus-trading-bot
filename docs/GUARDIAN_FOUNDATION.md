@@ -838,6 +838,113 @@ missing-file no-creation, persistent SQLite lock/retry, WAL reads during short
 writes, and 100 read refreshes with no evidence or cursor writes. Standalone
 Guardian service imports do not load source execution/services/bot packages.
 
+## Source-side SMC paper exit-trigger evidence (2026-10-07)
+
+This next local slice closes one source-data gap, not the complete lifecycle
+certification gap. Fill-position records establish exact position origins but
+did not retain the actual exit trigger. The broker now adds nullable
+`v2_fills.fill_exit_json`, schema v1 / scope `SMC_PAPER_EXIT_FILL`, for an actual
+fill that reduces an opposing **SMC_LAB** net position. Both the durable account
+type and execution engine must be SMC_LAB. Entry/addition fills and PA/PAPER
+accounts remain null. Existing fills stay null; no history is reconstructed.
+
+The bounded pure source formatter has no Guardian, network, journal, runtime or
+strategy dependency. It records, in the **same existing fill INSERT and broker
+transaction**:
+
+- Account, fill, order, original position, entry-order and original execution IDs.
+  Missing/foreign parent links leave the original execution key/timeframe unknown.
+- Actual fill quantity/price, the closed portion of a netting/reversal fill and
+  the raw pre-spread/slippage reference price. The new position created by a
+  reversal does not adopt the old origin.
+- The stored position stop/target/trailing/peak snapshot immediately before the
+  fill, plus the effective stop/peak used by the existing candle trigger logic.
+  A computed trailing stop is not misrepresented as the stored static stop.
+- Literal order type/limit/stop/trailing fields and whether that order is
+  persisted or a synthetic broker exit.
+- One input observation (OHLC or bid/ask, optional identified input timestamp
+  and quote ID), **not** quotes per refresh or a rolling candle window. Missing
+  input time is unknown, never inferred from the fill wall clock.
+
+Trigger kinds describe which existing broker branch produced the fill:
+
+| Kind | Recorded meaning |
+| --- | --- |
+| `POSITION_STOP_LOSS` | Stored position stop triggered; includes adverse gaps |
+| `POSITION_TAKE_PROFIT` | Stored target triggered, with the existing stop-first policy when both hit |
+| `POSITION_TRAILING_STOP` | Candle-computed trailing stop dominated the stored static stop |
+| `ORDER_TRAILING_STOP` | Explicit persisted trailing-close order triggered |
+| `ORDER_REDUCE_ONLY` | Explicit opposing reduce-only order filled; not inferred to be a manual or protective stop |
+| `NETTING_FILL` | Non-reduce-only opposing order reduced/reversed the original net position; not labelled protective |
+| `LEGACY_POSITION_REMEDIATION` | Existing explicit reconciled-mark paper remediation |
+| `PAPER_LIQUIDATION` | Existing isolated paper liquidation estimate, not Binance liquidation evidence |
+
+No stop, target, RR, risk, entry, signal, alpha, fill-price, fee, participation,
+stop-first, liquidation or trailing calculation is changed. Current broker
+event/API fields are unchanged; the retained fill row gains only the nullable
+JSON field. Export/restore retains captured bytes; old snapshots without the
+field remain null. The source database is still owner-mutable/restorable, so
+these snapshots are not a claim that source history is tamper-proof.
+
+Serialization is capped at **8 KiB per actual exit fill**, with finite JSON
+numbers and no extra table, network call or additional commit. Encoding/INSERT/
+order-update failure rolls the whole existing event transaction back: fill,
+position, account and tick cursor agree. There is no independently committed
+evidence write after execution, and no deletion/compensation to hide a mismatch.
+The strict read decoder rejects malformed/oversized/deep or duplicate-field
+JSON, invalid Unicode/numbers/flags, contradictory size/direction, and incorrect
+trigger relationships. This validator is not used to approve trades.
+
+This is **source capture only**. Guardian's existing fill-position importer and
+entry/position views are unchanged and do not import this new field. A bounded,
+authenticated source projection, retained Guardian import and exact-ID exit
+view remain the next milestone. Stop-move history, journal-close/exit IDs,
+current exposure, entry-lot allocation, full lifecycle, source immutability,
+account/currency binding and net-P&L certification remain unverified. No journal
+write ordering, Agent approvals, strategy, trading authority, dashboard,
+weekly-review, deployment configuration or VPS state is changed.
+
+### Exit-provenance local validation
+
+The new regression file contains **74 cases**. Focused capture/architecture/
+SMC-freeze checks passed **138 cases**. The broader broker, source provenance,
+Guardian import/link/service, crash-boundary, architecture and freeze run passed
+**387 cases** before the final two decoder/bound regressions were added, with
+five existing FastAPI/Starlette deprecation warnings and no worker warning.
+Both source-level and behaviour-level SMC protections pass, and protected files
+and freeze baseline remain byte-identical to the validated `804a7c0` source.
+
+The final complete local Python suite passed **4,811 tests, 15 skipped** in
+330.40 seconds, with zero failures/errors and 93 existing deprecation warnings.
+No background worker warning occurred. JUnit evidence is
+`/private/tmp/guardian-smc-exit-provenance-complete-suite.xml`. The full run
+includes all final exit-provenance cases and both SMC protection systems.
+The working branch is `codex/guardian-foundation`; this is a local-only
+milestone, not pushed or deployed, and main is unchanged.
+
+All counts below are disposable local fixtures, **not VPS evidence**. Order
+counts mean persisted `v2_orders` rows; synthetic protective exits are identified
+by their fill order IDs but do not create persisted order rows.
+
+| Injected boundary or replay | Orders / open positions / fills | Evidence |
+| --- | --- | --- |
+| Exit encoding or INSERT failure, candle/tick/mark/remediation | 1 / 1 / 1 | Zero exit snapshots; original position/account/cursor retained; retry yields 1 / 0 / 2 and one exit snapshot |
+| Explicit close formatting or order-update failure | 2 / 1 / 1 | Close order still open; retry yields 2 / 0 / 2 and one exact close-order snapshot |
+| Hard process exit before fill INSERT or immediately after uncommitted INSERT | 1 / 1 / 1 after restart | Uncommitted exit rolled back; original origin retained; retry produces one exit snapshot |
+| Hard process exit immediately after broker commit | 1 / 0 / 2 after restart | Existing exit bytes, fill ID and original execution key retained; no second fill on three more restarts |
+| Duplicate quote + 100 post-close read/candle refreshes after restart | 1 / 0 / 2 | No additional fills/snapshots and no retained evidence rewrite |
+| 100 no-trigger candles and zero-volume exit attempt | 1 / 1 / 1 | No snapshot without an actual fill |
+
+Other regressions cover long/short stop/target precedence, tick versus candle
+triggers, stored versus computed trailing stops, partial closes, explicit
+trailing orders, scale-ins/reversals, market/engine/account isolation, legacy
+schema and snapshot compatibility, missing origin links, invalid read contracts,
+bounded formatting and failed oversized quote with unchanged tick cursor.
+Paired SMC/PAPER fixtures preserve identical fill/fee/P&L numbers and account
+results for candle, tick and liquidation paths. Backend/API and testing skills
+guided bounded contracts and failure-first tests, without adding trading
+authority or claiming complete journal reconciliation.
+
 Focused invocation from the repository root:
 `PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" python -m pytest -q automation-hub/tests/test_guardian_smc_fill_position_import.py tests/test_guardian_smc_fill_positions.py tests/test_guardian_service.py`.
 Complete validation uses the same absolute `PYTHONPATH` with `python -m pytest -q`.
