@@ -21,11 +21,12 @@ a fill become EXECUTION_FAILED / EXECUTION_UNCERTAIN records.
 """
 from __future__ import annotations
 
+from bisect import bisect_right
 from typing import Optional
 
 from data.trade_record_store import TradeRecordStore
-from services.journal_recorder import (_f, _finish, _json, _result_fields, _rr, _side, _timeline,
-                                       _ts, classify_decision, trading_session)
+from services.journal_recorder import (_dt, _f, _finish, _json, _result_fields, _rr, _side,
+                                       _timeline, _ts, classify_decision, trading_session)
 
 _CORE = ("evaluation", "planned_stop_loss", "entry_fill", "risk_amount")
 # Both labs stamp a decision with its signal candle's close time -- a candle
@@ -82,6 +83,40 @@ def _pair_lifecycles(fills: list[dict]) -> list[dict]:
     return lifecycles
 
 
+def _attribute_funding(lifecycles: list[dict], events: list[dict]) -> dict[int, float]:
+    """The funding each lifecycle paid, by index, from the broker's funding events.
+
+    ``apply_funding`` charges the position open when it is booked, and the
+    event's ``created_at`` is that booking time, on the same clock as the
+    fills (its ``funding_timestamp`` is whatever time the caller named). The
+    fills do not name the position. An event belongs to the lifecycle on its
+    symbol that opened at or before its booking and before the next one
+    opened, which keeps a charge booked after the exit quote arrived, but
+    before it was processed, with the trade that paid it. Every event of one
+    broker position stays with the lifecycle its first event belongs to."""
+    starts: dict[str, list] = {}
+    for index, life in enumerate(lifecycles):
+        at = _dt(life["entry"].get("fill_timestamp") or life["entry"].get("timestamp"))
+        if at is not None:
+            starts.setdefault(life["symbol"], []).append((at, index))
+    for rows in starts.values():
+        rows.sort()
+    times = {symbol: [at for at, _ in rows] for symbol, rows in starts.items()}
+    owners: dict[str, int] = {}
+    totals: dict[int, float] = {}
+    dated = [(at, e) for e in events if (at := _dt(e.get("created_at"))) is not None]
+    for at, event in sorted(dated, key=lambda pair: pair[0]):
+        symbol = str(event.get("symbol") or "").upper()
+        owner = owners.get(event.get("position_id"))
+        if owner is None:
+            slot = bisect_right(times.get(symbol, []), at) - 1
+            if slot < 0:
+                continue                 # charged before any position still in the ledger
+            owner = owners[event.get("position_id")] = starts[symbol][slot][1]
+        totals[owner] = totals.get(owner, 0.0) + (_f(event.get("amount")) or 0.0)
+    return totals
+
+
 class V2LabProjector:
     """Shared projection for PaperBrokerV2 labs; subclasses add lab evidence."""
 
@@ -120,18 +155,34 @@ class V2LabProjector:
         orders = {o["id"]: o for o in _rows(conn, lock, "SELECT * FROM v2_orders")}
         metas = self.order_meta()
         known = store.keys_with_status((self.record_source,))
+        lifecycles = _pair_lifecycles(fills)
+        life_metas = [metas.get(life["entry"]["order_id"]) or {} for life in lifecycles]
+        funding = _attribute_funding(lifecycles, _rows(
+            conn, lock, "SELECT position_id, symbol, created_at, amount FROM v2_funding_events"))
+        # One entry order can open a second position: its remainder fills after
+        # the first position already closed. Each position is its own trade.
+        # The first keeps the order's key (records written before this rule
+        # keep theirs); a later one adds its first fill's id.
+        keys, shared = [], {}
+        for life, meta in zip(lifecycles, life_metas):
+            key = self._key(meta, life["entry"])
+            keys.append(key if key not in shared else f"{key}:{life['entry']['id']}")
+            shared[key] = shared.get(key, 0) + 1
         written = seen = 0
         entry_orders = set()
-        for life in _pair_lifecycles(fills):
+        for index, (life, meta, key) in enumerate(zip(lifecycles, life_metas, keys)):
             entry = life["entry"]
-            meta = metas.get(entry["order_id"]) or {}
             entry_orders.add(entry["order_id"])
-            key = self._key(meta, entry)
-            if known.get(key, (None, 0))[1] and life["closed"]:
+            # A finished first position is re-projected when its order opened
+            # another one, so its record carries its own legs again: before
+            # this rule the later position wrote its legs over them.
+            if known.get(key, (None, 0))[1] and life["closed"] \
+                    and shared.get(self._key(meta, entry), 0) < 2:
                 seen += 1
                 self._late_agent_link(store, key, meta)
                 continue
-            record = self._record(life, meta, orders, key)
+            # The broker books every funding charge, so none attributed is 0.
+            record = self._record(life, meta, orders, key, funding=funding.get(index, 0.0))
             self._link_agent(record, meta)
             store.upsert_trade(record, events=_timeline(record))
             written += 1
@@ -145,7 +196,9 @@ class V2LabProjector:
         anchor = meta.get("proposal_id") or entry["order_id"]
         return f"{self.record_source}:{session}:{anchor}"
 
-    def _record(self, life: dict, meta: dict, orders: dict, key: str) -> dict:
+    def _record(self, life: dict, meta: dict, orders: dict, key: str, *,
+                funding: Optional[float] = None) -> dict:
+        """``funding`` is what the broker charged this position (None: unknown)."""
         entry = life["entry"]
         side = life["side"]
         evaluation = self.evaluation(meta)
@@ -157,7 +210,10 @@ class V2LabProjector:
         stop = _f(entry.get("stop_loss")) or _f(meta.get("stop"))
         target = _f(entry.get("take_profit")) or _f(meta.get("target_1") or meta.get("target"))
         planned_entry = _f(meta.get("entry")) or _f(entry.get("requested_price"))
-        risk_amount = _f(entry.get("risk_amount"))
+        # Each entry fill carries the risk it added (its distance to the stop
+        # times its size); an entry that filled in pieces risks their sum.
+        risks = [_f(f.get("risk_amount")) for f in entries]
+        risk_amount = round(sum(risks), 10) if risks and None not in risks else None
         if stop is None:
             missing.append("planned_stop_loss")
         if risk_amount is None:
@@ -221,11 +277,17 @@ class V2LabProjector:
             entry_fees = sum(float(f.get("fee") or 0) for f in entries)
             legs = [{"price": f["price"], "size": f.get("quantity"),
                      "pnl": float(f.get("realized_pnl") or 0) - float(f.get("fee") or 0),
-                     "fees": float(f.get("fee") or 0),
-                     "funding": f.get("funding")} for f in exits]
-            # The entry commission is a cost of this trade too.
+                     "fees": float(f.get("fee") or 0), "funding": None} for f in exits]
+            # The entry commission and the funding the position paid are costs
+            # of this trade too. The broker's fill rows always carry funding 0:
+            # it books funding on the account, and the lab records each charge.
             legs[0]["pnl"] -= entry_fees
             legs[0]["fees"] += entry_fees
+            legs[0]["funding"] = funding
+            if funding is None:
+                missing.append("funding")
+            else:
+                legs[0]["pnl"] -= funding
             last = exits[-1]
             exit_order = orders.get(last["order_id"]) or {}
             reason = _exit_reason(exit_order)

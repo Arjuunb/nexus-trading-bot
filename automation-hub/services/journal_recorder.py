@@ -44,6 +44,8 @@ from data.trade_record_store import TradeRecordStore, record_id_for, utcnow
 BREAKEVEN_R = 0.05
 #: SignalPipeline's close-side vocabulary (services/signal_pipeline.py).
 _CLOSE_SIDES = {"REDUCE", "CLOSE", "EXIT", "FLAT", "FLATTEN"}
+#: Why a position ended when an account restart cancelled what was still open.
+RESTART_EXIT_REASON = "account-restart"
 #: A trade-less forward intent missing from the instance's parked intents for
 #: this long has provably not filled: it was dropped, not delayed.
 INTENT_GRACE_S = 3600
@@ -169,7 +171,9 @@ def _result_fields(*, entry, stop, side, legs: list[dict], risk_amount, exit_rea
     mae = _f(mae_r)
     return {
         "actual_exit": round(exit_price, 10), "exit_reason": exit_reason,
-        "gross_pnl": round(net + fees, 10), "fees": round(fees, 10), "funding": funding,
+        # net is after fees and funding, so the price P&L adds both back
+        "gross_pnl": round(net + fees + (funding or 0.0), 10), "fees": round(fees, 10),
+        "funding": funding,
         "net_pnl": round(net, 10), "realized_r": realized_r, "achieved_rr": achieved,
         "mae_r": mae, "mfe_r": _f(mfe_r),
         "max_trade_drawdown": (round(abs(mae) * risk, 10) if mae is not None and risk else None),
@@ -202,7 +206,9 @@ def _timeline(rec: dict) -> list[dict]:
         elif at:
             state = "DONE"
         elif stage in ("EXIT", "POSITION_CLOSED") and not closed:
-            state = "PENDING"
+            # A cancelled, rejected or failed record never exits: nothing is pending.
+            state = ("NOT_REACHED" if status in ("CANCELLED", "REJECTED", "EXECUTION_FAILED")
+                     else "PENDING")
         elif stage == "FILL" and status in ("EXECUTION_FAILED", "CANCELLED", "REJECTED"):
             state = status
             reached = False
@@ -607,11 +613,16 @@ class LedgerProjector:
         if risk_amount is None:
             missing.append("risk_amount")
         legs_sorted = sorted(legs, key=lambda l: l["opened_at"])
-        entry_size = sum(_f(l.get("size")) or 0 for l in legs_sorted if l["id"] == root["id"]) \
-            or _f(root.get("size"))
+        # A scale-out rewrites the trade row to the size it closed and puts the
+        # rest on a remainder row, so the filled size is the sum of every leg.
+        entry_size = sum(_f(l.get("size")) or 0 for l in legs_sorted) or _f(root.get("size"))
         closed_legs = [l for l in legs_sorted if l["status"] == "closed"]
         open_legs = [l for l in legs_sorted if l["status"] == "open"]
-        status = "OPEN" if open_legs else "CLOSED"
+        # An account restart marks a position's open rows 'cancelled' (P&L 0):
+        # nothing was sold or bought back for them, so they have no exit fill
+        # and no result. Without any closed leg the trade was cancelled.
+        ended_legs = [l for l in legs_sorted if l["status"] not in ("open", "closed")]
+        status = "OPEN" if open_legs else "CLOSED" if closed_legs else "CANCELLED"
         close_payloads, close_sides = [], []
         for leg in closed_legs:
             exec_row = close_by_trade.get(leg["id"])
@@ -627,6 +638,10 @@ class LedgerProjector:
             # explicit CLOSE is an operator close, an opposite side is a flip.
             exit_reason = ("manual-close" if close_sides[-1] in _CLOSE_SIDES
                            else "opposite-signal")
+        if not open_legs and ended_legs and (
+                not closed_legs or (ended_legs[-1].get("closed_at") or "")
+                >= (closed_legs[-1].get("closed_at") or "")):
+            exit_reason = RESTART_EXIT_REASON
         if status == "CLOSED" and not exit_reason:
             missing.append("exit_reason")
         exit_legs = [{"price": l.get("exit"), "size": l.get("size"),
@@ -729,6 +744,18 @@ class LedgerProjector:
             rec["exit_filled_at"] = _ts(exec_row.get("created_at")) or _ts(last_leg.get("closed_at"))
             rec["position_closed_at"] = _ts(last_leg.get("closed_at"))
             rec["execution_status"] = "CLOSED"
+        if ended_legs and not open_legs:
+            last_end = max(_ts(l.get("closed_at")) or "" for l in closed_legs + ended_legs)
+            rec["position_closed_at"] = last_end or rec.get("position_closed_at")
+            rec["source_ref_json"]["ended_without_exit"] = {
+                "trade_ids": [l["id"] for l in ended_legs],
+                "ledger_status": sorted({str(l["status"]) for l in ended_legs}),
+                "basis": "the ledger ended these rows without an exit fill (an account "
+                         "restart marks open rows cancelled); no exit price or result exists "
+                         "for them"}
+        if status == "CANCELLED":
+            rec.update({"outcome": "CANCELLED", "exit_reason": exit_reason,
+                        "execution_status": "POSITION_CANCELLED"})
         return _finish(rec, missing, self.CORE,
                        latency_from=_ledger_latency_start(origin, signal_at, rec["timeframe"], payload))
 
