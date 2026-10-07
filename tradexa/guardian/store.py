@@ -87,6 +87,8 @@ class GuardianStore:
                 CREATE INDEX IF NOT EXISTS events_smc_closed_journal ON events(sequence)
                   WHERE source_service='guardian_smc_journal_history'
                     AND event_type='smc_closed_journal_observed';
+                CREATE INDEX IF NOT EXISTS events_producer_transport ON events(source_service,sequence)
+                  WHERE event_type='producer_transport_observed';
                 CREATE INDEX IF NOT EXISTS events_smc_intent_history ON events(sequence)
                   WHERE source_service='guardian_smc_intent_history'
                     AND event_type='smc_intent_transition_observed';

@@ -1756,6 +1756,173 @@ or live-routing enablement is part of it. Producer backlog/drop telemetry,
 production load/latency acceptance, full infrastructure self-monitoring and
 remote delivery remain unimplemented/unverified.
 
+## Opt-in producer transport diagnostics (2026-10-08)
+
+### What this phase adds, and what it does not
+
+The preceding backlog view measures only **retained Guardian rows**. It cannot
+infer events dropped before receipt, emitter queue depth, or an HTTP delivery
+attempt's latency. `GuardianEmitter` now offers a coherent local `diagnostics()`
+snapshot and optional background publication of typed transport reports.
+`GET /v1/producer-health` reads those retained reports independently.
+
+Repository inspection found no trading runtime constructing this optional
+emitter: current references are its library and tests. This phase does **not**
+wire it into strategy/Agent/runtime code or enable it through environment or
+deployment changes. `publish_diagnostics=False` remains the default. Therefore
+no live PA/SMC/instance producer coverage or production drop-count evidence is
+claimed. Missing reports remain UNKNOWN/null. The existing
+`/v1/pipeline-health` producer fields remain null, since its retained queue
+counts must not be confused with a particular producer's self-reported metrics.
+
+### Process identity, atomic accounting and publication
+
+Every emitter receives an independent UUID process epoch. Cumulative counters
+start at zero for that epoch, not for a trading account, session or strategy.
+A restart creates another epoch; counters are never pooled across epochs or
+parallel workers sharing a source. This identity is for telemetry only and
+does not change decision IDs, broker keys, orders, positions or journals.
+
+Queue admission, removal, completion and local snapshots use one short lock,
+with this invariant:
+
+```text
+enqueued = delivered + delivery_failed + queued_events + in_flight_events
+```
+
+An event sender remains outside that lock. Serialization occurs outside it,
+and event admission performs no network/SQLite I/O. Queue capacity remains
+bounded; full admission increments `backpressure_dropped`, invalid/post-close
+admission increments `invalid`, and a failed send increments `delivery_failed`.
+The existing five-key `counters()` interface is retained. A timed-out close
+returns false and preserves an in-flight event, rather than pretending it
+flushed; later sender completion remains accurately counted.
+
+The local snapshot contains epoch/report sequence, uptime, capacity, actual
+queued/in-flight event counts, pending age, last completed attempt latency,
+accepting/worker-alive flags, counters and separate diagnostic-send failures.
+It exposes no endpoint, key, error text, raw event or trade evidence. Pending
+age and attempt latency use the producer's monotonic clock. The latter includes
+queue waiting and HTTP-response time, including failed completed attempts;
+it is **not** a network-only, exchange or verified database-ingestion latency.
+Reported durations cannot predate the current process epoch.
+
+When explicitly opted in, the existing sender thread publishes
+`producer_transport_observed` through the same authenticated `/v1/events`
+endpoint, initially, at a default 30-second interval and once on graceful
+drain. Diagnostics bypass the source-event queue and its counters, preventing
+feedback/self-amplification. They use stable event identities
+`transport_<epoch>_<report-sequence>` and do not retry ambiguous sends blindly.
+Diagnostic-send exceptions/failures increment their own counter and cannot
+kill the event sender. HTTP 200/201 is an acknowledged telemetry attempt, not
+proof that every source event reached its canonical ledger or was analyzed.
+
+Publication interval is bounded to 1-300 seconds, queue capacity to 1-65,536,
+HTTP timeout to >0 and <=30 seconds, and close timeout to 0-30 seconds.
+Custom injected senders can violate the HTTP timeout contract, so a bounded
+close explicitly reports when one remains stuck. No extra worker/thread,
+scheduler, external destination or credential is created. HTTP redirects are
+now rejected: producer credentials cannot follow a `Location` header to a
+different address. This also applies to ordinary event delivery.
+
+### Typed ingestion and authenticated read contract
+
+Transport evidence has its own strict schema version. Required keys and
+counter names must match exactly; bool-as-integer, nonfinite/oversized values,
+invalid epochs, impossible accounting, capacity violations and inconsistent
+age/latency are rejected. A transport report cannot claim a strategy, order,
+execution or other trading identity. `/v1/events` retains existing per-source
+authentication and immutability, additionally validating this known report
+type before persistence. A replay of the exact event is idempotent and does
+not refresh its stored receipt timestamp; conflicting/invalid reports return
+422, source spoofing 403 and wrong credentials 401.
+
+`GET /v1/producer-health` requires the independent `X-Guardian-Key` read key;
+producer credentials cannot read it. There are no query parameters, supplied
+paths or mutation methods (400 invalid query, 405 mutation). It returns 200,
+`Cache-Control: no-store`, with truthful diagnostic states even when UNKNOWN.
+This endpoint has no authority to overwrite source/component heartbeats,
+change the aggregate trading health, submit orders or force a recovery.
+
+The reader checks only configured source names (up to 128 bounded unique
+identifiers). It selects at most two reports per source, each <=4 KiB, in one
+query-only SQLite snapshot with 250 ms busy timeout, 500 ms progress/read
+deadline and regular owner-only/non-symlink database checks. The Guardian-owned
+partial index `events_producer_transport(source_service,sequence)` is created
+by normal store initialization, not by GET requests; it changes no trading
+schema or existing event content. No full count, whole-history scan, source
+network request, cleanup, checkpoint, retention or automatic repair runs.
+
+| Latest observed process report | Diagnostic state |
+| --- | --- |
+| No report, stale/future/invalid clock, malformed evidence or unavailable storage | UNKNOWN; current metrics null |
+| Producer reports stopped/not accepting or worker not alive | BLOCKED, for this producer transport only |
+| Epoch cumulative invalid/drop/event-send/report-send failures observed | DEGRADED; retained loss is not silently cleared |
+| Queue full or oldest pending event age >=60 seconds | DEGRADED / PRODUCER_BACKLOG_PRESSURE |
+| Fresh coherent report without observed loss/pressure | HEALTHY / LATEST_PROCESS_REPORT_WITHIN_WARNING_THRESHOLDS |
+
+Both Guardian receipt and producer report timestamps must be within 90 seconds
+(5-second future tolerance). This is a freshness filter, **not synchronized
+clock certification**. The adjacent reports of the same epoch must progress
+in sequence/uptime/cumulative counters and keep capacity constant; regression
+is UNKNOWN. `counter_history_verified` only checks that adjacent pair; it does
+not verify all reports. Across epochs no monotonic counter comparison is
+invented. Only the latest observed process is shown; this is not an expected
+worker inventory, nor proof that an older/parallel process stopped.
+
+`producer_inventory_verified`, `source_clock_verified`,
+`all_events_delivered_verified`, `full_history_verified`,
+`trading_integrity_verified` and `automatic_action_allowed` remain false.
+`network_ingestion_delay_ms` remains null. Missing/stale metrics must not be
+filled with zero or promoted to whole-source/platform HEALTHY.
+Reports stay as immutable Guardian evidence. They do not generate an incident
+merely because a telemetry counter changed, or alter existing notification
+policy. Production workload/retention acceptance remains required before
+choosing a report interval for real sources; no history is deleted here.
+
+### Local validation
+
+Backend/API and testing skills guided the source/read authority separation,
+versioned contract and failure-first tests. The **70 new regression cases**
+cover restart epochs, coherent concurrent queue snapshots, blocked senders,
+backpressure/loss accounting, post-close admission, bounded configuration,
+diagnostic-send failure isolation, redirect credential protection, clocks,
+regression/shape/duration validation, read/write authentication, immutable
+replay, bounded query-only reads, partial-index use, WAL snapshots, storage
+lock/retry, unsafe/corrupt/missing storage and read time limits.
+
+Broader targeted validation passed **398 tests**, zero failures/skips/warnings,
+in 6.37 seconds, including both SMC freezes, P0 crash boundaries, service,
+incidents/reports, retained queues, backup/recovery and deployment contracts.
+Evidence: `/private/tmp/guardian-transport-targeted.xml`.
+
+The complete suite passed: **5,355 passed, 15 skipped, 95 warnings**, no
+failures/errors, in **333.00 seconds**. Evidence:
+`/private/tmp/guardian-transport-complete-suite.xml`. Both SMC source and
+behaviour freezes passed in the targeted and complete runs; the protection
+modules contributed 27 passing cases in each. The reported warnings are
+dependency/FastAPI deprecations, not transport test failures.
+
+Protected SMC files and both freeze baselines remain byte-identical to
+`804a7c0`. All trading backend/dashboard, broker, SDK and deployment files
+remain unchanged from the starting `ae7ef0d` checkout. Canonical services,
+strategies, data/execution and broker files also remain unchanged from
+`4f8ee06`. `git diff --check` passed. No trading strategy was retuned.
+
+Exact changed files:
+
+- `tradexa/guardian/emitter.py`
+- `tradexa/guardian/transport_health.py`
+- `tradexa/guardian/service.py`
+- `tradexa/guardian/store.py`
+- `tests/test_guardian_transport_health.py`
+- `docs/GUARDIAN_FOUNDATION.md`
+
+Local-only: no push, deployment, environment/main changes, native producer
+activation, strategy/Agent/runtime/journal/broker edits or live-routing change.
+This finishes the optional transport contract and local verification portion,
+not production producer telemetry or the entire Guardian PRD.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

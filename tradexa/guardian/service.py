@@ -21,6 +21,7 @@ from .decision_traces import decision_traces
 from .health import component_health
 from .self_health import include_self_health, self_health
 from .pipeline_health import include_pipeline_health, pipeline_health
+from .transport_health import KIND as TRANSPORT_KIND, transport_health, validate_transport_event
 from .incidents import GuardianIncidentEngine
 from .investigations import incident_investigation
 from .instance_decisions import GuardianInstanceDecisions
@@ -195,6 +196,8 @@ class GuardianService:
                     event = GuardianEvent.from_payload(payload)
                     if event.source_service != source:
                         raise _HTTPError(403, "SOURCE_MISMATCH")
+                    if event.event_type == TRANSPORT_KIND:
+                        validate_transport_event(event)
                     inserted = self.store.append(event)
                     return self._respond(start_response, 201 if inserted else 200, {
                         "event_id": event.event_id,
@@ -215,7 +218,7 @@ class GuardianService:
                                             reason=payload.get("reason", ""),
                                             observed_at=observed_at)
                 return self._respond(start_response, 200, {"result": "RECORDED"})
-            if (path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/incidents", "/v1/decision-traces",
+            if (path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
                          "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
@@ -231,6 +234,11 @@ class GuardianService:
                     if environ.get("QUERY_STRING", ""):
                         raise _HTTPError(400, "INVALID_PIPELINE_HEALTH_QUERY")
                     return self._respond(start_response, 200, pipeline_health(self.store.path))
+                if path == "/v1/producer-health":
+                    if environ.get("QUERY_STRING", ""):
+                        raise _HTTPError(400, "INVALID_PRODUCER_HEALTH_QUERY")
+                    return self._respond(start_response, 200,
+                                         transport_health(self.store.path, tuple(self.source_keys)))
                 if path == "/v1/health":
                     health = component_health(
                         self.store.heartbeats(), self.required_components)
@@ -433,7 +441,7 @@ class GuardianService:
                 source = query.get("source_service", [None])[0]
                 return self._respond(start_response, 200, {
                     "events": self.store.recent(limit, source_service=source)})
-            if path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/heartbeats", "/v1/incidents",
+            if path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
                         "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
