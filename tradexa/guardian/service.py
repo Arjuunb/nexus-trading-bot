@@ -42,6 +42,7 @@ from .smc_execution_links import smc_execution_links_view, validate_key
 from .smc_fill_positions import GuardianSMCFillPositions, PROBE as POSITION_PROBE, smc_fill_positions_view
 from .smc_exit_fills import GuardianSMCExitFills, PROBE as EXIT_PROBE, smc_exit_fills_view
 from .smc_position_links import smc_position_links_view
+from .smc_exit_links import smc_exit_links_view
 from .store import GuardianStore
 
 _STATUSES = {
@@ -213,7 +214,7 @@ class GuardianService:
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
-                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
+                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
@@ -246,6 +247,19 @@ class GuardianService:
                     if not 0 <= after <= 2**63 - 1:
                         raise _HTTPError(400, "INVALID_JOURNAL_HISTORY_CURSOR")
                     return self._respond(start_response, 200, smc_journal_history_view(self.store, after=after))
+                if path == "/v1/smc-exit-links":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) != {"execution_key"} or len(query["execution_key"]) != 1:
+                        raise _HTTPError(400, "INVALID_EXIT_LINK_QUERY")
+                    try:
+                        key = validate_key(query["execution_key"][0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_EXIT_LINK_IDENTITY") from exc
+                    try:
+                        view = smc_exit_links_view(self.store, key)
+                    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                        raise _HTTPError(503, "EXIT_LINK_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
                 if path == "/v1/smc-execution-links":
                     query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
                     if set(query) != {"execution_key"} or len(query["execution_key"]) != 1:
@@ -392,7 +406,7 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/reports", "/v1/notifications",
+                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")

@@ -1084,6 +1084,125 @@ current exposure and full-account/currency/net-P&L proof still require their
 own source evidence and acceptance tests. This read export/import milestone
 does not complete the whole Guardian PRD or certify VPS operation.
 
+## Exact-ID SMC exit associations (2026-10-07)
+
+This local phase adds `GET /v1/smc-exit-links?execution_key=<key>` to the
+independent Guardian service. It requires the separate `X-Guardian-Key` read
+credential; source ingestion/control credentials cannot authorize the read.
+The route is GET-only, no-store, and does not alter source writers, strategy,
+approval modes, paper orders, positions, journal finalization or runtime gates.
+No push, deployment, live routing or environment/configuration change is part
+of this phase. Backend/API and testing skills guided bounded contracts and
+failure-first tests, not additional trading authority.
+
+### What the association proves, and what it does not
+
+The view joins **retained facts by exact IDs only**: execution intent -> original
+entry order -> original account/position identity -> exit account/fill ID ->
+the matching fill-position transition. An observed origin requires an OPEN or
+REVERSE transition whose new position names the same entry execution key and
+order. Closing snapshots alone do not invent an entry. Exit and transition
+must agree on sequence, timestamp, fill/order/market/side, quantity, actual
+price, flags and the entire original position snapshot. Synthetic protective
+order IDs remain literal, not persisted-order claims. Partial exits preserve
+their recorded original size; a reversal's exit stays with the old execution,
+not the new incoming execution. No residual/current exposure is calculated.
+
+The four independent existing imports remain optional and off unless separately
+configured: intent history, fill-position transitions, exit fills and closed
+journal history. Guardian reads only its own evidence database, with no source
+mount, broker construction, network access or trading credentials on this GET.
+Source export/import and broker/journal/runtime/strategy files are unchanged.
+
+**The journal has no exit-fill ID, exit-order ID or position ID.** The API can
+associate a closed journal's entry order/trade ID with the intent's recorded
+order/trade ID, symbol/timeframe and original direction. It cannot certify
+that the journal close belongs to a particular exit. `decision_id` is not
+assumed to equal `execution_key`. Intent and closed-journal origin digests use
+different namespaces; equal or different hashes do not prove physical database
+identity. Close time/price, same symbol or a nearby candle never establish a
+relationship. All verification flags remain false, including journal close,
+exit lifecycle, current execution/position/protection, full lifecycle, source
+immutability, paper-account/currency binding and net P&L.
+
+| Root `link_state` | Meaning |
+| --- | --- |
+| `EXPLICIT_EXIT_POSITION_LINKS_OBSERVED` | All selected exit candidates have consistent retained account, fill, original entry order/key, position and transition IDs |
+| `INSUFFICIENT_EVIDENCE` | Missing intent/entry/transition/exit capture, nullable legacy origin or no observed exit; not proof that no order exists |
+| `CONFLICTING_EVIDENCE` | Contradictory market/order/position/key/account/trade/source-origin facts; rows retain facts but cannot present an explicit association |
+| `UNKNOWN` | Missing/failed/degraded/stale intent/position/exit observation, or truncated evidence |
+
+`observed_exit_fill_ids` is masked on stale/failed/truncated/conflicting evidence;
+historical exit payloads remain visible. Journal freshness is separately
+reported, and cannot erase a valid retained broker-exit association. A stale
+journal association has `observation_state=UNKNOWN`. A recorded
+`EXECUTION_UNCERTAIN` remains uncertain, not COMPLETE, MISSED or "No order was
+placed". `JOURNAL_EXIT_IDS_NOT_CAPTURED` is always reported. Per-row association
+labels are descriptions of IDs, not reconciliation/trading authority.
+
+### Bounded read and failure behavior
+
+One `mode=ro`, `query_only` SQLite transaction reads events and all four
+heartbeats from Guardian's own database. `guardian_snapshot_atomic=true` does
+not imply `cross_database_atomic=true`. The combined unique-event budget is
+128 rows / 2 MiB across **all** queries, with a 16 KiB per-event bound checked
+before JSON decoding, a 250 ms busy timeout and a 1 second progress/wall
+deadline. Rows retrieved through several indexes count only once. Fixed exact
+partial indexes find old keys outside the recent event window; the new indexes
+are installed only in Guardian's store initialization, never on a source or GET.
+
+Every cached envelope is revalidated against its collector contract, including
+schema, stable event ID, timestamp, scope, source/identity and false verification
+flags. Duplicate JSON fields, unknown authority fields, unsafe credential-like
+material or invalid/oversized evidence fail closed with sanitized 503
+`EXIT_LINK_EVIDENCE_UNAVAILABLE`. Missing/locked/interrupted SQLite returns
+503 `PERSISTENCE_UNAVAILABLE`; no missing database is created. Short WAL writes
+remain readable; lock release permits retry without deletion or reset.
+
+### Local validation
+
+The additional tests cover exact IDs and their conflicts, unknown/missing/legacy
+evidence, health masking across four probes, source contract corruption, total
+row/byte budgets, fixed-index old-key reads, wall deadline, independent auth,
+query validation, locks/retry and 100 concurrent-WAL read refreshes without
+writes. Real disposable paper-broker/journal fixtures pass through all four
+source exporters/collectors for long/short stops, targets, tick exits, trailing
+stops, partial fills, explicit reductions, reversals, remediation and liquidation.
+Entry/addition null exit captures are not counted as exits. Delayed journal
+close is eventually observed without inferring an exit; Guardian restart and
+100 reads preserve source SQL dumps, orders, positions, fills and journal rows.
+
+The focused **89 additional cases** passed in 3.36 seconds: 75 standalone
+contract/failure/read tests and 14 real-source integration cases. JUnit:
+`/private/tmp/guardian-smc-exit-links-new-cases.xml`. The broader
+Guardian/broker/provenance/crash-boundary/freeze run passed **949 tests** in
+24.95 seconds with five deprecation warnings; the subsequent dedicated wall
+deadline regression also passed. Broader JUnit:
+`/private/tmp/guardian-smc-exit-links-targeted.xml`.
+
+The complete local suite passed **5,019 tests, 15 skipped**, with zero failures
+or errors, 93 deprecation warnings, successful process exit and no background
+worker warning in 324.01 seconds. Complete JUnit:
+`/private/tmp/guardian-smc-exit-links-complete-suite.xml`.
+
+| Disposable source fixture | Persisted broker orders / open positions / fills | Journal trades | Read-model result |
+| --- | --- | --- | --- |
+| Completed stop/target/tick/trailing/mark/liquidation | 1 / 0 / 2 | 1 closed | Exact original exit IDs; journal-close proof remains false |
+| Partial stop then final close | 1 / 0 / 3 | 1 closed | Two exit fills retain their original position and closed portions |
+| Explicit reduce order | 2 / 0 / 2 | 1 closed | Exit linked to original entry, not the reduction decision |
+| Netting reversal | 2 / 1 / 2 | 1 open | Old-origin exit retained; new position is not assigned to old execution |
+| Broker fill before journal finalization | 1 / 1 / 1 | 0 | Recorded execution remains uncertain; no "no order" claim |
+| Delayed journal close, Guardian restart and 100 reads | 1 / 0 / 2 unchanged | 1 closed unchanged | No duplicate evidence, source writes, orders, positions or trades |
+
+Both SMC source and behavior freezes passed. Protected files and freeze
+baselines are byte-identical to `804a7c0`; all source execution, Agent, runtime,
+journal, strategy and data files are unchanged from `4f81783`. Only Guardian's
+own read/store/API, the two new test files and this document changed.
+
+This is not production evidence or completion of the whole Guardian PRD. The
+next source-evidence gaps include journal-close exit IDs and stop-move history;
+these are not reconstructed or silently added to source writers in this phase.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

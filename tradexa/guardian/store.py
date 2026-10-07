@@ -123,6 +123,21 @@ class GuardianStore:
                 CREATE INDEX IF NOT EXISTS smc_position_after_id
                   ON events(json_extract(payload_json,'$.evidence.account_id'),json_extract(payload_json,'$.evidence.fill.transition.after.position_id'),sequence)
                   WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_position_fill
+                  ON events(json_extract(payload_json,'$.evidence.account_id'),json_extract(payload_json,'$.evidence.fill.fill_id'),sequence)
+                  WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_exit_origin_key
+                  ON events(json_extract(payload_json,'$.evidence.fill.exit_evidence.position.entry_execution_key'),sequence)
+                  WHERE source_service='guardian_smc_exit_fills' AND event_type='smc_exit_evidence_observed';
+                CREATE INDEX IF NOT EXISTS smc_exit_origin_order
+                  ON events(json_extract(payload_json,'$.evidence.fill.exit_evidence.position.entry_order_id'),sequence)
+                  WHERE source_service='guardian_smc_exit_fills' AND event_type='smc_exit_evidence_observed';
+                CREATE INDEX IF NOT EXISTS smc_exit_position
+                  ON events(json_extract(payload_json,'$.evidence.account_id'),json_extract(payload_json,'$.evidence.fill.exit_evidence.position.position_id'),sequence)
+                  WHERE source_service='guardian_smc_exit_fills' AND event_type='smc_exit_evidence_observed';
+                CREATE INDEX IF NOT EXISTS smc_exit_fill
+                  ON events(json_extract(payload_json,'$.evidence.account_id'),json_extract(payload_json,'$.evidence.fill.fill_id'),sequence)
+                  WHERE source_service='guardian_smc_exit_fills' AND event_type='smc_exit_evidence_observed';
             """)
             conn.commit()
 
@@ -624,6 +639,114 @@ class GuardianStore:
             heartbeats = {r["component"]: dict(r) for r in db.execute("SELECT * FROM heartbeats WHERE component IN (?,?)", PROBES)}
         return {"intent_events": intents, "position_events": sorted(transitions, key=lambda e:e["guardian_sequence"])[:MAX_ROWS],
                 "heartbeats": heartbeats, "truncated": truncated}
+
+    def smc_exit_link_snapshot(self, execution_key: str) -> dict:
+        """One bounded own-DB read snapshot; no source reads or time/price joins.
+
+        Every query uses an exact-ID partial index, including old decisions.
+        The row/byte budget covers all four streams together, not each query.
+        """
+        from time import monotonic
+        from .smc_exit_links import MAX_ROWS, MAX_BYTES, MAX_EVENT_BYTES, PROBES, project_retained
+        from .smc_execution_links import validate_key
+        from .smc_exit_fills import _unique_fields
+        key = validate_key(execution_key)
+        kinds = ("smc_intent_transition_observed", "smc_fill_position_observed",
+                 "smc_exit_evidence_observed", "smc_closed_journal_observed")
+        specs = {
+            "intent": (0, "smc_link_intent_key", "$.execution_id"),
+            "position_order": (1, "smc_position_order", "$.order_id"),
+            "before_key": (1, "smc_position_before_key", "$.evidence.fill.transition.before.entry_execution_key"),
+            "after_key": (1, "smc_position_after_key", "$.evidence.fill.transition.after.entry_execution_key"),
+            "before_id": (1, "smc_position_before_id", "$.evidence.fill.transition.before.position_id"),
+            "after_id": (1, "smc_position_after_id", "$.evidence.fill.transition.after.position_id"),
+            "position_fill": (1, "smc_position_fill", "$.evidence.fill.fill_id"),
+            "exit_key": (2, "smc_exit_origin_key", "$.evidence.fill.exit_evidence.position.entry_execution_key"),
+            "exit_order": (2, "smc_exit_origin_order", "$.evidence.fill.exit_evidence.position.entry_order_id"),
+            "exit_position": (2, "smc_exit_position", "$.evidence.fill.exit_evidence.position.position_id"),
+            "exit_fill": (2, "smc_exit_fill", "$.evidence.fill.fill_id"),
+            "journal_trade": (3, "smc_link_journal_trade", "$.evidence.trade.id"),
+            "journal_order": (3, "smc_link_journal_order", "$.order_id"),
+        }
+        total, truncated, loaded = 0, False, set()
+        groups = [[] for _ in PROBES]
+        with closing(sqlite3.connect(self.path.resolve().as_uri()+"?mode=ro", uri=True, timeout=.25)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA busy_timeout=250")
+            deadline = monotonic()+1
+            db.set_progress_handler(lambda: int(monotonic()>deadline), 1000)
+            db.execute("BEGIN")
+
+            def select(spec, values, account=None):
+                nonlocal total, truncated
+                if not values or truncated:
+                    return
+                if monotonic() > deadline:
+                    raise sqlite3.OperationalError("Exit-link snapshot deadline exceeded")
+                stream, index, field = specs[spec]
+                slots = ",".join("?" for _ in values)
+                clause = "json_extract(payload_json,'$.evidence.account_id')=? AND " if account is not None else ""
+                # All SQL identifiers/paths come from the fixed internal table.
+                rows = db.execute("SELECT sequence,length(CAST(payload_json AS BLOB)) AS bytes,"
+                    f"substr(payload_json,1,{MAX_EVENT_BYTES+1}) AS payload FROM events INDEXED BY {index} "
+                    f"WHERE source_service='{PROBES[stream]}' AND event_type='{kinds[stream]}' AND "
+                    + clause + f"json_extract(payload_json,'{field}') IN ({slots}) ORDER BY sequence LIMIT ?",
+                    (*((account,) if account is not None else ()), *values, MAX_ROWS+1))
+                for row in rows:
+                    if monotonic() > deadline:
+                        raise sqlite3.OperationalError("Exit-link snapshot deadline exceeded")
+                    if row["sequence"] in loaded:
+                        continue
+                    if row["bytes"] > MAX_EVENT_BYTES:
+                        raise ValueError("Exit-link event exceeds bound")
+                    if len(loaded) == MAX_ROWS or total+row["bytes"] > MAX_BYTES:
+                        truncated = True
+                        break
+                    event = json.loads(row["payload"], object_pairs_hook=_unique_fields)
+                    project_retained(event, stream)
+                    loaded.add(row["sequence"])
+                    total += row["bytes"]
+                    groups[stream].append({**event, "guardian_sequence": row["sequence"]})
+
+            select("intent", (key,))
+            orders = sorted({e["order_id"] for e in groups[0] if e["order_id"]})
+            trade_ids = sorted({e["evidence"]["transition"]["trade_id"] for e in groups[0]
+                                if e["evidence"]["transition"]["trade_id"]})
+            select("position_order", orders)
+            for spec in ("before_key", "after_key", "exit_key"):
+                select(spec, (key,))
+            select("exit_order", orders)
+            seeds = set()
+            for stream in (1, 2):
+                for event in groups[stream]:
+                    row, account = project_retained(event, stream)
+                    if stream == 1:
+                        value = row["transition"]
+                        snapshots = [value[s] for s in ("before", "after")] if value else []
+                    else:
+                        value = row["exit_evidence"]
+                        snapshots = [value["position"]] if value else []
+                    for pos in snapshots:
+                        if pos and pos["entry_execution_key"] == key and pos["position_id"]:
+                            seeds.add((account, pos["position_id"]))
+            for account, position in sorted(seeds):
+                for spec in ("before_id", "after_id", "exit_position"):
+                    select(spec, (position,), account)
+            # Null legacy captures have no origin key. Exact account+fill ID
+            # finds their counterpart without inventing historical evidence.
+            fills = {(e["evidence"]["account_id"], e["evidence"]["fill"]["fill_id"])
+                     for stream in (1, 2) for e in groups[stream]}
+            for account, fill_id in sorted(fills):
+                for spec in ("position_fill", "exit_fill"):
+                    select(spec, (fill_id,), account)
+            select("journal_trade", trade_ids)
+            select("journal_order", orders)
+            heartbeats = {r["component"]: dict(r) for r in db.execute(
+                "SELECT * FROM heartbeats WHERE component IN (?,?,?,?)", PROBES)}
+        return {name: sorted(events, key=lambda e: e["guardian_sequence"])
+                for name, events in zip(("intent_events", "position_events", "exit_events", "journal_events"), groups)} | {
+                    "heartbeats": heartbeats, "truncated": truncated, "evidence_rows_loaded": len(loaded)}
 
     def count(self) -> int:
         with closing(self._connect()) as conn:
