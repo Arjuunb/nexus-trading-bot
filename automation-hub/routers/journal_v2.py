@@ -14,6 +14,7 @@ from __future__ import annotations
 import csv
 import io
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Body, Header, HTTPException, Query, Request
@@ -245,8 +246,9 @@ def _facts(trade: dict, snapshot: Optional[dict]) -> list[dict]:
         return None if v is None else round(float(v), 2)
 
     def plain(v):
-        """A stored number as recorded, without float noise."""
-        return None if v is None else f"{round(float(v), 10):.10f}".rstrip("0").rstrip(".")
+        """A stored number to 12 significant digits, written out in full:
+        float noise (100.10000000000001) goes, real precision stays."""
+        return None if v is None else format(Decimal(format(float(v), ".12g")), "f")
     passed = [c.get("name") for c in (snapshot or {}).get("conditions_passed") or []]
     return [
         {"q": "Strategy", "a": " ".join(str(v) for v in (trade.get("strategy_name"), trade.get("strategy_version"))
@@ -483,7 +485,7 @@ def _week_key(week: Optional[str]) -> str:
     if week:
         try:
             week_bounds(week)
-        except (ValueError, IndexError):
+        except (ValueError, IndexError, OverflowError):
             raise HTTPException(400, "week must look like 2026-W40")
         return week.upper()
     return iso_week_key(datetime.now(timezone.utc).isoformat())

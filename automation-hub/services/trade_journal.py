@@ -721,7 +721,12 @@ class TradeJournalRecorder:
                                                     if context.get(k) is not None} or None})
             self.store.add_event(trade_id, "trade-opened", f"Position {ev.get('position_id') or ''} open",
                                  ts=filled_at, actor="position-manager")
-            self._backfill_legacy_entry(trade_id, ledger_trade_id)
+            if context.get("fill_timestamp"):
+                # Only a forward-paper fill (a later quote) needs the legacy
+                # entry recreated. On an immediate fill the pipeline writes its
+                # own entry as soon as this hook returns; writing it here first
+                # made that insert fail.
+                self._backfill_legacy_entry(trade_id, ledger_trade_id)
             return trade_id
 
     def _create_from_fill(self, ev: dict, context: dict, direction: str, filled_at: str) -> str:

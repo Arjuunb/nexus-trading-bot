@@ -42,7 +42,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
-from data.sqlite_runtime import runtime_connection
+from data.sqlite_runtime import TransactionLock, runtime_connection
 from data.tenant_scope import ensure_tenant_column
 from services.journal_sessions import london_day_bounds
 
@@ -242,15 +242,17 @@ class TradeJournalStore:
         own_file = connection is None and self.path != ":memory:"
         if connection is None:
             if own_file:
-                # The runtime convention (WAL, synchronous=NORMAL, bounded busy
-                # wait): live fill hooks commit without an fsync per write, and
-                # readers never block the writer.
-                connection = runtime_connection(self.path)
+                # The runtime convention (WAL, synchronous=NORMAL): live fill
+                # hooks commit without an fsync per write, and readers never
+                # block the writer. Hooks write on the execution path, so the
+                # busy wait is bounded at 2 s rather than the usual 10 s.
+                connection = runtime_connection(self.path, busy_timeout_ms=2_000)
             else:
                 connection = sqlite3.connect(self.path, check_same_thread=False)
         self._c = connection
         self._c.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
+        # a write that raises is rolled back, never left open on the shared file
+        self._lock = TransactionLock(self._c)
         with self._lock:
             self._schema()
         # Dashboard reads (trade lists, counts, facets) use their own WAL
@@ -415,7 +417,7 @@ class TradeJournalStore:
 
     # ------------------------------------------------------------------ helpers
     @property
-    def lock(self) -> threading.RLock:
+    def lock(self) -> TransactionLock:
         return self._lock
 
     def meta(self, key: str) -> Optional[str]:

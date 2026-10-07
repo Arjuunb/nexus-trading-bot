@@ -188,9 +188,14 @@ def _london_midnight_utc(day: date) -> datetime:
 
 def london_day_bounds(day_text: str) -> tuple[str, str]:
     """UTC ISO bounds [start, end) of a London calendar day such as
-    ``2026-10-05``: the day a London time on screen falls on."""
+    ``2026-10-05``: the day a London time on screen falls on. The first and
+    last representable days stay open-ended rather than overflow."""
     day = date.fromisoformat(day_text)
-    return _london_midnight_utc(day).isoformat(), _london_midnight_utc(day + timedelta(days=1)).isoformat()
+    start = (_london_midnight_utc(day) if day > date.min
+             else datetime.min.replace(tzinfo=timezone.utc))
+    end = (_london_midnight_utc(day + timedelta(days=1)) if day < date.max
+           else datetime.max.replace(tzinfo=timezone.utc))
+    return start.isoformat(), end.isoformat()
 
 
 def week_bounds(week_key: str) -> tuple[str, str]:

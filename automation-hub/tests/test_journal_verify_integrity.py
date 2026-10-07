@@ -1696,3 +1696,81 @@ def test_a_failing_change_marker_falls_back_to_a_full_pass():
     for _ in range(2):
         assert "error" not in sync.run_once(include_legacy=False)["ledger_reconciliation"]
     assert len(reads) == 2 and any("change marker failed" in m for m in logs)
+
+
+# ============================================================ shared journal.db (legacy + canonical writers)
+def test_shared_journal_db_keeps_recording_after_an_immediate_fill(tmp_path):
+    """Production wiring: the legacy decision journal and the canonical
+    journal share journal.db. On an immediate fill the pipeline writes its
+    own legacy entry; the recorder used to write it first, so the pipeline's
+    insert failed, left its transaction open and kept the file's write lock.
+    Every later canonical write then waited out the busy timeout and failed,
+    on the execution path."""
+    from tests.test_journal_verify_lifecycles import _close, _rig, _signal
+    path = str(tmp_path / "journal.db")
+    legacy = JournalStore(path)                      # opened first, as in webhook_api
+    rig = _rig(store=TradeJournalStore(path), legacy_store=legacy)
+    started = time.perf_counter()
+    assert _signal(rig).accepted
+    assert not legacy._c.in_transaction
+    (ledger_row,) = rig.ledger.get_paper_trades()
+    assert legacy.get(ledger_row["id"]) is not None             # the pipeline's own entry
+    assert _close(rig, 112.0, reason="take-profit").accepted
+    assert time.perf_counter() - started < 1.5                 # no busy wait on the execution path
+    (trade,) = rig.store.list_trades(modes=["ALL"])
+    assert trade["status"] == "CLOSED" and trade["exit_price"] is not None
+    assert legacy.get(ledger_row["id"])["status"] == "closed"
+    # forward paper: the fill arrives after the pipeline returned, so the
+    # recorder recreates the legacy entry, once
+    forward_legacy = JournalStore(str(tmp_path / "forward.db"))
+    forward = _rig(store=TradeJournalStore(str(tmp_path / "forward.db")), legacy_store=forward_legacy,
+                   forward=True)
+    assert _signal(forward, ts=(datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat()).accepted
+    stamp = datetime.now(timezone.utc).isoformat()
+    assert len(forward.paper.process_quote({"symbol": "BTCUSDT", "last": 100.0, "bid": 99.9, "ask": 100.1,
+                                            "mark": 100.0, "sequence": 1, "received_at": stamp,
+                                            "event_timestamp": stamp, "quote_event_id": "q1"})) == 1
+    (forward_row,) = forward.ledger.get_paper_trades()
+    assert forward_legacy.get(forward_row["id"]) is not None and not forward_legacy._c.in_transaction
+
+
+def test_a_failed_journal_write_never_leaves_a_transaction_open(tmp_path):
+    """Two writers share journal.db. A failed write must roll back: left
+    open, the legacy connection kept the file's write lock from the
+    canonical writer, and the canonical connection kept a stale WAL snapshot
+    that refused all its later writes until a restart."""
+    path = str(tmp_path / "journal.db")
+    legacy = JournalStore(path)
+    connection = sqlite3.connect(path, timeout=0.2, check_same_thread=False)   # a short busy wait
+    connection.execute("PRAGMA journal_mode=WAL")
+    store = TradeJournalStore(path, connection=connection)
+    trade_id = _fact_trade(store, "t1", net_pnl=1.0, result="WIN")
+    entry = {"trade_id": "dup", "symbol": "BTCUSDT", "side": "long", "sections": {}}
+    legacy.record_entry(entry)
+    with pytest.raises(sqlite3.IntegrityError):
+        legacy.record_entry(entry)                   # the duplicate the pipeline used to hit
+    assert not legacy._c.in_transaction
+    store.add_event(trade_id, "probe", "after a failed legacy insert")         # not locked out
+    other = sqlite3.connect(path, timeout=5)
+    other.execute("BEGIN IMMEDIATE")                 # another writer holds the lock
+    with pytest.raises(sqlite3.OperationalError):
+        store.add_event(trade_id, "probe", "while another writer holds the lock")
+    assert not store._c.in_transaction
+    other.execute("INSERT INTO journal_meta(key, value) VALUES ('probe', '1')")
+    other.commit()
+    store.add_event(trade_id, "probe", "after that writer committed")          # no stale snapshot
+    assert [e["kind"] for e in store.events(trade_id)].count("probe") == 2
+
+
+def test_calendar_edge_dates_and_large_or_tiny_numbers(api):
+    store = TradeJournalStore(":memory:")
+    trade_id = _fact_trade(store, "edge", net_pnl=1.0, result="WIN", quantity=2500000.7,
+                           initial_stop=0.000009846372, entry_price=0.00001)
+    client, auth = api(store)
+    for query in ("date_to=9999-12-31", "date_from=0001-01-01", "date_from=0001-01-01&date_to=9999-12-31"):
+        listed = client.get(f"/journal/v2/trades?{query}", headers=auth)
+        assert listed.status_code == 200 and listed.json()["total"] == 1, query
+    assert client.get("/journal/v2/weekly-review?week=0001-W01", headers=auth).status_code == 400
+    facts = {f["q"]: f["a"] for f in client.get(f"/journal/v2/trades/{trade_id}", headers=auth).json()["facts"]}
+    assert facts["Quantity"] == "2500000.7" and facts["Stop loss"] == "0.000009846372"
+    assert facts["Entry / exit price"] == "0.00001 → —"

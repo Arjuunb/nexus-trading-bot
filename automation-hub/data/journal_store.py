@@ -18,11 +18,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from data.sqlite_runtime import TransactionLock
 from data.tenant_scope import ensure_tenant_column
 
 EARLY_SIGNAL_MAX = 30       # < this many trades for a setup = early signal only
@@ -40,7 +40,9 @@ class JournalStore:
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._c = sqlite3.connect(self.path, check_same_thread=False)
         self._c.row_factory = sqlite3.Row
-        self._lock = threading.RLock()
+        # journal.db is shared with the canonical trade journal: a failed write
+        # must roll back, or it holds the file's write lock from that writer
+        self._lock = TransactionLock(self._c)
         with self._lock:
             self._c.executescript("""
             CREATE TABLE IF NOT EXISTS trade_decision_journal (

@@ -110,6 +110,17 @@ unchanged with or without a concurrent 1,000-entry replay import.
 runtime databases, so hook commits do not fsync. The legacy decision journal
 shares the file and keeps working.
 
+**Two writers on one file.** The legacy decision journal and the canonical
+journal each have a connection to `journal.db`. Both stores take their
+connection through a `TransactionLock`: a write that raises is rolled back,
+never left open. An open legacy transaction would hold the file's write lock
+from the canonical writer. An open canonical transaction would pin a stale WAL
+snapshot that refuses its own later writes. The canonical writer's busy wait is
+bounded at 2 s, because hooks run on the execution path. The recorder recreates
+a legacy entry only for a forward-paper fill (one that arrives on a later
+quote). On an immediate fill the pipeline writes its own legacy entry, as it
+always has.
+
 1. **Legacy migration**: maps each `trade_decision_journal` row once. Fields it did not record stay NULL; for example, leverage is never invented for history. It runs at boot and on an explicit sync. Both histories are read before the recorder lock is taken, and the lock is taken per row, so a sync never makes a live fill hook wait.
 2. **Ledger reconciliation**:
    - creates records for ledger trades the journal never saw (`RECONCILED_FROM_LEDGER`, no snapshot);
