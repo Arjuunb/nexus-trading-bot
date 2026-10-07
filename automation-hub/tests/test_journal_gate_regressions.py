@@ -564,3 +564,41 @@ def test_an_ordinary_ledger_pass_does_not_read_the_bot_logs(tmp_path):
     finally:
         ledger._c.set_trace_callback(None)
     assert statements and not [s for s in statements if "bot_logs" in s]
+
+
+def test_a_trade_imported_from_the_legacy_journal_first_is_not_rewritten_every_pass(tmp_path):
+    """Production imported legacy journal rows while its Supabase ledger was not
+    readable yet. Once the ledger mirror made the same trades projectable, the
+    ledger projection wrote each one (reached by trade id, kept under its legacy
+    key), then the legacy import wrote it back as UNVERIFIED legacy: every
+    record twice per pass, about 20 row changes each, forever."""
+    from services.journal_legacy import LegacyJournalMigration
+    from tests.test_journal_integrity import Env
+    env = Env(tmp_path)
+    assert env.entry().accepted
+    env.fill()
+    assert env.close(102.0, reason="take-profit").accepted
+    [trade] = env.ledger.get_paper_trades()
+    legacy = JournalStore(str(tmp_path / "journal.db"))
+    legacy.record_entry({"trade_id": trade["id"], "mode": "paper", "symbol": "BTCUSDT",
+                         "side": "long", "strategy": "3-Candle Rejection", "timeframe": "5m",
+                         "entry": 100, "stop": 99, "target": 102, "size": trade["size"],
+                         "risk_amount": 1, "planned_rr": 2, "confidence": 80, "brain_score": 80,
+                         "regime": "trend", "sections": {}, "instance_id": env.instance_id,
+                         "execution_mode": "paper"})
+    before_ledger = JournalRecorder(env.store)                 # the ledger was not readable yet
+    before_ledger.legacy = LegacyJournalMigration(legacy)
+    assert before_ledger.reconcile()["legacy"]["legacy_unverified"] == 1
+
+    recorder = env.recorder()
+    recorder.legacy = LegacyJournalMigration(legacy)
+    first = recorder.reconcile()
+    assert first["errors"] == [] and first["legacy"]["matched_to_ledger"] == 1
+    for _ in range(2):
+        changes = env.store._c.total_changes
+        report = recorder.reconcile()
+        assert report["ledgers"][0]["written"] == 0 and report["ledgers"][0]["skipped_final"] == 1
+        assert env.store._c.total_changes - changes <= 1      # only the recorder's own status row
+    [record] = env.store.query_trades()
+    assert record["verification"] == "VERIFIED" and record["status"] == "CLOSED"
+    assert record["net_pnl"] == pytest.approx(trade["pnl"])

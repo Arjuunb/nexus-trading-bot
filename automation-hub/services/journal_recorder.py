@@ -545,6 +545,9 @@ class LedgerProjector:
                 root = parent[root]
             roots.setdefault(root, []).append(t)
         known = self.store.keys_with_status(("INSTANCE", "LEGACY_ENGINE", "ADAPTIVE_LAB"))
+        # A finished trade this projection already wrote may be stored under
+        # another key (imported from the legacy journal first): skip it too.
+        projected = self.store.projected_trades(source.name)
         results = {"source": source.name, "lifecycles": 0, "written": 0, "skipped_final": 0}
         alert_ids = [by_id[r].get("alert_id") for r in roots if by_id.get(r)]
         decision_events = self._events_by_alert(conn, lock, [a for a in alert_ids if a])
@@ -555,7 +558,7 @@ class LedgerProjector:
         for root_id, legs in roots.items():
             root = by_id[root_id]
             key = self._key(source, root)
-            status, finalized = known.get(key, (None, 0))
+            status, finalized = known.get(key) or projected.get(root_id) or (None, 0)
             if finalized and all(l["status"] != "open" for l in legs):
                 results["skipped_final"] += 1
                 continue

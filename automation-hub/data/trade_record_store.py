@@ -589,6 +589,14 @@ class TradeRecordStore:
                 f"SELECT * FROM trade_records WHERE finalized=0 AND record_source IN ({marks})",
                 tuple(sources))]
 
+    def projected_trades(self, ledger: str) -> dict[str, tuple[str, int]]:
+        """trade_id -> (status, finalized) of records a ledger projection wrote,
+        whatever key they are stored under (a legacy import keeps its own)."""
+        with self._lock:
+            return {r["trade_id"]: (r["status"], r["finalized"]) for r in self._c.execute(
+                "SELECT trade_id, status, finalized FROM trade_records WHERE trade_id IS NOT NULL "
+                "AND json_extract(source_ref_json, '$.ledger') = ?", (ledger,))}
+
     def keys_with_status(self, sources: Iterable[str]) -> dict[str, tuple[str, int]]:
         marks = ",".join("?" * len(tuple(sources)))
         with self._lock:

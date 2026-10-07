@@ -44,9 +44,14 @@ class LegacyJournalMigration:
         for row in rows:
             sections = _json(row.get("sections_json"), {}) or {}
             existing = store.get(row["trade_id"])
-            # A record the ledger projection built (its key is not a legacy
-            # journal key) is backed by execution facts: only fill its gaps.
-            if existing is not None and not existing["execution_key"].startswith("LEGACY_JOURNAL:"):
+            # A record the ledger projection built or has projected into is
+            # backed by execution facts: only fill its gaps. A trade imported
+            # here before its ledger was readable keeps its legacy key once the
+            # ledger projection reaches it; rewriting it as a legacy record
+            # again undid that projection on every pass.
+            if existing is not None and (
+                    not existing["execution_key"].startswith("LEGACY_JOURNAL:")
+                    or (existing.get("source_ref") or {}).get("ledger")):
                 # A verified ledger record: only fill what it does not know.
                 enrich = {"execution_key": existing["execution_key"], "trade_id": row["trade_id"]}
                 if existing.get("setup") is None and sections:
