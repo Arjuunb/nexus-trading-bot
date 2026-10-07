@@ -31,7 +31,9 @@ from data.trade_record_store import TradeRecordStore, utcnow
 from services import journal_stats as stats
 
 REVIEWER_ID = "journal_reviewer"
-REVIEWER_VERSION = 1
+#: v2: strategy compliance is UNKNOWN when the record carries no rule-check
+#: result (v1 called any recorded setup compliant).
+REVIEWER_VERSION = 2
 WEEKLY_REVIEW_VERSION = 1
 #: A pattern needs this many trades behind it before a proposal is raised.
 PROPOSAL_MIN_SAMPLE = 20
@@ -52,7 +54,10 @@ def review_trade(rec: dict) -> dict:
     setup = rec.get("setup") or {}
     gate = evidence.get("quality_gate") or {}
     score = gate.get("score") if isinstance(gate, dict) else None
-    failed = (setup.get("conditions_failed") if isinstance(setup, dict) else None) or []
+    failed = [c for c in ((setup.get("conditions_failed") if isinstance(setup, dict) else None)
+                          or []) if c is not None]
+    # Only a record whose strategy check ran carries its result, even an empty one.
+    checked = isinstance(setup, dict) and "conditions_failed" in setup
 
     if rec.get("planned_stop_loss") is None:
         violations.append({"rule": "STOP_REQUIRED", "detail": "no stop-loss on record at entry"})
@@ -62,7 +67,8 @@ def review_trade(rec: dict) -> dict:
         mistakes.append("loss exceeded the planned risk (gap, slippage or stop not honoured)")
     if failed:
         violations.append({"rule": "ALL_CONDITIONS_PASSED",
-                           "detail": f"entered with failed conditions: {failed[:5]}"})
+                           "detail": "entered with failed conditions: "
+                                     + ", ".join(str(c) for c in failed[:5])})
 
     slip, qty = rec.get("slippage"), rec.get("filled_quantity")
     slip_r = (float(slip) * float(qty) / float(risk)) if (slip is not None and qty and risk) else None
@@ -102,7 +108,7 @@ def review_trade(rec: dict) -> dict:
                        "VIOLATION" if any(v["rule"] in ("STOP_REQUIRED", "LOSS_WITHIN_PLANNED_RISK")
                                           for v in violations) else "COMPLIANT")
     strategy_compliance = ("VIOLATION" if any(v["rule"] == "ALL_CONDITIONS_PASSED" for v in violations)
-                           else "COMPLIANT" if (setup or evidence) else "UNKNOWN")
+                           else "COMPLIANT" if checked else "UNKNOWN")
     return {
         "journal_record_id": rec["journal_record_id"], "agent_id": REVIEWER_ID,
         "review_version": REVIEWER_VERSION,
@@ -287,7 +293,7 @@ def _findings(records: list[dict], report: dict, previous: Optional[dict],
         by_session = stats.breakdown(history, lambda r: r.get("trading_session"))
         for session, s in by_session.items():
             if s["trades"] >= PROPOSAL_MIN_SAMPLE and s["total_r"] is not None and s["total_r"] < 0 \
-                    and (s["profit_factor"] or 0) < 0.8:
+                    and s["profit_factor"] is not None and s["profit_factor"] < 0.8:
                 proposals.append({
                     "title": f"Consider not taking {scope['label']} entries during {session}",
                     "affected_strategy": scope["strategy_id"],

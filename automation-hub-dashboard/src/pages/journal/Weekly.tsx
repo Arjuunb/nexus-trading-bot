@@ -5,7 +5,9 @@ import { Badge } from "../../components/common/ui";
 import { apiPost, apiPostJson, useLive } from "../../lib/api";
 import { usePref } from "../../lib/prefs";
 import { useApp } from "../../app-context";
-import { dash, type Finding, money, num, pct, rMult, when, whenFull } from "../../lib/journal";
+import {
+  compliance, coverage, dash, type Finding, money, num, pct, profitFactor, rMult, when, whenFull,
+} from "../../lib/journal";
 import EvidenceModal from "./Evidence";
 
 /** Journal > Weekly Reviews. Figures are computed by the application; the
@@ -18,7 +20,7 @@ type Summary = {
   net_pnl: number | null; total_r: number | null; profit_factor: number | null;
   profit_factor_note: string | null; average_r: number | null; max_drawdown: number | null;
   max_drawdown_r: number | null; rule_compliance: number | null; reviewed: number;
-  sample_warning: string | null; journal_record_ids: string[];
+  sample_warning: string | null; journal_record_ids: string[]; r_known?: number; pnl_known?: number;
 };
 type Report = {
   overall: Summary; long: Summary; short: Summary; by_symbol: Record<string, Summary>;
@@ -47,13 +49,18 @@ const METRICS: [string, (s: Summary) => string][] = [
   ["Trades", (s) => String(s.trades)],
   ["Wins / losses", (s) => (s.trades ? `${s.wins} / ${s.losses}${s.breakevens ? ` / ${s.breakevens} BE` : ""}` : dash)],
   ["Win rate", (s) => pct(s.win_rate)],
-  ["Net P&L", (s) => money(s.net_pnl)],
-  ["Total R", (s) => rMult(s.total_r)],
-  ["Profit factor", (s) => (s.profit_factor != null ? num(s.profit_factor) : s.profit_factor_note ? "No losses" : dash)],
+  ["Net P&L", (s) => withCoverage(money(s.net_pnl), s.net_pnl, coverage(s.pnl_known, s.trades, "P&L"))],
+  ["Total R", (s) => withCoverage(rMult(s.total_r), s.total_r, coverage(s.r_known, s.trades, "R"))],
+  ["Profit factor", (s) => profitFactor(s.profit_factor, s.profit_factor_note)],
   ["Average R", (s) => rMult(s.average_r)],
   ["Max drawdown", (s) => (s.max_drawdown != null ? `$${num(s.max_drawdown)} · ${rMult(s.max_drawdown_r == null ? null : -s.max_drawdown_r)}` : dash)],
-  ["Rule compliance", (s) => (s.rule_compliance != null ? pct(s.rule_compliance, 0) : s.trades ? "Not reviewed" : dash)],
+  ["Rule compliance", (s) => compliance(s.rule_compliance, s.trades, s.reviewed)],
 ];
+
+/** A total over only some trades carries how many it covers. */
+function withCoverage(text: string, value: number | null, note: string | undefined): string {
+  return value != null && note ? `${text} (${note})` : text;
+}
 
 function extremes(groups: Record<string, Summary>): { best?: [string, Summary]; worst?: [string, Summary] } {
   const rows = Object.entries(groups).filter(([, s]) => s.trades > 0 && s.total_r != null);
@@ -78,8 +85,12 @@ export default function JournalWeekly() {
   const review = useLive<ReviewFull>(openReview ? `/journal/weekly/${openReview}` : null, 60000);
   const [evidence, setEvidence] = useState<{ title: string; ids: string[] } | null>(null);
 
-  const reviews = useMemo(() => (list.data?.reviews ?? []).filter((r) =>
-    !scope || (r.agent_id === scope.agent_id && r.strategy_id === scope.strategy_id)), [list.data, scope]);
+  // The scope's own reviews, asked for by scope: the unscoped list holds only
+  // the newest reviews across every scope, so filtering it here dropped some.
+  const scoped = useLive<{ reviews: ReviewSummary[] }>(
+    scope ? `/journal/weekly?agent_id=${encodeURIComponent(scope.agent_id)}&strategy_id=${encodeURIComponent(scope.strategy_id)}&limit=200` : null,
+    20000);
+  const reviews = useMemo(() => scoped.data?.reviews ?? [], [scoped.data]);
 
   const decide = async (p: Proposal, approve: boolean) => {
     const note = window.prompt(approve

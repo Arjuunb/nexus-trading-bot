@@ -5,8 +5,9 @@ import { Badge, StatCard } from "../../components/common/ui";
 import { useLive } from "../../lib/api";
 import { usePref } from "../../lib/prefs";
 import {
-  dash, duration, type Kpis, money, num, originTone, outcomeTone, pct, price, type RecordRow,
-  rMult, SOURCE_LABEL, statusTone, when,
+  compliance, coverage, dash, duration, type Kpis, money, num, ORIGINS, originTone, outcomeTone, pct,
+  price,
+  profitFactor, type RecordRow, rMult, SOURCE_LABEL, statusTone, when,
 } from "../../lib/journal";
 import TradeDetail from "./TradeDetail";
 
@@ -25,10 +26,6 @@ const EMPTY: Filters = {
   origin: "FORWARD_PAPER", source: "", instance_id: "", strategy: "", symbol: "", timeframe: "",
   side: "", session: "", mode: "", outcome: "", reviewed: "", date_from: "", date_to: "",
 };
-const ORIGINS: [string, string][] = [
-  ["FORWARD_PAPER", "Forward paper"], ["LEGACY_MIGRATION", "Legacy / unverified"],
-  ["SIMULATION", "Simulation"], ["BACKTEST", "Backtest"], ["RESEARCH", "Research"], ["all", "All origins"],
-];
 /** Which facet list validates each filter. A saved value that no longer
  *  exists (a deleted instance, a renamed strategy) is dropped instead of
  *  silently narrowing the list to nothing. */
@@ -57,7 +54,8 @@ export default function JournalTrades({ focusId }: { focusId?: string }) {
   const set = (patch: Partial<Filters>) => setSaved({ ...filters, ...patch });
 
   const qs = new URLSearchParams({ limit: "200" });
-  for (const [k, v] of Object.entries(filters)) if (v) qs.set(k, v);
+  // Dates are London days (the server reads a bare date that way).
+  for (const [k, v] of Object.entries(filters)) if (v) qs.set(k, k.startsWith("date_") ? v.slice(0, 10) : v);
   const data = useLive<{ records: RecordRow[]; total: number; kpis: Kpis; origin: string }>(
     `/journal/records?${qs.toString()}`, 8000);
 
@@ -76,20 +74,24 @@ export default function JournalTrades({ focusId }: { focusId?: string }) {
         <StatCard label="Completed trades" value={k ? String(k.trades) : dash}
           sub={k ? `${k.wins}W · ${k.losses}L · ${k.breakevens}BE` : undefined} />
         <StatCard label="Net P&L" value={insufficient(money(k?.net_pnl))}
-          tone={(k?.net_pnl ?? 0) > 0 ? "green" : (k?.net_pnl ?? 0) < 0 ? "red" : "default"} />
+          tone={(k?.net_pnl ?? 0) > 0 ? "green" : (k?.net_pnl ?? 0) < 0 ? "red" : "default"}
+          sub={coverage(k?.pnl_known, k?.trades, "P&L")} />
         <StatCard label="Total R" value={insufficient(rMult(k?.total_r))}
-          tone={(k?.total_r ?? 0) > 0 ? "green" : (k?.total_r ?? 0) < 0 ? "red" : "default"} />
-        <StatCard label="Profit factor" value={insufficient(k?.profit_factor != null ? num(k.profit_factor)
-          : k?.profit_factor_note ? "No losses" : dash)} />
+          tone={(k?.total_r ?? 0) > 0 ? "green" : (k?.total_r ?? 0) < 0 ? "red" : "default"}
+          sub={coverage(k?.r_known, k?.trades, "R")} />
+        <StatCard label="Profit factor" value={insufficient(profitFactor(k?.profit_factor, k?.profit_factor_note))}
+          sub={k?.profit_factor == null && k?.profit_factor_note !== "no losing trades"
+            ? k?.profit_factor_note ?? undefined : undefined} />
         <StatCard label="Win rate" value={insufficient(pct(k?.win_rate))}
           sub={k?.sample_warning ? `${k.trades} trades — not yet evidence` : undefined} />
-        <StatCard label="Rule compliance" value={k?.rule_compliance != null ? pct(k.rule_compliance, 0)
-          : k && k.trades ? "Not reviewed" : "Insufficient data"}
+        <StatCard label="Rule compliance"
+          value={k && k.trades ? compliance(k.rule_compliance, k.trades, k.reviewed) : "Insufficient data"}
           sub={k?.reviewed ? `${k.reviewed} reviewed` : undefined} />
       </div>
 
       <Card title="Trade records"
-        subtitle={`${data.data?.total ?? 0} record(s) · ${ORIGINS.find(([id]) => id === filters.origin)?.[1] ?? filters.origin}`}
+        subtitle={`${data.data?.total ?? 0} record(s)${rows.length < (data.data?.total ?? 0)
+          ? ` · showing the newest ${rows.length}` : ""} · ${ORIGINS.find(([id]) => id === filters.origin)?.[1] ?? filters.origin}`}
         right={recorder.data?.last_reconcile ? (
           <span className="dim jr-recorder" title="The recorder rebuilds records from execution facts">
             <Icon name={recorder.data.last_reconcile.errors?.length ? "warning" : "check"} size={12} />
@@ -142,7 +144,7 @@ export default function JournalTrades({ focusId }: { focusId?: string }) {
           <label className="field">
             <span className="field-label">To</span>
             <input type="date" value={filters.date_to.slice(0, 10)}
-              onChange={(e) => set({ date_to: e.target.value ? `${e.target.value}T23:59:59` : "" })} />
+              onChange={(e) => set({ date_to: e.target.value })} />
           </label>
           {activeFilters > 0 && (
             <button type="button" className="btn btn-ghost btn-sm jr-clear"

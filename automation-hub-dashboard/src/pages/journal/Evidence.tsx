@@ -13,7 +13,8 @@ export default function EvidenceModal({ title, ids, onClose }: {
   return (
     <Modal open={ids !== null} title={title} onClose={onClose}>
       <p className="dim" style={{ marginTop: 0 }}>
-        {ids?.length ?? 0} record(s). Open one to see its full trade record.
+        {ids?.length ?? 0} record(s){(ids?.length ?? 0) > 500 ? "; the first 500 are listed" : ""}.
+        Open one to see its full trade record.
       </p>
       <div className="tablewrap">
         <table className="data-table jr-table">

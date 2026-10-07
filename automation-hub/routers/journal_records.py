@@ -12,8 +12,9 @@ when a request names their origin.
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -23,8 +24,53 @@ from services import journal_stats as stats
 from services.journal_memory import evidence as memory_evidence
 from services.journal_memory import memory as memory_view
 from services.journal_reviews import review_scopes, week_bounds, _records as scope_records
+from data.trade_record_store import RECORD_ORIGINS
 
 router = APIRouter()
+
+#: The Journal shows every time in London time, so a bare date is a London day.
+_LONDON = ZoneInfo("Europe/London")
+#: SQLite integers are 64-bit; a larger offset cannot match anything anyway.
+_MAX_OFFSET = 2 ** 62
+
+
+def _page(limit: int, offset: int, *, most: int = 500) -> tuple[int, int]:
+    return max(1, min(int(limit), most)), min(max(0, int(offset)), _MAX_OFFSET)
+
+
+def _origin(origin: Optional[str]) -> Optional[str]:
+    if origin and origin.lower() != "all" and origin.upper() not in RECORD_ORIGINS:
+        raise HTTPException(400, f"unknown origin {origin!r}; use one of "
+                                 f"{', '.join(RECORD_ORIGINS)} or all")
+    return origin
+
+
+def _bound(value: str, *, end: bool) -> Optional[tuple[str, str]]:
+    """A date filter bound as (operator, UTC ISO time), or None when unbounded.
+
+    A bare date (YYYY-MM-DD) is a London calendar day, the calendar every
+    Journal time is shown in: "from" starts at its London midnight, "to" ends
+    before the next one. A full timestamp is used as given (UTC if it names
+    no zone)."""
+    text = value.strip()
+    try:
+        if len(text) == 10:
+            day = date.fromisoformat(text)
+            if end and day == date.max:
+                return None
+            if end:
+                day += timedelta(days=1)
+            start = datetime(day.year, day.month, day.day, tzinfo=_LONDON)
+            try:
+                return ("<" if end else ">="), start.astimezone(timezone.utc).isoformat()
+            except OverflowError:            # the first representable day: no lower bound
+                return None
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(400, f"invalid date {value!r}; use YYYY-MM-DD") from None
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return ("<=" if end else ">="), stamp.astimezone(timezone.utc).isoformat()
 
 _LIST_FIELDS = (
     "journal_record_id", "execution_key", "record_source", "record_origin", "verification",
@@ -56,7 +102,7 @@ def _where(*, origin: Optional[str], source: Optional[str], instance_id: Optiona
         wanted = [i for i in ids.split(",") if i][:1000]
         cond.append(f"journal_record_id IN ({','.join('?' * len(wanted))})")
         args.extend(wanted)
-    elif origin and origin.lower() != "all":
+    elif _origin(origin) and origin.lower() != "all":
         cond.append("record_origin=?"); args.append(origin.upper())
     elif not origin:
         cond.append("record_origin='FORWARD_PAPER'")
@@ -82,10 +128,10 @@ def _where(*, origin: Optional[str], source: Optional[str], instance_id: Optiona
     elif reviewed in ("no", "false", "0"):
         cond.append("journal_record_id NOT IN (SELECT journal_record_id FROM trade_reviews)")
     stamp = "COALESCE(position_opened_at, decision_created_at, created_at)"
-    if date_from:
-        cond.append(f"{stamp} >= ?"); args.append(date_from)
-    if date_to:
-        cond.append(f"{stamp} <= ?"); args.append(date_to)
+    for value, end in ((date_from, False), (date_to, True)):
+        bound = _bound(value, end=end) if value else None
+        if bound:
+            cond.append(f"{stamp} {bound[0]} ?"); args.append(bound[1])
     return " AND ".join(cond), args
 
 
@@ -106,8 +152,8 @@ def journal_records(
                          strategy=strategy, symbol=symbol, timeframe=timeframe, side=side,
                          session=session, mode=mode, outcome=outcome, status=status,
                          reviewed=reviewed, date_from=date_from, date_to=date_to, ids=ids)
-    page = store.query_trades(where=where, params=args, limit=max(1, min(limit, 500)),
-                              offset=max(0, offset))
+    limit, offset = _page(limit, offset)
+    page = store.query_trades(where=where, params=args, limit=limit, offset=offset)
     everything = store.query_trades(where=where, params=args, limit=200000)
     reviews = store.reviews_for([r["journal_record_id"] for r in everything])
     rows = []
@@ -182,9 +228,14 @@ def decision_records(limit: int = 100, offset: int = 0, source: Optional[str] = 
                      decision_type: Optional[str] = None, symbol: Optional[str] = None,
                      instance_id: Optional[str] = None, strategy: Optional[str] = None,
                      traded: Optional[str] = None, date_from: Optional[str] = None,
-                     date_to: Optional[str] = None):
-    """Material decisions: signals and why they did or did not become trades."""
+                     date_to: Optional[str] = None, origin: Optional[str] = None):
+    """Material decisions: signals and why they did or did not become trades.
+    Forward-paper decisions by default, as for trades; ``origin=all`` mixes them."""
     cond, args = [], []
+    if _origin(origin) and origin.lower() != "all":
+        cond.append("record_origin=?"); args.append(origin.upper())
+    elif not origin:
+        cond.append("record_origin='FORWARD_PAPER'")
     if source:
         cond.append("record_source=?"); args.append(source.upper())
     if decision_type:
@@ -199,14 +250,14 @@ def decision_records(limit: int = 100, offset: int = 0, source: Optional[str] = 
         cond.append("journal_record_id IS NOT NULL")
     elif traded in ("no", "false"):
         cond.append("journal_record_id IS NULL")
-    if date_from:
-        cond.append("decided_at >= ?"); args.append(date_from)
-    if date_to:
-        cond.append("decided_at <= ?"); args.append(date_to)
+    for value, end in ((date_from, False), (date_to, True)):
+        bound = _bound(value, end=end) if value else None
+        if bound:
+            cond.append(f"decided_at {bound[0]} ?"); args.append(bound[1])
     where = " AND ".join(cond)
     store = _store()
-    rows = store.query_decisions(where=where, params=args, limit=max(1, min(limit, 500)),
-                                 offset=max(0, offset))
+    limit, offset = _page(limit, offset)
+    rows = store.query_decisions(where=where, params=args, limit=limit, offset=offset)
     with store._lock:
         types = {r[0]: r[1] for r in store._c.execute(
             "SELECT decision_type, COUNT(*) FROM decision_records"
@@ -253,7 +304,7 @@ def weekly_reviews(agent_id: Optional[str] = None, strategy_id: Optional[str] = 
     scheduler = getattr(_wa, "weekly_review_scheduler", None)
     return {"scopes": scopes, "reviews": reviews,
             "scheduler": scheduler.status() if scheduler is not None else None,
-            "pending_proposals": store.proposals(status="PENDING_APPROVAL", limit=50)}
+            "pending_proposals": store.proposals(status="PENDING_APPROVAL", limit=500)}
 
 
 @router.get("/journal/weekly/overview")

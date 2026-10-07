@@ -370,3 +370,178 @@ def test_a_lab_session_reset_ends_an_unfilled_order_record(tmp_path):
     record = store.get(pending["journal_record_id"])
     assert (record["status"], record["outcome"]) == ("CANCELLED", "CANCELLED")
     assert record["execution_status"] == "ORDER_REMOVED"
+
+
+# ──────────────────────────── reporting ────────────────────────────
+_n = iter(range(1, 10_000))
+
+
+def _closed(store, **facts):
+    """A finalized CLOSED record holding only the given facts (unknowns stay NULL)."""
+    n = next(_n)
+    rec = {"execution_key": f"GATE:{n}", "record_source": "INSTANCE",
+           "record_origin": "FORWARD_PAPER", "verification": "VERIFIED", "status": "CLOSED",
+           "data_completeness": "PARTIAL", "trade_id": f"gate-{n}", "symbol": "BTCUSDT",
+           "side": "long", **facts}
+    store.upsert_trade(rec)
+    return store.get(rec["trade_id"])
+
+
+@pytest.fixture
+def api(tmp_path, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import webhook_api
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    monkeypatch.setattr(webhook_api, "trade_records", store)
+    app = FastAPI()
+    app.include_router(webhook_api.router)
+    return store, TestClient(app, raise_server_exceptions=False)
+
+
+def test_totals_never_present_unknown_values_as_known(api):
+    """A loss with no recorded P&L used to read "No losses", a $0 drawdown
+    and a profit factor over the trades that had one."""
+    store, client = api
+    _closed(store, outcome="WIN", net_pnl=10.0, realized_r=1.0,
+            position_closed_at="2026-07-06T10:00:00+00:00")
+    _closed(store, outcome="LOSS", net_pnl=None, realized_r=-1.0,
+            position_closed_at="2026-07-06T11:00:00+00:00")
+    k = client.get("/journal/records").json()["kpis"]
+    assert (k["trades"], k["losses"], k["pnl_known"], k["r_known"]) == (2, 1, 1, 2)
+    assert k["profit_factor"] is None
+    assert k["profit_factor_note"] != "no losing trades"
+    from services import journal_stats
+    summary = journal_stats.summarize(store.query_trades())
+    assert summary["max_drawdown"] is None            # a gap hides the true path
+    assert summary["max_drawdown_r"] == pytest.approx(1.0)
+
+
+def test_an_unknown_exit_leg_value_is_not_turned_into_zero():
+    from services.journal_recorder import _result_fields
+    out = _result_fields(entry=100.0, stop=95.0, side="long", risk_amount=5.0,
+                         exit_reason="take-profit",
+                         legs=[{"price": 110.0, "size": 1.0, "pnl": None, "fees": None}])
+    assert out["net_pnl"] is None and out["fees"] is None and out["gross_pnl"] is None
+    assert out["realized_r"] is None and out["outcome"] is None
+    assert out["actual_exit"] == pytest.approx(110.0)
+
+
+def test_strategy_compliance_is_unknown_when_no_rule_check_ran():
+    """Any recorded setup used to make a trade COMPLIANT, even one whose
+    quality gate listed blocks while it was switched off."""
+    from services.journal_reviews import review_trade
+    base = {"journal_record_id": "r1", "planned_stop_loss": 95.0, "realized_r": 1.0,
+            "outcome": "WIN", "exit_reason": "take-profit"}
+    unchecked = review_trade({**base, "setup": {"quality_blocks": ["score below minimum"]}})
+    assert unchecked["strategy_compliance"] == "UNKNOWN"
+    passed = review_trade({**base, "setup": {"conditions_failed": []}})
+    assert passed["strategy_compliance"] == "COMPLIANT"
+    failed = review_trade({**base, "setup": {"conditions_failed": ["opposing zone within 1R", None]}})
+    assert failed["strategy_compliance"] == "VIOLATION"
+    assert failed["rule_violations"][0]["detail"] == \
+        "entered with failed conditions: opposing zone within 1R"
+
+
+def test_a_decision_whose_order_never_filled_is_not_a_trade(tmp_path):
+    """The forward intent's PENDING record carried the decision id, so the
+    decision was shown as TRADE_OPENED / FILLED with no fill behind it."""
+    from tests.test_journal_integrity import Env
+    env = Env(tmp_path)
+    did = env.decisions.record({
+        "symbol": "BTCUSDT", "timeframe": "5m", "strategy": "3-Candle Rejection · EMA 9/33",
+        "side": "long", "decision": "accepted", "reason": "limit entry parked",
+        "instance_id": env.instance_id, "ts": "2026-10-07T08:00:00+00:00",
+        "decision_identity": "inst-A:BTCUSDT:a1", "final_state": "PENDING_INTENT"})
+    assert env.entry().accepted                       # parked, never filled
+    env.recorder().reconcile()
+    env.decisions.finalize(did, final_state="GATE_REJECTED", gate_stage="execution",
+                           blocker="EXPIRED", reason="limit order expired unfilled")
+    env.recorder().reconcile()
+    [trade] = env.store.query_trades()
+    assert trade["status"] == "PENDING"
+    [decision] = env.store.query_decisions()
+    assert decision["decision_type"] != "TRADE_OPENED" and decision["status"] != "FILLED"
+    assert decision["journal_record_id"] is None
+    assert decision["source_ref"]["order_record_id"] == trade["journal_record_id"]
+
+
+def test_date_filters_are_london_days_and_bad_inputs_are_rejected(api):
+    """The table shows London time, but the filter compared text against UTC
+    stamps: a trade at 00:30 London on Monday 6 July fell under Sunday."""
+    store, client = api
+    for opened in ("2026-07-05T23:30:00+00:00",      # Mon 6 Jul 00:30 London
+                   "2026-07-06T12:00:00+00:00",
+                   "2026-07-06T22:59:59+00:00",      # Mon 23:59:59 London
+                   "2026-07-06T23:30:00+00:00"):     # Tue 7 Jul 00:30 London
+        _closed(store, outcome="WIN", net_pnl=1.0, position_opened_at=opened)
+    got = client.get("/journal/records", params={"date_from": "2026-07-06",
+                                                 "date_to": "2026-07-06"}).json()
+    assert sorted(r["position_opened_at"] for r in got["records"]) == [
+        "2026-07-05T23:30:00+00:00", "2026-07-06T12:00:00+00:00", "2026-07-06T22:59:59+00:00"]
+    assert client.get("/journal/records", params={"date_to": "9999-12-31"}).status_code == 200
+    assert client.get("/journal/records", params={"date_from": "0001-01-01"}).status_code == 200
+    for params in ({"date_from": "not-a-date"}, {"date_to": "2026-13-45"}, {"origin": "garbage"}):
+        assert client.get("/journal/records", params=params).status_code == 400, params
+    assert client.get("/journal/records", params={"offset": "99999999999999999999"}).status_code == 200
+    assert client.get("/journal/decision-records",
+                      params={"offset": "99999999999999999999"}).status_code == 200
+
+
+def test_decisions_default_to_forward_paper_and_name_other_origins(api):
+    store, client = api
+    for instance, origin in (("inst-live", "FORWARD_PAPER"), ("inst-replay", "SIMULATION")):
+        store.upsert_decision({"decision_key": f"INSTANCE:decision:{instance}:1",
+                               "record_source": "INSTANCE", "record_origin": origin,
+                               "instance_id": instance, "symbol": "BTCUSDT",
+                               "decided_at": "2026-07-06T10:00:00+00:00",
+                               "decision_type": "QUALITY_BLOCKED"})
+    default = client.get("/journal/decision-records").json()
+    assert [d["instance_id"] for d in default["decisions"]] == ["inst-live"]
+    assert default["by_type"] == {"QUALITY_BLOCKED": 1}
+    assert client.get("/journal/decision-records", params={"origin": "all"}).json()["total"] == 2
+    assert client.get("/journal/decision-records",
+                      params={"origin": "SIMULATION"}).json()["total"] == 1
+
+
+def test_nan_in_stored_evidence_reads_as_unknown(api):
+    store, client = api
+    record = _closed(store, outcome="WIN", net_pnl=1.0, evidence_json={"score": float("nan")})
+    response = client.get(f"/journal/records/{record['journal_record_id']}")
+    assert response.status_code == 200
+    assert response.json()["evidence"] == {"score": None}
+
+
+def test_a_lab_journal_pass_never_holds_the_broker_lock(tmp_path):
+    """Fills and quotes take the broker lock. The pass read the whole broker
+    history through it, holding it about 0.24 s at 10,000 trips every pass;
+    it now reads a WAL snapshot on its own connection."""
+    import threading
+    from services.journal_labs import PALabProjector
+    pa, _now, _feed = _pa_lab(tmp_path, "LIVE_PAPER")
+    at = datetime.now(timezone.utc).isoformat()
+    pa.process_quote("BTCUSDT", {"bid": 105.0, "ask": 105.1, "mark": 105.05, "received_at": at,
+                                 "event_timestamp": at, "sequence": 1}, feed_reliable=True)
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    projector = PALabProjector(pa)
+    held, done = threading.Event(), threading.Event()
+
+    def hold():                          # a fill in progress owns the broker lock
+        with pa.broker._lock:
+            held.set()
+            done.wait(10)
+
+    worker = threading.Thread(target=hold)
+    worker.start()
+    assert held.wait(5)
+    import time
+    started = time.monotonic()
+    try:
+        projector.project(store)         # used to wait here until the fill let go
+        elapsed = time.monotonic() - started
+    finally:
+        done.set()
+        worker.join(5)
+    assert elapsed < 2, f"the pass waited {elapsed:.1f} s for the broker lock"
+    [record] = store.query_trades(where="record_source='PA_LAB'", limit=5)
+    assert record["status"] == "OPEN"

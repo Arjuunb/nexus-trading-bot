@@ -344,7 +344,9 @@ class TradeRecordStore:
         for key in list(out):
             if key in _JSON_COLUMNS or key.endswith("_json"):
                 raw = out.pop(key)
-                out[key[:-5]] = json.loads(raw) if raw else None
+                # A NaN or infinity in source evidence is no number: it reads as
+                # unknown, and the API can still answer in JSON.
+                out[key[:-5]] = json.loads(raw, parse_constant=lambda _c: None) if raw else None
         return out
 
     def state(self, key: str, default=None):
@@ -600,7 +602,10 @@ class TradeRecordStore:
     #: Every other column keeps what it had when a later pass does not know it.
     _DECISION_OVERWRITE = ("blocker",)
 
-    def upsert_decision(self, decision: dict) -> str:
+    def upsert_decision(self, decision: dict, *, overwrite: Iterable[str] = ()) -> str:
+        """``overwrite`` names further columns whose given value, None included,
+        is the truth (a caller that always knows them, such as a trade link)."""
+        replace = (*self._DECISION_OVERWRITE, *overwrite)
         key = str(decision["decision_key"])
         did = decision_id_for(key)
         now = utcnow()
@@ -630,14 +635,14 @@ class TradeRecordStore:
                 # What the upsert below would store; when that is what is already
                 # stored, skip it: the recorder re-projects every decision on each
                 # pass, and a write per unchanged decision is a disk sync each.
-                if all(existing[c] == (row[c] if c in self._DECISION_OVERWRITE
+                if all(existing[c] == (row[c] if c in replace
                                        or row[c] is not None else existing[c])
                        for c in updatable):
                     return did
             self._c.execute(
                 f"INSERT INTO decision_records({','.join(cols)},created_at,updated_at) "
                 f"VALUES ({','.join('?' * len(cols))},?,?) ON CONFLICT(decision_key) DO UPDATE SET "
-                + ",".join(f"{c}=excluded.{c}" if c in self._DECISION_OVERWRITE else
+                + ",".join(f"{c}=excluded.{c}" if c in replace else
                            f"{c}=COALESCE(excluded.{c}, decision_records.{c})" for c in updatable)
                 + ", updated_at=excluded.updated_at",
                 [row[c] for c in cols] + [now, now])

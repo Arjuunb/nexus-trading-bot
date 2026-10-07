@@ -35,9 +35,10 @@ def _close_key(r: dict) -> str:
 
 
 def drawdown(values: list[Optional[float]]) -> Optional[float]:
-    """Largest peak-to-trough fall of the running sum (positive number)."""
+    """Largest peak-to-trough fall of the running sum (positive number).
+    None when any value is unknown: a gap in the sequence hides the true path."""
     known = [v for v in values if v is not None]
-    if not known:
+    if not known or len(known) < len(values):
         return None
     peak = equity = 0.0
     worst = 0.0
@@ -59,6 +60,9 @@ def summarize(records: Iterable[dict], *, reviews: Optional[dict] = None) -> dic
     rs = [r.get("realized_r") for r in rows]
     gains = sum(float(v) for v in nets if v is not None and v > 0)
     pains = -sum(float(v) for v in nets if v is not None and v < 0)
+    # Totals sum the recorded values; *_known says how many trades they cover.
+    # A profit factor needs every trade's P&L: one missing loss would inflate it.
+    pnl_known = sum(1 for v in nets if v is not None)
     reviewed = [(reviews or {}).get(r["journal_record_id"]) for r in rows]
     reviewed = [v for v in reviewed if v]
     # A review that could not assess compliance (UNKNOWN) is neither
@@ -78,8 +82,11 @@ def summarize(records: Iterable[dict], *, reviews: Optional[dict] = None) -> dic
         "total_r": _sum(rs),
         "average_r": _mean(rs),
         "r_known": sum(1 for v in rs if v is not None),
-        "profit_factor": (round(gains / pains, 4) if pains > 0 else None),
-        "profit_factor_note": ("no losing trades" if n and pains == 0 else None),
+        "pnl_known": pnl_known,
+        "profit_factor": (round(gains / pains, 4) if pains > 0 and pnl_known == n else None),
+        "profit_factor_note": ("no losing trades" if n and not losses and pnl_known == n
+                               else "P&L not recorded for every trade" if pnl_known < n
+                               else None),
         "average_planned_rr": _mean(r.get("planned_rr") for r in rows),
         "average_achieved_r": _mean(r.get("achieved_rr") for r in rows),
         "max_drawdown": drawdown(nets),
@@ -120,4 +127,5 @@ def kpis(records: list[dict], *, reviews: Optional[dict] = None) -> dict:
     s = summarize(records, reviews=reviews)
     return {k: s[k] for k in ("trades", "net_pnl", "total_r", "profit_factor",
                               "profit_factor_note", "win_rate", "rule_compliance",
-                              "reviewed", "sample_warning", "wins", "losses", "breakevens")}
+                              "reviewed", "sample_warning", "wins", "losses", "breakevens",
+                              "r_known", "pnl_known", "compliance_assessed")}

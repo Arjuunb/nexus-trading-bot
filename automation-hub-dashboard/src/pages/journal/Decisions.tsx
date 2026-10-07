@@ -4,7 +4,7 @@ import Icon from "../../components/common/Icon";
 import { Badge } from "../../components/common/ui";
 import { useLive } from "../../lib/api";
 import { usePref } from "../../lib/prefs";
-import { dash, type DecisionRow, humanize, SOURCE_LABEL, when, whenFull } from "../../lib/journal";
+import { dash, type DecisionRow, humanize, ORIGINS, SOURCE_LABEL, when, whenFull } from "../../lib/journal";
 import CandleArchive from "../Decisions";
 
 /** Journal > Decisions: material decisions only -- a signal, and what became
@@ -27,10 +27,11 @@ export default function JournalDecisions({ focusId }: { focusId?: string }) {
   const shown = cycleLink ? "candles" : view;
   const [type, setType] = useState("");
   const [traded, setTraded] = useState("");
+  const [origin, setOrigin] = usePref<string>("journal.decisions.origin", "FORWARD_PAPER");
   const [open, setOpen] = useState<string | null>(!cycleLink && focusId ? focusId : null);
   useEffect(() => { if (focusId && !/^\d+$/.test(focusId)) setOpen(focusId); }, [focusId]);
 
-  const qs = new URLSearchParams({ limit: "200" });
+  const qs = new URLSearchParams({ limit: "200", origin });
   if (type) qs.set("decision_type", type);
   if (traded) qs.set("traded", traded);
   const data = useLive<{ decisions: DecisionRow[]; total: number; by_type: Record<string, number> }>(
@@ -47,7 +48,15 @@ export default function JournalDecisions({ focusId }: { focusId?: string }) {
       {shown === "candles" ? <CandleArchive focusId={focusId} /> : open ? (
         <DecisionDetail id={open} onBack={() => setOpen(null)} />
       ) : (
-        <Card title="Decisions" subtitle={`${data.data?.total ?? 0} material decision(s) · signals and what became of them`}>
+        <Card title="Decisions" subtitle={`${data.data?.total ?? 0} material decision(s)${
+          (data.data?.decisions.length ?? 0) < (data.data?.total ?? 0) ? ` · showing the newest ${data.data?.decisions.length}` : ""
+        } · ${ORIGINS.find(([id]) => id === origin)?.[1] ?? origin}`}>
+          <div className="chips jr-origins" role="group" aria-label="Decision origin">
+            {ORIGINS.map(([id, label]) => (
+              <button key={id} type="button" className={`chip-btn ${origin === id ? "active" : ""}`}
+                onClick={() => setOrigin(id)}>{label}</button>
+            ))}
+          </div>
           <div className="chips jr-origins" role="group" aria-label="Decision type">
             <button type="button" className={`chip-btn ${type === "" ? "active" : ""}`} onClick={() => setType("")}>All</button>
             {Object.entries(data.data?.by_type ?? {}).sort((a, b) => b[1] - a[1]).map(([t, n]) => (

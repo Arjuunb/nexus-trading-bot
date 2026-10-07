@@ -21,6 +21,7 @@ a fill become EXECUTION_FAILED / EXECUTION_UNCERTAIN records.
 """
 from __future__ import annotations
 
+import sqlite3
 from bisect import bisect_right
 from typing import Optional
 
@@ -127,6 +128,8 @@ class V2LabProjector:
     def __init__(self, account, *, agent_journal=None):
         self.account = account
         self.agent_journal = agent_journal
+        self._reader: Optional[sqlite3.Connection] = None
+        self._reader_path: Optional[str] = None
 
     # -------------------------------------------------------------- access
     def _broker(self):
@@ -135,6 +138,34 @@ class V2LabProjector:
 
     def _meta(self):
         return getattr(self.account, "_db", None), getattr(self.account, "_lock", None)
+
+    def _broker_history(self) -> tuple[list[dict], list[dict], list[dict]]:
+        """The broker's fills, orders and funding events, read as one snapshot.
+
+        The broker's own connection is guarded by the lock its fills and
+        quotes take, and reading the whole history through it held that lock
+        for the read: about 0.24 s at 10,000 trips, every pass. The broker
+        database is in WAL mode, so a separate connection reads a consistent
+        snapshot without that lock and without blocking its writes. A broker
+        without a database file is read through its own connection."""
+        broker = getattr(self.account, "broker", None)
+        path = str(getattr(broker, "path", "") or "")
+        queries = ("SELECT * FROM v2_fills ORDER BY timestamp, rowid", "SELECT * FROM v2_orders",
+                   "SELECT position_id, symbol, created_at, amount FROM v2_funding_events")
+        if not path or path == ":memory:":
+            conn, lock = self._broker()
+            return tuple(_rows(conn, lock, sql) for sql in queries)
+        if self._reader is None or self._reader_path != path:
+            self._reader = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+            self._reader.row_factory = sqlite3.Row
+            self._reader.execute("PRAGMA query_only=ON")
+            self._reader_path = path
+        reader = self._reader
+        reader.execute("BEGIN")
+        try:
+            return tuple(_rows(reader, None, sql) for sql in queries)
+        finally:
+            reader.execute("COMMIT")
 
     # ------------------------------------------------------------ overrides
     def order_meta(self) -> dict:
@@ -151,14 +182,13 @@ class V2LabProjector:
         conn, lock = self._broker()
         if conn is None:
             return {"source": self.name, "skipped": "no broker"}
-        fills = _rows(conn, lock, "SELECT * FROM v2_fills ORDER BY timestamp, rowid")
-        orders = {o["id"]: o for o in _rows(conn, lock, "SELECT * FROM v2_orders")}
+        fills, order_rows, funding_events = self._broker_history()
+        orders = {o["id"]: o for o in order_rows}
         metas = self.order_meta()
         known = store.keys_with_status((self.record_source,))
         lifecycles = _pair_lifecycles(fills)
         life_metas = [metas.get(life["entry"]["order_id"]) or {} for life in lifecycles]
-        funding = _attribute_funding(lifecycles, _rows(
-            conn, lock, "SELECT position_id, symbol, created_at, amount FROM v2_funding_events"))
+        funding = _attribute_funding(lifecycles, funding_events)
         # One entry order can open a second position: its remainder fills after
         # the first position already closed. Each position is its own trade.
         # The first keeps the order's key (records written before this rule

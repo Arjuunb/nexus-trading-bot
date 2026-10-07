@@ -26,6 +26,31 @@ export interface Kpis {
   trades: number; net_pnl: number | null; total_r: number | null; profit_factor: number | null;
   profit_factor_note: string | null; win_rate: number | null; rule_compliance: number | null;
   reviewed: number; sample_warning: string | null; wins: number; losses: number; breakevens: number;
+  r_known?: number; pnl_known?: number; compliance_assessed?: number;
+}
+
+/** Which data a record or decision ran on. Forward paper is the default view. */
+export const ORIGINS: [string, string][] = [
+  ["FORWARD_PAPER", "Forward paper"], ["LEGACY_MIGRATION", "Legacy / unverified"],
+  ["SIMULATION", "Simulation"], ["BACKTEST", "Backtest"], ["RESEARCH", "Research"], ["all", "All origins"],
+];
+
+/** "P&L known for 3 of 5" when a total covers only some of the trades. */
+export function coverage(known: number | null | undefined, trades: number | null | undefined,
+                         what: string): string | undefined {
+  return known != null && trades && known < trades ? `${what} known for ${known} of ${trades}` : undefined;
+}
+
+/** A profit factor, or why there is none. "No losses" only when there were none. */
+export function profitFactor(pf: number | null | undefined, note: string | null | undefined): string {
+  return pf != null ? num(pf) : note === "no losing trades" ? "No losses" : dash;
+}
+
+/** Rule compliance, telling "nothing reviewed" apart from "reviewed but not assessable". */
+export function compliance(rate: number | null | undefined, trades: number, reviewed: number): string {
+  if (rate != null) return pct(rate, 0);
+  if (!trades) return dash;
+  return reviewed ? "Not assessed" : "Not reviewed";
 }
 
 export interface TimelineStage { stage: string; at: string | null; status: string; detail?: string | null }
@@ -89,8 +114,10 @@ export function num(v: number | null | undefined, digits = 2): string {
 
 export function price(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return dash;
-  const digits = Math.abs(v) >= 1000 ? 2 : Math.abs(v) >= 1 ? 4 : 6;
-  return v.toLocaleString(undefined, { maximumFractionDigits: digits });
+  // Below 1 a fixed decimal count would cut low-priced instruments to the same
+  // or a zero figure, so those keep six significant digits.
+  if (Math.abs(v) < 1) return v.toLocaleString(undefined, { maximumSignificantDigits: 6 });
+  return v.toLocaleString(undefined, { maximumFractionDigits: Math.abs(v) >= 1000 ? 2 : 4 });
 }
 
 export function money(v: number | null | undefined): string {

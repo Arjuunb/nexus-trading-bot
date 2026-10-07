@@ -159,26 +159,35 @@ def _result_fields(*, entry, stop, side, legs: list[dict], risk_amount, exit_rea
     size = sum(_f(l.get("size")) or 0.0 for l in legs)
     if not legs or size <= 0:
         return {}
-    exit_price = sum((_f(l.get("price")) or 0.0) * (_f(l.get("size")) or 0.0) for l in legs) / size
-    net = sum(_f(l.get("pnl")) or 0.0 for l in legs)
-    fees = sum(_f(l.get("fees")) or 0.0 for l in legs)
+    def total(field):                    # unknown stays unknown: one missing leg value
+        values = [_f(l.get(field)) for l in legs]
+        return None if None in values else sum(values)
+
+    prices = [_f(l.get("price")) for l in legs]
+    exit_price = (None if None in prices else
+                  sum(p * (_f(l.get("size")) or 0.0) for p, l in zip(prices, legs)) / size)
+    net, fees = total("pnl"), total("fees")
     funding = None
     if any(l.get("funding") is not None for l in legs):
         funding = sum(_f(l.get("funding")) or 0.0 for l in legs)
     risk = _f(risk_amount)
-    realized_r = round(net / risk, 4) if risk and risk > 0 else None
+    realized_r = round(net / risk, 4) if net is not None and risk and risk > 0 else None
     entry_f, stop_f = _f(entry), _f(stop)
     achieved = None
-    if entry_f is not None and stop_f is not None and entry_f != stop_f:
+    if entry_f is not None and stop_f is not None and entry_f != stop_f and exit_price is not None:
         sign = 1.0 if side == "long" else -1.0
         achieved = round(sign * (exit_price - entry_f) / abs(entry_f - stop_f), 4)
     mae = _f(mae_r)
     return {
-        "actual_exit": round(exit_price, 10), "exit_reason": exit_reason,
+        "actual_exit": round(exit_price, 10) if exit_price is not None else None,
+        "exit_reason": exit_reason,
         # net is after fees and funding, so the price P&L adds both back
-        "gross_pnl": round(net + fees + (funding or 0.0), 10), "fees": round(fees, 10),
+        "gross_pnl": (round(net + fees + (funding or 0.0), 10)
+                      if net is not None and fees is not None else None),
+        "fees": round(fees, 10) if fees is not None else None,
         "funding": funding,
-        "net_pnl": round(net, 10), "realized_r": realized_r, "achieved_rr": achieved,
+        "net_pnl": round(net, 10) if net is not None else None,
+        "realized_r": realized_r, "achieved_rr": achieved,
         "mae_r": mae, "mfe_r": _f(mfe_r),
         "max_trade_drawdown": (round(abs(mae) * risk, 10) if mae is not None and risk else None),
         "outcome": classify_outcome(net, realized_r),
@@ -945,6 +954,13 @@ class DecisionProjector:
             identity = row.get("decision_identity") or f"id:{row['id']}"
             key = f"{name}:decision:{instance_id or '-'}:{identity}"
             trade = linked.get((instance_id, str(row["id"])))
+            # A forward intent's record exists from the moment it is parked.
+            # Only a filled one is a trade; an unfilled order keeps the
+            # decision's own outcome and is referenced, not linked as a trade.
+            order_record = None
+            if trade is not None and not (trade.get("entry_filled_at")
+                                          or trade.get("status") in ("OPEN", "CLOSED")):
+                order_record, trade = trade, None
             dtype = classify_decision(row.get("final_state"), row.get("gate_stage"),
                                       row.get("blocker"), row.get("reason"))
             status, blocker, reason = (row.get("final_state") or None, row.get("blocker") or None,
@@ -981,10 +997,13 @@ class DecisionProjector:
                              "components": _json(row.get("components_json"), {}),
                              "gate_stage": row.get("gate_stage"),
                              **({"duplicate_attempt": later} if later else {})},
-                "source_ref": {"decision_store": source_name, "decision_row_id": row["id"]},
+                "source_ref": {"decision_store": source_name, "decision_row_id": row["id"],
+                               **({"order_record_id": order_record["journal_record_id"],
+                                   "order_record_status": order_record.get("status")}
+                                  if order_record else {})},
                 "journal_record_id": trade["journal_record_id"] if trade else None,
                 "trade_id": trade.get("trade_id") if trade else None,
-            })
+            }, overwrite=("journal_record_id", "trade_id"))   # every link is known here
             written += 1
         return {"source": source_name, "written": written, "last_id": last}
 
