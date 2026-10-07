@@ -1614,6 +1614,148 @@ local-only and changes only the Guardian service/diagnostic module, its tests,
 and this document; no strategy, Agent, runtime, journal, broker, deployment
 configuration or live-routing control is modified.
 
+## Retained processing backlog diagnostics (2026-10-07)
+
+### Scope and evidence gap
+
+A fresh `guardian_incident_engine` or `guardian_notifications` heartbeat only
+reports that its latest scan succeeded. The existing processors scan finite
+batches, so HEALTHY does not prove their retained queues are caught up.
+This phase adds read-only progress diagnostics; it does not change those
+processors, their cursor writes, incident classification, notification policy,
+any trading gate, strategy, execution Agent or broker.
+
+`GET /v1/pipeline-health` requires the independent `X-Guardian-Key` read
+credential. Producer, research, admin and unrelated control credentials cannot
+read it. There are no accepted query parameters, caller-supplied paths or
+mutation methods (401 unauthorized, 400 invalid query, 405 mutation).
+Diagnostics return 200 with `Cache-Control: no-store`, including during a
+reported UNKNOWN/FAILED state: JSON state, not HTTP success, is the evidence.
+`/healthz` remains process liveness only and performs no persistence operation.
+
+Two retained queues are checked in one query-only SQLite transaction:
+
+| Component | Durable cursor | Retained queue being counted |
+| --- | --- | --- |
+| `guardian_incident_engine` | `guardian_analysis_cursor.incidents_v1.last_event_sequence` | Actual `events` rows after that cursor |
+| `guardian_notifications` | `guardian_notification_cursor.in_app_v1.last_update_sequence` | Actual `guardian_incident_updates` rows after that cursor |
+
+The reader counts selected rows, **never** latest sequence minus cursor.
+Sequence gaps are legitimate and are not evidence of dropped or queued events.
+A positive cursor must reference a retained anchor, and a cursor ahead of the
+retained latest row, a missing cursor, invalid numeric type, negative cursor or
+invalid retained sequence is UNKNOWN. It never resets or advances a cursor.
+Notification LEFT JOINs retain queued updates whose source event/incident is
+missing; those links are explicitly unverified rather than silently counted as
+processed. These checks are not full-history integrity or retention proofs.
+
+### Bounds, age semantics and states
+
+The configured Guardian database path uses the existing owner-only,
+regular-file/no-symlink/no-hardlink checks. SQLite opens `mode=ro`,
+`query_only=ON`, with 250 ms busy timeout and 500 ms SQL read/progress deadline.
+No persistence constructor, network call, schema creation, write test,
+checkpoint, VACUUM, cleanup or payload/summary/prose deserialization occurs.
+Each queue selects at most 5,000 metadata rows plus one overflow sentinel,
+with a 1 MiB returned-metadata budget; SQL values/records are capped at 4 KiB.
+Actual event payloads up to the existing evidence size bound remain unselected.
+Returned state/timestamp cells are validated, never clipped into valid evidence.
+The metadata budget is a byte estimate of selected fields, not a host-memory
+or SQLite page-I/O measurement. The deadline may return UNKNOWN on a slow read.
+
+`pending_count` is exact for a complete bounded queue read. Overflow returns
+`pending_count=null`, `pending_count_lower_bound`, `truncated=true` and
+`evidence_complete=false`, not a false complete count. Missing/corrupt/unsafe
+storage, missing schema, busy/locked/deadline failures return sanitized UNKNOWN
+diagnostics without exposing paths or exception prose. A later released lock
+can be retried; reads never repair or erase the evidence.
+
+For incidents, `first_pending_received_age_seconds` uses the actual Guardian
+`events.received_at` of the **first pending row by sequence**, not the source
+event timestamp, not the minimum over an unbounded history, and not network
+ingestion latency. Historical source evidence newly received does not create
+a false incident-processing delay. Future/malformed/naive receipt times are
+unverified, not negative delays or HEALTHY evidence.
+
+For notices, `guardian_incident_updates.observed_at` is the **original event
+receipt time**, not insertion into the notification queue. It is exposed only
+as `first_pending_evidence_received_age_seconds`; notification
+`queue_residency_seconds=null` and no time-based notice warning is inferred.
+Old backfilled incidents therefore cannot manufacture a notification-delay
+alarm. A notification queue's actual row count can still show pressure.
+
+| `processing_state` | Meaning, separate from monitor readiness |
+| --- | --- |
+| `CAUGHT_UP` | No retained rows after a verified cursor in this snapshot |
+| `PENDING` | Some retained rows, below the fixed warning thresholds |
+| `LAGGING` | At least 1,000 pending rows, an overflow, or incident first-pending receipt age >= 60 seconds |
+| `UNKNOWN` | Required cursor/link/time/storage evidence cannot be verified |
+
+These fixed thresholds are Guardian operational warnings, not trading rules
+or SLAs proven on the VPS. Queue processing state is separate from the two
+reported monitor heartbeats (90-second freshness bound, 5-second future
+tolerance). A caught-up queue with a missing/stale heartbeat is still UNKNOWN
+readiness; a reported FAILED/BLOCKED/DEGRADED monitor cannot be hidden by an
+empty queue. Small pending queues may be HEALTHY **within these warning
+thresholds**, but are always explicitly PENDING, not CAUGHT_UP. Known backlog
+pressure is DEGRADED, not proof of source failure or automatic trading pause.
+
+`/v1/health` includes `pipeline_health` and replaces only the two Guardian-owned
+component read-model entries with their observed queue/heartbeat state. It
+does not write stored heartbeats or upstream states. Aggregation preserves
+FAILED > BLOCKED > DEGRADED > UNKNOWN > HEALTHY. A subsequent unavailable
+pipeline read cannot erase an already reported failure. Active-incident
+masking remains unchanged. Each pipeline snapshot is atomic, but the overall
+health response combines separate reads and is **not** a whole-platform atomic
+certificate; its pre-existing database reads can still return 503 on failure.
+
+`producer_queue_depth`, `producer_dropped_count` and
+`producer_ingestion_delay_seconds` remain null: those process-local metrics
+are not durably observed by this reader. `remote_delivery_verified`,
+`full_history_verified`, `trading_integrity_verified` and
+`automatic_action_allowed` remain false. No backlog is treated as an SMC
+signal, order approval, forced retry or reconciliation instruction.
+
+### Local validation and changed files
+
+The backend/API and testing skills guided the independent read-only contract
+and failure-first tests. The **65 new regression cases** cover actual gapped
+counts for both queues, count/age bounds, historical evidence, malformed
+metadata/cursors/anchors, truncated reads, missing source links, timestamp
+semantics, heartbeat masking, auth/method/query boundaries, SQL authorization
+and progress time bounds, locks/retry and 100 reads during an uncommitted WAL
+write. Repeated reads do not append notices/events or process/checkpoint
+cursors. Restarted existing processors drain retained queues idempotently,
+without reader-created incidents or duplicated notices.
+
+Broader targeted validation passed **328 tests**, zero failures/skips/warnings,
+in 5.62 seconds, including both SMC freezes, P0 crash boundaries, service,
+incidents, notices/reports, deployment contract and isolated backup/recovery.
+Evidence: `/private/tmp/guardian-pipeline-targeted.xml`.
+
+The complete local suite passed **5,285 tests, 15 skipped**, zero failures/errors
+and 94 deprecation warnings in 318.02 seconds. Complete evidence:
+`/private/tmp/guardian-pipeline-complete-suite.xml`.
+Both SMC source and behavior freezes passed. All four protected decision-path
+files and both freeze manifests are byte-unchanged from `804a7c0`; all strategy,
+Agent/runtime/journal, data and execution/broker code is unchanged from
+`4f8ee06`. App/dashboard, SDK and deployment files are unchanged from this
+phase's starting commit `b8b09e4`. `git diff --check` passed.
+
+Exact changed files:
+
+- `tradexa/guardian/pipeline_health.py`
+- `tradexa/guardian/service.py`
+- `tests/test_guardian_pipeline_health.py`
+- `tests/test_guardian_service.py`
+- `docs/GUARDIAN_FOUNDATION.md`
+
+This phase remains local-only. No push, deployment, main/environment change,
+source ingestion/emitter change, strategy/Agent/runtime/journal/broker change
+or live-routing enablement is part of it. Producer backlog/drop telemetry,
+production load/latency acceptance, full infrastructure self-monitoring and
+remote delivery remain unimplemented/unverified.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

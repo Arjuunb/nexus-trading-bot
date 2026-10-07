@@ -297,6 +297,8 @@ def test_health_is_unknown_without_evidence_then_source_bound_heartbeat(app):
     assert health["components"]["smc_lab"]["state"] == "UNKNOWN"
     assert health["components"]["guardian"]["state"] == "UNKNOWN"
     app.store.record_heartbeat("guardian", "HEALTHY")
+    for component in ("guardian_incident_engine", "guardian_notifications"):
+        app.store.record_heartbeat(component, "HEALTHY")
     payload = {"component": "smc_lab", "state": "BLOCKED", "reason": "NO_SETUP",
                "observed_at": datetime.now(timezone.utc).isoformat()}
     assert _request(app, "POST", "/v1/heartbeats", payload=payload, key=SOURCE_KEY)[0] == 200
@@ -329,6 +331,8 @@ def test_liveness_poll_cannot_create_or_overwrite_guardian_readiness(app, monkey
 def test_open_incident_prevents_green_overall_health_but_does_not_claim_trading_block(app):
     assert _request(app, "GET", "/healthz")[0] == 200
     app.store.record_heartbeat("guardian", "HEALTHY")
+    for component in ("guardian_incident_engine", "guardian_notifications"):
+        app.store.record_heartbeat(component, "HEALTHY")
     heartbeat = {"component": "smc_lab", "state": "HEALTHY", "reason": "SOURCE_OBSERVED",
                  "observed_at": datetime.now(timezone.utc).isoformat()}
     assert _request(app, "POST", "/v1/heartbeats", payload=heartbeat,
