@@ -289,3 +289,84 @@ def test_funding_booked_while_the_exit_quote_waits_belongs_to_the_closing_trade(
     assert record["status"] == "CLOSED"
     assert record["funding"] == pytest.approx(truth["funding"])
     assert record["net_pnl"] == pytest.approx(truth["balance_change"])
+
+
+# ───────────────────────────── resets ─────────────────────────────
+def test_a_logged_paper_reset_ends_the_open_records_it_deleted(tmp_path):
+    """An initial-capital change deletes every paper trade and position. The
+    journal used to keep their records OPEN forever; a missing row without
+    the reset's log entry must still not end anything."""
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    paper = PaperExecutionEngine(ledger, 10_000)
+    opened = paper.open(symbol="BTCUSDT", side="BUY", size=1, entry=100, stop=95)
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    recorder = JournalRecorder(store)
+    recorder.add_ledger(LedgerSource("MAIN", ledger))
+    assert recorder.reconcile()["errors"] == []
+
+    with ledger._lock:                   # rows gone without a logged reset: left alone
+        saved = [dict(r) for r in ledger._c.execute("SELECT * FROM paper_trades")]
+        ledger._c.execute("DELETE FROM paper_trades")
+        ledger._c.commit()
+    recorder.reconcile()
+    assert store.get(opened.trade_id)["status"] == "OPEN"
+
+    with ledger._lock:
+        for row in saved:
+            ledger._c.execute(f"INSERT INTO paper_trades({','.join(row)}) "
+                              f"VALUES ({','.join('?' * len(row))})", list(row.values()))
+        ledger._c.commit()
+    ledger.reset_paper()                 # what POST /paper/initial-capital does, then logs
+    ledger.log(level="warning", stage="account",
+               message="Initial capital set to 5000 — paper account reset.")
+    assert recorder.reconcile()["errors"] == []
+    record = store.get(opened.trade_id)
+    assert (record["status"], record["outcome"], record["finalized"]) == ("CANCELLED", "CANCELLED", 1)
+    assert record["exit_reason"] == "paper-reset"
+    for field in ("actual_exit", "net_pnl", "realized_r"):
+        assert record[field] is None, field
+    assert [e["status"] for e in record["timeline"] if e["stage"] == "EXIT"] == ["NOT_REACHED"]
+
+
+def test_a_lab_session_reset_ends_its_open_and_pending_records(tmp_path):
+    """Restarting a lab wipes the broker's fills and orders. Its OPEN record
+    and its PENDING order record used to stay open forever."""
+    from services.journal_labs import PALabProjector
+    pa, _now, _feed = _pa_lab(tmp_path, "LIVE_PAPER")
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    projector = PALabProjector(pa)
+    projector.project(store)
+    [pending] = store.query_trades(where="record_source='PA_LAB'", limit=5)
+    assert pending["status"] == "PENDING"
+
+    at = datetime.now(timezone.utc).isoformat()
+    pa.process_quote("BTCUSDT", {"bid": 105.0, "ask": 105.1, "mark": 105.05, "received_at": at,
+                                 "event_timestamp": at, "sequence": 1}, feed_reliable=True)
+    projector.project(store)
+    [opened] = store.query_trades(where="record_source='PA_LAB'", limit=5)
+    assert opened["status"] == "OPEN" and pa.broker.positions()
+
+    pa.reset()
+    assert not pa.broker.positions()
+    projector.project(store)
+    record = store.get(opened["journal_record_id"])
+    assert (record["status"], record["outcome"], record["finalized"]) == ("CANCELLED", "CANCELLED", 1)
+    assert record["exit_reason"] == "lab-session-reset"
+    assert record["net_pnl"] is None and record["actual_exit"] is None
+    projector.project(store)             # nothing left to end; the new session's records stay
+    assert store.unfinished(("PA_LAB",)) == []
+
+
+def test_a_lab_session_reset_ends_an_unfilled_order_record(tmp_path):
+    from services.journal_labs import PALabProjector
+    pa, _now, _feed = _pa_lab(tmp_path, "LIVE_PAPER")
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    projector = PALabProjector(pa)
+    projector.project(store)
+    [pending] = store.query_trades(where="record_source='PA_LAB'", limit=5)
+    assert pending["status"] == "PENDING"
+    pa.reset()
+    projector.project(store)
+    record = store.get(pending["journal_record_id"])
+    assert (record["status"], record["outcome"]) == ("CANCELLED", "CANCELLED")
+    assert record["execution_status"] == "ORDER_REMOVED"

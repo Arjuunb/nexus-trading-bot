@@ -30,12 +30,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Optional
 
 from bot.data.resample import TF_SECONDS
+from data.ledger import SqliteLedger
 from data.trade_record_store import TradeRecordStore, record_id_for, utcnow
 
 #: |realized R| at or below this is a breakeven, not a win or a loss. A trade
@@ -46,6 +48,8 @@ BREAKEVEN_R = 0.05
 _CLOSE_SIDES = {"REDUCE", "CLOSE", "EXIT", "FLAT", "FLATTEN"}
 #: Why a position ended when an account restart cancelled what was still open.
 RESTART_EXIT_REASON = "account-restart"
+#: Why a position ended when a paper-account reset deleted it from the ledger.
+PAPER_RESET_EXIT_REASON = "paper-reset"
 #: A trade-less forward intent missing from the instance's parked intents for
 #: this long has provably not filled: it was dropped, not delayed.
 INTENT_GRACE_S = 3600
@@ -556,7 +560,49 @@ class LedgerProjector:
         results["pending_intents"] = self._project_pending(source, conn, lock, known,
                                                            set(a for a in alert_ids if a),
                                                            instances)
+        results["ended_by_reset"] = self._end_reset_records(source, conn, lock, by_id)
         return results
+
+    def _end_reset_records(self, source: LedgerSource, conn, lock, trades: dict) -> int:
+        """End OPEN records whose position a logged paper reset deleted.
+
+        An initial-capital change runs ``SqliteLedger.reset_paper``, which
+        deletes every paper trade and position, and logs the reset. A record
+        still OPEN whose trade is gone, and which opened before such a
+        logged reset, ends CANCELLED: nothing was sold or bought back, so no
+        exit price or result is invented. A missing row without that log is
+        left alone, since it could be an incomplete read."""
+        try:
+            resets = [r["ts"] for r in _query(
+                conn, lock, "SELECT ts FROM bot_logs WHERE stage='account' AND message LIKE ? "
+                            "ORDER BY ts", (f"%{SqliteLedger.PAPER_RESET_LOG}%",))]
+        except sqlite3.Error:            # a ledger copy without bot logs (the mirror)
+            return 0
+        if not resets:
+            return 0
+        names = ("INSTANCE", "LEGACY_ENGINE") if source.name == "MAIN" else (source.name,)
+        ended = 0
+        for rec in self.store.unfinished(names):
+            opened = _dt(rec.get("position_opened_at"))
+            if rec["status"] != "OPEN" or rec.get("trade_id") in trades or opened is None \
+                    or (rec.get("source_ref") or {}).get("ledger") != source.name:
+                continue
+            reset_at = next((_ts(ts) for ts in resets if (_dt(ts) or opened) > opened), None)
+            if reset_at is None:
+                continue
+            rec.update({"status": "CANCELLED", "outcome": "CANCELLED",
+                        "exit_reason": PAPER_RESET_EXIT_REASON,
+                        "execution_status": "POSITION_REMOVED", "position_closed_at": reset_at})
+            rec["source_ref"]["ended_without_exit"] = {
+                "basis": "a paper-account reset (initial-capital change) deleted the position "
+                         "from the ledger; no exit fill exists", "reset_logged_at": reset_at}
+            self.store.upsert_trade(
+                {"execution_key": rec["execution_key"], "status": "CANCELLED",
+                 "outcome": "CANCELLED", "exit_reason": PAPER_RESET_EXIT_REASON,
+                 "execution_status": "POSITION_REMOVED", "position_closed_at": reset_at,
+                 "source_ref_json": rec["source_ref"]}, events=_timeline(rec))
+            ended += 1
+        return ended
 
     def _source_name(self, source: LedgerSource, instance_id: str) -> str:
         if source.name != "MAIN":

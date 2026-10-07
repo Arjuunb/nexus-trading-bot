@@ -187,9 +187,51 @@ class V2LabProjector:
             store.upsert_trade(record, events=_timeline(record))
             written += 1
         written += self._unfilled_orders(store, metas, orders, entry_orders, known)
+        written += self._end_reset_records(store, fills, orders)
         decisions = self.project_decisions(store)
         return {"source": self.name, "written": written, "skipped_final": seen,
                 "decisions": decisions}
+
+    def _end_reset_records(self, store, fills: list[dict], orders: dict) -> int:
+        """End records whose lab session was replaced while they were open.
+
+        Restarting, starting or factory-resetting a lab replaces its session
+        and wipes the broker's fills, orders and positions. A record of an
+        earlier session that is still OPEN (its entry fill is gone) or
+        PENDING (its order is gone) can never progress: it ends CANCELLED,
+        with no exit fill invented. Records of the current session, and any
+        whose fill or order still exists, are left alone."""
+        try:
+            current = (self.account.session() or {}).get("id")
+        except Exception:  # noqa: BLE001 -- no session known: nothing is ended
+            current = None
+        if not current:
+            return 0
+        fill_ids = {f"{self.lab_id}:{f['id']}" for f in fills}
+        ended = 0
+        for rec in store.unfinished((self.record_source,)):
+            session = rec.get("session_id")
+            if not session or session == current:
+                continue
+            if rec["status"] == "OPEN" and rec.get("trade_id") not in fill_ids:
+                reason, state = "lab-session-reset", "POSITION_REMOVED"
+            elif rec["status"] == "PENDING" and rec.get("order_id") not in orders:
+                reason, state = "order removed by a lab session reset", "ORDER_REMOVED"
+            else:
+                continue
+            rec.update({"status": "CANCELLED", "outcome": "CANCELLED", "exit_reason": reason,
+                        "execution_status": state})
+            ref = rec.get("source_ref") or {}
+            ref["ended_without_exit"] = {
+                "basis": "the lab replaced this session (restart, new session or factory "
+                         "reset) and the broker no longer holds its fill or order; no exit "
+                         "fill exists", "current_session_id": current}
+            store.upsert_trade({"execution_key": rec["execution_key"], "status": "CANCELLED",
+                                "outcome": "CANCELLED", "exit_reason": reason,
+                                "execution_status": state, "source_ref_json": ref},
+                               events=_timeline(rec))
+            ended += 1
+        return ended
 
     def _key(self, meta: dict, entry: dict) -> str:
         session = meta.get("session_id") or "-"

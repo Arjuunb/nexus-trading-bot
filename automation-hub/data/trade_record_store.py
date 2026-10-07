@@ -579,6 +579,14 @@ class TradeRecordStore:
                 "SELECT COUNT(*) FROM trade_records" + (f" WHERE {where}" if where else ""),
                 list(params)).fetchone()[0])
 
+    def unfinished(self, sources: Iterable[str]) -> list[dict]:
+        """Records of these sources not finalized yet (OPEN, PENDING, ...)."""
+        marks = ",".join("?" * len(tuple(sources)))
+        with self._lock:
+            return [self._row(r) for r in self._c.execute(
+                f"SELECT * FROM trade_records WHERE finalized=0 AND record_source IN ({marks})",
+                tuple(sources))]
+
     def keys_with_status(self, sources: Iterable[str]) -> dict[str, tuple[str, int]]:
         marks = ",".join("?" * len(tuple(sources)))
         with self._lock:

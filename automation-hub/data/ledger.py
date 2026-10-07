@@ -639,6 +639,10 @@ class SqliteLedger:
         with self._lock:
             return [dict(r) for r in self._c.execute(query, args)]
 
+    #: The bot-log text (stage "account") an initial-capital reset writes after
+    #: reset_paper(); the journal reads it as the reset's durable evidence.
+    PAPER_RESET_LOG = "paper account reset"
+
     def reset_paper(self) -> None:
         """Clear paper trades + positions — used ONLY when the operator changes
         initial capital (a confirmed paper-account reset). Never live."""

@@ -10,6 +10,8 @@ import webhook_api as _wa
 from fastapi import APIRouter, Header, HTTPException, Body, Query, Depends  # noqa: F401
 from typing import Optional, List, Dict  # noqa: F401
 
+from data.ledger import SqliteLedger
+
 # Fallback: expose every webhook_api global by name so references the qualifier
 # intentionally left bare (e.g. inside f-strings) still resolve. Qualified
 # `_wa.<name>` uses stay dynamic; these copies are only a safety net.
@@ -103,7 +105,7 @@ def paper_set_initial_capital(body: InitialCapital,
     _wa.paper.starting_balance = body.amount
     _wa.paper._persist_account_snapshot()
     _wa.ledger.log(level="warning", stage="account",
-                   message=f"Initial capital set to {body.amount} — paper account reset.")
+                   message=f"Initial capital set to {body.amount} — {SqliteLedger.PAPER_RESET_LOG}.")
     return {"ok": True, **(paper_account())}
 
 @router.get("/paper/positions")
