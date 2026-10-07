@@ -107,6 +107,8 @@ class GuardianStore:
                   WHERE source_service='guardian_smc_journal_history' AND event_type='smc_closed_journal_observed';
                 CREATE INDEX IF NOT EXISTS smc_position_history ON events(sequence)
                   WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
+                CREATE INDEX IF NOT EXISTS smc_exit_history ON events(sequence)
+                  WHERE source_service='guardian_smc_exit_fills' AND event_type='smc_exit_evidence_observed';
                 CREATE INDEX IF NOT EXISTS smc_position_order ON events(json_extract(payload_json,'$.order_id'),sequence)
                   WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
                 CREATE INDEX IF NOT EXISTS smc_position_before_key
@@ -523,6 +525,34 @@ class GuardianStore:
             if any(r["bytes"] > 16384 for r in rows):
                 raise ValueError("Fill-position history evidence exceeds bound")
             events = [{**json.loads(r["payload"]), "guardian_sequence": r["sequence"], "received_at": r["received_at"]} for r in rows[:32]]
+            heartbeat = db.execute("SELECT * FROM heartbeats WHERE component=?", (PROBE,)).fetchone()
+            cursor = db.execute("SELECT source_sequence,anchor_id FROM observer_cursors WHERE component=?", (COMPONENT,)).fetchone()
+        return {"events": events, "after": after, "next_after": events[-1]["guardian_sequence"] if events else after,
+                "has_more": len(rows)>32, "guardian_snapshot_atomic": True,
+                "source_cursor": {"after": cursor["source_sequence"] if cursor else 0, "anchor": cursor["anchor_id"] if cursor else ""},
+                "heartbeats": {PROBE: dict(heartbeat)} if heartbeat else {}}
+
+    def smc_exit_fills_page(self, *, after: int = 0) -> dict:
+        """Own bounded imported exit records; GET never creates or migrates a DB."""
+        from time import monotonic
+        from .smc_exit_fills import COMPONENT, PROBE, _unique_fields
+        if type(after) is not int or not 0 <= after <= 2**63-1:
+            raise ValueError("Invalid exit history cursor")
+        with closing(sqlite3.connect(self.path.resolve().as_uri()+"?mode=ro", uri=True, timeout=.25)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA busy_timeout=250")
+            deadline = monotonic()+1
+            db.set_progress_handler(lambda: int(monotonic()>deadline), 1000)
+            db.execute("BEGIN")
+            rows = db.execute("SELECT sequence,received_at,length(CAST(payload_json AS BLOB)) AS bytes,"
+                              "substr(payload_json,1,16385) AS payload FROM events INDEXED BY smc_exit_history "
+                              "WHERE source_service='guardian_smc_exit_fills' AND event_type='smc_exit_evidence_observed' "
+                              "AND sequence>? ORDER BY sequence LIMIT 33", (after,)).fetchall()
+            if any(r["bytes"]>16384 for r in rows):
+                raise ValueError("Exit history evidence exceeds bound")
+            events = [{**json.loads(r["payload"], object_pairs_hook=_unique_fields),
+                       "guardian_sequence": r["sequence"], "received_at": r["received_at"]} for r in rows[:32]]
             heartbeat = db.execute("SELECT * FROM heartbeats WHERE component=?", (PROBE,)).fetchone()
             cursor = db.execute("SELECT source_sequence,anchor_id FROM observer_cursors WHERE component=?", (COMPONENT,)).fetchone()
         return {"events": events, "after": after, "next_after": events[-1]["guardian_sequence"] if events else after,

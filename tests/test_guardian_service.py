@@ -179,6 +179,7 @@ def test_invalid_schema_unknown_fields_and_secret_text_are_rejected(app):
     ("/v1/smc-journal", "smc_journal_history_page"),
     ("/v1/smc-intent-events", "smc_intent_history_page"),
     ("/v1/smc-fill-transitions", "smc_fill_positions_page"),
+    ("/v1/smc-exit-fills", "smc_exit_fills_page"),
 ])
 def test_smc_retained_history_read_authority_unknown_state_and_errors(app, monkeypatch, route, page_method):
     assert _request(app, "GET", route)[0] == 401
@@ -204,7 +205,7 @@ def test_smc_retained_history_read_authority_unknown_state_and_errors(app, monke
 
 
 @pytest.mark.parametrize("enabled", [False, True])
-@pytest.mark.parametrize("kind", ["JOURNAL", "INTENT", "FILL_POSITIONS"])
+@pytest.mark.parametrize("kind", ["JOURNAL", "INTENT", "FILL_POSITIONS", "EXIT_FILLS"])
 def test_smc_history_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled, kind):
     import os
     import tradexa.guardian.service as service
@@ -216,8 +217,8 @@ def test_smc_history_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled,
     monkeypatch.setenv("GUARDIAN_READ_KEY", READ_KEY)
     monkeypatch.setenv("GUARDIAN_SOURCE_KEYS_JSON", json.dumps({"guardian_probe": SOURCE_KEY}))
     if enabled:
-        suffix = {"JOURNAL": "smc-journal", "INTENT": "smc-intent-events", "FILL_POSITIONS": "smc-fill-transitions"}[kind]
-        flag = "GUARDIAN_SMC_FILL_POSITIONS_URL" if kind == "FILL_POSITIONS" else f"GUARDIAN_SMC_{kind}_HISTORY_URL"
+        suffix = {"JOURNAL": "smc-journal", "INTENT": "smc-intent-events", "FILL_POSITIONS": "smc-fill-transitions", "EXIT_FILLS": "smc-exit-fills"}[kind]
+        flag = f"GUARDIAN_SMC_{kind}_URL" if kind in ("FILL_POSITIONS", "EXIT_FILLS") else f"GUARDIAN_SMC_{kind}_HISTORY_URL"
         monkeypatch.setenv(flag, "http://app:8000/guardian/" + suffix)
         monkeypatch.setenv("GUARDIAN_LAB_OBSERVER_KEY", "independent-observer-key-123456789")
     threads, apps = [], []
@@ -246,12 +247,12 @@ def test_smc_history_monitor_is_opt_in_and_stops(tmp_path, monkeypatch, enabled,
     observers = [t for t in threads if t.target == service._lab_execution_monitor]
     assert len(observers) == int(enabled)
     assert all(t.started and t.joined for t in threads)
-    probe = {"JOURNAL": service.JOURNAL_PROBE, "INTENT": service.INTENT_PROBE, "FILL_POSITIONS": service.POSITION_PROBE}[kind]
+    probe = {"JOURNAL": service.JOURNAL_PROBE, "INTENT": service.INTENT_PROBE, "FILL_POSITIONS": service.POSITION_PROBE, "EXIT_FILLS": service.EXIT_PROBE}[kind]
     assert (probe in apps[0].required_components) == enabled
     if enabled:
         [collector] = observers[0].args[0]
         expected = {"JOURNAL": service.GuardianSMCJournalHistory, "INTENT": service.GuardianSMCIntentHistory,
-                    "FILL_POSITIONS": service.GuardianSMCFillPositions}[kind]
+                    "FILL_POSITIONS": service.GuardianSMCFillPositions, "EXIT_FILLS": service.GuardianSMCExitFills}[kind]
         assert isinstance(collector, expected)
 
 

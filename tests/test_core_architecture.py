@@ -371,6 +371,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Fill-position source export reuses pure bounds/hash/redaction contracts;
     # source capture never imports Guardian and stays in the broker ledger.
     "automation-hub/services/guardian_smc_fill_transition_read_model.py",
+    # Exit source GET shares only bounded validation/cursor contracts. No
+    # Guardian store, journal or broker authority is invoked by this reader.
+    "automation-hub/services/guardian_smc_exit_fill_read_model.py",
 }
 
 

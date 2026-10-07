@@ -953,6 +953,137 @@ Protected strategy files and freeze baselines remain byte-unchanged from
 the prior local `304ff1c` milestone. This remains a local-only read-model phase,
 not a production rollout or complete execution/journal/lifecycle certification.
 
+## Read-only SMC exit export and retained import (2026-10-07)
+
+This local milestone builds on source-only exit capture at `5d935e6`. It adds
+authenticated, bounded reads and replay-safe observation in the independent
+Guardian database. It does **not** change source capture, paper execution,
+strategy rules, approval modes, the SMC Agent, journal finalization or runtime
+gates. No code is pushed or deployed, main is unchanged, and no live routing or
+deployment environment is enabled or modified.
+
+### Data and authority contract
+
+- Source: `GET /guardian/smc-exit-fills?after=0&anchor=` reads the configured
+  `settings.smc_paper_db` using `mode=ro`, `query_only`, a 250 ms busy timeout,
+  a 0.5 s SQLite progress deadline and a single snapshot transaction. Only an
+  independently configured `X-Guardian-Observer-Key` can authorize this GET;
+  the control/webhook key cannot. It never constructs a broker or journal,
+  installs a source schema/index, reconstructs evidence, or performs network
+  or trading work. Duplicate/unknown query fields are rejected.
+- The page contains **at most 32 fill rows**, ordered by source SQLite row ID,
+  including rows with null exit capture. This preserves cursor coverage, not
+  a count of actual exits. A captured payload is capped at 8 KiB; source
+  payload reads are length-checked and prefix-bounded before JSON decoding.
+  Present exit evidence must agree exactly with the existing atomic
+  `fill_position_json` original position, IDs, quantity, price, flags and
+  REDUCE/CLOSE/REVERSE effect. SMC account and engine identity must match.
+- `RECORDED_SOURCE_EXIT` means retained exit-trigger facts passed this read
+  contract. `UNVERIFIED_NO_EXIT_CAPTURE` means **unknown evidence**, including
+  entry/addition and legacy fills; it is not proof of an entry, no exit, no
+  order, or a missed trade. Synthetic exit order IDs stay literal; no persisted
+  order, manual-close reason, input timestamp, origin or journal ID is invented.
+- Source locks, missing data, changed cursor identity or malformed/contradictory
+  evidence return a sanitized HTTP 503 / `PERSISTENCE_BLOCKED` with code
+  `SMC_EXIT_EVIDENCE_UNAVAILABLE`. Short WAL writes remain readable. Persistent
+  locks fail closed and can be retried after release, without resetting data.
+
+The optional `GUARDIAN_SMC_EXIT_FILLS_URL` defaults **off**. When explicitly
+configured to the internal `http://app:8000/guardian/smc-exit-fills` read route,
+the independent collector uses the observer credential, a 3 s HTTP timeout,
+no redirects and a 384 KiB response bound. Root/page/row contracts, timestamps,
+numbers, IDs, exit semantics and duplicate JSON fields are validated. Source
+and standalone exit decoders agree on all tested actual broker branches;
+Guardian's image imports no execution, services, broker or strategy package.
+No source database mount or trading credential is added to Guardian.
+
+Each observed row has event type `smc_exit_evidence_observed` and a stable ID
+derived from **account ID + fill ID**. The same fill in another account is not
+deduplicated into it. Changed evidence under the same ID cannot overwrite the
+immutable event. Events and the compare-and-swap checkpoint commit in one
+Guardian-owned transaction. The checkpoint binds account, first row and
+previous row material; changed/deleted anchor rows stop import rather than
+silently reset it. It is **not** a tamper-proof certificate for intervening
+source history, which remains owner-mutable/restorable.
+
+Restart/replay uses the committed cursor: failed event/cursor writes roll back
+both, and a failed heartbeat after page commit does not lose or duplicate that
+page. A failing/stale observer masks freshness but retains historical facts.
+Persistent Guardian persistence failure can age observation to UNKNOWN; it
+cannot approve, reject, reconcile or alter a trade. This importer runs outside
+the trading process and has no synchronous trading dependency.
+
+### Guardian read surface
+
+`GET /v1/smc-exit-fills?after=0` requires the separate `X-Guardian-Key` read
+credential and returns no-store, indexed pages of at most 32 retained events,
+plus the source checkpoint and an atomic Guardian-local heartbeat snapshot.
+Read refreshes write no evidence or cursor and never create a missing store.
+Oversized, ambiguous, unsafe or contradictory cached evidence returns sanitized
+503 / `EXIT_EVIDENCE_UNAVAILABLE`; unavailable SQLite returns
+`PERSISTENCE_UNAVAILABLE`. Writes to this route are not supported.
+
+`history_state` describes the importer, **not the bot or current protection**:
+
+| State | Meaning |
+| --- | --- |
+| `CAUGHT_UP_AT_LAST_POLL` | A fresh successful observation reached the source tail at that poll |
+| `IMPORTING` | More source rows remain at the latest fresh poll |
+| `UNKNOWN` | Missing, failed, invalid or stale observation; retained rows remain historical |
+
+All certification flags remain false: execution integrity, full lifecycle,
+source immutability, position lifecycle, journal close, current protection,
+paper-account binding, currency binding and net P&L. The API does not join
+exit IDs to journal outcomes or infer closure by nearby time/price. Counts of
+this stream are **observed fill records**, not completed trades or actual exit
+counts. Exact original entry execution/order/position IDs are retained inside
+the source evidence without becoming a current runtime verdict.
+
+### Exit-import local validation
+
+Failure-first tests cover malformed/oversized/ambiguous evidence, independent
+read credentials, replay collisions and races, partial close and reversal
+origin preservation, all actual exit kinds, tick/candle/mark sources, legacy
+null/pre-column data, account/engine isolation, 32-row paging, late timestamps,
+missing stores, WAL reads, persistent lock/retry, import commit boundaries,
+restart and 100 refreshes without source writes or duplicate events.
+
+The focused new import/service/architecture/freeze run passed **209 tests**.
+The broader Guardian/broker/provenance/crash-boundary/architecture/freeze run
+passed **898 tests** in 22.14 seconds, with five existing deprecation warnings.
+JUnit evidence: `/private/tmp/guardian-smc-exit-import-targeted.xml`.
+The complete local Python suite passed **4,930 tests, 15 skipped**, with zero
+failures/errors and 96 deprecation warnings in 359.00 seconds. No background
+worker warning occurred. Complete JUnit evidence:
+`/private/tmp/guardian-smc-exit-import-complete-suite.xml`.
+
+All counts below are disposable stop-exit fixtures, **not production evidence**.
+Their source broker has 1 persisted order / 0 open positions / 2 fills after
+the exit. The observer never alters any of those source counts.
+
+| Import boundary / replay | Guardian records / source checkpoint | Result |
+| --- | --- | --- |
+| Failed event insert or checkpoint write | 0 / 0 | Both roll back; retry imports exactly 2 rows |
+| Heartbeat failure after committed page | 2 / 2 | Freshness becomes UNKNOWN; restart resumes without duplicating the page |
+| Restart + 100 repeated polls/read refreshes | 2 / 2 | Zero new evidence rows and zero source writes |
+| Changed/deleted cursor anchor | Prior records / prior checkpoint | Import stops; no reset, overwrite or inferred current health |
+
+The **119 additional cases** comprise 39 paired source/import tests, 77
+standalone contract/failure tests and 3 service route/opt-in-monitor cases.
+The broader and complete runs include them and both unchanged SMC freezes.
+
+Both SMC freeze systems pass. Protected strategy files and baseline remain
+byte-identical to `804a7c0`; execution, Agent, runtime and journal writer files
+remain unchanged from the preceding `5d935e6` capture milestone. Backend/API
+and testing skills guided bounded contracts and failure-first validation, not
+trading or strategy authority.
+
+The next lifecycle slice is an exact-ID retained exit association with entry
+position and journal evidence. Stop-move history, journal-close source IDs,
+current exposure and full-account/currency/net-P&L proof still require their
+own source evidence and acceptance tests. This read export/import milestone
+does not complete the whole Guardian PRD or certify VPS operation.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

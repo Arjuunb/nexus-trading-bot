@@ -6,7 +6,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Query
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from config import settings
@@ -16,12 +16,33 @@ from services.guardian_lab_fill_read_model import lab_fill_page
 from services.guardian_smc_journal_read_model import smc_journal_page
 from services.guardian_smc_intent_read_model import smc_intent_event_page
 from services.guardian_smc_fill_transition_read_model import smc_fill_transition_page
+from services.guardian_smc_exit_fill_read_model import smc_exit_fill_page
 from services.guardian_instance_read_model import instance_decision_page
 from services.guardian_instance_ledger_read_model import instance_paper_ledger_snapshot
 from services.guardian_lab_feed_read_model import lab_feed_snapshot
 from services.guardian_read_model import lab_decision_page, lab_decision_snapshot, lab_lifecycle_page
 
 router = APIRouter(tags=["guardian-observer"])
+
+
+@router.get("/guardian/smc-exit-fills")
+def guardian_smc_exit_fills(
+        request: Request,
+        after: int = Query(0, ge=0, le=2**63-1),
+        anchor: str = Query("", max_length=64),
+        x_guardian_observer_key: Optional[str] = Header(default=None)):
+    _require_observer_key(x_guardian_observer_key)
+    query = request.query_params
+    if set(query) - {"after", "anchor"} or any(len(query.getlist(k)) != 1 for k in query):
+        raise HTTPException(422, "Invalid or ambiguous exit evidence query")
+    try:
+        page = smc_exit_fill_page(settings.smc_paper_db, after=after, anchor=anchor)
+    except (sqlite3.Error, ValueError, TypeError, OverflowError, RecursionError) as exc:
+        raise HTTPException(503, {"state": "PERSISTENCE_BLOCKED", "code": "SMC_EXIT_EVIDENCE_UNAVAILABLE"}) from exc
+    return JSONResponse({"schema_version": 1, "scope": "RETAINED_SMC_PAPER_EXIT_FILL_EVIDENCE",
+                         "observed_at": datetime.now(timezone.utc).isoformat(),
+                         "execution_integrity_verified": False, "page": page},
+                        headers={"Cache-Control": "no-store"})
 
 
 @router.get("/guardian/smc-fill-transitions")
