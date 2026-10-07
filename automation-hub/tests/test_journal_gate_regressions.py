@@ -545,3 +545,22 @@ def test_a_lab_journal_pass_never_holds_the_broker_lock(tmp_path):
     assert elapsed < 2, f"the pass waited {elapsed:.1f} s for the broker lock"
     [record] = store.query_trades(where="record_source='PA_LAB'", limit=5)
     assert record["status"] == "OPEN"
+
+
+def test_an_ordinary_ledger_pass_does_not_read_the_bot_logs(tmp_path):
+    """bot_logs has no index and grows with every cycle; the reset check reads
+    it only when an OPEN record's trade is actually missing."""
+    ledger = SqliteLedger(str(tmp_path / "ledger.db"))
+    paper = PaperExecutionEngine(ledger, 10_000)
+    paper.open(symbol="BTCUSDT", side="BUY", size=1, entry=100, stop=95)
+    store = TradeRecordStore(str(tmp_path / "trade_records.db"))
+    recorder = JournalRecorder(store)
+    recorder.add_ledger(LedgerSource("MAIN", ledger))
+    statements = []
+    ledger._c.set_trace_callback(statements.append)
+    try:
+        recorder.reconcile()
+        recorder.reconcile()
+    finally:
+        ledger._c.set_trace_callback(None)
+    assert statements and not [s for s in statements if "bot_logs" in s]

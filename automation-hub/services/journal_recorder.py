@@ -581,21 +581,24 @@ class LedgerProjector:
         logged reset, ends CANCELLED: nothing was sold or bought back, so no
         exit price or result is invented. A missing row without that log is
         left alone, since it could be an incomplete read."""
+        names = ("INSTANCE", "LEGACY_ENGINE") if source.name == "MAIN" else (source.name,)
+        missing = [rec for rec in self.store.unfinished(names)
+                   if rec["status"] == "OPEN" and rec.get("trade_id") not in trades
+                   and _dt(rec.get("position_opened_at")) is not None
+                   and (rec.get("source_ref") or {}).get("ledger") == source.name]
+        if not missing:                  # the usual pass: no log read, no ledger lock
+            return 0
+        earliest = min(_ts(rec["position_opened_at"]) for rec in missing)
         try:
             resets = [r["ts"] for r in _query(
-                conn, lock, "SELECT ts FROM bot_logs WHERE stage='account' AND message LIKE ? "
-                            "ORDER BY ts", (f"%{SqliteLedger.PAPER_RESET_LOG}%",))]
+                conn, lock, "SELECT ts FROM bot_logs WHERE stage='account' AND ts > ? "
+                            "AND message LIKE ? ORDER BY ts",
+                (earliest, f"%{SqliteLedger.PAPER_RESET_LOG}%"))]
         except sqlite3.Error:            # a ledger copy without bot logs (the mirror)
             return 0
-        if not resets:
-            return 0
-        names = ("INSTANCE", "LEGACY_ENGINE") if source.name == "MAIN" else (source.name,)
         ended = 0
-        for rec in self.store.unfinished(names):
+        for rec in missing:
             opened = _dt(rec.get("position_opened_at"))
-            if rec["status"] != "OPEN" or rec.get("trade_id") in trades or opened is None \
-                    or (rec.get("source_ref") or {}).get("ledger") != source.name:
-                continue
             reset_at = next((_ts(ts) for ts in resets if (_dt(ts) or opened) > opened), None)
             if reset_at is None:
                 continue
