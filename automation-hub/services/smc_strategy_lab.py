@@ -613,11 +613,21 @@ class SMCPaperAccount:
                                    market_data_source="Binance USD-M public WebSocket",
                                    candle_id=idempotency_key)
         now = _iso()
+        try:
+            account_before = self.broker.account(persist_metrics=False)
+        except Exception:  # noqa: BLE001 — journal evidence must never affect placement
+            account_before = {}
         config = {"reference_price": entry, "stop_loss": protective_stop,
                   "target_1": target_1, "target_2": target_2,
                   "target_1_r": target_1_r, "target_2_r": target_2_r, "rules": rules,
                   "correlation_id": correlation_id, "idempotency_key": idempotency_key,
-                  "execution_mode": "PAPER", "live_execution_allowed": False}
+                  "execution_mode": "PAPER", "live_execution_allowed": False,
+                  # account state at placement, for the trade journal
+                  "leverage": self.broker.leverage,
+                  "account_balance_before": account_before.get("balance"),
+                  "account_equity_before": account_before.get("equity"),
+                  "available_margin_before": account_before.get("free_margin"),
+                  "max_risk_pct": 1.0}
         self._db.execute(
             "INSERT INTO smc_order_meta(order_id,session_id,ownership,idempotency_key,proposal_id,setup_id,poi_id,model_id,model_version,direction,entry,stop,target_1,target_2,risk_pct,creation_candle,expiry_candle,status,reason,config_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (order["id"], current["id"], ownership, idempotency_key, proposal_id, setup_id, poi_id,
@@ -1352,6 +1362,42 @@ class SMCPaperAccount:
                     (f"smc-journal-{candidate['proposal_id']}",))],
             })
         return rows
+
+    def journal_export(self) -> dict:
+        """Stored execution evidence for the canonical trade journal: broker
+        fills/orders/funding, SMC order metadata, candidate evaluations frozen
+        at decision time, and session modes. Read-only."""
+        export = self.broker.journal_export()
+        with self._lock:
+            meta = {}
+            for row in self._db.execute("SELECT * FROM smc_order_meta"):
+                item = dict(row)
+                try:
+                    item["config"] = json.loads(item.pop("config_json") or "{}")
+                except (TypeError, ValueError):
+                    item["config"] = {}
+                meta[item["order_id"]] = item
+            sessions = {row["id"]: dict(row) for row in self._db.execute(
+                "SELECT id, mode, symbol, timeframe, started_at, status, risk_pct FROM smc_sessions")}
+        return {**export, "lab_id": "SMC_LAB", "meta": meta,
+                "candidate_lookup": self._journal_candidate,
+                "sessions": sessions, "strategy_version": STRATEGY_VERSION}
+
+    def _journal_candidate(self, proposal_id: str) -> dict:
+        """The candidate evaluation frozen at decision time for ONE proposal,
+        by a targeted read (never every candidate on every sync pass)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT proposal_id, model_id, status, payload, created_at FROM smc_candidates "
+                "WHERE proposal_id=?", (proposal_id,)).fetchone()
+        if not row:
+            return {}
+        try:
+            payload = json.loads(row["payload"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        return {"model_id": row["model_id"], "status": row["status"],
+                "created_at": row["created_at"], "payload": payload}
 
     def journal(self, session_id: str | None = None) -> dict:
         session_ids = ([session_id] if session_id else

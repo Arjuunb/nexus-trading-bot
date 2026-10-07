@@ -108,6 +108,20 @@ from services.decision_journal import DecisionJournal  # noqa: E402
 decision_journal_store = DecisionJournalStore(settings.journal_db)
 pipeline.journal = DecisionJournal(decision_journal_store)
 
+# Canonical trade journal: the single structured, audit-grade record of every
+# executed trade (same journal.db). The pipeline registers each decision; the
+# execution engine reports every fill, partial exit, close and stop/target
+# change. Reconciliation and lab ingestion keep it complete (see journal_sync).
+from data.trade_journal_store import TradeJournalStore  # noqa: E402
+from services.trade_journal import TradeJournalRecorder  # noqa: E402
+trade_journal_store = TradeJournalStore(settings.journal_db)
+trade_journal = TradeJournalRecorder(
+    trade_journal_store, legacy_journal=pipeline.journal,
+    logger=lambda message: ledger.log(level="warning", stage="journal", message=message[:400]),
+    preferred_window=(settings.session_start, settings.session_end))
+pipeline.trade_journal = trade_journal
+paper.journal = trade_journal
+
 # Live-trading readiness gate: an enforced checklist between paper and live.
 # Live stays locked by default; this only reports real state, never fakes it.
 from services.safety_gate import SafetyState  # noqa: E402
@@ -163,6 +177,8 @@ pipeline.journal_context = {
     "exchange": _os.environ.get("HUB_EXCHANGE", "paper"),
     "instrument_type": "spot",
 }
+# fills that arrive with no registered decision still carry this identity
+paper.journal_provenance = pipeline.journal_context
 # import already-closed journal trades so the memory isn't empty on first boot
 trade_memory.backfill()
 
@@ -241,6 +257,7 @@ instance_manager = TradingInstanceManager(
     fetcher=ws_feed.make_fetcher(_default_fetcher) if settings.use_live_data else None,
     decision_store=decision_store,
     decision_journal=pipeline.journal,
+    trade_journal=trade_journal,
     trade_memory=trade_memory,
     skipped_store=skipped_store,
     cycle_store=cycle_store,
@@ -976,6 +993,23 @@ price_action_runtime = PriceActionLabRuntime(
     v2_market_data, price_action_paper, autostart=True,
     market_hub=forward_paper_market_hub,
     poll_seconds=settings.price_action_poll_s)
+# Keep the canonical journal complete: migrate the legacy decision journal,
+# reconcile against the ledger, and ingest the isolated lab ledgers and the
+# replay (backtest) journal. Once at boot on the sync thread (so a large first
+# import never delays startup), then on a timer; tests run the boot pass inline.
+from services.journal_ingest import JournalSync  # noqa: E402
+journal_sync = JournalSync(
+    trade_journal, legacy_store=decision_journal_store, ledger=ledger,
+    mode_resolver=instance_manager.journal_identity,
+    labs=(price_action_paper, smc_paper), replay_store=journal_store,
+    interval_s=float(_os.environ.get("HUB_JOURNAL_SYNC_INTERVAL", "60")),
+    logger=lambda message: ledger.log(level="warning", stage="journal", message=message[:400]))
+import sys as _sys  # noqa: E402
+if "PYTEST_CURRENT_TEST" in _os.environ or "pytest" in _sys.modules:
+    journal_sync.run_once()
+else:
+    journal_sync.start(timer=_os.environ.get("HUB_JOURNAL_SYNC", "1").strip().lower()
+                       not in ("0", "false", "no", "off"))
 price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
 price_action_research = PriceActionExperimentRunner(price_action_experiments)
 v2_market_update_job = MarketDataUpdateJob(v2_market_data)
@@ -1226,6 +1260,7 @@ import routers.bots  # noqa: E402
 import routers.engine  # noqa: E402
 import routers.health  # noqa: E402
 import routers.journal  # noqa: E402
+import routers.journal_v2  # noqa: E402
 import routers.paper  # noqa: E402
 import routers.paper_v2  # noqa: E402
 import routers.risk  # noqa: E402
@@ -1245,6 +1280,7 @@ router.include_router(routers.bots.router)
 router.include_router(routers.engine.router)
 router.include_router(routers.health.router)
 router.include_router(routers.journal.router)
+router.include_router(routers.journal_v2.router)
 router.include_router(routers.paper.router)
 router.include_router(routers.paper_v2.router)
 router.include_router(routers.risk.router)

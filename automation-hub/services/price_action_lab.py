@@ -238,6 +238,51 @@ class PriceActionPaperAccount:
             row = self._db.execute("SELECT * FROM pa_sessions WHERE status='active' ORDER BY started_at DESC LIMIT 1").fetchone()
             return dict(row) if row else {}
 
+    def journal_export(self) -> dict:
+        """Stored execution evidence for the canonical trade journal: broker
+        fills/orders/funding plus this lab's order metadata (with the frozen
+        setup captured at placement) and session modes. Read-only."""
+        export = self.broker.journal_export()
+        with self._lock:
+            meta = {}
+            for row in self._db.execute("SELECT * FROM pa_order_meta"):
+                item = dict(row)
+                try:
+                    item["config"] = json.loads(item.pop("config_json") or "{}")
+                except (TypeError, ValueError):
+                    item["config"] = {}
+                meta[item["order_id"]] = item
+            sessions = {row["id"]: dict(row) for row in self._db.execute(
+                "SELECT id, mode, symbol, timeframe, started_at, status FROM pa_sessions")}
+        return {**export, "lab_id": "PRICE_ACTION_LAB", "meta": meta, "sessions": sessions,
+                "research_lookup": self._journal_research_for_order,
+                "strategy_version": PRICE_ACTION_STRATEGY_VERSION}
+
+    def _journal_research_for_order(self, order_id: str) -> dict:
+        """The PA journal's own excursion/MTF evidence for ONE order, by a
+        targeted indexed read (never a whole-journal scan)."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT session_id, setup_id FROM pa_order_meta WHERE order_id=?", (order_id,)).fetchone()
+        if not row:
+            return {}
+        try:
+            with self.journal._lock:
+                entry = self.journal._db.execute(
+                    "SELECT id FROM pa_journal_entries WHERE session_id=? AND setup_id=?",
+                    (row["session_id"], row["setup_id"])).fetchone()
+                latest = entry and self.journal._db.execute(
+                    "SELECT payload_json FROM pa_journal_revisions WHERE journal_id=? "
+                    "ORDER BY revision_no DESC LIMIT 1", (entry["id"],)).fetchone()
+            record = json.loads(latest["payload_json"]) if latest else {}
+        except Exception:  # noqa: BLE001 — enrichment only
+            return {}
+        outcome = record.get("outcome") or {}
+        return {"mfe_r": outcome.get("maximum_favourable_excursion"),
+                "mae_r": outcome.get("maximum_adverse_excursion"),
+                "exit_reason": outcome.get("exit_reason"),
+                "mtf_evidence": (record.get("market_context") or {}).get("mtf_evidence")}
+
     def sessions(self) -> list[dict]:
         with self._lock:
             rows = self._db.execute("SELECT * FROM pa_sessions ORDER BY started_at DESC").fetchall()
@@ -1250,6 +1295,10 @@ class PriceActionPaperAccount:
             "leverage": self.broker.leverage, "execution_mode": "PAPER",
             "correlation_id": correlation_id, "idempotency_key": idempotency_key,
             "live_execution_allowed": False,
+            # account state when the order was placed, for the trade journal
+            "account_balance_before": account.get("balance"),
+            "account_equity_before": account.get("equity"),
+            "available_margin_before": account.get("free_margin"),
         }
         order = self.broker.submit(symbol=current.get("symbol") or proposal.get("symbol") or "BTCUSDT",
                                    side="buy" if is_long else "sell", order_type="stop",

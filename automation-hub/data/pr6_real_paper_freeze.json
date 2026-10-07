@@ -4,8 +4,8 @@
   "approved_delta": "Replace synthesized HTF clocks with services/mtf_policy.py native-candle evidence only.",
   "sha256": {
     "services/mtf_policy.py": "f54da90f2643152f9e9864f42ea77e9fc920c4b75aba19e3190fc3e86ac199a0",
-    "services/price_action_lab.py": "85b06d105e025769cffd0c2234862a6d90772ab70813b15713f3c1df15657d6d",
-    "services/smc_strategy_lab.py": "009bd4f48caeb443adc9849b4708001e2414ad6119104c6916572f0169de1da1",
+    "services/price_action_lab.py": "3a2c3c83201e72af16fcdbfeb8224fe731d965c24408e18fca249e274d55ec64",
+    "services/smc_strategy_lab.py": "ecb67499595a4008d0adbe55f7633b3475d3700cbcf5babea088094e0316f813",
     "services/native_price_action.py": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",
     "services/native_smc.py": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23"
   },
@@ -62,6 +62,19 @@
       "alpha_rules_changed": false,
       "fill_timing_changed": false,
       "verification": "A one-token change to two defaults plus comments. The three-branch dispatch on operating_mode is untouched, so what 'automatic' does -- call _place_proposal on a proposal that has already cleared every risk, attestation, persistence and feed-reliability gate ahead of it -- is unchanged; only which branch a NEW session starts on differs. Existing sessions keep their stored mode, and the read fallbacks for rows that predate the column (price_action_lab.py old.get(...) and session.get(...)) deliberately still resolve to signals_only so an old session is never silently armed. native_price_action.py, native_smc.py and mtf_policy.py still hash to their PR #6 baseline: entry conditions, stop model, target R and the native MTF policy are untouched. real_execution_allowed remains False and paper_only True in both labs, so this arms simulated fills only and cannot reach a venue."
+    },
+    {
+      "commits": [
+        "pending (canonical trade journal)"
+      ],
+      "delta": "Expose stored execution evidence to the canonical trade journal: add read-only journal_export() methods to PriceActionPaperAccount and SMCPaperAccount (plus single-record, indexed lookups for PA excursion evidence and the SMC candidate evaluation), and record the account balance, equity, free margin and leverage (plus SMC's existing 1% risk ceiling) in the order metadata written when an order is placed.",
+      "files_rehashed": [
+        "services/price_action_lab.py",
+        "services/smc_strategy_lab.py"
+      ],
+      "alpha_rules_changed": false,
+      "fill_timing_changed": false,
+      "verification": "Purely additive: two SELECT-only export methods and extra keys in the order metadata dict after every sizing, risk and attestation decision has already been made. The SMC account snapshot is read with persist_metrics=False so it writes nothing, and a failure to read it records no account state instead of affecting placement. No statement, threshold, rule, quantity, price or fill path changed. native_price_action.py, native_smc.py and mtf_policy.py still hash to their PR #6 baseline values; real_execution_allowed stays False and paper_only True in both labs."
     }
   ]
 }

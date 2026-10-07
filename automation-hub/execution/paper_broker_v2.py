@@ -299,6 +299,31 @@ class PaperBrokerV2:
             return [dict(r) for r in self._c.execute(
                 "SELECT * FROM v2_fills ORDER BY timestamp DESC LIMIT ?", (int(limit),))]
 
+    def journal_export(self) -> dict:
+        """Every stored fill (oldest first), order and funding event, for the
+        canonical trade journal. Read-only; nothing is derived from market data."""
+        with self._lock:
+            fills = [dict(r) for r in self._c.execute(
+                "SELECT * FROM v2_fills ORDER BY COALESCE(fill_timestamp, timestamp), rowid")]
+            orders = {r["id"]: dict(r) for r in self._c.execute("SELECT * FROM v2_orders")}
+            funding = [dict(r) for r in self._c.execute(
+                "SELECT * FROM v2_funding_events ORDER BY funding_timestamp")]
+            account = dict(self._account_row())
+        return {"fills": fills, "orders": orders, "funding": funding,
+                "account_id": account.get("account_id"), "fee_rate": self.fee_rate,
+                "leverage": self.leverage}
+
+    def journal_watermark(self) -> tuple:
+        """Changes whenever a fill or funding event is booked, or the ledger
+        is reset: the newest row of each (rowid and key). Two indexed reads
+        whatever the history size, so the journal sync can skip an idle lab."""
+        with self._lock:
+            fill = self._c.execute(
+                "SELECT rowid, id FROM v2_fills ORDER BY rowid DESC LIMIT 1").fetchone()
+            funding = self._c.execute(
+                "SELECT rowid, funding_key FROM v2_funding_events ORDER BY rowid DESC LIMIT 1").fetchone()
+        return (tuple(fill) if fill else None, tuple(funding) if funding else None)
+
     def factory_reset(self, starting_balance: float) -> None:
         amount = float(starting_balance)
         if amount <= 0:

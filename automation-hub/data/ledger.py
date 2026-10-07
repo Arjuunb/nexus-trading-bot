@@ -580,6 +580,17 @@ class SqliteLedger:
             self._c.commit()
             return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
 
+    def journal_watermark(self) -> tuple:
+        """Changes whenever a paper trade is opened, reduced or closed (each
+        writes a paper_trades or paper_executions row) or the paper ledger is
+        reset. Two indexed reads, independent of history size."""
+        with self._lock:
+            trade = self._c.execute(
+                "SELECT rowid, id FROM paper_trades ORDER BY rowid DESC LIMIT 1").fetchone()
+            execution = self._c.execute(
+                "SELECT rowid, execution_id FROM paper_executions ORDER BY rowid DESC LIMIT 1").fetchone()
+        return (tuple(trade) if trade else None, tuple(execution) if execution else None)
+
     def get_paper_trades(self, instance_id="", simulation_session_id=""):
         query = "SELECT * FROM paper_trades"
         where, args = [], []
@@ -939,6 +950,18 @@ class SupabaseLedger:
                 q = q.eq("simulation_session_id", simulation_session_id)
             return q.order("opened_at", desc=True).execute()
         return remote_call_with_retry(query).data
+
+    def journal_watermark(self) -> tuple:
+        """Changes whenever a paper trade is opened (a reduce's remainder row
+        included) or closed, or the paper ledger is reset: the newest opening
+        and the newest close. Two one-row reads, whatever the history size."""
+        def newest(column):
+            def query():
+                return (self._t("paper_trades").select(f"id,{column}")
+                        .not_.is_(column, "null").order(column, desc=True).limit(1).execute())
+            rows = remote_call_with_retry(query).data or []
+            return (rows[0]["id"], rows[0][column]) if rows else None
+        return newest("opened_at"), newest("closed_at")
 
     def log(self, *, level, stage, message, symbol="", instance_id=""):  # pragma: no cover
         row = {"id": _id(), "ts": _now(), "symbol": symbol,

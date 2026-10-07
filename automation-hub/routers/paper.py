@@ -99,6 +99,17 @@ def paper_set_initial_capital(body: InitialCapital,
             _wa.ledger.reset_paper()   # clears trades + positions if supported
         except Exception:  # noqa: BLE001 — some ledgers can't reset; snapshot still resets
             pass
+        else:
+            # The journal's open paper-engine trades just lost their ledger rows:
+            # end them honestly (no fabricated fill). Never blocks the reset.
+            journal = getattr(_wa, "trade_journal", None)
+            if journal is not None:
+                try:
+                    journal.cancel_open_engine_trades(
+                        reason="Paper account reset by an initial-capital change; "
+                               "no execution fill was fabricated.")
+                except Exception:  # noqa: BLE001
+                    pass
     _wa.account_store.set_initial_capital(body.amount, reset_account=True)
     _wa.paper.starting_balance = body.amount
     _wa.paper._persist_account_snapshot()
@@ -215,7 +226,9 @@ def paper_close(body: ClosePosition,
     if price is None or price <= 0:
         raise HTTPException(503, "Could not determine a current market price to close at. "
                                  "Try again once market data is reachable.")
-    res = _wa.paper.close(symbol=symbol, exit_price=price)
+    res = _wa.paper.close(symbol=symbol, exit_price=price,
+                          exit_context={"exit_reason": "MANUAL_CLOSE",
+                                        "exit_reason_source": "OPERATOR", "actor": "operator"})
     if getattr(res, "action", "") != "closed":
         raise HTTPException(409, f"Could not close {symbol} — position not open.")
     _wa.ledger.log(level="info", stage="execution",

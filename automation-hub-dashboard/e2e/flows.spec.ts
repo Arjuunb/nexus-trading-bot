@@ -135,9 +135,45 @@ test("no unexpected 4xx/5xx from the app's own requests during a page tour", asy
   expect(bad, bad.join("\n")).toHaveLength(0);
 });
 
-test("Journal page — lists journaled trades and expands the full decision journal", async ({ page }) => {
+test("Trade Journal — summary cards, filters, table and sectioned trade detail", async ({ page }) => {
   await mockApi(page);
   await page.goto("/#/journal");
+  await expect(page.getByRole("heading", { name: /^Trade Journal$/ })).toBeVisible();
+  // dashboard cards come from the server summary
+  await expect(page.locator(".stat-card", { hasText: "Net P&L" })).toContainText("+$26.91");
+  await expect(page.locator(".stat-card", { hasText: "Best Session" })).toContainText("London");
+  // one mode at a time unless explicitly mixed
+  await expect(page.getByRole("button", { name: /Forward Paper/ })).toHaveAttribute("aria-pressed", "true");
+  // readable default table
+  const table = page.locator("table.tj-table");
+  await expect(table).toContainText("BTCUSDT");
+  await expect(table).toContainText("+2.69R");
+  await expect(table).toContainText("1h 36m");
+  // open the detail view; sections, not one giant table
+  await page.getByRole("button", { name: /Open trade TRD-2026-000124/ }).click();
+  const drawer = page.getByRole("dialog", { name: /Trade TRD-2026-000124/ });
+  await expect(drawer).toContainText("Bullish HTF structure + liquidity sweep");
+  await drawer.getByRole("button", { name: "Decision Snapshot" }).click();
+  await expect(drawer).toContainText("Minimum RR achieved");
+  await drawer.getByRole("button", { name: "Risk" }).click();
+  await expect(drawer).toContainText("Break Even");
+  await drawer.getByRole("button", { name: "Timeline" }).click();
+  await expect(drawer).toContainText("Setup Detected");
+  await drawer.getByRole("button", { name: "Agent Review" }).click();
+  await expect(drawer).toContainText("trade-review-agent");
+  await page.getByRole("button", { name: "Close trade detail" }).click();
+  await expect(drawer).toBeHidden();
+  // analytics + weekly review tabs render server-computed data
+  await page.goto("/#/journal?tab=analytics");
+  await expect(page.getByText("Strategy comparison")).toBeVisible();
+  await expect(page.locator("table.data-table").first()).toContainText("SMC Lab");
+  await page.goto("/#/journal?tab=weekly");
+  await expect(page.getByText(/62% win rate during London session/)).toBeVisible();
+});
+
+test("Journal page — lists journaled trades and expands the full decision journal", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/#/journal?tab=decision-journal");
   await page.waitForTimeout(700);
   // page + a journaled trade row render
   await expect(page.getByRole("heading", { name: /Bot Trade Journal/i })).toBeVisible();

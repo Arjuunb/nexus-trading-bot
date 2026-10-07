@@ -296,6 +296,10 @@ class SignalPipeline:
         self.counterfactual = None
         # Decision journal: the full explainable record of every trade.
         self.journal = None
+        # Canonical trade journal recorder (services.trade_journal). The
+        # pipeline registers the frozen decision; the execution engine reports
+        # the fills. Optional; journaling never blocks trading.
+        self.trade_journal = None
         # Skipped-trade log: every rejected setup with its failed gate + snapshot.
         self.skipped = None
         # Permanent trade memory: composes the closed trade into a forever record.
@@ -523,9 +527,25 @@ class SignalPipeline:
             # link the closing trade to its open journal before the ledger row closes
             _open_tid = next((t["id"] for t in self.ledger.get_paper_trades()
                               if t["symbol"] == symbol and t["status"] == "open"), None)
+            _exit_reason = (payload.get("exit_reason")
+                            or ("opposite-signal" if side not in _CLOSE_SIDES else "manual-close"))
             fill = self.paper.close(symbol=symbol, exit_price=entry,
-                                    execution_id=alert_id)
+                                    execution_id=alert_id,
+                                    exit_context={
+                                        "exit_reason": _exit_reason,
+                                        "mfe_r": payload.get("mfe_r"), "mae_r": payload.get("mae_r"),
+                                        "mfe_price": payload.get("mfe_price"),
+                                        "mae_price": payload.get("mae_price"),
+                                        "signal_timestamp": payload.get("timestamp"),
+                                    })
             if self.journal is not None and _open_tid:
+                # After a scale-out the open ledger row is the remainder, whose
+                # id the decision journal never saw; resolve it to the original.
+                if self.trade_journal is not None:
+                    try:
+                        _open_tid = self.trade_journal.original_ledger_trade_id(_open_tid)
+                    except Exception:  # noqa: BLE001 — journaling must never block trading
+                        pass
                 try:
                     self.journal.record_exit(
                         # The fill model may move an exit through spread and
@@ -533,8 +553,7 @@ class SignalPipeline:
                         # requested trigger price.
                         trade_id=_open_tid, exit_price=fill.price, pnl=fill.pnl,
                         instance_id=str(self.journal_context.get("instance_id") or ""),
-                        exit_reason=payload.get("exit_reason")
-                        or ("opposite-signal" if side not in _CLOSE_SIDES else "manual-close"),
+                        exit_reason=_exit_reason,
                         mfe_r=payload.get("mfe_r"), mae_r=payload.get("mae_r"))
                 except Exception:  # noqa: BLE001 — journaling must never block trading
                     pass
@@ -909,11 +928,15 @@ class SignalPipeline:
             return PipelineResult(
                 False, "dedup", f"order already claimed for this candle: {exc}",
                 steps, {})
+        journal_trade_id = self._register_journal_decision(
+            alert_id=alert_id, symbol=symbol, side=side, entry=entry, stop=stop,
+            size=size, payload=payload, steps=steps, realized_equity=realized_equity)
         try:
             fill = self.paper.open(symbol=symbol, side=side, size=size, entry=entry,
                                    stop=stop, target=payload.get("target"),
                                    alert_id=alert_id, maker=bool(payload.get("maker")),
                                    sizing_context={
+                                       "journal_trade_id": journal_trade_id,
                                        "sizing_mode": sizing.mode,
                                        "sizing_engine_version": sizing.sizing_engine_version,
                                        "risk_basis_at_entry": sizing.risk_basis,
@@ -933,12 +956,14 @@ class SignalPipeline:
                                            f"{self.journal_context.get('simulation_session_id')}"),
                                        "execution_engine": "INSTANCE",
                                    })
-        except Exception:
+        except Exception as exc:
             # Anything escaping the fill strands the claim, and a stranded
             # claim bars this candle permanently -- the dedup constraint has no
             # time component. Release it before the error propagates, so a
             # retry of a trade that never happened is still possible.
             self._release_order_claim(alert_id)
+            self._journal_order_outcome(journal_trade_id, "EXECUTION_FAILED",
+                                        f"{type(exc).__name__}: {exc}")
             raise
         if fill.action == "rejected":
             # The claim did not become an order. Release it so a later,
@@ -949,6 +974,9 @@ class SignalPipeline:
             # the hub's quote thread overwrite it between the rejection and
             # this line, hiding a systematic capital stop behind a
             # random-rejection reason.
+            self._journal_order_outcome(
+                journal_trade_id, "REJECTED",
+                getattr(fill, "reason", "") or "Order rejected at fill (execution model)")
             return reject("execution",
                           getattr(fill, "reason", "")
                           or "Order rejected at fill (execution model)")
@@ -974,6 +1002,8 @@ class SignalPipeline:
                 # this key, so a surviving claim would bar the candle forever
                 # with nothing to age it out.
                 self._release_order_claim(alert_id)
+                self._journal_order_outcome(journal_trade_id, "CANCELLED",
+                                            "duplicate intent suppressed by idempotency key")
                 steps.append(Step("execution", True, "duplicate intent suppressed by idempotency key"))
                 return PipelineResult(
                     False, "dedup", f"order intent already recorded: {exc}",
@@ -984,6 +1014,7 @@ class SignalPipeline:
                 message=(f"{symbol} {side} paper intent accepted; waiting for "
                          "the first Binance USD-M quote after decision time"),
             )
+            self._journal_intent_parked(journal_trade_id, symbol)
             steps.append(Step("execution", True, "forward-paper intent awaiting next quote"))
             return PipelineResult(
                 True, "execution", "paper order intent awaiting next quote",
@@ -1039,6 +1070,72 @@ class SignalPipeline:
             if len(self._alert_info) > 500:
                 self._alert_info.pop(next(iter(self._alert_info)))
         return PipelineResult(True, "execution", "paper trade opened", steps, fill.__dict__)
+
+    # ------------------------------------------------------- trade journal
+    def _register_journal_decision(self, *, alert_id: str, symbol: str, side: str,
+                                   entry: float, stop, size: float, payload: dict,
+                                   steps: list, realized_equity: float) -> Optional[str]:
+        """Freeze this decision in the canonical journal before the order.
+
+        Everything recorded here was already computed by the gates above; the
+        journal only keeps it. Failure is logged and never blocks the order."""
+        if self.trade_journal is None:
+            return None
+        try:
+            limits = getattr(self.risk_engine, "limits", None)
+            max_pct = getattr(limits, "max_risk_per_trade_pct", None)
+            positions = self.paper.positions()
+            return self.trade_journal.register_decision(
+                order_id=alert_id, scope=str(self.journal_context.get("instance_id") or ""),
+                symbol=symbol, side=side, timeframe=str(payload.get("timeframe") or ""),
+                payload=payload, steps=list(steps), sizing=dict(payload.get("journal_sizing") or {}),
+                provenance=dict(payload.get("journal_execution") or {}),
+                requested_entry=entry, stop=stop, target=payload.get("target"), quantity=size,
+                equity_before=realized_equity,
+                available_before=float(self.paper.available_balance()),
+                open_positions=len(positions),
+                max_allowed_risk_pct=(float(max_pct) * 100 if max_pct is not None else None),
+                max_allowed_risk_amount=(float(self.maximum_risk_amount)
+                                         if getattr(self, "maximum_risk_amount", None) else None),
+                leverage=getattr(self.paper, "LEVERAGE", None),
+                leverage_source=getattr(self.paper, "LEVERAGE_SOURCE", None),
+                preferred_window=(self.session_start, self.session_end))
+        except Exception as exc:  # noqa: BLE001 — journaling must never block trading
+            try:
+                self.ledger.log(level="warning", stage="journal", symbol=symbol,
+                                message=f"journal decision capture failed: {type(exc).__name__}: {exc}"[:400])
+            except Exception:  # noqa: BLE001
+                pass
+            return None
+
+    def _journal_order_outcome(self, journal_trade_id: Optional[str], outcome: str, reason: str) -> None:
+        if self.trade_journal is None or not journal_trade_id:
+            return
+        try:
+            self.trade_journal.mark_order_outcome(journal_trade_id, outcome, reason)
+        except Exception:  # noqa: BLE001 — journaling must never block trading
+            pass
+
+    def _journal_intent_parked(self, journal_trade_id: Optional[str], symbol: str) -> None:
+        """A forward-paper intent was parked. If the engine kept an older
+        intent for this symbol instead, this decision will never fill."""
+        if self.trade_journal is None or not journal_trade_id:
+            return
+        try:
+            pending = getattr(self.paper, "pending_intents", None)
+            intent = (pending() or {}).get(symbol) if callable(pending) else None
+            owner = ((intent or {}).get("sizing_context") or {}).get("journal_trade_id")
+            if intent is not None and owner and owner != journal_trade_id:
+                self.trade_journal.mark_order_outcome(
+                    journal_trade_id, "CANCELLED",
+                    "an earlier forward-paper intent for this symbol is still pending")
+            else:
+                self.trade_journal.store.add_event(
+                    journal_trade_id, "order-parked",
+                    "forward-paper intent waiting for the first later public quote",
+                    actor="execution-engine")
+        except Exception:  # noqa: BLE001 — journaling must never block trading
+            pass
 
     # ----------------------------------------------------- auto risk guard
     @property
