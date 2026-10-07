@@ -374,6 +374,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Exit source GET shares only bounded validation/cursor contracts. No
     # Guardian store, journal or broker authority is invoked by this reader.
     "automation-hub/services/guardian_smc_exit_fill_read_model.py",
+    # Existing Agent stop rows are exported through pure validation/hash
+    # helpers only. No source writer, broker or Guardian store is constructed.
+    "automation-hub/services/guardian_smc_stop_read_model.py",
 }
 
 

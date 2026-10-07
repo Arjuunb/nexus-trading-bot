@@ -1203,6 +1203,123 @@ This is not production evidence or completion of the whole Guardian PRD. The
 next source-evidence gaps include journal-close exit IDs and stop-move history;
 these are not reconstructed or silently added to source writers in this phase.
 
+## Read-only SMC Agent stop-move history (2026-10-07)
+
+This local milestone follows exit-ID associations at `1629867`. It exposes
+existing `agent_stop_moves` records to Guardian. It does not change the Agent's
+stop policy, broker protection, source journal writes, approvals, strategy,
+runtime, live-routing settings or deployment configuration.
+
+### Source contract
+
+`GET /guardian/smc-stop-moves?after=0&anchor=` uses only the configured
+`settings.smc_agent_journal_db`. Authorization requires the independent
+`X-Guardian-Observer-Key`; control/webhook credentials cannot authorize it.
+Duplicate/unknown query parameters are rejected. Reads use `mode=ro`,
+`query_only`, a 250 ms busy timeout, a 0.5 s SQLite progress deadline and one
+snapshot. Each page contains at most 32 records, ordered by source row ID, not
+candle or wall time. No source table/index/migration, Agent/broker constructor,
+network call or trading action occurs. Legacy databases without the table
+remain unavailable; GET does not migrate them.
+
+Fields: record/trade ID, source sequence, recorded/candle time, symbol, from/to
+stop price, reason code, reported progress R and `applied`, plus reason/error
+presence flags. Free-form reason/error text is not exported. Text projections
+are bounded before export; malformed/unsafe evidence fails closed. Account,
+session, execution, order and position identities are not invented from trade
+ID, symbol, price or timestamps.
+
+`REPORTED_APPLIED` / `REPORTED_NOT_APPLIED` describe what the existing journal
+says, not independent broker confirmation. Missing/orphan history is not
+classified as MISSED, no order, failed execution or unprotected exposure. An
+empty retained table does not prove no stop moved. Source locks, missing
+tables/files, malformed records and changed anchors return sanitized 503
+`PERSISTENCE_BLOCKED / SMC_STOP_HISTORY_UNAVAILABLE`. Short WAL writes remain
+readable; lock release permits retry. No deletion, VACUUM, backfill or evidence
+rewrites occur.
+
+### Independent import and read view
+
+`GUARDIAN_SMC_STOP_MOVES_URL` defaults off. When explicitly configured to
+`http://app:8000/guardian/smc-stop-moves`, its observer uses the independent
+`GUARDIAN_LAB_OBSERVER_KEY`, a three-second timeout, no redirects and a
+128 KiB response cap. Its own required freshness probe is added only when
+enabled. The monitor stops with Guardian; observation failures do not change
+trading gates or source state.
+
+Stable event identity is SHA-256 over the stop-history namespace, first-record
+origin fingerprint and original stop-record ID. Legitimate attempts with
+identical trade IDs/prices remain distinct. Replay is idempotent; changed
+same-ID evidence conflicts. Event append and compare-and-swap checkpoint
+advancement use one Guardian-owned transaction. Post-commit heartbeat failure
+retains progress, becomes UNKNOWN and resumes without duplication. Source
+replacement/changed anchors fail closed; no automatic cursor reset occurs.
+The namespace is not certification of source identity or immutability.
+
+`GET /v1/smc-stop-moves?after=0` uses the separate `X-Guardian-Key` read key
+and serves at most 32 retained events. It reads only Guardian's database:
+read-only connection, 250 ms busy timeout, one-second progress deadline,
+indexed paging, one atomic event/checkpoint/heartbeat snapshot and an 8 KiB
+per-event bound. Full canonical headers/types are revalidated, including
+rejecting numeric `0` instead of boolean `False`. Malformed evidence returns
+sanitized 503 `STOP_HISTORY_EVIDENCE_UNAVAILABLE`; SQLite failure returns
+`PERSISTENCE_UNAVAILABLE`. GET is `no-store`, cannot mutate state, and cannot
+create a missing store.
+
+`CAUGHT_UP_AT_LAST_POLL` means only that the retained page ended at the last
+successful poll; `IMPORTING` means rows remain. Missing/failed/stale probes
+produce `UNKNOWN` while keeping history readable. Broker application, current
+protection, complete stop coverage, account/trade binding, execution integrity,
+full lifecycle and source immutability remain explicitly unverified.
+
+### Local proof and remaining boundary
+
+Failure-first tests cover applied/failed/orphan records, late timestamps,
+pagination, restart/100 reads and polls, legitimate identical attempts,
+replay conflicts, compare-and-swap races, event/checkpoint/heartbeat failures,
+source replacement, transport bounds, credential separation, lock/retry,
+query validation, indexed WAL reads and unchanged source database dumps.
+
+The disposable broker fixture retains exactly **1 order / 1 open position /
+1 fill / 1 journal trade** before/after import. Its actual stop stays **90**
+even when the journal reports a move to **100**. Guardian neither applies
+that move nor certifies it; the original trade plan remains unchanged.
+
+Focused validation: **182 passed**, including SMC source/behavior freezes and
+architecture guards, `/private/tmp/guardian-smc-stop-targeted.xml`.
+The final complete suite passed **5,091 tests, 15 skipped**, with zero failures
+or errors, 95 deprecation warnings and successful process exit in 333.88
+seconds. Evidence: `/private/tmp/guardian-smc-stop-complete-suite.xml`.
+The 69 new stop-history cases plus three service/startup cases all passed.
+Both SMC protection freezes passed. Protected files and both freeze manifests
+are byte-unchanged from `804a7c0`; Agent/runtime/journal/execution/data writers
+are unchanged from `1629867`. `git diff --check` also passed.
+
+Exact changed files:
+
+- `automation-hub/services/guardian_smc_stop_read_model.py`
+- `automation-hub/routers/guardian_observer.py`
+- `automation-hub/app.py` (GET-only observer authentication allowlist)
+- `tradexa/guardian/smc_stop_moves.py`
+- `tradexa/guardian/store.py` (Guardian-owned index/read page only)
+- `tradexa/guardian/service.py`
+- `automation-hub/tests/test_guardian_smc_stop_moves.py`
+- `tests/test_guardian_service.py`
+- `tests/test_core_architecture.py` (one documented read-contract dependency)
+- `docs/GUARDIAN_FOUNDATION.md`
+
+Backend/API and testing skills guided the bounded read contract and
+failure-first tests. This is local-only: no push, deployment, main changes,
+source writer changes or live routing.
+
+Remaining gaps: source stop application and journal recording are separate
+operations; the runtime can suppress a recording failure after a broker
+operation. This observer cannot certify complete history or broker
+application. Agent journal `close_trade()` has only fixture/test callers;
+closed records also lack exact exit IDs. Automatic journal finalization or
+changes to stop persistence require a separately scoped repair, not an
+observability patch.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

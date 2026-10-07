@@ -43,6 +43,7 @@ from .smc_fill_positions import GuardianSMCFillPositions, PROBE as POSITION_PROB
 from .smc_exit_fills import GuardianSMCExitFills, PROBE as EXIT_PROBE, smc_exit_fills_view
 from .smc_position_links import smc_position_links_view
 from .smc_exit_links import smc_exit_links_view
+from .smc_stop_moves import GuardianSMCStopMoves, PROBE as STOP_PROBE, smc_stop_moves_view
 from .store import GuardianStore
 
 _STATUSES = {
@@ -214,7 +215,7 @@ class GuardianService:
                 return self._respond(start_response, 200, {"result": "RECORDED"})
             if (path in ("/v1/events", "/v1/health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
-                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
+                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
@@ -247,6 +248,21 @@ class GuardianService:
                     if not 0 <= after <= 2**63 - 1:
                         raise _HTTPError(400, "INVALID_JOURNAL_HISTORY_CURSOR")
                     return self._respond(start_response, 200, smc_journal_history_view(self.store, after=after))
+                if path == "/v1/smc-stop-moves":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query)-{"after"} or any(len(v) != 1 for v in query.values()):
+                        raise _HTTPError(400, "INVALID_STOP_HISTORY_QUERY")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                        if not 0 <= after <= 2**63-1:
+                            raise ValueError("cursor range")
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_STOP_HISTORY_CURSOR") from exc
+                    try:
+                        view = smc_stop_moves_view(self.store, after=after)
+                    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                        raise _HTTPError(503, "STOP_HISTORY_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
                 if path == "/v1/smc-exit-links":
                     query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
                     if set(query) != {"execution_key"} or len(query["execution_key"]) != 1:
@@ -406,7 +422,7 @@ class GuardianService:
                     "events": self.store.recent(limit, source_service=source)})
             if path in ("/v1/events", "/v1/health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
-                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/reports", "/v1/notifications",
+                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
@@ -678,6 +694,9 @@ def main() -> None:
     exit_url = os.environ.get("GUARDIAN_SMC_EXIT_FILLS_URL", "").strip()
     if exit_url and EXIT_PROBE not in required:
         required += (EXIT_PROBE,)
+    stop_url = os.environ.get("GUARDIAN_SMC_STOP_MOVES_URL", "").strip()
+    if stop_url and STOP_PROBE not in required:
+        required += (STOP_PROBE,)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
                           required_components=required, research_key=research_key, admin_key=admin_key)
@@ -750,7 +769,12 @@ def main() -> None:
     exit_monitor = (Thread(target=_lab_execution_monitor, args=((
         GuardianSMCExitFills(store, exit_url, lab_observer_key),), stopped),
         daemon=True) if exit_url else None)
+    stop_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCStopMoves(store, stop_url, lab_observer_key),), stopped),
+        daemon=True) if stop_url else None)
     monitor.start()
+    if stop_monitor:
+        stop_monitor.start()
     if exit_monitor:
         exit_monitor.start()
     if position_monitor:
@@ -787,6 +811,8 @@ def main() -> None:
             server.serve_forever()
     finally:
         stopped.set()
+        if stop_monitor:
+            stop_monitor.join(timeout=2)
         if exit_monitor:
             exit_monitor.join(timeout=2)
         if position_monitor:

@@ -109,6 +109,8 @@ class GuardianStore:
                   WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
                 CREATE INDEX IF NOT EXISTS smc_exit_history ON events(sequence)
                   WHERE source_service='guardian_smc_exit_fills' AND event_type='smc_exit_evidence_observed';
+                CREATE INDEX IF NOT EXISTS smc_stop_history ON events(sequence)
+                  WHERE source_service='guardian_smc_stop_moves' AND event_type='smc_stop_move_observed';
                 CREATE INDEX IF NOT EXISTS smc_position_order ON events(json_extract(payload_json,'$.order_id'),sequence)
                   WHERE source_service='guardian_smc_fill_positions' AND event_type='smc_fill_position_observed';
                 CREATE INDEX IF NOT EXISTS smc_position_before_key
@@ -544,6 +546,34 @@ class GuardianStore:
             cursor = db.execute("SELECT source_sequence,anchor_id FROM observer_cursors WHERE component=?", (COMPONENT,)).fetchone()
         return {"events": events, "after": after, "next_after": events[-1]["guardian_sequence"] if events else after,
                 "has_more": len(rows)>32, "guardian_snapshot_atomic": True,
+                "source_cursor": {"after": cursor["source_sequence"] if cursor else 0, "anchor": cursor["anchor_id"] if cursor else ""},
+                "heartbeats": {PROBE: dict(heartbeat)} if heartbeat else {}}
+
+    def smc_stop_moves_page(self, *, after: int = 0) -> dict:
+        """One bounded read-only snapshot of own retained stop observations."""
+        from time import monotonic
+        from .smc_stop_moves import COMPONENT, PROBE, MAX_EVENT_BYTES, unique_fields
+        if type(after) is not int or not 0 <= after <= 2**63-1:
+            raise ValueError("Invalid stop history cursor")
+        with closing(sqlite3.connect(self.path.resolve().as_uri()+"?mode=ro", uri=True, timeout=.25)) as db:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA query_only=ON")
+            db.execute("PRAGMA busy_timeout=250")
+            deadline = monotonic()+1
+            db.set_progress_handler(lambda: int(monotonic()>deadline), 1000)
+            db.execute("BEGIN")
+            rows = db.execute("SELECT sequence,received_at,length(CAST(payload_json AS BLOB)) AS bytes,"
+                "substr(payload_json,1,8193) AS payload FROM events INDEXED BY smc_stop_history "
+                "WHERE source_service='guardian_smc_stop_moves' AND event_type='smc_stop_move_observed' "
+                "AND sequence>? ORDER BY sequence LIMIT 33", (after,)).fetchall()
+            if any(r["bytes"]>MAX_EVENT_BYTES for r in rows):
+                raise ValueError("Stop history evidence exceeds bound")
+            events = [{**json.loads(r["payload"], object_pairs_hook=unique_fields),
+                       "guardian_sequence": r["sequence"], "received_at": r["received_at"]} for r in rows[:32]]
+            heartbeat = db.execute("SELECT * FROM heartbeats WHERE component=?", (PROBE,)).fetchone()
+            cursor = db.execute("SELECT source_sequence,anchor_id FROM observer_cursors WHERE component=?", (COMPONENT,)).fetchone()
+        return {"events": events, "after": after, "has_more": len(rows)>32,
+                "next_after": events[-1]["guardian_sequence"] if events else after, "guardian_snapshot_atomic": True,
                 "source_cursor": {"after": cursor["source_sequence"] if cursor else 0, "anchor": cursor["anchor_id"] if cursor else ""},
                 "heartbeats": {PROBE: dict(heartbeat)} if heartbeat else {}}
 
