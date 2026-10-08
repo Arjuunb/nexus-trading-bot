@@ -381,6 +381,9 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Capture remains source-local SQL; neither writer imports Guardian, and
     # this query-only adapter constructs no Guardian store or trading runtime.
     "automation-hub/services/guardian_read_model.py",
+    # Instance GET export validates bounded immutable applied settings with a
+    # pure contract only; no Guardian store/runtime is reached by the writer.
+    "automation-hub/services/guardian_instance_read_model.py",
 }
 
 

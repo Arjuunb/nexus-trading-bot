@@ -2164,6 +2164,134 @@ PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" python -m pytest -q
 The complete suite needs localhost socket permissions for its mock HTTP
 servers. No test is skipped to work around those permissions.
 
+## Instance applied-decision settings provenance (2026-10-09)
+
+This bounded next slice extends partial provenance to **new persisted instance
+entry-quality decisions**. It does not finish the PRD's every-evaluation or
+full-configuration requirements. There is no change to signal generation,
+quality/risk thresholds, execution authority, order identity, source retention,
+paper/live settings, or protected PA/SMC files and freeze baselines.
+
+`AutoStrategyEngine._on_signal()` attaches the worker's current strategy key,
+strategy version, configuration revision, entry mode, trading mode and minimum
+quality score to the already-existing entry decision. `DecisionStore.record()`
+captures only those six scalar fields plus that decision's symbol/timeframe in
+an additive `applied_settings_json` column. It never reads another instance's
+latest configuration or reconstructs historical configuration from today.
+
+The source-local `data/decision_provenance.py` installs a connection-local TEMP
+INSERT trigger. One immutable `guardian_instance_decision_provenance` audit row
+is captured per new attributed decision in the **same SQLite statement** as
+the source decision and existing lifecycle outbox. Capture failure rolls back
+all three; retry succeeds without partial evidence. Duplicate decision INSERTs
+do not recapture metadata. Lifecycle updates reuse the original audit row,
+including when a different/newer writer finalizes a decision. No broker or
+network work occurs in this transaction. Guardian is not imported by the writer.
+
+The writer connection retains its constructor-time reported `GIT_COMMIT` /
+`RENDER_GIT_COMMIT`. Valid declarations must agree and be full lowercase
+40-character hashes. Missing, invalid or conflicting declarations become null,
+not raw environment text. This is **not deployed source/image attestation**.
+Overlapping writers can keep different declared commits in the same database.
+
+The allowlisted snapshot is capped at 2,048 UTF-8 bytes. Unexpected scalar types,
+nested objects, oversized text or encoded snapshots make the optional snapshot
+unavailable, without introducing another trading gate or persisting nested
+secrets. Zero minimum quality score is recorded correctly; booleans are not
+accepted as integer settings. No candle windows, credentials, quotes, heartbeat
+or arbitrary configuration keys are copied. Missing optional telemetry is not
+used to infer a replacement setting. Genuine database failures still raise from
+the store; the pre-existing engine persistence-failure handling is unchanged.
+
+The independently authenticated `GET /guardian/instance-decisions` remains
+query-only, no-store and bounded to 32 anchored transitions with a 250ms database
+timeout. Provenance is read in the same read transaction via at most 32 indexed
+audit-row lookups. Audit rows survive the source decision store's existing prune
+policy; neither source history nor existing Guardian events are rewritten.
+Read polling adds no audit rows. Legacy rows and uninstrumented writers do not
+borrow the current commit/settings, and no backfill is attempted.
+
+Each exported transition now includes `instance_provenance`:
+
+- `CAPTURED_APPLIED_SETTINGS`: all eight allowlisted fields and a non-empty
+  decision identity were captured; the reported commit may still be unknown.
+- `INCOMPLETE_APPLIED_SETTINGS`: a capture exists but identity/settings are
+  incomplete or the bounded snapshot is unavailable.
+- `UNKNOWN`: no source capture exists, including legacy/uninstrumented writers
+  and older exporters.
+
+The pure shared contract recomputes the SHA-256 canonical non-null settings hash
+and checks decision owner/identity/market, scope, schema and false verification
+flags before the collector can acknowledge a page/cursor. Forged claims cannot
+advance the cursor; retry with valid evidence succeeds. Restart/replay imports
+no duplicate events. Traces retain the snapshot and declared strategy version;
+received-evidence reports separate differing applied-settings hashes/versions.
+For captured settings, stable strategy keys replace human labels as the event's
+strategy identity; the original label is retained separately in evidence.
+Older evidence retains its existing attribution rather than inventing a key.
+
+`saved_config_scope` is `INSTANCE_APPLIED_DECISION_SETTINGS`; `saved_config_hash`
+is **not** generic `config_hash`. `exact_version_verified`,
+`source_attestation_verified`, `full_strategy_config_verified` and
+`all_evaluations_verified` remain false. The snapshot excludes alpha internals,
+full risk/sizing/correlation/venue/news/Agent configuration and simulation-session
+identity. No-setup evaluations, exits and evaluations that never persisted still
+need coverage. The existing engine's catch-and-continue persistence behavior is
+not repaired or certified by this observability slice.
+
+Backend/API and testing skills guided the bounded contract and failure-first
+checks. The 46 new regression cases cover actual accepted/rejected engine paths,
+immutable capture, duplicate/restart/prune behavior, overlapping writer commits,
+legacy/partial records, atomic failure/retry, malformed telemetry exclusion,
+100 read refreshes, strict hash/identity/claim validation, cursor recovery and
+version/config-separated reports. The broader targeted run passed **1,435 tests**
+with zero failures/errors/skips, including both SMC protection systems (27 cases)
+and the Agent crash-boundary checks (7 cases).
+
+The final complete rerun passed **5,534 tests, 15 existing skips and 93
+deprecation warnings** in 333.82 seconds. Process exit was 0; its JUnit report
+records 5,549 cases, zero failures and zero errors. All 46 new cases, both SMC
+protection systems (27 cases), and Agent crash boundaries (7 cases) passed in
+both broader targeted and complete runs. Protected PA/SMC source/manifest files
+remain byte-unchanged and `git diff --check` passed. This is a local-only slice:
+no push, main change, producer activation or VPS deployment. All eight major
+workstreams remain open in the remaining-work tracker.
+
+Validation triage: the initial complete run had **5,533 passes, 15 existing
+skips and one failure**: the pre-existing PA runtime-unblocking latency assertion
+measured four reads at 2.039 seconds against its unchanged 2-second deadline.
+All functional response assertions in that case passed. The PA read path,
+loader and test are byte-unchanged and do not invoke instance provenance
+capture. Following the debugging skill's stop/inspect/reproduce sequence,
+the entire unchanged 7-case runtime-unblocking module passed three consecutive
+isolated runs (1.31, 1.41 and 1.60 seconds). This suggests load-sensitive timing,
+not a proven root cause or production latency certification. No deadline,
+strategy, test skip or source behavior was changed to conceal it. The original
+failed-run XML is retained, and a complete rerun uses a separate final artifact.
+
+Files changed:
+
+- `automation-hub/data/decision_provenance.py`
+- `automation-hub/data/decision_store.py`
+- `automation-hub/services/auto_engine.py` (passive metadata only)
+- `automation-hub/services/guardian_instance_read_model.py`
+- `automation-hub/tests/test_guardian_instance_provenance.py`
+- `tradexa/guardian/instance_provenance.py`
+- `tradexa/guardian/instance_decisions.py`
+- `tradexa/guardian/instance_decision_traces.py`
+- `tests/test_guardian_instance_provenance_contract.py`
+- `tests/test_core_architecture.py` (explicit pure read-contract seam)
+- `docs/GUARDIAN_FOUNDATION.md`
+- `docs/GUARDIAN_REMAINING_WORK.md`
+
+The targeted and complete validation commands are the same as the preceding
+phase. Local evidence files are `/private/tmp/guardian-instance-provenance-targeted.xml`,
+the initial `/private/tmp/guardian-instance-provenance-complete-suite.xml`,
+the final `/private/tmp/guardian-instance-provenance-complete-suite-final.xml`,
+and `/private/tmp/guardian-instance-runtime-unblocking-{1,2,3}.xml`. The complete
+suite uses its existing mock HTTP servers with localhost socket permissions;
+no test is skipped to work around sandbox restrictions.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.

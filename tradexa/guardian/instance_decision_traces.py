@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from .store import GuardianStore
+from .instance_provenance import unknown_instance_provenance
 
 
 def instance_decision_traces(store: GuardianStore, *, limit: int = 50,
@@ -37,6 +38,9 @@ def instance_decision_traces(store: GuardianStore, *, limit: int = 50,
             "decision_time": evidence.get("decision_time"),
             "received_at": event["received_at"],
             "strategy_id": event.get("strategy_id"),
+            "strategy_version": event.get("strategy_version"),
+            "instance_provenance": (event.get("metadata") or {}).get("instance_provenance")
+                or unknown_instance_provenance(),
             "symbol": event.get("symbol"), "timeframe": event.get("timeframe"),
             "side": evidence.get("side"),
             "strategy_verdict": evidence.get("strategy_verdict"),

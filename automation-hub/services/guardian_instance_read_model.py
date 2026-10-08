@@ -6,6 +6,8 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from tradexa.guardian.instance_provenance import project_instance_provenance
+
 MAX_ROWS = 32
 
 
@@ -35,6 +37,13 @@ def instance_decision_page(path: str | Path, *, after: int = 0,
             "SELECT * FROM guardian_decision_lifecycle WHERE sequence>? "
             "ORDER BY sequence LIMIT ?", (after, limit + 1),
         ).fetchall()
+        # Source-local audit rows survive decision pruning. Resolve at most one
+        # PK per exported transition in the SAME bounded read transaction.
+        present = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name='guardian_instance_decision_provenance'").fetchone() is not None
+        provenance = {row["decision_id"]: project_instance_provenance(connection.execute(
+            "SELECT * FROM guardian_instance_decision_provenance WHERE decision_id=?",
+            (row["decision_id"],)).fetchone() if present else None) for row in rows[:limit]}
     page = rows[:limit]
 
     def project(row: sqlite3.Row) -> dict:
@@ -64,6 +73,7 @@ def instance_decision_page(path: str | Path, *, after: int = 0,
             "executed": bool(row["executed"]),
             "passed_rules": rules("passed_rules_json"),
             "failed_rules": rules("failed_rules_json"),
+            "instance_provenance": provenance[row["decision_id"]],
         }
 
     return {

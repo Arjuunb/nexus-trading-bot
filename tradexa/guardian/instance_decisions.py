@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from .events import GuardianEvent
 from .lab_observer import _timestamp
 from .store import GuardianStore
+from .instance_provenance import instance_provenance_metadata
 
 _COMPONENT = "instance_decisions"
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -90,13 +91,16 @@ class GuardianInstanceDecisions:
             instance_id = row.get("instance_id")
             if not isinstance(instance_id, str):
                 raise ValueError("instance decision owner is invalid")
+            provenance = instance_provenance_metadata(row)
+            config = provenance["instance_provenance"]["saved_config"] or {}
             event = GuardianEvent(
                 source_service="guardian_instance_decisions",
                 source_component=_COMPONENT,
                 event_type="instance_decision_observed",
                 event_id=row["source_event_id"], timestamp=event_time,
                 severity="INFO", instance_id=instance_id or None,
-                strategy_id=row.get("strategy"), symbol=row.get("symbol"),
+                strategy_id=config.get("strategy_key") or row.get("strategy"),
+                strategy_version=config.get("strategy_version"), symbol=row.get("symbol"),
                 timeframe=row.get("timeframe"),
                 decision=row.get("final_state"), reason=row.get("reason"),
                 state_after=row.get("final_state"),
@@ -106,6 +110,7 @@ class GuardianInstanceDecisions:
                     "decision_identity": row.get("decision_identity"),
                     "decision_time": row["decision_time"],
                     "strategy_verdict": row.get("strategy_verdict"),
+                    "strategy_label": row.get("strategy"),
                     "side": row.get("side"),
                     "gate_stage": row.get("gate_stage"),
                     "blocker": row.get("blocker"),
@@ -116,7 +121,7 @@ class GuardianInstanceDecisions:
                     "execution_integrity_verified": False,
                 },
                 metadata={"coverage": "POST_INSTALL_INSTANCE_DECISION_LIFECYCLE",
-                          "instance_attributed": bool(instance_id)},
+                          "instance_attributed": bool(instance_id), **provenance},
             )
             event.canonical_json()
             events.append(event)
