@@ -10,7 +10,8 @@ from importlib import resources
 from datetime import datetime
 from pathlib import Path
 from threading import Event, Thread
-from typing import Any, Mapping
+from time import monotonic
+from typing import Any, Callable, Mapping
 from urllib.parse import parse_qs
 from wsgiref.simple_server import make_server
 
@@ -22,6 +23,7 @@ from .health import component_health
 from .self_health import include_self_health, self_health
 from .pipeline_health import include_pipeline_health, pipeline_health
 from .transport_health import KIND as TRANSPORT_KIND, transport_health, validate_transport_event
+from .ingestion import IngestionAdmission, IngestionLimits, IngestionOverload
 from .incidents import GuardianIncidentEngine
 from .investigations import incident_investigation
 from .instance_decisions import GuardianInstanceDecisions
@@ -54,6 +56,7 @@ _STATUSES = {
     401: "401 Unauthorized", 403: "403 Forbidden", 404: "404 Not Found",
     405: "405 Method Not Allowed", 411: "411 Length Required",
     413: "413 Content Too Large", 422: "422 Unprocessable Content",
+    429: "429 Too Many Requests",
     503: "503 Service Unavailable",
 }
 _MAX_HTTP_BYTES = MAX_EVENT_BYTES + 2048
@@ -71,7 +74,9 @@ class GuardianService:
 
     def __init__(self, store: GuardianStore, *, source_keys: Mapping[str, str],
                  read_key: str, required_components: tuple[str, ...],
-                 research_key: str | None = None, admin_key: str | None = None):
+                 research_key: str | None = None, admin_key: str | None = None,
+                 ingestion_limits: IngestionLimits | None = None,
+                 ingestion_clock: Callable[[], float] = monotonic):
         if not source_keys or any(not isinstance(key, str) or len(key) < 24
                                   for key in source_keys.values()):
             raise ValueError("each Guardian source requires a private key of at least 24 characters")
@@ -84,6 +89,8 @@ class GuardianService:
         if (any(not isinstance(key, str) or len(key) < 24 for key in optional) or
                 len(set((*source_keys.values(), read_key, *optional))) != len(source_keys) + 1 + len(optional)):
             raise ValueError("Guardian research/admin credentials must be long and independently scoped")
+        self.ingestion = IngestionAdmission(tuple(source_keys), limits=ingestion_limits,
+                                            clock=ingestion_clock)
         self.store = store
         self.incidents = GuardianIncidentEngine(store)
         self.notifications = GuardianNotifications(store)
@@ -128,7 +135,7 @@ class GuardianService:
         return payload
 
     @staticmethod
-    def _respond(start_response, status: int, payload: dict):
+    def _respond(start_response, status: int, payload: dict, *, extra_headers=()):
         encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         start_response(_STATUSES[status], [
             ("Content-Type", "application/json; charset=utf-8"),
@@ -136,8 +143,36 @@ class GuardianService:
             ("Cache-Control", "no-store"),
             ("X-Content-Type-Options", "nosniff"),
             ("Referrer-Policy", "no-referrer"),
-        ])
+        ] + list(extra_headers))
         return [encoded]
+
+    def _receive_source(self, environ, start_response, source: str, path: str):
+        """Authenticated and admitted; no admission lock held during persistence."""
+        payload = self._body(environ)
+        if path == "/v1/events":
+            event = GuardianEvent.from_payload(payload)
+            if event.source_service != source:
+                raise _HTTPError(403, "SOURCE_MISMATCH")
+            if event.event_type == TRANSPORT_KIND:
+                validate_transport_event(event)
+            inserted = self.store.append(event)
+            return self._respond(start_response, 201 if inserted else 200, {
+                "event_id": event.event_id,
+                "result": "APPENDED" if inserted else "ALREADY_PRESENT",
+            })
+        component = payload.get("component")
+        if not isinstance(component, str) or not (
+                component == source or component.startswith(source + "_")):
+            raise _HTTPError(403, "SOURCE_MISMATCH")
+        if set(payload) - {"component", "state", "reason", "observed_at"}:
+            raise _HTTPError(422, "INVALID_HEARTBEAT")
+        try:
+            observed_at = datetime.fromisoformat(payload["observed_at"].replace("Z", "+00:00"))
+        except (KeyError, AttributeError, ValueError) as exc:
+            raise _HTTPError(422, "INVALID_HEARTBEAT") from exc
+        self.store.record_heartbeat(component, payload.get("state"),
+                                    reason=payload.get("reason", ""), observed_at=observed_at)
+        return self._respond(start_response, 200, {"result": "RECORDED"})
 
     @staticmethod
     def _static(start_response, path: str):
@@ -191,40 +226,19 @@ class GuardianService:
                 source = self._source(presented)
                 if source is None:
                     raise _HTTPError(401, "UNAUTHORIZED")
-                payload = self._body(environ)
-                if path == "/v1/events":
-                    event = GuardianEvent.from_payload(payload)
-                    if event.source_service != source:
-                        raise _HTTPError(403, "SOURCE_MISMATCH")
-                    if event.event_type == TRANSPORT_KIND:
-                        validate_transport_event(event)
-                    inserted = self.store.append(event)
-                    return self._respond(start_response, 201 if inserted else 200, {
-                        "event_id": event.event_id,
-                        "result": "APPENDED" if inserted else "ALREADY_PRESENT",
-                    })
-                component = payload.get("component")
-                if not isinstance(component, str) or not (
-                    component == source or component.startswith(source + "_")):
-                    raise _HTTPError(403, "SOURCE_MISMATCH")
-                if set(payload) - {"component", "state", "reason", "observed_at"}:
-                    raise _HTTPError(422, "INVALID_HEARTBEAT")
-                try:
-                    observed_at = datetime.fromisoformat(
-                        payload["observed_at"].replace("Z", "+00:00"))
-                except (KeyError, AttributeError, ValueError) as exc:
-                    raise _HTTPError(422, "INVALID_HEARTBEAT") from exc
-                self.store.record_heartbeat(component, payload.get("state"),
-                                            reason=payload.get("reason", ""),
-                                            observed_at=observed_at)
-                return self._respond(start_response, 200, {"result": "RECORDED"})
-            if (path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/incidents", "/v1/decision-traces",
+                with self.ingestion.admit("events" if path == "/v1/events" else "heartbeats", source):
+                    return self._receive_source(environ, start_response, source, path)
+            if (path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/ingestion-health", "/v1/incidents", "/v1/decision-traces",
                          "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
                          "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
                          "/v1/system-map", "/v1/anomalies") or
                     path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
                 if not self._read(presented):
                     raise _HTTPError(401, "UNAUTHORIZED")
+                if path == "/v1/ingestion-health":
+                    if environ.get("QUERY_STRING", ""):
+                        raise _HTTPError(400, "INVALID_INGESTION_HEALTH_QUERY")
+                    return self._respond(start_response, 200, self.ingestion.snapshot())
                 if path == "/v1/self-health":
                     if environ.get("QUERY_STRING", ""):
                         raise _HTTPError(400, "INVALID_SELF_HEALTH_QUERY")
@@ -441,12 +455,17 @@ class GuardianService:
                 source = query.get("source_service", [None])[0]
                 return self._respond(start_response, 200, {
                     "events": self.store.recent(limit, source_service=source)})
-            if path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/heartbeats", "/v1/incidents",
+            if path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/ingestion-health", "/v1/heartbeats", "/v1/incidents",
                         "/v1/decision-traces", "/v1/instance-decision-traces",
                         "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications",
                         "/v1/system-map", "/v1/anomalies"):
                 raise _HTTPError(405, "METHOD_NOT_ALLOWED")
             raise _HTTPError(404, "NOT_FOUND")
+        except IngestionOverload as exc:
+            return self._respond(start_response, 429, {
+                "error": "INGESTION_LIMITED", "reasons": list(exc.reasons),
+                "request_persisted": False, "retry_after_seconds": exc.retry_after_seconds,
+            }, extra_headers=(("Retry-After", str(exc.retry_after_seconds)),))
         except _HTTPError as exc:
             return self._respond(start_response, exc.status, {"error": exc.code})
         except GuardianEventError:
@@ -650,6 +669,7 @@ def _lab_execution_monitor(collectors: tuple, stopped: Event) -> None:
 
 def main() -> None:
     """Run separately: python -m tradexa.guardian.service (loopback by default)."""
+    ingestion_limits = IngestionLimits.from_environment(os.environ)
     source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
     if not isinstance(source_keys, dict):
         raise ValueError("GUARDIAN_SOURCE_KEYS_JSON must be an object")
@@ -720,7 +740,8 @@ def main() -> None:
         required += (STOP_PROBE,)
     store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
     app = GuardianService(store, source_keys=source_keys, read_key=read_key,
-                          required_components=required, research_key=research_key, admin_key=admin_key)
+                          required_components=required, research_key=research_key, admin_key=admin_key,
+                          ingestion_limits=ingestion_limits)
     stopped = Event()
     monitor = Thread(target=_self_heartbeat, args=(store, stopped), daemon=True)
     incident_monitor = Thread(target=_incident_monitor,

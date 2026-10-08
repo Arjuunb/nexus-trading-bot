@@ -1923,6 +1923,114 @@ activation, strategy/Agent/runtime/journal/broker edits or live-routing change.
 This finishes the optional transport contract and local verification portion,
 not production producer telemetry or the entire Guardian PRD.
 
+## Bounded HTTP ingestion admission (2026-10-08)
+
+The standalone Guardian service now admits authenticated `/v1/events` and
+`/v1/heartbeats` writes through separate per-process token/capacity budgets.
+Global **per route class** and per-configured-source limits are both enforced
+atomically under a short local lock. No body parsing, network or persistence
+runs while that lock is held. Admission does not wait or create a queue.
+Unconfigured sources cannot allocate buckets; the inventory is bounded to 128
+valid unique names. Existing independent source/read/research/admin credentials
+retain their authority.
+
+Unauthorized requests remain 401 and do not read a body or spend a source's
+budget. Authenticated overload is rejected **before body/database work** with
+429 `INGESTION_LIMITED`, allowlisted `reasons`, `retry_after_seconds`,
+`request_persisted=false` and a `Retry-After` header. Reasons are
+`GLOBAL_RATE_LIMIT`, `SOURCE_RATE_LIMIT` or `WRITE_CAPACITY_FULL`; rate reasons
+can coexist. `request_persisted=false` refers to this rejected request only,
+**not** proof that a prior retry's event/order does not exist. `Retry-After` is
+guidance to try again, not a guarantee that capacity will be free.
+
+Events and heartbeats have independent budgets/capacity, so an event flood
+does not itself spend heartbeat admission. Reads, `/healthz` and diagnostics
+do not spend either budget. This does **not** guarantee read/heartbeat latency
+when the underlying single-process WSGI server, SQLite lock, host or gateway
+is unavailable; deployment acceptance and request/connection timeouts remain.
+
+An admitted request spends a token even if its body is malformed, its source
+identity is spoofed or persistence fails. Its capacity lease is always released
+on validation/persistence/response failure. Failed requests are not refunded
+into a flood loop. Denied requests do not spend tokens. Monotonic refill is
+capped at the configured burst; a backwards clock cannot grant capacity.
+No changes to immutable event IDs/content, stored receipt timestamps or replay
+semantics are made. A committed append followed by a lost HTTP acknowledgement
+retries as `ALREADY_PRESENT`, without a duplicate or freshness rewrite.
+
+### Protective defaults and configuration
+
+These are **local protective defaults**, not measured workload/latency SLAs.
+Environment overrides use the exact prefix `GUARDIAN_INGESTION_` plus the
+following suffixes. They are strictly positive integer strings; unknown prefix
+keys, zero/disable values, invalid ranges and inconsistent source/global limits
+fail startup **before store creation or thread/server startup**.
+
+| Suffix | Default | Meaning |
+| --- | --- | --- |
+| `EVENT_RATE` | 60 | Global event requests/second |
+| `EVENT_BURST` | 256 | Global event token capacity |
+| `EVENT_SOURCE_RATE` | 20 | Each configured source's event requests/second |
+| `EVENT_SOURCE_BURST` | 128 | Each source's event token capacity |
+| `EVENT_INFLIGHT` | 4 | Concurrent admitted event requests |
+| `HEARTBEAT_RATE` | 10 | Global heartbeat requests/second |
+| `HEARTBEAT_BURST` | 32 | Global heartbeat token capacity |
+| `HEARTBEAT_SOURCE_RATE` | 2 | Each source's heartbeat requests/second |
+| `HEARTBEAT_SOURCE_BURST` | 8 | Each source's heartbeat token capacity |
+| `HEARTBEAT_INFLIGHT` | 1 | Concurrent admitted heartbeat requests |
+
+Rates are bounded to 1-1000/second, bursts to 1-2000 and concurrent leases to
+1-16 per route class. Source rate/burst cannot exceed the corresponding global
+rate/burst. No active environment or deployment configuration changed here.
+No producer is enabled and no trading hot-path dependency is introduced.
+
+This limits **HTTP producer admission**, not all Guardian writes: in-process
+collectors, analysis/reports/research and heartbeats written internally remain
+outside these budgets. It is not a byte-rate limit, disk-retention policy,
+unauthenticated DoS defense, TLS gateway, shared multi-process quota or durable
+critical-event outbox. Existing HTTP body-size validation remains in force for
+admitted requests. Keep the service on loopback; public exposure is not approved.
+Best-effort emitters count a 429 as a failed delivery, never an acknowledged
+event, and do not gain retry/trading authority from this change.
+
+### Admission diagnostics and validation
+
+Read-key-only `GET /v1/ingestion-health` returns a no-store, bounded in-memory
+snapshot: process epoch/uptime, numeric route/source limits, available tokens,
+admitted/rate-limited/capacity-limited requests and current leases. There are no
+paths, keys, errors, raw bodies or trading payloads. No query/reset/mutation is
+accepted (400/405); unauthorized readers receive 401. This endpoint never opens
+SQLite or overwrites platform/component health. Its `HEALTHY`/`DEGRADED` status
+is scoped to local HTTP admission. Admitted request counts are **not** counts of
+persisted/verified events. Cumulative overload remains visible for the epoch.
+
+Counters are explicitly volatile and restart under a new epoch; existing
+Guardian evidence is preserved. `history_persistent`, `persistence_verified`,
+`producer_coverage_verified`, `trading_integrity_verified` and
+`automatic_action_allowed` remain false. There is no certified producer
+inventory, complete history, broker fill, recovery or trading permission.
+
+Backend/API and testing skills guided strict admission/error contracts and
+failure-first tests. Regression coverage includes quotas, concurrent requests,
+heartbeats/read isolation, clocks/configuration, sanitized persistence failure,
+capacity release, lost acknowledgement, immutable retry, restarts and startup
+fail-closed behavior. Local validation: **483 passed** in the targeted suite;
+the complete suite finished with **5,440 passed, 15 skipped, 94 warnings**
+(dependency/FastAPI deprecations), with zero failures or errors. Both SMC source
+and behavior protection checks passed; the protected strategy files and freeze
+manifests remain unchanged. `git diff --check` passed.
+
+Files changed in this admission phase: `tradexa/guardian/ingestion.py`,
+`tradexa/guardian/service.py`, `tests/test_guardian_ingestion_admission.py`,
+`docs/GUARDIAN_FOUNDATION.md` and `docs/GUARDIAN_REMAINING_WORK.md`.
+
+This is local Guardian-only work: no trading strategy/Agent/runtime/broker or
+source ledger edits, main/environment change, push, deployment or live routing.
+For the remaining **eight major workstreams**, see
+[GUARDIAN_REMAINING_WORK.md](GUARDIAN_REMAINING_WORK.md). They are not eight
+remaining commits; several need owner-selected external integrations and
+production acceptance.
+
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.
