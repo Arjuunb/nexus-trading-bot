@@ -31,6 +31,7 @@ from __future__ import annotations
 from services.price_action_lab import PriceActionPaperAccount
 from services.smc_agent_runtime import AgentGatedSMCPaperAccount
 from services.guardian_lifecycle_outbox import install_lab_lifecycle_outbox
+from services.guardian_decision_provenance import install_lab_decision_provenance
 
 LABS = {"price_action": "Price Action Lab", "smc": "SMC Lab", "adaptive": "Adaptive Lab"}
 
@@ -57,6 +58,7 @@ class EventGuardedPriceActionPaperAccount(PriceActionPaperAccount):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         install_lab_lifecycle_outbox(self._db, "pa")
+        install_lab_decision_provenance(self._db, "pa")
 
     def _runtime_control(self) -> dict:
         control = super()._runtime_control()
@@ -76,6 +78,7 @@ class EventGuardedSMCPaperAccount(AgentGatedSMCPaperAccount):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         install_lab_lifecycle_outbox(self._db, "smc")
+        install_lab_decision_provenance(self._db, "smc")
 
     def submit_order(self, **kwargs):
         if kwargs.get("ownership") == "strategy":

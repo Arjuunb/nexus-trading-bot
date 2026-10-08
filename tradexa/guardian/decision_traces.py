@@ -5,6 +5,7 @@ This does not infer trade outcomes or recommend changes to strategy rules.
 from __future__ import annotations
 
 from .store import GuardianStore
+from .provenance import unknown_provenance
 
 
 def _near_valid(event: dict) -> bool:
@@ -65,6 +66,8 @@ def decision_traces(store: GuardianStore, *, limit: int = 50,
             "received_at": event["received_at"], "candle_time": event["timestamp"],
             "strategy_id": event.get("strategy_id"),
             "strategy_version": event.get("strategy_version"),
+            "decision_provenance": (event.get("metadata") or {}).get("decision_provenance")
+                or unknown_provenance(),
             "symbol": event.get("symbol"), "timeframe": event.get("timeframe"),
             "decision": event.get("decision"), "reason": event.get("reason"),
             "conditions": conditions if isinstance(conditions, list) else [],

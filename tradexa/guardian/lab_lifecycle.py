@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from .events import GuardianEvent
 from .lab_observer import _timestamp
 from .store import GuardianStore
+from .provenance import provenance_metadata
 
 _COMPONENTS = {"PRICE_ACTION": "pa_lifecycle", "SMC": "smc_lifecycle"}
 _MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -119,7 +120,8 @@ class GuardianLabLifecycle:
                         "execution_integrity_verified": False,
                     },
                     metadata={"coverage": "POST_INSTALL_MATERIAL_LIFECYCLE",
-                              "paper_only": True, "model_id": row.get("model_id")},
+                              "paper_only": True, "model_id": row.get("model_id"),
+                              **provenance_metadata(row)},
                 )
                 event.canonical_json()
                 events.append(event)

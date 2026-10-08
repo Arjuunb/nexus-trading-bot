@@ -83,10 +83,12 @@ def _summarize(events: list[dict], *, truncated: bool) -> dict:
         # Never pool different versions, owners, markets or source configurations.
         key = (event.get("lab_id") or "INSTANCE", event.get("instance_id") or event.get("session_id"),
                event.get("strategy_id"), event.get("strategy_version"), event.get("symbol"),
-               event.get("timeframe"), metadata.get("code_commit"), metadata.get("config_hash"))
+               event.get("timeframe"), metadata.get("code_commit"), metadata.get("config_hash"),
+               metadata.get("saved_config_hash"), metadata.get("saved_config_scope"))
         group = groups.setdefault(key, {
             "scope": key[0], "owner_id": key[1], "strategy_id": key[2], "strategy_version": key[3],
             "symbol": key[4], "timeframe": key[5], "code_commit": key[6], "config_hash": key[7],
+            "saved_config_hash": key[8], "saved_config_scope": key[9],
             "exact_version_verified": bool(key[3] and key[6] and key[7]),
             "observed_decisions": 0, "unproven_near_valid_candidates": 0,
             "decisions_by_state": Counter(), "blockers": Counter(),

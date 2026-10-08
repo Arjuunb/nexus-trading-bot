@@ -377,6 +377,10 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # Existing Agent stop rows are exported through pure validation/hash
     # helpers only. No source writer, broker or Guardian store is constructed.
     "automation-hub/services/guardian_smc_stop_read_model.py",
+    # Lab lifecycle GET export shares pure saved-settings hash/validation only.
+    # Capture remains source-local SQL; neither writer imports Guardian, and
+    # this query-only adapter constructs no Guardian store or trading runtime.
+    "automation-hub/services/guardian_read_model.py",
 }
 
 

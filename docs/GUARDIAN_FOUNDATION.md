@@ -5,7 +5,7 @@ Status: local foundation, independently runnable service, read-only Command Cent
 ## Boundaries
 
 - `tradexa.guardian` contains no trading commands and imports no trading runtime.
-- Guardian evidence belongs in its own owner-only SQLite database, never in a PA, SMC, instance, order, or journal database. WAL permits short writes beside readers. Replayed events with an identical ID and identical content are ignored; a conflicting replay fails. SQL triggers reject updates and deletes to raw events.
+- Guardian-owned event storage belongs in its own owner-only SQLite database, never in a PA, SMC, instance, order, or journal database. Bounded source-local outboxes and saved-settings provenance are source audit records, committed by the source writer, not writes by the Guardian process into trading state. WAL permits short writes beside readers. Replayed events with an identical ID and identical content are ignored; a conflicting replay fails. SQL triggers reject updates and deletes to raw events.
 - Event `timestamp` is the source's aware clock; `received_at` is assigned by the store. This distinction is necessary for clock-skew and transport-lag investigations.
 - Heartbeat state is current-state data, not immutable evidence. Missing, invalid, stale, or future heartbeats produce `UNKNOWN`, not `HEALTHY`. A heartbeat is **not** proof that strategy, feed, broker, and ledger are all healthy.
 - Field validation rejects common secret-bearing names and values, oversized payloads, and non-JSON evidence. This is defense in depth, **not** a guarantee against every secret pattern. Producers must emit allowlisted, redacted evidence. Never send credentials, raw HTTP headers, or unrestricted exceptions.
@@ -2030,6 +2030,139 @@ For the remaining **eight major workstreams**, see
 [GUARDIAN_REMAINING_WORK.md](GUARDIAN_REMAINING_WORK.md). They are not eight
 remaining commits; several need owner-selected external integrations and
 production acceptance.
+
+## New lab decision saved-settings provenance (2026-10-08)
+
+This is the first bounded slice of source/version coverage, **not completion
+of deep telemetry or exact-version certification**. Frozen PA/SMC lab modules,
+strategy files, configuration defaults and manifests remain unchanged. The
+existing `EventGuardedPriceActionPaperAccount` / `EventGuardedSMCPaperAccount`
+wrappers, already constructed in `webhook_api.py`, install connection-local
+SQLite TEMP triggers after the existing lifecycle outbox installation.
+
+For each **new evaluation INSERT on that writer connection**, the trigger
+captures one immutable source audit row in `pa_guardian_decision_provenance` or
+`smc_guardian_decision_provenance`. The evaluation, lifecycle outbox and
+provenance INSERT share the source statement's atomicity. An injected capture
+failure rolls back all three; no network, broker call, UDF or extra post-commit
+finalization is involved. This does not capture an evaluation that failed to
+persist, nor certify the later broker/journal path. There is one provenance row
+per decision, never a row per lifecycle update, quote or dashboard refresh.
+
+The TEMP trigger belongs to its connection. Two overlapping writer connections
+can retain different declared commits without relabeling each other's records.
+Restarting/reinstalling the wrapper installs a new TEMP trigger; previously
+captured provenance is immutable. Missing/invalid/conflicting `GIT_COMMIT` and
+`RENDER_GIT_COMMIT` declarations yield `code_commit: null`; raw environment text
+is never exported. A full lowercase 40-character commit is a **reported runtime
+declaration**, not independently verified deployed source/image provenance.
+No environment variable is set or deployment performed by this phase.
+
+Only settings already saved in the frozen evaluation payload are captured:
+
+| Scope | Allowlisted snapshot |
+| --- | --- |
+| `PA_SAVED_EXECUTION_SETTINGS` | symbol, timeframe, operating mode, strategy ID, risk %, maximum risk %, maximum concurrent risk %, target R |
+| `SMC_SAVED_SESSION_SETTINGS` | symbol, timeframe, operating mode, model ID, risk % |
+
+Strategy/version, session and correlation identity are captured separately.
+The snapshot is capped at 2,048 UTF-8 bytes; oversized snapshots become
+unavailable rather than being truncated into a misleading configuration. No
+credentials, arbitrary payload fields, live quotes, rolling candles or UI
+state are included. An allowlist prevents new runtime fields expanding capture.
+`saved_config_hash` is SHA-256 over the captured non-null settings using sorted
+keys and compact JSON. It identifies **this saved-settings projection only**,
+not the full alpha/engine, Agent, risk, news or venue configuration.
+
+Capture uses SQLite's native JSON `->` operator (SQLite 3.38+), probed before
+schema installation. Raw JSON numeric/boolean tokens are retained: a numeric
+`json_extract`/`json_object` round-trip was shown by regression tests to round
+high-precision risk settings and convert booleans to integers. The capture
+does neither; invalid numeric types fail the read contract explicitly.
+The local runtime reports SQLite 3.53.1. Target deployment capability and
+write latency still require staging verification.
+
+`GET /guardian/lifecycle` retains its independent observer credential, scope,
+32-row anchored cursor and no-store response. It reads provenance in the same
+query-only transaction as lifecycle rows, using at most 32 indexed identity
+lookups. No full history scan or source write is added to the read route.
+Each transition now contains `decision_provenance`:
+
+- `CAPTURED_SAVED_SETTINGS`: every allowlisted setting is present. Commit may
+  still be unknown; this is not a verified strategy configuration.
+- `INCOMPLETE_SAVED_SETTINGS`: a capture exists but some settings/the bounded
+  snapshot are unavailable. Available fields remain explicitly partial.
+- `UNKNOWN`: no capture. Legacy rows, post-install updates to legacy rows,
+  uninstrumented writer connections and older exporters remain unknown.
+
+There is no historical backfill using current environment/session settings,
+no deletion, no VACUUM and no account/order/journal reset. Existing source
+outbox IDs/cursors remain unchanged. Existing Guardian events are not rewritten.
+
+The lifecycle collector validates scope, schema, decision identity, canonical
+snapshot hash and false verification flags before committing a page/cursor.
+Tampered metadata rejects the page without advancing its cursor; retry with
+valid evidence works. Restart/replay retains source IDs and imports no duplicate
+events. Guardian decision traces expose the captured projection; received-
+evidence reports separate differing saved-setting hashes/scopes. Generic
+`config_hash` is deliberately **not** populated from this partial snapshot.
+`exact_version_verified`, `source_attestation_verified`,
+`full_strategy_config_verified` and `all_evaluations_verified` remain false
+for this capture. No profitability, complete producer coverage or execution
+authority is conferred.
+
+Backend/API and testing skills guided bounded, authenticated projection and
+failure-first coverage. New tests exercise exact saved values/hashes, duplicate
+decisions, lifecycle updates, restart and overlapping connection identities,
+legacy/uninstrumented writers, atomic failure/retry, invalid/conflicting commit
+declarations, secret/runtime-field exclusion, 100 read refreshes, malformed/
+forged export rejection with cursor recovery, and report isolation. Final local
+validation: **1,389 passed** in the targeted suite (5 deprecation warnings);
+**5,488 passed, 15 existing skips, 93 deprecation warnings** in the complete
+suite, zero failures/errors, exit code 0. The 48 new provenance cases passed.
+Both SMC protection systems passed (27 freeze/protection cases), as did the
+7 Agent crash-boundary cases. Protected PA/SMC strategy/lab files and freeze
+manifests remain byte-unchanged; `git diff --check` passed. Full-suite
+review identified an undeclared read-only helper dependency; the explicit
+architecture allowlist now records this pure projection seam, and a new AST
+guard prohibits I/O/trading dependencies in the shared contract. No strategy
+lock or behavior expectation was weakened. Sandbox-localhost socket denials
+are rerun with local test-server permissions, not "fixed" by skipping tests.
+
+This closes only newly persisted **lab saved-settings** identity capture.
+Full source/config attestation, all-instance provenance, complete engine/Agent/
+risk configuration and failed-persistence/every-evaluation coverage remain
+required. No producer activation, main change, push, VPS deployment or live
+routing occurred.
+
+Files changed in this saved-settings phase:
+
+- `automation-hub/services/guardian_decision_provenance.py`
+- `automation-hub/services/guardian_read_model.py`
+- `automation-hub/services/lab_event_guard.py`
+- `automation-hub/tests/test_guardian_decision_provenance.py`
+- `tradexa/guardian/provenance.py`
+- `tradexa/guardian/lab_lifecycle.py`
+- `tradexa/guardian/decision_traces.py`
+- `tradexa/guardian/reports.py`
+- `tests/test_guardian_provenance.py`
+- `tests/test_core_architecture.py`
+- `docs/GUARDIAN_FOUNDATION.md`
+- `docs/GUARDIAN_REMAINING_WORK.md`
+
+Validation commands (from the repository root with its Python dependencies):
+
+```sh
+python -m pytest -q tests/test_guardian*.py tests/test_core_architecture.py \
+  automation-hub/tests/test_guardian*.py \
+  automation-hub/tests/test_smc_decision_path_freeze.py \
+  automation-hub/tests/test_smc_agent_cannot_touch_the_strategy.py \
+  automation-hub/tests/test_smc_agent_crash_boundaries.py
+PYTHONPATH="$PWD/automation-hub:$PWD:$PWD/sdks/python" python -m pytest -q
+```
+
+The complete suite needs localhost socket permissions for its mock HTTP
+servers. No test is skipped to work around those permissions.
 
 ## PRD completion boundary
 

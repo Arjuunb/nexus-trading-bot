@@ -11,6 +11,8 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
+from tradexa.guardian.provenance import project_saved_provenance
+
 LAB_TABLES = {
     "PRICE_ACTION": ("pa_sessions", "pa_evaluations"),
     "SMC": ("smc_sessions", "smc_evaluations"),
@@ -171,6 +173,7 @@ def lab_lifecycle_page(path: str | Path, lab: str, *, after: int = 0,
     if not source.is_file():
         raise sqlite3.OperationalError("source evidence database is unavailable")
     table = ("pa" if lab == "PRICE_ACTION" else "smc") + "_guardian_lifecycle"
+    provenance_table = ("pa" if lab == "PRICE_ACTION" else "smc") + "_guardian_decision_provenance"
     with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro",
                                  uri=True, timeout=0.25)) as connection:
         connection.row_factory = sqlite3.Row
@@ -187,6 +190,14 @@ def lab_lifecycle_page(path: str | Path, lab: str, *, after: int = 0,
             f"SELECT * FROM {table} WHERE sequence>? ORDER BY sequence LIMIT ?",
             (after, limit + 1),
         ).fetchall()
+        provenance = {}
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                              (provenance_table,)).fetchone():
+            for row in rows[:limit]:
+                if row["correlation_id"] not in provenance:
+                    provenance[row["correlation_id"]] = connection.execute(
+                        f"SELECT * FROM {provenance_table} WHERE correlation_id=?",
+                        (row["correlation_id"],)).fetchone()
     page = rows[:limit]
 
     def project(row: sqlite3.Row) -> dict:
@@ -218,6 +229,7 @@ def lab_lifecycle_page(path: str | Path, lab: str, *, after: int = 0,
             "broker_event_order_id": row["broker_event_order_id"],
             "fill": {key: value for key, value in (raw_fill or {}).items()
                      if key in _LIFECYCLE_FILL_FIELDS} if raw_fill else None,
+            "decision_provenance": project_saved_provenance(provenance.get(row["correlation_id"])),
         }
     return {
         "lab": lab, "coverage": "POST_INSTALL_MATERIAL_LIFECYCLE",

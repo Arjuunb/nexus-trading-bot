@@ -1,6 +1,6 @@
 # Guardian: remaining work and completion gates
 
-Updated 2026-10-08 from the current `codex/guardian-foundation` code and the
+Updated 2026-10-09 from the current `codex/guardian-foundation` code and the
 Guardian v1.0 PRD. This is a delivery checklist, not a production certification.
 
 ## Honest status
@@ -15,7 +15,9 @@ The independent local service, immutable evidence store, credential separation,
 bounded decision/lifecycle observers, incident grouping/investigation, several
 SMC paper-history links, read-only standalone Command Center, evidence reports,
 research registry, backup/recovery rehearsal and scoped self/queue/transport
-diagnostics exist. The new HTTP admission phase limits producer write floods.
+diagnostics exist. The HTTP admission phase limits producer write floods;
+new lab decisions now retain immutable saved-settings provenance, with unknown
+legacy/commit/configuration coverage stated explicitly.
 They are **locally tested**, not proof that every production evaluation/order
 was captured. No Guardian deployment or producer activation was performed in
 these local phases. Do not infer the current VPS state from this checklist.
@@ -24,7 +26,7 @@ these local phases. Do not infer the current VPS state from this checklist.
 
 | Workstream | Existing local evidence | Still required to close it |
 | --- | --- | --- |
-| 1. Complete source coverage and provenance | Post-install persisted PA/SMC/instance decision outboxes; bounded/restart-safe imports; optional emitter transport contract | Capture every required evaluation and failed-persistence outcome without altering alpha; exact strategy/version/commit/config identity; approved source/process inventory; production producer wiring; outage/replay completeness proof. |
+| 1. Complete source coverage and provenance | Post-install persisted PA/SMC/instance decision outboxes; bounded/restart-safe imports; new lab saved-settings hashes and connection-local reported commits (not full config/source attestation); optional emitter transport contract | Capture every required evaluation and failed-persistence outcome without altering alpha; full engine/Agent/risk configuration and deployed-source attestation; all-instance provenance; approved source/process inventory; production producer wiring; outage/replay completeness proof. |
 | 2. Execution, journal and isolated risk integrity | PA/SMC retained fills, several SMC intent/fill/position/exit/journal/stop links, bounded current instance ledger pairing | Complete PA and all-instance lifecycle history; source-authoritative reconciliation of unresolved/racing links; currency/venue/account identity and correlated exposure; missing/legacy evidence remains unknown; never combine paper/live or unrelated lab accounts. |
 | 3. Infrastructure, agents and causal evidence | Coarse public probe, lab-feed observations, declared graph, bounded incident timelines and typed latency read models | Actual host/container resource and agent telemetry; runtime-verified dependencies and recovery chains; required frequency/distribution/latency baselines with sufficient attributable samples; no causal claims from coincidence alone. |
 | 4. Causal research runners | Owner-governed hypothesis/result/review registry; active strategy protected | Real isolated backtest/OOS/walk-forward/stress/forward-paper runners, causal datasets, statistical comparison and reproducibility; no automatic production rule application. |
