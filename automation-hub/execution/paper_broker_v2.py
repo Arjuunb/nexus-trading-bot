@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Optional
 
 from data.sqlite_runtime import runtime_connection
+from execution.paper_fill_provenance import encode_transition
+from execution.paper_exit_provenance import encode_exit_fill, observation
 
 
 ORDER_TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
@@ -162,6 +164,8 @@ class PaperBrokerV2:
                 ("account_id", "TEXT"), ("execution_engine", "TEXT"),
                 ("candle_id", "TEXT"), ("blocker", "TEXT"),
                 ("quote_event_id", "TEXT"), ("fill_key", "TEXT"),
+                ("fill_position_json", "TEXT"),
+                ("fill_exit_json", "TEXT"),
             ):
                 if name not in fill_columns:
                     self._c.execute(f"ALTER TABLE v2_fills ADD COLUMN {name} {ddl}")
@@ -599,6 +603,7 @@ class PaperBrokerV2:
                      "close": mark, "volume": volume, "timestamp": received.isoformat(),
                      "bid": bid, "ask": ask, "quote_event_id": quote_event_id},
                     events, bool(order["reduce_only"]), fill_timestamp=received.isoformat(),
+                    fill_source="TICK",
                 )
                 if protection and len(events) > before:
                     position = self._c.execute(
@@ -647,6 +652,10 @@ class PaperBrokerV2:
                          "bid": bid, "ask": ask, "quote_event_id": quote_event_id},
                         events, True, persisted=False,
                         fill_timestamp=received.isoformat(),
+                        fill_source="TICK",
+                        exit_trigger={"kind": "POSITION_STOP_LOSS" if hit_stop else "POSITION_TAKE_PROFIT",
+                                      "price": float(stop) if hit_stop else float(target),
+                                      "effective_stop": stop, "effective_peak": None},
                     )
             self._c.commit()
         return {
@@ -658,6 +667,9 @@ class PaperBrokerV2:
     def process_candle(self, symbol: str, candle, *, protections: Optional[dict[str, dict]] = None) -> dict:
         """Advance open orders and protective stops using one verified candle."""
         symbol, bar = (symbol or "").upper().replace("/", ""), self._candle(candle)
+        # Evidence only: _candle's OHLCV validation/fill math is unchanged.
+        bar["timestamp"] = (candle.get("timestamp") if isinstance(candle, dict)
+                            else getattr(candle, "timestamp", None))
         events: list[dict] = []
         with self._lock, self._rollback_failed_event():
             # A trailing-stop order is an explicit close instruction. Its trigger
@@ -671,7 +683,9 @@ class PaperBrokerV2:
                     trigger = (bar["high"] - order["trailing_offset"] if pos["side"] == "long"
                                else bar["low"] + order["trailing_offset"])
                     if (pos["side"] == "long" and bar["low"] <= trigger) or (pos["side"] == "short" and bar["high"] >= trigger):
-                        self._fill(order, "sell" if pos["side"] == "long" else "buy", trigger, bar, events, True)
+                        self._fill(order, "sell" if pos["side"] == "long" else "buy", trigger, bar, events, True,
+                                   exit_trigger={"kind": "ORDER_TRAILING_STOP", "price": trigger,
+                                                 "effective_stop": None, "effective_peak": None})
                     continue
                 price = self._candidate_price(order, bar)
                 if price is None and order["type"] == "stop_limit" and ((order["side"] == "buy" and bar["high"] >= order["stop_price"]) or (order["side"] == "sell" and bar["low"] <= order["stop_price"])):
@@ -768,12 +782,33 @@ class PaperBrokerV2:
             raw = raw if hit else (max(bar["open"], target) if p["side"] == "long" else min(bar["open"], target))
             order = {"id": "protective-" + _id(), "symbol": symbol, "remaining": p["size"], "filled": 0,
                      "quantity": p["size"], "reduce_only": 1, "type": "stop", "side": exit_side}
-            self._fill(order, exit_side, raw, bar, events, True, persisted=False)
+            trailing_trigger = bool(hit and p["trailing_offset"] and stop != p["stop_loss"])
+            self._fill(order, exit_side, raw, bar, events, True, persisted=False,
+                       exit_trigger={"kind": ("POSITION_TRAILING_STOP" if trailing_trigger else
+                                              "POSITION_STOP_LOSS") if hit else "POSITION_TAKE_PROFIT",
+                                     "price": stop if hit else target,
+                                     "effective_stop": stop, "effective_peak": peak})
         return events
+
+    def _position_provenance(self, position, account_id):
+        """Exact source IDs around a fill; never join by time/market proximity."""
+        if position is None:
+            return None
+        row = dict(position)
+        parent = self._c.execute("SELECT symbol,side,account_id,execution_engine,candle_id,timeframe "
+                                 "FROM v2_orders WHERE id=?", (row.get("entry_order_id"),)).fetchone()
+        linked = (parent is not None and parent["account_id"] == account_id
+                  and parent["execution_engine"] == "SMC_LAB" and parent["symbol"] == row["symbol"]
+                  and parent["side"] == ("buy" if row["side"] == "long" else "sell"))
+        return {"position_id": row.get("position_id") or None, "entry_order_id": row.get("entry_order_id") or None,
+                "entry_execution_key": (parent["candle_id"] or None) if linked else None,
+                "entry_timeframe": (parent["timeframe"] or None) if linked else None,
+                "side": row["side"], "size": row["size"], "entry_price": row["entry_price"]}
 
     def _fill(self, order: dict, side: str, raw_price: float, bar: dict, events: list,
               reduce_only: bool, *, persisted: bool = True,
-              fill_timestamp: str | None = None) -> None:
+              fill_timestamp: str | None = None, fill_source: str = "CANDLE",
+              exit_trigger: dict | None = None) -> None:
         quantity = min(float(order["remaining"]), max(0.0, bar["volume"] * self.participation_rate))
         if quantity <= 0:
             return
@@ -820,8 +855,33 @@ class PaperBrokerV2:
         take_profit = order.get("protection_take_profit")
         risk_amount = (abs(float(price) - float(stop_loss)) * quantity
                        if stop_loss is not None else None)
+        position_json = None
+        exit_json = None
+        if account["account_type"] == "SMC_LAB" and self.execution_engine == "SMC_LAB":
+            after = self._c.execute("SELECT * FROM v2_positions WHERE symbol=?", (order["symbol"],)).fetchone()
+            before_origin = self._position_provenance(pos, account["account_id"])
+            position_json = encode_transition(
+                account_id=account["account_id"], fill_id=fid, order_id=order["id"], symbol=order["symbol"],
+                side=side, quantity=quantity, price=price, reduce_only=bool(reduce_only),
+                persisted_order=bool(persisted), before=before_origin,
+                after=self._position_provenance(after, account["account_id"]))
+            if pos is not None and (pos["side"] == "long") != (side == "buy"):
+                trigger = exit_trigger or {
+                    "kind": "ORDER_REDUCE_ONLY" if reduce_only else "NETTING_FILL",
+                    "price": None, "effective_stop": None, "effective_peak": None,
+                }
+                exit_json = encode_exit_fill(
+                    account_id=account["account_id"], fill_id=fid, order_id=order["id"], symbol=order["symbol"],
+                    side=side, quantity=quantity, closed_quantity=min(quantity, float(pos["size"])),
+                    price=price, raw_reference_price=raw_price, reduce_only=bool(reduce_only),
+                    persisted_order=bool(persisted), position=before_origin,
+                    protection={key: pos[key] for key in ("stop_loss", "take_profit", "trailing_offset", "peak_price")},
+                    order={key: order.get(key) for key in ("type", "limit_price", "stop_price", "trailing_offset")},
+                    trigger_kind=trigger["kind"], trigger_price=trigger["price"],
+                    effective_stop=trigger["effective_stop"], effective_peak=trigger["effective_peak"],
+                    fill_source=fill_source, observation=observation(bar))
         self._c.execute(
-            "INSERT INTO v2_fills(id,order_id,symbol,side,quantity,price,fee,realized_pnl,timestamp,signal_timestamp,decision_timestamp,order_timestamp,fill_timestamp,signal_price,requested_price,spread,slippage,commission,funding,stop_loss,take_profit,risk_amount,position_size,strategy,strategy_version,timeframe,market_data_source,account_id,execution_engine,candle_id,blocker,quote_event_id,fill_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO v2_fills(id,order_id,symbol,side,quantity,price,fee,realized_pnl,timestamp,signal_timestamp,decision_timestamp,order_timestamp,fill_timestamp,signal_price,requested_price,spread,slippage,commission,funding,stop_loss,take_profit,risk_amount,position_size,strategy,strategy_version,timeframe,market_data_source,account_id,execution_engine,candle_id,blocker,quote_event_id,fill_key,fill_position_json,fill_exit_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (fid, order["id"], order["symbol"], side, quantity, price, fee, pnl,
              filled_at, order.get("signal_timestamp"), order.get("decision_timestamp"),
              order.get("created_at"), filled_at, signal_price, requested_price,
@@ -830,7 +890,7 @@ class PaperBrokerV2:
              order.get("timeframe"), order.get("market_data_source"),
              order.get("account_id") or self._account_row()["account_id"],
              order.get("execution_engine") or self.execution_engine,
-             order.get("candle_id"), "NONE", quote_event_id, fill_key),
+             order.get("candle_id"), "NONE", quote_event_id, fill_key, position_json, exit_json),
         )
         if persisted:
             filled, remaining = float(order["filled"]) + quantity, float(order["remaining"]) - quantity
@@ -943,6 +1003,9 @@ class PaperBrokerV2:
                     {"open": mark, "high": mark, "low": mark,
                      "close": mark, "volume": volume},
                     events, True, persisted=False,
+                    fill_source="MARK",
+                    exit_trigger={"kind": "LEGACY_POSITION_REMEDIATION", "price": mark,
+                                  "effective_stop": None, "effective_peak": None},
                 )
                 if self._c.execute(
                         "SELECT 1 FROM v2_positions WHERE symbol=?", (symbol,)
@@ -994,7 +1057,7 @@ class PaperBrokerV2:
         symbol, mark = symbol.upper(), float(mark_price)
         if mark <= 0:
             raise ValueError("mark price must be positive")
-        with self._lock:
+        with self._lock, self._rollback_failed_event():
             position = next((row for row in self.positions() if row["symbol"] == symbol), None)
             if not position or position["estimated_liquidation_price"] is None:
                 return {"liquidated": False, "symbol": symbol}
@@ -1011,7 +1074,9 @@ class PaperBrokerV2:
             self._fill(order, side, mark,
                        {"open": mark, "high": mark, "low": mark, "close": mark,
                         "volume": max(position["size"] / max(self.participation_rate, 1e-9), position["size"])},
-                       events, True, persisted=False)
+                       events, True, persisted=False, fill_source="MARK",
+                       exit_trigger={"kind": "PAPER_LIQUIDATION", "price": boundary,
+                                     "effective_stop": None, "effective_peak": None})
             self._c.commit()
             return {"liquidated": True, "symbol": symbol,
                     "estimated_liquidation_price": boundary, "mark_price": mark,
@@ -1079,7 +1144,7 @@ class PaperBrokerV2:
                             "take_profit", "risk_amount", "position_size", "strategy",
                             "strategy_version", "timeframe", "market_data_source", "account_id",
                             "execution_engine", "candle_id", "blocker", "quote_event_id",
-                            "fill_key")
+                            "fill_key", "fill_position_json", "fill_exit_json")
                     self._c.execute(
                         f"INSERT INTO v2_fills({','.join(keys)}) VALUES ({','.join('?' for _ in keys)})",
                         tuple(row.get(k) for k in keys),

@@ -352,6 +352,38 @@ DELIBERATE_TRADEXA_CONSUMERS = {
     # mathematics out of the execution engine. Adding a venue touches this file
     # and no arithmetic.
     "automation-hub/services/portfolio_view.py",
+    # Guardian: the GET-only primary-ledger adapter translates bounded source
+    # rows into a pure paper-pair observation. No trading control path consumes
+    # its result, and Guardian never imports the trading ledger back.
+    "automation-hub/services/guardian_instance_ledger_read_model.py",
+    # Guardian's PA/SMC GET-only adapter shares pure bounded validation, not
+    # the Guardian store or any trading instruction. Source files stay read-only.
+    "automation-hub/services/guardian_lab_execution_read_model.py",
+    # Retained fill export reuses validation/identity hashing only. The query-
+    # only HTTP path never opens Guardian storage or invokes a trading runtime.
+    "automation-hub/services/guardian_lab_fill_read_model.py",
+    # Closed Agent journal repeat-scan export shares a pure projection/cursor
+    # contract only. It does not import Guardian storage or trading authority.
+    "automation-hub/services/guardian_smc_journal_read_model.py",
+    # Retained intent-event GET export shares pure validation/hash helpers only.
+    # Guardian persistence and broker/runtime authority remain separate.
+    "automation-hub/services/guardian_smc_intent_read_model.py",
+    # Fill-position source export reuses pure bounds/hash/redaction contracts;
+    # source capture never imports Guardian and stays in the broker ledger.
+    "automation-hub/services/guardian_smc_fill_transition_read_model.py",
+    # Exit source GET shares only bounded validation/cursor contracts. No
+    # Guardian store, journal or broker authority is invoked by this reader.
+    "automation-hub/services/guardian_smc_exit_fill_read_model.py",
+    # Existing Agent stop rows are exported through pure validation/hash
+    # helpers only. No source writer, broker or Guardian store is constructed.
+    "automation-hub/services/guardian_smc_stop_read_model.py",
+    # Lab lifecycle GET export shares pure saved-settings hash/validation only.
+    # Capture remains source-local SQL; neither writer imports Guardian, and
+    # this query-only adapter constructs no Guardian store or trading runtime.
+    "automation-hub/services/guardian_read_model.py",
+    # Instance GET export validates bounded immutable applied settings with a
+    # pure contract only; no Guardian store/runtime is reached by the writer.
+    "automation-hub/services/guardian_instance_read_model.py",
 }
 
 

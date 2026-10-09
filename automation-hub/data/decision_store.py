@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from data.tenant_scope import ensure_column, ensure_tenant_column
+from data.decision_outbox import install_decision_outbox
+from data.decision_provenance import applied_settings_json, install_instance_provenance
 
 
 def _utcnow() -> str:
@@ -59,6 +61,7 @@ class DecisionStore:
         ensure_column(self._c, "decisions", "final_state", "TEXT NOT NULL DEFAULT ''")
         ensure_column(self._c, "decisions", "gate_stage", "TEXT NOT NULL DEFAULT ''")
         ensure_column(self._c, "decisions", "blocker", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(self._c, "decisions", "applied_settings_json", "TEXT")
         self._c.execute(
             "UPDATE decisions SET final_state=CASE "
             "WHEN executed=1 THEN 'FILLED' "
@@ -70,6 +73,8 @@ class DecisionStore:
             "CREATE UNIQUE INDEX IF NOT EXISTS ux_decisions_identity "
             "ON decisions(decision_identity) WHERE decision_identity <> ''")
         ensure_tenant_column(self._c, "decisions")   # Phase C-3: schema-only, additive
+        install_decision_outbox(self._c)
+        install_instance_provenance(self._c)
         self._c.commit()
 
     def record(self, d: dict) -> int:
@@ -80,8 +85,8 @@ class DecisionStore:
                     setup_quality_score, volume_score, rr_score, confidence,
                     passed_json, failed_json, decision, reason, executed,
                     final_state, gate_stage, blocker,
-                    components_json, instance_id, decision_identity)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    components_json, instance_id, decision_identity, applied_settings_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(decision_identity) WHERE decision_identity <> '' DO NOTHING""",
                 (d.get("ts") or _utcnow(), d["symbol"], d.get("timeframe"),
                  d.get("strategy"), d.get("side"), d.get("regime"),
@@ -95,7 +100,7 @@ class DecisionStore:
                  d.get("final_state") or ("GATE_REJECTED" if d["decision"] == "rejected" else "QUALIFIED"),
                  d.get("gate_stage") or "", d.get("blocker") or "",
                  json.dumps(d.get("components") or {}), d.get("instance_id") or "",
-                 d.get("decision_identity") or ""))
+                 d.get("decision_identity") or "", applied_settings_json(d)))
             if cur.rowcount == 0 and d.get("decision_identity"):
                 row = self._c.execute(
                     "SELECT id FROM decisions WHERE decision_identity=?",

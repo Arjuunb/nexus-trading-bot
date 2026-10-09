@@ -1,0 +1,13 @@
+# Guardian is intentionally built without the trading app, exchange libraries,
+# dashboard bundles, or trading credentials. Its stdlib HTTP service is read-only.
+FROM python:3.11-slim
+WORKDIR /srv
+RUN groupadd --system --gid 10001 guardian \
+ && useradd --system --uid 10001 --gid 10001 --home-dir /nonexistent guardian
+COPY --chown=guardian:guardian tradexa/__init__.py /srv/tradexa/__init__.py
+COPY --chown=guardian:guardian tradexa/guardian/ /srv/tradexa/guardian/
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+USER 10001:10001
+EXPOSE 8765
+CMD ["python", "-m", "tradexa.guardian.service"]

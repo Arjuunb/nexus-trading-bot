@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <title>Guardian Command Center · Tradexa</title>
+  <link rel="stylesheet" href="/assets/command-center.css">
+  <script src="/assets/command-center.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="masthead">
+      <div>
+        <p class="eyebrow">TRADEXA / GUARDIAN</p>
+        <h1>Command Center</h1>
+        <p class="subtitle">Read-only operational evidence. Guardian cannot change trading state.</p>
+      </div>
+      <div class="overall">
+        <span class="metric-label">Configured evidence state</span>
+        <span id="overall-state" class="state state-unknown" aria-live="polite">UNKNOWN</span>
+      </div>
+    </header>
+
+    <section class="notice" aria-label="Evidence scope">
+      This view shows only evidence received by Guardian. A missing heartbeat or event is
+      <strong>UNKNOWN</strong>—never proof that a strategy, feed, or broker is healthy.
+    </section>
+
+    <section class="panel access" aria-labelledby="access-title">
+      <div>
+        <h2 id="access-title">Observer access</h2>
+        <p>The read key stays in this tab's memory. It is not saved in browser storage.</p>
+      </div>
+      <div class="access-controls">
+        <label for="read-key">Guardian read key</label>
+        <div class="key-row">
+          <input id="read-key" type="password" autocomplete="off" spellcheck="false" aria-describedby="connection-message">
+          <button id="connect" type="button">Connect</button>
+          <button id="disconnect" type="button" class="secondary" disabled>Disconnect</button>
+        </div>
+        <p id="connection-message" class="helper" role="status" aria-live="polite">Not connected. No evidence loaded.</p>
+      </div>
+    </section>
+
+    <section class="summary" aria-label="Guardian evidence summary">
+      <article class="panel metric">
+        <span class="metric-label">Evidence coverage</span>
+        <strong id="coverage">—</strong>
+        <span id="coverage-detail" class="metric-detail">Awaiting authenticated read</span>
+      </article>
+      <article class="panel metric">
+        <span class="metric-label">Recent events</span>
+        <strong id="event-count">—</strong>
+        <span class="metric-detail">Most recent 50; not a lifetime total</span>
+      </article>
+      <article class="panel metric">
+        <span class="metric-label">Observed open incidents</span>
+        <strong id="incident-count">—</strong>
+        <span class="metric-detail">All unresolved derived incidents; table shows the most recent 50</span>
+      </article>
+      <article class="panel metric">
+        <span class="metric-label">Last checked</span>
+        <strong id="last-checked">—</strong>
+        <span class="metric-detail">Refreshes every 15 seconds while connected</span>
+      </article>
+    </section>
+
+    <section class="panel" aria-labelledby="components-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">REQUIRED SOURCES</p>
+          <h2 id="components-title">Component health</h2>
+        </div>
+        <span class="section-hint">State is based on fresh heartbeats only</span>
+      </div>
+      <div id="components" class="component-grid" aria-live="polite">
+        <p class="empty">Connect to view Guardian's observed components.</p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="dependencies-title">
+      <p class="eyebrow">DECLARED OPERATING DEPENDENCIES</p>
+      <h2 id="dependencies-title">System map</h2>
+      <p id="dependency-coverage" class="metric-detail">Connect to load dependency evidence.</p>
+      <p class="metric-detail">A blocked prerequisite does not prove the strategy is broken. Probe health never certifies its subject. Edges are declared, not runtime-verified; this view changes no trading gates.</p>
+      <details class="report"><summary>Show components and prerequisites</summary>
+        <div class="table-wrap"><table>
+          <thead><tr><th scope="col">Component</th><th scope="col">Observed state</th><th scope="col">Dependency readiness</th><th scope="col">Requires</th><th scope="col">Blocked / unknown prerequisites</th></tr></thead>
+          <tbody id="dependency-map"><tr><td colspan="5" class="empty">No dependency evidence loaded.</td></tr></tbody>
+        </table></div>
+      </details>
+    </section>
+
+    <section class="panel" aria-labelledby="anomalies-title">
+      <p class="eyebrow">CLOSED-WINDOW OPERATIONAL BASELINES</p>
+      <h2 id="anomalies-title">Latency observations</h2>
+      <p id="anomaly-coverage" class="metric-detail">Connect to load typed latency evidence.</p>
+      <p class="metric-detail">WATCH is a deviation, not a failure. Separate source/version/config/account baselines; no inferred signal frequency, trading danger or automatic recovery.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th scope="col">Source / metric</th><th scope="col">Market / owner</th><th scope="col">Observation</th><th scope="col">Baseline / current samples</th><th scope="col">Current median / threshold</th><th scope="col">Evidence</th></tr></thead>
+        <tbody id="anomalies"><tr><td colspan="6" class="empty">No latency evidence loaded.</td></tr></tbody>
+      </table></div>
+    </section>
+
+    <section class="panel" aria-labelledby="incidents-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">CORRELATED EVIDENCE</p>
+          <h2 id="incidents-title">Incidents</h2>
+        </div>
+        <span class="section-hint">An observed failure, not a strategy's ordinary no-trade decision</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Last observed</th><th scope="col">State</th><th scope="col">Incident</th><th scope="col">Failure fact / confidence</th><th scope="col">Evidence</th><th scope="col">Investigation</th></tr></thead>
+          <tbody id="incidents"><tr><td colspan="6" class="empty">Connect to load incidents.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="decisions-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">STRATEGY EVIDENCE</p>
+          <h2 id="decisions-title">Observed PA / SMC decisions</h2>
+        </div>
+        <span class="section-hint">Bounded received snapshots; not every lifecycle transition or an outcome study</span>
+      </div>
+      <p id="decision-coverage" class="metric-detail">Connect to load saved decision evidence.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Candle</th><th scope="col">Lab / strategy</th><th scope="col">Market</th><th scope="col">Decision</th><th scope="col">Missing</th><th scope="col">Research flag</th><th scope="col">Evidence ID</th></tr></thead>
+          <tbody id="decision-traces"><tr><td colspan="7" class="empty">Connect to load decision traces.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="instance-decisions-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">INSTANCE GATE EVIDENCE</p>
+          <h2 id="instance-decisions-title">Observed Trading Instance decisions</h2>
+        </div>
+        <span class="section-hint">Persisted post-install transitions; broker fills are not independently verified</span>
+      </div>
+      <p id="instance-decision-coverage" class="metric-detail">Connect to load instance gate evidence.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Decision candle</th><th scope="col">Instance / strategy</th><th scope="col">Market</th><th scope="col">Strategy verdict</th><th scope="col">Downstream state</th><th scope="col">Gate / blocker</th><th scope="col">Evidence ID</th></tr></thead>
+          <tbody id="instance-decision-traces"><tr><td colspan="7" class="empty">Connect to load instance decision traces.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="instance-ledger-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">PAPER ACCOUNTING</p>
+          <h2 id="instance-ledger-title">Trading Instance paper ledger</h2>
+        </div>
+        <span class="section-hint">PA / SMC accounts are separate; currency and exchange fills remain unverified</span>
+      </div>
+      <p id="instance-ledger-coverage" class="metric-detail">Connect to load paper ledger evidence.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Instance</th><th scope="col">Open positions</th><th scope="col">Open trades</th><th scope="col">Entry-to-stop risk (source units)</th><th scope="col">Pairing / findings</th><th scope="col">Evidence ID</th></tr></thead>
+          <tbody id="instance-ledger"><tr><td colspan="6" class="empty">Connect to load paper ledger evidence.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="lab-execution-title">
+      <p class="eyebrow">ISOLATED PAPER RECORDS</p>
+      <h2 id="lab-execution-title">PA / SMC execution evidence</h2>
+      <p class="metric-detail">Separate accounts; open orders and positions plus bounded fill history. Entry-to-stop amounts use source units, exclude costs and gaps, and are not global risk. Journal trade completeness and protective execution remain unverified.</p>
+      <div id="lab-execution"><p class="empty">Connect to load lab paper evidence.</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="notifications-title">
+      <p class="eyebrow">GROUPED IN-APP NOTICES</p>
+      <h2 id="notifications-title">Incident notifications</h2>
+      <p class="metric-detail">New incidents, severity increases and verified recoveries only. No remote delivery or automatic remediation.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th scope="col">Observed</th><th scope="col">Change</th><th scope="col">Severity</th><th scope="col">Evidence / confidence</th><th scope="col">Incident</th></tr></thead>
+        <tbody id="notifications"><tr><td colspan="5" class="empty">Connect to load notices.</td></tr></tbody>
+      </table></div>
+    </section>
+
+    <section class="panel" aria-labelledby="reports-title">
+      <p class="eyebrow">IMMUTABLE UTC WINDOWS</p>
+      <h2 id="reports-title">Daily / weekly evidence reports</h2>
+      <p class="metric-detail">Received observations only. Trading P&amp;L, uptime, global risk and outcomes remain unknown without verified source coverage.</p>
+      <div id="reports"><p class="empty">Connect to load reports.</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="research-title">
+      <p class="eyebrow">OWNER-GOVERNED RESEARCH</p>
+      <h2 id="research-title">Hypotheses and validation records</h2>
+      <p class="metric-detail">Results are source-reported, not certified. This registry does not run backtests, edit strategies, trade or deploy. Research and owner writes require separately scoped credentials.</p>
+      <div id="research"><p class="empty">Connect to load research evidence.</p></div>
+    </section>
+
+    <section class="panel" aria-labelledby="events-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">IMMUTABLE EVIDENCE</p>
+          <h2 id="events-title">Recent events</h2>
+        </div>
+        <span class="section-hint">Newest received first</span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th scope="col">Observed</th><th scope="col">Source</th><th scope="col">Event</th><th scope="col">Severity</th><th scope="col">Reason</th><th scope="col">Evidence ID</th></tr></thead>
+          <tbody id="events"><tr><td colspan="6" class="empty">Connect to load evidence.</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <footer>Guardian foundation · Local read-only surface · No trading authority</footer>
+  </main>
+</body>
+</html>

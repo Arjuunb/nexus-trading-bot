@@ -988,9 +988,14 @@ def test_persistence_failure_does_not_stop_or_remove_in_memory_instance(monkeypa
     assert list(manager._instances) == [instance.id]
 
 
-def test_two_real_forward_workers_are_alive_at_the_same_time():
+def test_two_real_forward_workers_are_alive_at_the_same_time(monkeypatch):
     """Runtime proof: actual worker threads, not merely two database rows."""
     from bot.types import Bar
+    from data.ws_feed import WebSocketFeed
+    # This proves local worker concurrency, not exchange connectivity. The
+    # engine still runs and reads the strict forward provider below; external
+    # socket latency/cache data must not decide a two-second assertion.
+    monkeypatch.setattr(WebSocketFeed, "start", lambda self: False)
     ledger = SqliteLedger(":memory:")
     manager = TradingInstanceManager(ledger, strategy_factory=_factory, live=False, live_poll_s=0.01)
     manager.configure(max_active_slots=2)
@@ -1001,10 +1006,13 @@ def test_two_real_forward_workers_are_alive_at_the_same_time():
                          strategy_version="v2", timeframe="15m", risk_per_trade_pct=0.005,
                          capital_allocation=500)
 
+    requested_timeframes = set()
+
     def forward_bars(_symbol, timeframe, limit):
-        minutes = 5 if timeframe == "5m" else 15
-        forming = datetime.now(timezone.utc).replace(second=0, microsecond=0)
-        forming -= timedelta(minutes=forming.minute % minutes)
+        requested_timeframes.add(timeframe)
+        minutes = {"5m": 5, "15m": 15, "1h": 60, "4h": 240}[timeframe]
+        duration = minutes * 60
+        forming = datetime.fromtimestamp(int(time.time()) // duration * duration, timezone.utc)
         start = forming - timedelta(minutes=minutes * (limit - 1))
         return ([Bar(start + timedelta(minutes=minutes * index), 100, 101, 99, 100, 1)
                  for index in range(limit)], "live (test)")
@@ -1026,6 +1034,7 @@ def test_two_real_forward_workers_are_alive_at_the_same_time():
         assert first_engine._thread is not None and first_engine._thread.is_alive()
         assert second_engine._thread is not None and second_engine._thread.is_alive()
         assert manager.platform_status()["active_slots"] == 2
+        assert requested_timeframes == {"5m", "15m", "1h", "4h"}
         assert manager.store.market_state(btc.id)["last_processed_candle_timestamp"] is not None
         assert manager.store.market_state(eth.id)["last_processed_candle_timestamp"] is not None
         # Warm-up history establishes each cursor but is never replayed as a

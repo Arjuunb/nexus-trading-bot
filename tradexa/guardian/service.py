@@ -1,0 +1,892 @@
+"""Standalone, read-only Guardian HTTP surface; never imports trading workers."""
+from __future__ import annotations
+
+import hmac
+import json
+import os
+import re
+import sqlite3
+from importlib import resources
+from datetime import datetime
+from pathlib import Path
+from threading import Event, Thread
+from time import monotonic
+from typing import Any, Callable, Mapping
+from urllib.parse import parse_qs
+from wsgiref.simple_server import make_server
+
+from .events import GuardianEvent, GuardianEventError, MAX_EVENT_BYTES
+from .anomalies import latency_anomalies
+from .dependencies import dependency_map
+from .decision_traces import decision_traces
+from .health import component_health
+from .self_health import include_self_health, self_health
+from .pipeline_health import include_pipeline_health, pipeline_health
+from .transport_health import KIND as TRANSPORT_KIND, transport_health, validate_transport_event
+from .ingestion import IngestionAdmission, IngestionLimits, IngestionOverload
+from .incidents import GuardianIncidentEngine
+from .investigations import incident_investigation
+from .instance_decisions import GuardianInstanceDecisions
+from .instance_decision_traces import instance_decision_traces
+from .instance_ledger_observer import GuardianInstanceLedgerObserver
+from .instance_ledger_view import instance_ledger_view
+from .lab_execution_observer import COMPONENTS, GuardianLabExecutionObserver, lab_execution_view
+from .lab_fill_history import COMPONENTS as FILL_COMPONENTS, GuardianLabFillHistory, lab_fill_history_view
+from .lab_backfill import GuardianLabBackfill
+from .lab_lifecycle import GuardianLabLifecycle
+from .lab_feed_observer import GuardianLabFeedObserver
+from .lab_observer import GuardianLabObserver
+from .public_status import GuardianPublicStatusCollector
+from .notifications import GuardianNotifications
+from .reports import GuardianReports
+from .research import GuardianResearch
+from .smc_execution_observer import GuardianSMCExecutionObserver
+from .smc_journal_history import GuardianSMCJournalHistory, PROBE as JOURNAL_PROBE, smc_journal_history_view
+from .smc_intent_history import GuardianSMCIntentHistory, PROBE as INTENT_PROBE, smc_intent_history_view
+from .smc_execution_links import smc_execution_links_view, validate_key
+from .smc_fill_positions import GuardianSMCFillPositions, PROBE as POSITION_PROBE, smc_fill_positions_view
+from .smc_exit_fills import GuardianSMCExitFills, PROBE as EXIT_PROBE, smc_exit_fills_view
+from .smc_position_links import smc_position_links_view
+from .smc_exit_links import smc_exit_links_view
+from .smc_stop_moves import GuardianSMCStopMoves, PROBE as STOP_PROBE, smc_stop_moves_view
+from .store import GuardianStore
+
+_STATUSES = {
+    200: "200 OK", 201: "201 Created", 400: "400 Bad Request",
+    401: "401 Unauthorized", 403: "403 Forbidden", 404: "404 Not Found",
+    405: "405 Method Not Allowed", 411: "411 Length Required",
+    413: "413 Content Too Large", 422: "422 Unprocessable Content",
+    429: "429 Too Many Requests",
+    503: "503 Service Unavailable",
+}
+_MAX_HTTP_BYTES = MAX_EVENT_BYTES + 2048
+_ASSETS = {
+    "/": ("command_center.html", "text/html; charset=utf-8"),
+    "/assets/command-center.css": ("command_center.css", "text/css; charset=utf-8"),
+    "/assets/command-center.js": ("command_center.js", "text/javascript; charset=utf-8"),
+}
+_CSP = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; "
+        "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+
+
+class GuardianService:
+    """WSGI app with per-source ingestion keys and a separate read key."""
+
+    def __init__(self, store: GuardianStore, *, source_keys: Mapping[str, str],
+                 read_key: str, required_components: tuple[str, ...],
+                 research_key: str | None = None, admin_key: str | None = None,
+                 ingestion_limits: IngestionLimits | None = None,
+                 ingestion_clock: Callable[[], float] = monotonic):
+        if not source_keys or any(not isinstance(key, str) or len(key) < 24
+                                  for key in source_keys.values()):
+            raise ValueError("each Guardian source requires a private key of at least 24 characters")
+        if len(set(source_keys.values())) != len(source_keys) or not isinstance(read_key, str) \
+                or len(read_key) < 24 or read_key in source_keys.values():
+            raise ValueError("Guardian source and read keys must be distinct")
+        if not required_components or "guardian" not in required_components:
+            raise ValueError("Guardian health must include its own component")
+        optional = [key for key in (research_key, admin_key) if key is not None]
+        if (any(not isinstance(key, str) or len(key) < 24 for key in optional) or
+                len(set((*source_keys.values(), read_key, *optional))) != len(source_keys) + 1 + len(optional)):
+            raise ValueError("Guardian research/admin credentials must be long and independently scoped")
+        self.ingestion = IngestionAdmission(tuple(source_keys), limits=ingestion_limits,
+                                            clock=ingestion_clock)
+        self.store = store
+        self.incidents = GuardianIncidentEngine(store)
+        self.notifications = GuardianNotifications(store)
+        self.reports = GuardianReports(store)
+        self.research = GuardianResearch(store)
+        self.source_keys = dict(source_keys)
+        self.read_key = read_key
+        self.research_key, self.admin_key = research_key, admin_key
+        self.required_components = tuple(required_components)
+
+    def _source(self, presented: str) -> str | None:
+        for source, key in self.source_keys.items():
+            if hmac.compare_digest(presented, key):
+                return source
+        return None
+
+    def _read(self, presented: str) -> bool:
+        return hmac.compare_digest(presented, self.read_key)
+
+    @staticmethod
+    def _body(environ: Mapping[str, Any]) -> dict:
+        raw_length = environ.get("CONTENT_LENGTH", "")
+        if not raw_length:
+            raise _HTTPError(411, "CONTENT_LENGTH_REQUIRED")
+        try:
+            length = int(raw_length)
+        except ValueError as exc:
+            raise _HTTPError(400, "INVALID_CONTENT_LENGTH") from exc
+        if length < 1 or length > _MAX_HTTP_BYTES:
+            raise _HTTPError(413, "EVENT_TOO_LARGE")
+        if environ.get("CONTENT_TYPE", "").split(";", 1)[0].strip().lower() != "application/json":
+            raise _HTTPError(400, "JSON_REQUIRED")
+        body = environ["wsgi.input"].read(length)
+        if len(body) != length:
+            raise _HTTPError(400, "INCOMPLETE_BODY")
+        try:
+            payload = json.loads(body)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _HTTPError(400, "INVALID_JSON") from exc
+        if not isinstance(payload, dict):
+            raise _HTTPError(422, "JSON_OBJECT_REQUIRED")
+        return payload
+
+    @staticmethod
+    def _respond(start_response, status: int, payload: dict, *, extra_headers=()):
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        start_response(_STATUSES[status], [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(encoded))),
+            ("Cache-Control", "no-store"),
+            ("X-Content-Type-Options", "nosniff"),
+            ("Referrer-Policy", "no-referrer"),
+        ] + list(extra_headers))
+        return [encoded]
+
+    def _receive_source(self, environ, start_response, source: str, path: str):
+        """Authenticated and admitted; no admission lock held during persistence."""
+        payload = self._body(environ)
+        if path == "/v1/events":
+            event = GuardianEvent.from_payload(payload)
+            if event.source_service != source:
+                raise _HTTPError(403, "SOURCE_MISMATCH")
+            if event.event_type == TRANSPORT_KIND:
+                validate_transport_event(event)
+            inserted = self.store.append(event)
+            return self._respond(start_response, 201 if inserted else 200, {
+                "event_id": event.event_id,
+                "result": "APPENDED" if inserted else "ALREADY_PRESENT",
+            })
+        component = payload.get("component")
+        if not isinstance(component, str) or not (
+                component == source or component.startswith(source + "_")):
+            raise _HTTPError(403, "SOURCE_MISMATCH")
+        if set(payload) - {"component", "state", "reason", "observed_at"}:
+            raise _HTTPError(422, "INVALID_HEARTBEAT")
+        try:
+            observed_at = datetime.fromisoformat(payload["observed_at"].replace("Z", "+00:00"))
+        except (KeyError, AttributeError, ValueError) as exc:
+            raise _HTTPError(422, "INVALID_HEARTBEAT") from exc
+        self.store.record_heartbeat(component, payload.get("state"),
+                                    reason=payload.get("reason", ""), observed_at=observed_at)
+        return self._respond(start_response, 200, {"result": "RECORDED"})
+
+    @staticmethod
+    def _static(start_response, path: str):
+        filename, mime = _ASSETS[path]
+        encoded = resources.files("tradexa.guardian").joinpath("assets", filename).read_bytes()
+        start_response(_STATUSES[200], [
+            ("Content-Type", mime), ("Content-Length", str(len(encoded))),
+            ("Cache-Control", "no-store"), ("X-Content-Type-Options", "nosniff"),
+            ("Referrer-Policy", "no-referrer"), ("X-Frame-Options", "DENY"),
+            ("Content-Security-Policy", _CSP),
+        ])
+        return [encoded]
+
+    def __call__(self, environ: Mapping[str, Any], start_response):
+        method = environ.get("REQUEST_METHOD", "GET")
+        path = environ.get("PATH_INFO", "")
+        presented = str(environ.get("HTTP_X_GUARDIAN_KEY", ""))
+        try:
+            if path in _ASSETS:
+                if method != "GET":
+                    raise _HTTPError(405, "METHOD_NOT_ALLOWED")
+                return self._static(start_response, path)
+            if path == "/healthz":
+                if method != "GET":
+                    raise _HTTPError(405, "METHOD_NOT_ALLOWED")
+                return self._respond(start_response, 200, {
+                    "service": "guardian", "self_state": "ALIVE",
+                    "readiness_state": "NOT_CHECKED",
+                    "platform_state": "UNKNOWN_UNTIL_EVIDENCE_CHECKED",
+                })
+            if path == "/v1/research/hypotheses" and method == "POST":
+                if not self.research_key or not hmac.compare_digest(presented, self.research_key):
+                    raise _HTTPError(403, "RESEARCH_AUTHORITY_REQUIRED")
+                return self._respond(start_response, 201, self.research.create(self._body(environ)))
+            if path.startswith("/v1/research/") and method == "POST":
+                match = re.fullmatch(r"/v1/research/([0-9a-f]{64})/(results|review)", path)
+                if match is None:
+                    raise _HTTPError(404, "NOT_FOUND")
+                authority = self.research_key if match[2] == "results" else self.admin_key
+                if not authority or not hmac.compare_digest(presented, authority):
+                    raise _HTTPError(403, "RESEARCH_AUTHORITY_REQUIRED" if match[2] == "results" else "OWNER_AUTHORITY_REQUIRED")
+                payload = self._body(environ)
+                if match[2] == "results":
+                    result = self.research.record_result(match[1], payload)
+                else:
+                    if set(payload) != {"decision", "expected_digest"}:
+                        raise _HTTPError(422, "INVALID_REVIEW")
+                    result = self.research.review(match[1], **payload)
+                return self._respond(start_response, 200, result)
+            if path in ("/v1/events", "/v1/heartbeats") and method == "POST":
+                source = self._source(presented)
+                if source is None:
+                    raise _HTTPError(401, "UNAUTHORIZED")
+                with self.ingestion.admit("events" if path == "/v1/events" else "heartbeats", source):
+                    return self._receive_source(environ, start_response, source, path)
+            if (path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/ingestion-health", "/v1/incidents", "/v1/decision-traces",
+                         "/v1/instance-decision-traces", "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills",
+                         "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications", "/v1/research/hypotheses",
+                         "/v1/system-map", "/v1/anomalies") or
+                    path.startswith(("/v1/incidents/", "/v1/research/"))) and method == "GET":
+                if not self._read(presented):
+                    raise _HTTPError(401, "UNAUTHORIZED")
+                if path == "/v1/ingestion-health":
+                    if environ.get("QUERY_STRING", ""):
+                        raise _HTTPError(400, "INVALID_INGESTION_HEALTH_QUERY")
+                    return self._respond(start_response, 200, self.ingestion.snapshot())
+                if path == "/v1/self-health":
+                    if environ.get("QUERY_STRING", ""):
+                        raise _HTTPError(400, "INVALID_SELF_HEALTH_QUERY")
+                    return self._respond(start_response, 200,
+                                         self_health(self.store.path, self.required_components))
+                if path == "/v1/pipeline-health":
+                    if environ.get("QUERY_STRING", ""):
+                        raise _HTTPError(400, "INVALID_PIPELINE_HEALTH_QUERY")
+                    return self._respond(start_response, 200, pipeline_health(self.store.path))
+                if path == "/v1/producer-health":
+                    if environ.get("QUERY_STRING", ""):
+                        raise _HTTPError(400, "INVALID_PRODUCER_HEALTH_QUERY")
+                    return self._respond(start_response, 200,
+                                         transport_health(self.store.path, tuple(self.source_keys)))
+                if path == "/v1/health":
+                    health = component_health(
+                        self.store.heartbeats(), self.required_components)
+                    include_self_health(health, self_health(self.store.path, self.required_components))
+                    include_pipeline_health(health, pipeline_health(self.store.path))
+                    incidents = self.incidents.active_summary()
+                    health["active_incidents"] = incidents
+                    if health["state"] == "HEALTHY" and incidents["warning_or_higher"]:
+                        # A heartbeat proves the components answered recently,
+                        # not that an unresolved execution or journal finding
+                        # disappeared. This is an observation only; no trading
+                        # gate is changed by Guardian.
+                        health["state"] = "DEGRADED"
+                        health["state_reason"] = "ACTIVE_INCIDENTS"
+                    return self._respond(start_response, 200, health)
+                if path == "/v1/instance-ledger":
+                    return self._respond(start_response, 200, instance_ledger_view(self.store))
+                if path == "/v1/lab-execution":
+                    return self._respond(start_response, 200, lab_execution_view(self.store))
+                if path == "/v1/smc-journal":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) - {"after"} or any(len(v) != 1 for v in query.values()):
+                        raise _HTTPError(400, "INVALID_JOURNAL_HISTORY_QUERY")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_JOURNAL_HISTORY_CURSOR") from exc
+                    if not 0 <= after <= 2**63 - 1:
+                        raise _HTTPError(400, "INVALID_JOURNAL_HISTORY_CURSOR")
+                    return self._respond(start_response, 200, smc_journal_history_view(self.store, after=after))
+                if path == "/v1/smc-stop-moves":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query)-{"after"} or any(len(v) != 1 for v in query.values()):
+                        raise _HTTPError(400, "INVALID_STOP_HISTORY_QUERY")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                        if not 0 <= after <= 2**63-1:
+                            raise ValueError("cursor range")
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_STOP_HISTORY_CURSOR") from exc
+                    try:
+                        view = smc_stop_moves_view(self.store, after=after)
+                    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                        raise _HTTPError(503, "STOP_HISTORY_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
+                if path == "/v1/smc-exit-links":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) != {"execution_key"} or len(query["execution_key"]) != 1:
+                        raise _HTTPError(400, "INVALID_EXIT_LINK_QUERY")
+                    try:
+                        key = validate_key(query["execution_key"][0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_EXIT_LINK_IDENTITY") from exc
+                    try:
+                        view = smc_exit_links_view(self.store, key)
+                    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                        raise _HTTPError(503, "EXIT_LINK_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
+                if path == "/v1/smc-execution-links":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) != {"execution_key"} or len(query["execution_key"]) != 1:
+                        raise _HTTPError(400, "INVALID_EXECUTION_LINK_QUERY")
+                    try:
+                        key = validate_key(query["execution_key"][0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_EXECUTION_LINK_IDENTITY") from exc
+                    try:
+                        view = smc_execution_links_view(self.store, key)
+                    except (ValueError, TypeError, KeyError) as exc:
+                        raise _HTTPError(503, "EXECUTION_LINK_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
+                if path == "/v1/smc-exit-fills":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) - {"after"} or any(len(v) != 1 for v in query.values()):
+                        raise _HTTPError(400, "INVALID_EXIT_HISTORY_QUERY")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                        if not 0 <= after <= 2**63 - 1:
+                            raise ValueError("cursor range")
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_EXIT_HISTORY_CURSOR") from exc
+                    try:
+                        view = smc_exit_fills_view(self.store, after=after)
+                    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                        raise _HTTPError(503, "EXIT_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
+                if path in ("/v1/smc-fill-transitions", "/v1/smc-position-links"):
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if path == "/v1/smc-position-links":
+                        if set(query) != {"execution_key"} or len(query["execution_key"])!=1:
+                            raise _HTTPError(400, "INVALID_POSITION_LINK_QUERY")
+                        try:
+                            key = validate_key(query["execution_key"][0])
+                        except ValueError as exc:
+                            raise _HTTPError(400, "INVALID_POSITION_LINK_IDENTITY") from exc
+                        arguments = {"execution_key": key}
+                        read_view = smc_position_links_view
+                    else:
+                        if set(query)-{"after"} or any(len(v)!=1 for v in query.values()):
+                            raise _HTTPError(400, "INVALID_FILL_POSITION_HISTORY_QUERY")
+                        try:
+                            after = int(query.get("after", ["0"])[0])
+                            if not 0<=after<=2**63-1:
+                                raise ValueError("cursor range")
+                        except ValueError as exc:
+                            raise _HTTPError(400, "INVALID_FILL_POSITION_HISTORY_CURSOR") from exc
+                        arguments = {"after": after}
+                        read_view = smc_fill_positions_view
+                    try:
+                        view = read_view(self.store, **arguments)
+                    except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as exc:
+                        raise _HTTPError(503, "FILL_POSITION_EVIDENCE_UNAVAILABLE") from exc
+                    return self._respond(start_response, 200, view)
+                if path == "/v1/smc-intent-events":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if set(query) - {"after"} or any(len(v) != 1 for v in query.values()):
+                        raise _HTTPError(400, "INVALID_INTENT_HISTORY_QUERY")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_INTENT_HISTORY_CURSOR") from exc
+                    if not 0 <= after <= 2**63 - 1:
+                        raise _HTTPError(400, "INVALID_INTENT_HISTORY_CURSOR")
+                    return self._respond(start_response, 200, smc_intent_history_view(self.store, after=after))
+                if path == "/v1/lab-fills":
+                    query = parse_qs(environ.get("QUERY_STRING", ""), keep_blank_values=True)
+                    if (set(query) - {"lab", "after"} or any(len(v) != 1 for v in query.values()) or
+                            query.get("lab", [None])[0] not in FILL_COMPONENTS):
+                        raise _HTTPError(400, "INVALID_FILL_HISTORY_QUERY")
+                    try:
+                        after = int(query.get("after", ["0"])[0])
+                    except ValueError as exc:
+                        raise _HTTPError(400, "INVALID_FILL_HISTORY_CURSOR") from exc
+                    if not 0 <= after <= 2**63 - 1:
+                        raise _HTTPError(400, "INVALID_FILL_HISTORY_CURSOR")
+                    return self._respond(start_response, 200, lab_fill_history_view(
+                        self.store, query["lab"][0], after=after))
+                if path == "/v1/system-map":
+                    return self._respond(start_response, 200, dependency_map(
+                        self.store.heartbeats(), self.required_components))
+                if path == "/v1/anomalies":
+                    return self._respond(start_response, 200, latency_anomalies(self.store))
+                if path == "/v1/reports":
+                    return self._respond(start_response, 200, {"reports": self.reports.list()})
+                if path == "/v1/notifications":
+                    return self._respond(start_response, 200, {
+                        "channel": "IN_APP", "notifications": self.notifications.list()})
+                if path == "/v1/research/hypotheses":
+                    return self._respond(start_response, 200, {"hypotheses": self.research.list()})
+                if path.startswith("/v1/research/"):
+                    match = re.fullmatch(r"/v1/research/([0-9a-f]{64})", path)
+                    if match is None:
+                        raise _HTTPError(404, "NOT_FOUND")
+                    return self._respond(start_response, 200, self.research.get(match[1]))
+                query = parse_qs(environ.get("QUERY_STRING", ""))
+                try:
+                    limit = int(query.get("limit", ["50"])[0])
+                except ValueError as exc:
+                    raise _HTTPError(400, "INVALID_LIMIT") from exc
+                if not 1 <= limit <= 500:
+                    raise _HTTPError(400, "INVALID_LIMIT")
+                if path == "/v1/decision-traces":
+                    if limit > 100:
+                        raise _HTTPError(400, "INVALID_LIMIT")
+                    lab = query.get("lab", [None])[0]
+                    if lab not in (None, "PRICE_ACTION", "SMC"):
+                        raise _HTTPError(400, "INVALID_LAB")
+                    return self._respond(start_response, 200,
+                                         decision_traces(self.store, limit=limit, lab=lab))
+                if path == "/v1/instance-decision-traces":
+                    if limit > 100:
+                        raise _HTTPError(400, "INVALID_LIMIT")
+                    instance_id = query.get("instance_id", [None])[0]
+                    if instance_id is not None and not 1 <= len(instance_id) <= 128:
+                        raise _HTTPError(400, "INVALID_INSTANCE_ID")
+                    return self._respond(start_response, 200,
+                                         instance_decision_traces(
+                                             self.store, limit=limit, instance_id=instance_id))
+                if path == "/v1/incidents":
+                    state = query.get("state", [None])[0]
+                    if state not in (None, "OPEN", "RECOVERING", "RECOVERED"):
+                        raise _HTTPError(400, "INVALID_STATE")
+                    return self._respond(start_response, 200, {
+                        "incidents": self.incidents.list(limit=limit, state=state)})
+                if path.startswith("/v1/incidents/"):
+                    match = re.fullmatch(r"/v1/incidents/([0-9a-f]{32})/(timeline|investigation)", path)
+                    if match is None:
+                        raise _HTTPError(404, "NOT_FOUND")
+                    incident = self.incidents.get(match.group(1))
+                    if incident is None:
+                        raise _HTTPError(404, "NOT_FOUND")
+                    if match.group(2) == "investigation":
+                        investigation = incident_investigation(self.store, match.group(1))
+                        if investigation is None:
+                            raise _HTTPError(404, "NOT_FOUND")
+                        return self._respond(start_response, 200, investigation)
+                    return self._respond(start_response, 200, {
+                        "incident": incident,
+                        "updates": self.incidents.timeline(match.group(1))})
+                source = query.get("source_service", [None])[0]
+                return self._respond(start_response, 200, {
+                    "events": self.store.recent(limit, source_service=source)})
+            if path in ("/v1/events", "/v1/health", "/v1/self-health", "/v1/pipeline-health", "/v1/producer-health", "/v1/ingestion-health", "/v1/heartbeats", "/v1/incidents",
+                        "/v1/decision-traces", "/v1/instance-decision-traces",
+                        "/v1/instance-ledger", "/v1/lab-execution", "/v1/lab-fills", "/v1/smc-journal", "/v1/smc-intent-events", "/v1/smc-execution-links", "/v1/smc-fill-transitions", "/v1/smc-position-links", "/v1/smc-exit-fills", "/v1/smc-exit-links", "/v1/smc-stop-moves", "/v1/reports", "/v1/notifications",
+                        "/v1/system-map", "/v1/anomalies"):
+                raise _HTTPError(405, "METHOD_NOT_ALLOWED")
+            raise _HTTPError(404, "NOT_FOUND")
+        except IngestionOverload as exc:
+            return self._respond(start_response, 429, {
+                "error": "INGESTION_LIMITED", "reasons": list(exc.reasons),
+                "request_persisted": False, "retry_after_seconds": exc.retry_after_seconds,
+            }, extra_headers=(("Retry-After", str(exc.retry_after_seconds)),))
+        except _HTTPError as exc:
+            return self._respond(start_response, exc.status, {"error": exc.code})
+        except GuardianEventError:
+            return self._respond(start_response, 422, {"error": "INVALID_EVIDENCE"})
+        except (ValueError, TypeError):
+            return self._respond(start_response, 422, {"error": "INVALID_EVIDENCE"})
+        except sqlite3.Error:
+            return self._respond(start_response, 503, {"error": "PERSISTENCE_UNAVAILABLE"})
+
+
+class _HTTPError(Exception):
+    def __init__(self, status: int, code: str):
+        super().__init__(code)
+        self.status = status
+        self.code = code
+
+
+def _self_heartbeat(store: GuardianStore, stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            store.record_heartbeat("guardian", "HEALTHY")
+        except sqlite3.Error:
+            pass  # A missing/stale heartbeat is reported as UNKNOWN by /v1/health.
+        stopped.wait(15)
+
+
+def _incident_monitor(store: GuardianStore, engine: GuardianIncidentEngine,
+                      notifications: GuardianNotifications, stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            processed = engine.scan(limit=500)
+            store.record_heartbeat("guardian_incident_engine", "HEALTHY")
+        except Exception:
+            processed = 0
+            try:
+                store.record_heartbeat("guardian_incident_engine", "FAILED",
+                                       reason="INCIDENT_ANALYSIS_FAILED")
+            except sqlite3.Error:
+                pass
+        try:
+            notified = notifications.scan(limit=500)
+            store.record_heartbeat("guardian_notifications", "HEALTHY")
+        except Exception:
+            notified = 0
+            try:
+                store.record_heartbeat("guardian_notifications", "FAILED",
+                                       reason="NOTIFICATION_ANALYSIS_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(0.25 if processed == 500 or notified == 500 else 5)
+
+
+def _report_monitor(store: GuardianStore, reports: GuardianReports, stopped: Event) -> None:
+    next_report = 0.0
+    from time import monotonic
+    while not stopped.is_set():
+        try:
+            if monotonic() >= next_report:
+                reports.generate_due()
+                next_report = monotonic() + 3600
+            store.record_heartbeat("guardian_reports", "HEALTHY")
+        except Exception:
+            next_report = 0.0
+            try:
+                store.record_heartbeat("guardian_reports", "FAILED", reason="REPORT_GENERATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _public_status_monitor(store: GuardianStore, collector: GuardianPublicStatusCollector,
+                           stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            # A failed probe cannot declare trading unhealthy or healthy.
+            # Its own heartbeat explains why downstream evidence may go stale.
+            try:
+                store.record_heartbeat("guardian_public_probe", "FAILED",
+                                       reason="PUBLIC_STATUS_PROBE_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _lab_observation_monitor(store: GuardianStore, collector: GuardianLabObserver,
+                             stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_probe", "FAILED",
+                                       reason="LAB_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _lab_feed_monitor(store: GuardianStore, collector: GuardianLabFeedObserver,
+                      stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_feed_probe", "FAILED",
+                                       reason="LAB_FEED_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(15)
+
+
+def _lab_backfill_monitor(store: GuardianStore, collector: GuardianLabBackfill,
+                          stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_backfill", "FAILED",
+                                       reason="LAB_BACKFILL_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _lab_lifecycle_monitor(store: GuardianStore, collector: GuardianLabLifecycle,
+                           stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_lab_lifecycle", "FAILED",
+                                       reason="LAB_LIFECYCLE_IMPORT_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _smc_execution_monitor(store: GuardianStore,
+                           collector: GuardianSMCExecutionObserver,
+                           stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_smc_execution_probe", "FAILED",
+                                       reason="SMC_EXECUTION_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _instance_decision_monitor(store: GuardianStore,
+                               collector: GuardianInstanceDecisions,
+                               stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_instance_decisions", "FAILED",
+                                       reason="INSTANCE_DECISION_IMPORT_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _instance_ledger_monitor(store: GuardianStore,
+                             collector: GuardianInstanceLedgerObserver,
+                             stopped: Event) -> None:
+    while not stopped.is_set():
+        try:
+            collector.poll()
+        except Exception:
+            try:
+                store.record_heartbeat("guardian_instance_ledger_probe", "FAILED",
+                                       reason="INSTANCE_LEDGER_OBSERVATION_FAILED")
+            except sqlite3.Error:
+                pass
+        stopped.wait(30)
+
+
+def _lab_execution_monitor(collectors: tuple, stopped: Event) -> None:
+    while not stopped.is_set():
+        for collector in collectors:
+            if stopped.is_set():
+                break
+            try:
+                collector.poll()
+            except Exception:
+                # poll invalidates its own freshness. A PA failure must not
+                # prevent observing SMC; a Guardian DB failure ages to UNKNOWN.
+                pass
+        stopped.wait(30)
+
+
+def main() -> None:
+    """Run separately: python -m tradexa.guardian.service (loopback by default)."""
+    ingestion_limits = IngestionLimits.from_environment(os.environ)
+    source_keys = json.loads(os.environ["GUARDIAN_SOURCE_KEYS_JSON"])
+    if not isinstance(source_keys, dict):
+        raise ValueError("GUARDIAN_SOURCE_KEYS_JSON must be an object")
+    read_key = os.environ["GUARDIAN_READ_KEY"]
+    research_key = os.environ.get("GUARDIAN_RESEARCH_KEY") or None
+    admin_key = os.environ.get("GUARDIAN_ADMIN_KEY") or None
+    lab_observer_key = os.environ.get("GUARDIAN_LAB_OBSERVER_KEY", "")
+    hub_key = os.environ.get("HUB_CONTROL_KEY")
+    if hub_key and hub_key in (read_key, lab_observer_key, research_key, admin_key, *source_keys.values()):
+        raise ValueError("Guardian credentials must not reuse HUB_CONTROL_KEY")
+    if lab_observer_key and lab_observer_key in (read_key, research_key, admin_key, *source_keys.values()):
+        raise ValueError("Guardian lab observation credential must be independent")
+    required = tuple(part.strip() for part in os.environ.get(
+        "GUARDIAN_REQUIRED_COMPONENTS",
+        "guardian,guardian_incident_engine,api,instance_ledger,instance_market_data,"
+        "trading_instances,pa_lab,smc_lab"
+    ).split(",") if part.strip())
+    required += tuple(name for name in ("guardian_reports", "guardian_notifications")
+                      if name not in required)
+    public_url = os.environ.get("GUARDIAN_PUBLIC_STATUS_URL", "").strip()
+    if public_url and "guardian_public_probe" not in required:
+        required += ("guardian_public_probe",)
+    lab_url = os.environ.get("GUARDIAN_LAB_OBSERVER_URL", "").strip()
+    if lab_url and "guardian_lab_probe" not in required:
+        required += ("guardian_lab_probe",)
+    lab_feed_url = os.environ.get("GUARDIAN_LAB_FEED_URL", "").strip()
+    if lab_feed_url:
+        required += tuple(name for name in
+                          ("guardian_lab_feed_probe", "pa_feed", "smc_feed")
+                          if name not in required)
+    backfill_url = os.environ.get("GUARDIAN_LAB_BACKFILL_URL", "").strip()
+    if backfill_url and "guardian_lab_backfill" not in required:
+        required += ("guardian_lab_backfill",)
+    lifecycle_url = os.environ.get("GUARDIAN_LAB_LIFECYCLE_URL", "").strip()
+    if lifecycle_url and "guardian_lab_lifecycle" not in required:
+        required += ("guardian_lab_lifecycle",)
+    smc_execution_url = os.environ.get("GUARDIAN_SMC_EXECUTION_URL", "").strip()
+    if smc_execution_url and "guardian_smc_execution_probe" not in required:
+        required += ("guardian_smc_execution_probe",)
+    instance_decision_url = os.environ.get("GUARDIAN_INSTANCE_DECISION_URL", "").strip()
+    if instance_decision_url and "guardian_instance_decisions" not in required:
+        required += ("guardian_instance_decisions",)
+    instance_ledger_url = os.environ.get("GUARDIAN_INSTANCE_LEDGER_URL", "").strip()
+    if instance_ledger_url and "guardian_instance_ledger_probe" not in required:
+        required += ("guardian_instance_ledger_probe",)
+    lab_execution_url = os.environ.get("GUARDIAN_LAB_EXECUTION_URL", "").strip()
+    if lab_execution_url:
+        required += tuple("guardian_" + name + "_probe" for name in COMPONENTS.values()
+                          if "guardian_" + name + "_probe" not in required)
+    fill_history_url = os.environ.get("GUARDIAN_LAB_FILL_HISTORY_URL", "").strip()
+    if fill_history_url:
+        required += tuple("guardian_" + name for name in FILL_COMPONENTS.values()
+                          if "guardian_" + name not in required)
+    journal_history_url = os.environ.get("GUARDIAN_SMC_JOURNAL_HISTORY_URL", "").strip()
+    if journal_history_url and JOURNAL_PROBE not in required:
+        required += (JOURNAL_PROBE,)
+    intent_history_url = os.environ.get("GUARDIAN_SMC_INTENT_HISTORY_URL", "").strip()
+    if intent_history_url and INTENT_PROBE not in required:
+        required += (INTENT_PROBE,)
+    position_url = os.environ.get("GUARDIAN_SMC_FILL_POSITIONS_URL", "").strip()
+    if position_url and POSITION_PROBE not in required:
+        required += (POSITION_PROBE,)
+    exit_url = os.environ.get("GUARDIAN_SMC_EXIT_FILLS_URL", "").strip()
+    if exit_url and EXIT_PROBE not in required:
+        required += (EXIT_PROBE,)
+    stop_url = os.environ.get("GUARDIAN_SMC_STOP_MOVES_URL", "").strip()
+    if stop_url and STOP_PROBE not in required:
+        required += (STOP_PROBE,)
+    store = GuardianStore(Path(os.environ["GUARDIAN_DB_PATH"]))
+    app = GuardianService(store, source_keys=source_keys, read_key=read_key,
+                          required_components=required, research_key=research_key, admin_key=admin_key,
+                          ingestion_limits=ingestion_limits)
+    stopped = Event()
+    monitor = Thread(target=_self_heartbeat, args=(store, stopped), daemon=True)
+    incident_monitor = Thread(target=_incident_monitor,
+                              args=(store, app.incidents, app.notifications, stopped), daemon=True)
+    report_monitor = Thread(target=_report_monitor, args=(store, app.reports, stopped), daemon=True)
+    public_collector = (GuardianPublicStatusCollector(store, public_url)
+                        if public_url else None)
+    public_monitor = (Thread(target=_public_status_monitor,
+                             args=(store, public_collector, stopped), daemon=True)
+                      if public_collector else None)
+    lab_collector = (GuardianLabObserver(store, lab_url, lab_observer_key)
+                     if lab_url else None)
+    lab_monitor = (Thread(target=_lab_observation_monitor,
+                          args=(store, lab_collector, stopped), daemon=True)
+                   if lab_collector else None)
+    lab_feed_collector = (GuardianLabFeedObserver(store, lab_feed_url, lab_observer_key)
+                          if lab_feed_url else None)
+    lab_feed_monitor = (Thread(target=_lab_feed_monitor,
+                               args=(store, lab_feed_collector, stopped), daemon=True)
+                        if lab_feed_collector else None)
+    backfill_collector = (GuardianLabBackfill(store, backfill_url, lab_observer_key)
+                          if backfill_url else None)
+    backfill_monitor = (Thread(target=_lab_backfill_monitor,
+                               args=(store, backfill_collector, stopped), daemon=True)
+                        if backfill_collector else None)
+    lifecycle_collector = (GuardianLabLifecycle(store, lifecycle_url, lab_observer_key)
+                           if lifecycle_url else None)
+    lifecycle_monitor = (Thread(target=_lab_lifecycle_monitor,
+                                args=(store, lifecycle_collector, stopped), daemon=True)
+                         if lifecycle_collector else None)
+    smc_execution_collector = (
+        GuardianSMCExecutionObserver(store, smc_execution_url, lab_observer_key)
+        if smc_execution_url else None)
+    smc_execution_monitor = (
+        Thread(target=_smc_execution_monitor,
+               args=(store, smc_execution_collector, stopped), daemon=True)
+        if smc_execution_collector else None)
+    instance_decision_collector = (
+        GuardianInstanceDecisions(store, instance_decision_url, lab_observer_key)
+        if instance_decision_url else None)
+    instance_decision_monitor = (
+        Thread(target=_instance_decision_monitor,
+               args=(store, instance_decision_collector, stopped), daemon=True)
+        if instance_decision_collector else None)
+    instance_ledger_collector = (
+        GuardianInstanceLedgerObserver(store, instance_ledger_url, lab_observer_key)
+        if instance_ledger_url else None)
+    instance_ledger_monitor = (
+        Thread(target=_instance_ledger_monitor,
+               args=(store, instance_ledger_collector, stopped), daemon=True)
+        if instance_ledger_collector else None)
+    lab_execution_monitor = (Thread(target=_lab_execution_monitor, args=(tuple(
+        GuardianLabExecutionObserver(store, lab_execution_url, lab_observer_key, lab)
+        for lab in COMPONENTS), stopped), daemon=True) if lab_execution_url else None)
+    fill_history_monitor = (Thread(target=_lab_execution_monitor, args=(tuple(
+        GuardianLabFillHistory(store, fill_history_url, lab_observer_key, lab)
+        for lab in FILL_COMPONENTS), stopped), daemon=True) if fill_history_url else None)
+    journal_history_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCJournalHistory(store, journal_history_url, lab_observer_key),), stopped),
+        daemon=True) if journal_history_url else None)
+    intent_history_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCIntentHistory(store, intent_history_url, lab_observer_key),), stopped),
+        daemon=True) if intent_history_url else None)
+    position_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCFillPositions(store, position_url, lab_observer_key),), stopped),
+        daemon=True) if position_url else None)
+    exit_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCExitFills(store, exit_url, lab_observer_key),), stopped),
+        daemon=True) if exit_url else None)
+    stop_monitor = (Thread(target=_lab_execution_monitor, args=((
+        GuardianSMCStopMoves(store, stop_url, lab_observer_key),), stopped),
+        daemon=True) if stop_url else None)
+    monitor.start()
+    if stop_monitor:
+        stop_monitor.start()
+    if exit_monitor:
+        exit_monitor.start()
+    if position_monitor:
+        position_monitor.start()
+    if intent_history_monitor:
+        intent_history_monitor.start()
+    if journal_history_monitor:
+        journal_history_monitor.start()
+    if fill_history_monitor:
+        fill_history_monitor.start()
+    if lab_execution_monitor:
+        lab_execution_monitor.start()
+    incident_monitor.start()
+    report_monitor.start()
+    if public_monitor:
+        public_monitor.start()
+    if lab_monitor:
+        lab_monitor.start()
+    if lab_feed_monitor:
+        lab_feed_monitor.start()
+    if backfill_monitor:
+        backfill_monitor.start()
+    if lifecycle_monitor:
+        lifecycle_monitor.start()
+    if smc_execution_monitor:
+        smc_execution_monitor.start()
+    if instance_decision_monitor:
+        instance_decision_monitor.start()
+    if instance_ledger_monitor:
+        instance_ledger_monitor.start()
+    try:
+        with make_server(os.environ.get("GUARDIAN_BIND_HOST", "127.0.0.1"),
+                         int(os.environ.get("GUARDIAN_PORT", "8765")), app) as server:
+            server.serve_forever()
+    finally:
+        stopped.set()
+        if stop_monitor:
+            stop_monitor.join(timeout=2)
+        if exit_monitor:
+            exit_monitor.join(timeout=2)
+        if position_monitor:
+            position_monitor.join(timeout=2)
+        if intent_history_monitor:
+            intent_history_monitor.join(timeout=2)
+        if journal_history_monitor:
+            journal_history_monitor.join(timeout=2)
+        if fill_history_monitor:
+            fill_history_monitor.join(timeout=2)
+        if lab_execution_monitor:
+            lab_execution_monitor.join(timeout=2)
+        monitor.join(timeout=2)
+        incident_monitor.join(timeout=2)
+        report_monitor.join(timeout=2)
+        if public_monitor:
+            public_monitor.join(timeout=2)
+        if lab_monitor:
+            lab_monitor.join(timeout=2)
+        if lab_feed_monitor:
+            lab_feed_monitor.join(timeout=2)
+        if backfill_monitor:
+            backfill_monitor.join(timeout=2)
+        if lifecycle_monitor:
+            lifecycle_monitor.join(timeout=2)
+        if smc_execution_monitor:
+            smc_execution_monitor.join(timeout=2)
+        if instance_decision_monitor:
+            instance_decision_monitor.join(timeout=2)
+        if instance_ledger_monitor:
+            instance_ledger_monitor.join(timeout=2)
+
+
+if __name__ == "__main__":
+    main()

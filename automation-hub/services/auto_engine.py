@@ -1844,6 +1844,15 @@ class AutoStrategyEngine:
             decision["ts"] = signal.timestamp.isoformat()
             decision["decision_identity"] = (
                 decision_identity or self._decision_identity(sym, signal.timestamp))
+            # Passive provenance of the worker values used for this decision.
+            # Not a full strategy/risk configuration or a new execution gate.
+            decision["applied_settings"] = {
+                "strategy_key": getattr(self, "strategy_key", None),
+                "strategy_version": self.strategy_version or None,
+                "config_revision": getattr(self, "config_revision", None),
+                "entry_mode": self.entry_mode, "trading_mode": self.trading_mode,
+                "min_quality_score": self.min_quality_score,
+            }
             if self.decisions is not None:
                 try:
                     decision_id = self.decisions.record(decision)

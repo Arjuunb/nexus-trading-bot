@@ -49,3 +49,6 @@ Repository = "https://github.com/Arjuunb/VPS-productn"
 # because conftest.py appends the repo root to sys.path, so the package resolves
 # under pytest and only under pytest. test_packaging.py now guards this.
 include = ["bot*", "tradexa*"]
+
+[tool.setuptools.package-data]
+"tradexa.guardian" = ["assets/*.html", "assets/*.css", "assets/*.js"]
