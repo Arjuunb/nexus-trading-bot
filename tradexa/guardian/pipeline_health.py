@@ -14,6 +14,7 @@ from time import monotonic
 
 from .health import component_health
 from .self_health import _file_sizes, _ReadDeadline, _state, _UnsafePath
+from .sqlite_reads import bound_read_values, read_is_blocked
 
 MAX_PENDING_ROWS = 5000
 MAX_METADATA_BYTES = 1024**2
@@ -143,7 +144,7 @@ def _snapshot(path: Path, now: datetime) -> dict:
         if monotonic() > deadline:
             raise _ReadDeadline()
         conn.row_factory = sqlite3.Row
-        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 4096)
+        bound_read_values(conn, 4096)
         conn.execute("PRAGMA query_only=ON")
         conn.execute("PRAGMA busy_timeout=250")
         conn.set_progress_handler(lambda: int(monotonic() > deadline), 1000)
@@ -214,9 +215,7 @@ def pipeline_health(path: str | Path, *, now: datetime | None = None) -> dict:
     except OSError:
         return result  # No paths, exception prose, automatic repair or DB creation.
     except sqlite3.Error as exc:
-        code = getattr(exc, "sqlite_errorcode", 0) or 0
-        result["reason"] = ("GUARDIAN_DB_READ_BLOCKED" if (code & 255) in
-                            (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT)
+        result["reason"] = ("GUARDIAN_DB_READ_BLOCKED" if read_is_blocked(exc)
                             else "GUARDIAN_DB_READ_FAILED")
         return result
     components = result["components"]

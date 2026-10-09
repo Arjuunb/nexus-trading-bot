@@ -14,6 +14,7 @@ from typing import Sequence
 
 from .events import GuardianEvent, GuardianEventError, _NAME
 from .self_health import _file_sizes, _ReadDeadline, _state, _UnsafePath
+from .sqlite_reads import bound_read_values, read_is_blocked
 
 KIND = "producer_transport_observed"
 COUNTERS = ("enqueued", "delivered", "invalid", "backpressure_dropped", "delivery_failed")
@@ -162,7 +163,7 @@ def transport_health(path: str | Path, sources: Sequence[str], *, now: datetime 
             if monotonic() > deadline:
                 raise _ReadDeadline()
             conn.row_factory = sqlite3.Row
-            conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, MAX_REPORT_BYTES+1024)
+            bound_read_values(conn, MAX_REPORT_BYTES+1024)
             conn.execute("PRAGMA query_only=ON")
             conn.execute("PRAGMA busy_timeout=250")
             conn.set_progress_handler(lambda: int(monotonic() > deadline), 1000)
@@ -187,9 +188,7 @@ def transport_health(path: str | Path, sources: Sequence[str], *, now: datetime 
     except (OSError, ValueError, TypeError, OverflowError):
         return result
     except sqlite3.Error as exc:
-        code = getattr(exc, "sqlite_errorcode", 0) or 0
-        result["reason"] = ("GUARDIAN_DB_READ_BLOCKED" if (code & 255) in
-                            (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT)
+        result["reason"] = ("GUARDIAN_DB_READ_BLOCKED" if read_is_blocked(exc)
                             else "GUARDIAN_DB_READ_FAILED")
         return result
     result.update(database_snapshot_atomic=True, state=_state(result["sources"]),

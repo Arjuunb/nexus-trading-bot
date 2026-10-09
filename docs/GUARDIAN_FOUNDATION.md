@@ -2295,3 +2295,49 @@ no test is skipped to work around sandbox restrictions.
 ## PRD completion boundary
 
 Still required before calling the whole Guardian PRD complete: validated every-evaluation/source-version coverage (including failed persistence), complete PA/SMC and all-instance execution/journal/exit lifecycles beyond bounded current snapshots, currency-verified isolated risk/correlation, infrastructure and other-agent telemetry, production typed latency samples and frequency/distribution/resource baselines, runtime-verified dependencies and source-proven causal/recovery chains, actual isolated causal research runners and statistical tests, a bounded model/provider integration, explicitly approved operational-recovery targets, remote notification delivery, the one-item authenticated trading-app integration, load/retention/backups, and deployment fault/availability acceptance. Local read models, reported research results and green unit tests cannot substitute for any of these proofs. No credentials, remote destination, recovery policy, model provider or production deployment is inferred from the PRD.
+
+## Release compatibility follow-up (2026-10-09)
+
+The implemented foundation was pushed on `codex/guardian-foundation` at
+`19eff2a1c5c012bc4ce3d0c5bc3861fb85aa8474`. GitHub CI exposed an import-time
+Python 3.10 error in Guardian diagnostics: `sqlite3.SQLITE_INTERRUPT` is not
+exported there. The same readers also called `Connection.setlimit`, which was
+added in Python 3.11. The project still supports Python 3.10; neither removing
+that CI job nor raising the project minimum version is this repair.
+
+`tradexa/guardian/sqlite_reads.py` shares stable SQLite numeric result codes and
+applies the extra native value-length limit only when the stdlib exposes it.
+Mandatory SQL CASE byte bounds, row limits, read-only/query-only connections,
+250ms busy timeout and read deadlines remain in all three diagnostic readers.
+Python 3.10 does not gain a native SQLite allocation cap from this helper; it
+retains those query/read bounds. Errors from an available setter propagate to
+the existing unknown/failed diagnostic path. Lock/interrupt errors use numeric
+codes when present, or exact known SQLite messages on older Python; arbitrary
+error text remains private and unknown/corrupt/full errors never become healthy.
+These remain observation-only contracts, not trading or durability certificates.
+
+The failure-first regressions reproduce missing constants in a separate
+interpreter, simulate connections without `setlimit`, verify all three readers
+redact oversized evidence and recover, preserve immutable report history, and
+assert native setter failures propagate. The focused run passed **209 tests**,
+including 15 new compatibility cases. The complete release rerun is recorded
+separately in `/private/tmp/guardian-release-sqlite-compat-full.xml`.
+
+The first complete run in the restricted sandbox had 5,541 passes, 15 existing
+skips, four failures and four fixture errors. Every failure/error was an
+existing localhost mock-server bind rejected with `PermissionError`; no
+functional expectation failed. The unchanged full suite rerun with localhost
+permissions passed **5,549 tests, 15 existing skips and 95 deprecation warnings**
+in 347.97 seconds; the process exited 0. Its separate final JUnit artifact,
+`/private/tmp/guardian-release-sqlite-compat-full-final.xml`, records 5,564 cases,
+zero failures and zero errors. Both SMC protection systems (10 decision-path
+source/behavior checks plus 17 agent-isolation checks) and the seven Agent
+crash-boundary cases passed. No tests were skipped or relaxed for the repair.
+
+Only Guardian diagnostics, their compatibility helper/regressions and this
+release record changed. No SMC/PA strategy, entry/exit/risk logic, freeze
+baseline, live-routing configuration or persistent trading data changed. No
+VPS deployment or Guardian producer activation was performed. The eight open
+workstreams and production acceptance gates above still apply. Deployment
+requires green CI for the exact target and a target-host ancestry/configuration/
+persistent-mount check; updates from another branch must not be overwritten.

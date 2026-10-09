@@ -16,6 +16,7 @@ from time import monotonic
 from typing import Sequence
 
 from .health import component_health
+from .sqlite_reads import SQLITE_INTERRUPT, bound_read_values, read_is_blocked
 
 CRITICAL_HEADROOM_BYTES = 64 * 1024**2
 WARNING_HEADROOM_BYTES = 256 * 1024**2
@@ -46,7 +47,7 @@ class _UnsafePath(ValueError):
 
 
 class _ReadDeadline(sqlite3.OperationalError):
-    sqlite_errorcode = sqlite3.SQLITE_INTERRUPT
+    sqlite_errorcode = SQLITE_INTERRUPT
 
 
 def _file_sizes(path: Path) -> dict:
@@ -101,7 +102,7 @@ def _read_monitors(path: Path, names: tuple[str, ...]) -> tuple[dict, str]:
         if monotonic() > deadline:
             raise _ReadDeadline()
         conn.row_factory = sqlite3.Row
-        conn.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 4096)
+        bound_read_values(conn, 4096)
         conn.execute("PRAGMA query_only=ON")
         conn.execute("PRAGMA busy_timeout=250")
         conn.set_progress_handler(lambda: int(monotonic() > deadline), 1000)
@@ -198,9 +199,7 @@ def self_health(path: str | Path, required_components: Sequence[str], *,
             monitors = component_health(heartbeats, names, now=moment)
             storage.update(database_readable=True, journal_mode=journal_mode)
         except sqlite3.Error as exc:
-            code = getattr(exc, "sqlite_errorcode", 0) or 0
-            storage["reason"] = ("GUARDIAN_DB_READ_BLOCKED" if (code & 255) in
-                                 (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_INTERRUPT)
+            storage["reason"] = ("GUARDIAN_DB_READ_BLOCKED" if read_is_blocked(exc)
                                  else "GUARDIAN_DB_READ_FAILED")
     if metadata_available and storage["database_readable"]:
         free, inodes = storage["filesystem_available_bytes"], storage["filesystem_available_inodes"]
