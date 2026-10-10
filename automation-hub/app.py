@@ -40,6 +40,7 @@ from database.store import SqliteStore  # noqa: E402
 from core_engine.observer import CoreV2ShadowObserver  # noqa: E402
 from core_engine.persistence import ShadowDecisionStore  # noqa: E402
 from routers.core_v2 import create_router as create_core_v2_router  # noqa: E402
+from routers.strategy_intelligence import create_router as create_intelligence_router  # noqa: E402
 from services.supabase_auth import Principal, SupabaseAuth, SupabaseAuthError  # noqa: E402
 
 # The API version prefix, declared before the app so the OpenAPI docs can live
@@ -143,6 +144,7 @@ app.include_router(webhook_router)
 # router in a later slice), so /api/v1 covers the router-based API surface.
 app.include_router(webhook_router, prefix="/api/" + API_VERSION)
 app.include_router(create_core_v2_router(core_v2_store))
+app.include_router(create_intelligence_router())
 
 
 @app.get("/api/" + API_VERSION)

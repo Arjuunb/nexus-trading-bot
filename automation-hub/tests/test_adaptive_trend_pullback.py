@@ -3,7 +3,10 @@ from __future__ import annotations
 import math
 import hashlib
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+
+import pytest
 
 from bot.types import Bar, SignalType
 from strategies.adaptive_trend_pullback import AdaptiveTrendPullbackStrategy
@@ -152,3 +155,124 @@ def test_research_resolver_exposes_the_same_versioned_strategy():
     registry = next(row for row in REGISTRY if row["id"] == "adaptive_trend_pullback")
     assert registry["version"] == "1.0.0"
     assert registry["timeframes"] == ["5m"]
+
+
+@pytest.mark.parametrize("direction", (1, -1))
+@pytest.mark.parametrize("optional_context", ("missing", "empty"))
+def test_optional_four_hour_context_does_not_change_valid_entry(direction, optional_context):
+    context = _context(direction)
+    baseline = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    baseline.set_timeframe_context(context)
+    expected = baseline.on_bar(context["5m"][-1])
+    assert expected is not None
+
+    if optional_context == "missing":
+        context.pop("4h")
+    else:
+        context["4h"] = []
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    strategy.set_timeframe_context(context)
+    actual = strategy.on_bar(context["5m"][-1])
+
+    assert actual is not None
+    # The optional clock contributes telemetry only. All trading outputs and
+    # evidence from the required clocks retain the valid-context baseline.
+    for attribute in ("type", "entry", "stop_loss", "take_profit", "confidence", "reason", "checklist"):
+        assert getattr(actual, attribute) == getattr(expected, attribute)
+    expected.snapshot["timeframe_closes"].pop("4h")
+    assert actual.snapshot == expected.snapshot
+    assert set(actual.snapshot["timeframe_closes"]) == {"1h", "15m", "5m"}
+
+
+@pytest.mark.parametrize("timeframe", ("1h", "15m", "5m"))
+def test_missing_required_context_still_blocks_entries(timeframe):
+    context = _context(1)
+    decision_bar = context["5m"][-1]
+    context.pop(timeframe)
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    strategy.set_timeframe_context(context)
+
+    assert strategy.on_bar(decision_bar) is None
+    assert strategy.decision_report()["state"] == "BLOCKED"
+    assert timeframe in strategy.decision_report()["reason"]
+
+
+def _current_native_context() -> dict[str, list[Bar]]:
+    """Keep stage-fixture prices with independently closed native clocks."""
+    now = datetime.now(timezone.utc)
+    context = _context(1)
+    for timeframe, rows in context.items():
+        duration = _SECONDS[timeframe]
+        latest_close = datetime.fromtimestamp(
+            int(now.timestamp()) // duration * duration, timezone.utc)
+        shift = latest_close - (rows[-1].timestamp + timedelta(seconds=duration))
+        context[timeframe] = [replace(bar, timestamp=bar.timestamp + shift) for bar in rows]
+    return context
+
+
+def _native_engine(context):
+    from data.ledger import SqliteLedger
+    from execution.paper_engine import PaperExecutionEngine
+    from services.auto_engine import AutoStrategyEngine
+    from services.controls import TradingControl
+    from services.signal_pipeline import SignalPipeline
+
+    ledger = SqliteLedger(":memory:")
+    paper = PaperExecutionEngine(ledger, starting_balance=10_000)
+    pipeline = SignalPipeline(ledger, paper, TradingControl(), equity=10_000)
+    return AutoStrategyEngine(
+        pipeline, paper, ledger, symbols=["BTCUSDT"], timeframe="5m",
+        strategy_factory=AdaptiveTrendPullbackStrategy, live=True,
+        fetcher=lambda _symbol, timeframe, _limit: (context.get(timeframe, []), "live (test fixture)"),
+    )
+
+
+@pytest.mark.parametrize("optional_context", ("missing", "empty", "stale", "valid"))
+def test_forward_native_boundary_handles_optional_context_without_an_entry_gate(optional_context):
+    context = _current_native_context()
+    if optional_context == "missing":
+        context.pop("4h")
+    elif optional_context == "empty":
+        context["4h"] = []
+    elif optional_context == "stale":
+        context["4h"] = [replace(bar, timestamp=bar.timestamp - timedelta(hours=12))
+                         for bar in context["4h"]]
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    engine = _native_engine(context)
+    decision_bar = context["5m"][-1]
+
+    engine._refresh_multi_timeframe_context("BTCUSDT", strategy, entry_bars=context["5m"])
+    engine._apply_multi_timeframe_context(strategy, decision_bar.timestamp)
+    signal = strategy.on_bar(decision_bar)
+
+    assert signal is not None
+    assert signal.type == SignalType.LONG
+    assert signal.snapshot["mtf_evidence"]["primary"] is not None
+    if optional_context == "valid":
+        assert signal.snapshot["mtf_evidence"]["secondary"] is not None
+        assert "4h" in signal.snapshot["timeframe_closes"]
+    else:
+        assert signal.snapshot["mtf_evidence"]["secondary"] is None
+        assert "4h" not in signal.snapshot["timeframe_closes"]
+        assert strategy._context["4h"] == []
+
+
+@pytest.mark.parametrize("timeframe", ("1h", "15m"))
+@pytest.mark.parametrize("required_context", ("missing", "stale"))
+def test_forward_native_boundary_keeps_required_context_fail_closed(timeframe, required_context):
+    from services.auto_engine import EngineFeedError
+
+    context = _current_native_context()
+    if required_context == "missing":
+        context.pop(timeframe)
+    else:
+        context[timeframe] = [replace(bar, timestamp=bar.timestamp - timedelta(hours=4))
+                              for bar in context[timeframe]]
+    strategy = AdaptiveTrendPullbackStrategy("BTCUSDT")
+    engine = _native_engine(context)
+
+    with pytest.raises(EngineFeedError, match=(f"{timeframe} returned" if required_context == "missing"
+                                             else f"{timeframe} context stale")):
+        engine._refresh_multi_timeframe_context("BTCUSDT", strategy, entry_bars=context["5m"])
+    assert strategy.lifecycle_state == SetupState.SCANNING
+    assert engine.ledger.get_positions() == []

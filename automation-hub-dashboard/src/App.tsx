@@ -22,6 +22,7 @@ const SimulationPage = lazy(() => import("./pages/Simulation"));
 const ReplayPage = lazy(() => import("./pages/Replay"));
 const EvolutionPage = lazy(() => import("./pages/Evolution"));
 const LiveTradingPage = lazy(() => import("./pages/LiveTrading"));
+const SafetyCenterPage = lazy(() => import("./pages/SafetyCenter"));
 const AIAssistantPage = lazy(() => import("./pages/AIAssistant"));
 const StrategyProofPage = lazy(() => import("./pages/StrategyProof"));
 const OptimizationPage = lazy(() => import("./pages/Optimization"));
@@ -124,6 +125,7 @@ export default function App() {
       case "Trading Instances": return <TradingInstancesPage instanceId={route.instanceId} tab={route.tab} />;
       case "Paper Account": return <PaperTradingPage />;
       case "Live Trading": return <LiveTradingPage />;
+      case "Safety Center": return <SafetyCenterPage />;
       case "Portfolio": return <PortfolioPage tab={route.tab} />;
       case "Analytics": return <AnalyticsPage tab={route.tab} />;
       case "Strategy Proof": return <StrategyProofPage />;

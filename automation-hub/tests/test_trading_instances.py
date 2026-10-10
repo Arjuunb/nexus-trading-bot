@@ -340,6 +340,11 @@ def test_instance_worker_wires_journal_memory_and_server_owned_provenance(monkey
         "execution_mode": "paper",
         "exchange": "kraken",
         "instrument_type": "spot",
+        "owner_id": instance.owner_id,
+        "account_id": f"instance:{instance.id}:{instance.simulation_session_id}",
+        "lab_id": None,
+        "source_kind": "unknown",
+        "evidence_class": "UNKNOWN",
     }
 
 

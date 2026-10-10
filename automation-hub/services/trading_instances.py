@@ -293,6 +293,27 @@ class InstanceLedger:
             instance_id=self.instance_id,
             simulation_session_id=self.simulation_session_id)
 
+    def get_execution_receipts(self):
+        rows = self._ledger.get_execution_receipts(instance_id=self.instance_id)
+        if self.simulation_session_id:
+            # The primary receipt schema has instance scope. Confirm session
+            # membership through its exact trade ID; never join by symbol.
+            trade_ids = {trade["id"] for trade in self.get_paper_trades()}
+            rows = [row for row in rows if row["trade_id"] in trade_ids]
+        return rows
+
+    def get_evidence_outbox(self):
+        return self._ledger.get_evidence_outbox(
+            instance_id=self.instance_id, simulation_session_id=self.simulation_session_id)
+
+    def get_evidence_outbox_event(self, execution_id):
+        return self._ledger.get_evidence_outbox_event(execution_id,
+            instance_id=self.instance_id, simulation_session_id=self.simulation_session_id)
+
+    def get_authoritative_evidence_snapshot(self):
+        return self._ledger.get_authoritative_evidence_snapshot(
+            instance_id=self.instance_id, simulation_session_id=self.simulation_session_id)
+
     def close_paper_trade(self, trade_id, **kw):
         return self._ledger.close_paper_trade(trade_id, **kw, instance_id=self.instance_id)
 
@@ -1189,7 +1210,7 @@ class TradingInstanceManager:
                  session_start: int = 0, session_end: int = 24,
                  max_weekly_loss_pct: float = 0.0, max_trades_per_day: int = 0,
                  trading_days_mask: int = 127, full_reboot_timeout_s: float | None = None,
-                 market_hub=None, symbol_rules_provider=None):
+                 market_hub=None, symbol_rules_provider=None, intelligence_service=None):
         self.ledger, self.store = ledger, InstanceStore(ledger)
         self.strategy_factory, self.live, self.live_poll_s, self.fetcher = strategy_factory, live, live_poll_s, fetcher
         self.decision_store = decision_store
@@ -1199,6 +1220,7 @@ class TradingInstanceManager:
         self.cycle_store = cycle_store
         self.market_hub = market_hub
         self.symbol_rules_provider = symbol_rules_provider
+        self.intelligence_service = intelligence_service
         # Instance workers own their positions, but production risk policy is
         # supplied by the server and applied to every isolated pipeline. These
         # values were previously omitted, silently disabling several configured
@@ -1821,6 +1843,9 @@ class TradingInstanceManager:
                 "execution_mode": inst.execution_mode,
                 "exchange": inst.exchange,
                 "instrument_type": inst.instrument_type,
+                "owner_id": inst.owner_id,
+                "account_id": f"instance:{inst.id}:{inst.simulation_session_id}",
+                "lab_id": None,
             }
             exchange = ("binance_usdm" if self.market_hub is not None and forward else
                         inst.exchange if inst.exchange != "inherit" else
@@ -1834,7 +1859,24 @@ class TradingInstanceManager:
                 "instrument_type": ("perpetual"
                                     if self.market_hub is not None and forward
                                     else inst.instrument_type),
+                "source_kind": ("forward_paper" if self.market_hub is not None and forward
+                                else "replay" if not forward else "unknown"),
+                "evidence_class": ("EXECUTED_FORWARD_PAPER" if self.market_hub is not None and forward
+                                   else "SIMULATED_REPLAY" if not forward else "UNKNOWN"),
             })
+            if self.decision_journal is not None:
+                try:
+                    from services.strategy_evidence_capture import StrategyEvidenceCapture
+                    capture = StrategyEvidenceCapture(
+                        self.decision_journal, decisions=self.decision_store,
+                        trade_memory=self.trade_memory)
+                    pipeline.evidence = capture
+                    paper.evidence_listener = capture.observe_fill
+                    paper.evidence_prepare_listener = capture.prepare_exit
+                    capture.reconcile_report(scoped)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("strategy_evidence_worker_recovery_failed")
             if forward:
                 if self.symbol_rules_provider is not None:
                     pipeline.symbol_rules_provider = self.symbol_rules_provider
@@ -2068,7 +2110,23 @@ class TradingInstanceManager:
             inst.desired_running, inst.last_error = True, ""
             inst.started_at, inst.stopped_at = _now(), None
             self.store.save(inst)
+            if pipeline.evidence is not None and self.intelligence_service is not None:
+                scope = {"owner_id": inst.owner_id, "instance_id": inst.id,
+                         "simulation_session_id": inst.simulation_session_id,
+                         "account_id": f"instance:{inst.id}:{inst.simulation_session_id}"}
+                pipeline.evidence.evidence_changed_listener = lambda: self.intelligence_service.invalidate_scope(scope)
             engine.start()
+            if pipeline.evidence is not None:
+                try:
+                    from services.strategy_evidence_recovery import EvidenceRecoveryLoop
+                    engine.evidence_recovery = EvidenceRecoveryLoop(
+                        pipeline.evidence, scoped, stop_event=engine._stop,
+                        worker_alive=lambda: engine.running,
+                        after_reconcile=self._intelligence_callback(inst))
+                    engine.evidence_recovery.start()
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("strategy_evidence_recovery_loop_unavailable")
             observed_state = engine.status().get("lifecycle_state")
             if (observed_state and observed_state != inst.state
                     and not entry_gate_closed):
@@ -2082,6 +2140,16 @@ class TradingInstanceManager:
                 engine.last_blocker = "PENDING_ORDER_OWNERSHIP_INVALID"
                 self.store.save(inst)
             return inst
+
+    def _intelligence_callback(self, inst):
+        """Bind derived processing to the worker's immutable account scope."""
+        if self.intelligence_service is None:
+            return None
+        scope = {"owner_id": inst.owner_id, "instance_id": inst.id,
+                 "simulation_session_id": inst.simulation_session_id,
+                 "account_id": f"instance:{inst.id}:{inst.simulation_session_id}"}
+        return lambda ledger, report: self.intelligence_service.refresh(
+            ledger, scope=scope, reconciliation_report=report)
 
     def _renew_lease(self, inst: TradingInstance) -> bool:
         """Extend this process's ownership. False means it was lost."""
@@ -2614,6 +2682,15 @@ class TradingInstanceManager:
             self._metric_fingerprints.pop(instance_id, None)
 
             if self.decision_journal is not None:
+                try:
+                    from services.strategy_evidence_capture import StrategyEvidenceCapture
+                    StrategyEvidenceCapture(self.decision_journal, decisions=self.decision_store).cancel_pending(
+                        InstanceLedger(self.ledger, instance_id, previous_session_id),
+                        instance_id=instance_id, simulation_session_id=previous_session_id,
+                        reason="Pending order cancelled by committed simulation account restart.")
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("strategy_evidence_pending_cancellation_failed")
                 try:
                     self.decision_journal.store.cancel_open_for_instance(
                         instance_id,

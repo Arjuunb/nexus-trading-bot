@@ -85,6 +85,7 @@ const PA_CHART = {
     mark_age_seconds: .3, closed_candle_age_seconds: 120, candle_quote_deviation_bps: 2,
     new_entries_paused: false, execution_uses_closed_bars_only: true },
   data_provenance: { exchange: "Binance USDⓈ-M Futures", closed_candles_used: 80 },
+  mtf_policy: { label: "Independent native entry timeframes", available_entry_timeframes: ["1m", "5m", "15m", "1h", "4h", "1d"] },
 };
 const PA_PAPER = {
   account_scope: "PRICE_ACTION_VISUAL_LAB_ONLY", currency: "USDT", execution_mode: "PAPER",
@@ -410,11 +411,15 @@ const SHAPES: [string, unknown][] = [
     best_symbol: { name: "BTCUSDT", net_pnl: 200 }, worst_symbol: { name: "ETHUSDT", net_pnl: -50 },
     best_strategy: { name: "Decision Brain", net_r: 12 }, worst_strategy: { name: "Decision Brain", net_r: 12 },
     skipped_total: 7, skipped_by_category: [{ category: "safety", count: 5 }, { category: "risk", count: 2 }],
+    criteria: { minimum_profit_factor: 1.5, max_drawdown_pct: 10, forward_data: false, execution_model: "realistic" },
+    stability: { available: false, passed: false, windows: [] },
     safety: { live_allowed: false, hard_locked: true, passed: 3, total: 6 },
     live_review: { eligible: false, stage: "insufficient-sample",
       reasons: ["Need ≥ 30 closed paper trades (have 24).", "Safety guards incomplete: max_daily_loss."],
       note: "Live trading stays LOCKED regardless of this verdict. This is human-review eligibility only — it never auto-enables real-money trading." },
   }],
+  ["/api/v2/health/engines", { mode: "shadow", execution_enabled: false, total_decisions: 0,
+    sampled_decisions: 0, engine_status_counts: {} }],
   ["/skipped/summary", { stages: [{ stage: "risk_guard", count: 1 }, { stage: "controls", count: 1 }] }],
   ["/health/bot", {
     engine: { running: true, mode: "paper", strategy: "Decision Brain", symbols: ["BTCUSDT", "ETHUSDT"],
@@ -433,7 +438,8 @@ const SHAPES: [string, unknown][] = [
   ["/bot-os", { services: [] }],
   ["/alerts/channels", { channels: [] }],
   ["/alerts/check", { ok: true, issues: [] }],
-  ["/econ/protection", { mode: "normal", actions: [], next_event: null, minutes_to_event: null }],
+  ["/econ/protection", { mode: "normal", connected: false, next_event: null, minutes_to_event: null,
+    risk_multiplier: 1, stop_multiplier: 1, halt_new_entries: false, actions: [], note: "No external economic feed in the isolated fixture." }],
   ["/market/context", { fear_greed: { available: false }, btc_dominance: { available: false }, total_mcap_usd: { available: false }, eth_btc: { available: false }, funding_rate: { available: false }, open_interest: { available: false }, liquidations: { available: false }, econ_calendar: { available: false }, news: { available: false, connected: false, headlines: [] }, provider_debug: [] }],
   ["/paper/equity-curve", { points: [] }],
 
@@ -487,6 +493,7 @@ const SHAPES: [string, unknown][] = [
   ["/ai/profile", { sample: 12, ready: true, strengths: ["Best in the London session (+0.6R)."],
     weaknesses: ["Repeated mistake: entered before confirmation (×4)"], avg_hold_seconds: 3600,
     sharpe_ratio: 1.1, win_rate: 57, expectancy_r: 0.3, note: "Profile updates automatically as trades close." }],
+  ["/ai/recommendations", { recommendations: [], count: 0, ready: false, note: "No recommendations in the isolated fixture." }],
   ["/ai/confidence-accuracy", { sample: 24, ready: true, calibrated: true,
     verdict: "Well calibrated: high-confidence setups win 72% vs 41% for low-confidence (+31 pts).",
     high_conf_win_rate: 72, low_conf_win_rate: 41, spread_pts: 31,
@@ -558,6 +565,28 @@ function bodyFor(pathname: string): unknown {
 }
 
 export async function mockApi(page: Page) {
+  // The UI includes a public Binance chart stream. HTTP routing cannot mock
+  // WebSockets in the pinned Playwright 1.47 release. Isolate that transport in
+  // this browser fixture rather than allowing a real venue/proxy connection.
+  await page.addInitScript(() => {
+    const NativeSocket = window.WebSocket;
+    class FixtureSocket extends EventTarget {
+      static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
+      readonly url: string; readyState = 0; bufferedAmount = 0; extensions = ""; protocol = ""; binaryType = "blob";
+      onopen: ((event: Event) => void) | null = null;
+      onclose: ((event: Event) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      constructor(url: string | URL, protocols?: string | string[]) {
+        super(); this.url = String(url);
+        if (!/^wss:\/\/(fstream|stream)\.binance\.com\//.test(this.url)) return new NativeSocket(url, protocols) as unknown as FixtureSocket;
+        queueMicrotask(() => { if (this.readyState !== 0) return; this.readyState = 1; const event = new Event("open"); this.dispatchEvent(event); this.onopen?.(event); });
+      }
+      send(_data: unknown) { /* chart fixture has no server-side subscription */ }
+      close() { this.readyState = 3; const event = new Event("close"); this.dispatchEvent(event); this.onclose?.(event); }
+    }
+    window.WebSocket = FixtureSocket as unknown as typeof WebSocket;
+  });
   let paPaper: any = structuredClone(PA_PAPER);
   await page.route(
     (url) => url.host === "localhost:8000",
@@ -693,4 +722,28 @@ export async function mockApi(page: Page) {
         body: JSON.stringify(bodyFor(url.pathname)) });
     },
   );
+}
+
+/** A mutable isolated instance for testing the current header's scoped API.
+ * Changes affect only this per-test in-memory fixture, never a trading ledger. */
+export async function mockHeaderInstance(page: Page) {
+  let instance = {
+    id: "header-fixture", symbol: "BTCUSDT", strategy_key: "brain", strategy_label: "Decision Brain",
+    strategy_version: "1.0", timeframe: "4h", state: "stopped", mode: "trading", ui_status: "BLOCKED",
+    risk_per_trade_pct: .005, capital_allocation: 1000, max_open_positions: 3,
+    metrics: { trades: 0, realized_pnl: 0, win_rate: 0, profit_factor: 0 },
+    market_data: { market_data_status: "idle", data_source: "ISOLATED_FIXTURE" },
+  };
+  await page.route((url) => url.host === "localhost:8000" && url.pathname.startsWith("/instances"), async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname === "/instances/options") {
+      return route.fulfill({ json: { ...(bodyFor(url.pathname) as object), strategies: [
+        { key: "brain", label: "Decision Brain", versions: ["1.0"] },
+        { key: "supertrend", label: "Supertrend", versions: ["1.0"] },
+      ] } });
+    }
+    if (url.pathname === "/instances") return route.fulfill({ json: { ...(bodyFor(url.pathname) as object), instances: [instance] } });
+    if (route.request().method() === "PATCH") instance = { ...instance, ...route.request().postDataJSON() };
+    return route.fulfill({ json: { instance } });
+  });
 }

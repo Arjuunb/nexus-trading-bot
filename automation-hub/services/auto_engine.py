@@ -897,6 +897,8 @@ class AutoStrategyEngine:
                 sources.append(f"{timeframe}:stale optional bias")
                 continue
             context[timeframe] = closed
+            if source != "live (cached closed context)":
+                self._observe_closed_market_context(symbol, timeframe, closed, source)
             sources.append(f"{timeframe}:{source}")
         self._multi_timeframe_context[symbol] = context
         if sources:
@@ -1076,6 +1078,42 @@ class AutoStrategyEngine:
         self.market_data_status = "healthy"
         self.next_expected_candle = (
             newest.timestamp + timedelta(seconds=interval * 2)).isoformat()
+        self._observe_closed_market_context(symbol, self.timeframe, closed, self.last_source)
+
+    def _context_observer(self):
+        observer = getattr(self, "_market_context_observer", None)
+        if observer is None:
+            from services.market_context_observer import MarketContextObserver
+            observer = MarketContextObserver()
+            self._market_context_observer = observer
+        return observer
+
+    def _observe_closed_market_context(self, symbol, timeframe, closed, source):
+        """Observe an already accepted closed batch; never fetch or gate data."""
+        if not self.live:
+            return
+        try:
+            provenance = self.pipeline.journal_context
+            self._context_observer().record_closed_batch(
+                symbol, timeframe, closed, available_at=datetime.now(timezone.utc),
+                source=source or "", exchange=provenance.get("exchange"),
+                market_type=provenance.get("instrument_type"))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("market_context_batch_observation_failed symbol=%s timeframe=%s", symbol, timeframe)
+
+    def _freeze_signal_market_context(self, symbol, signal, strategy):
+        """Keep original observed inputs through approval/deferred-fill delays."""
+        if getattr(signal, "market_context_input", None) is not None:
+            return
+        try:
+            signal.market_context_input = self._context_observer().freeze(
+                symbol, strategy, entry_timeframe=self.timeframe,
+                signal_timestamp=signal.timestamp, signal_observed_at=datetime.now(timezone.utc),
+                source=self.last_source or "", execution_mode="forward_paper" if self.live else "replay")
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("market_context_signal_observation_failed symbol=%s", symbol)
 
     def _record_received_candle(self, bars) -> None:
         """Expose the newest provider event separately from the closed cursor."""
@@ -1360,7 +1398,11 @@ class AutoStrategyEngine:
             return False
         self._pending.pop(sym, None)
         self._checkpoint_pending_orders()
-        res = self._route({**po["payload"], "entry": fill, "maker": True,
+        original = po["payload"]
+        res = self._route({**original, "entry": fill, "maker": True,
+                           "original_signal_timestamp": original.get("original_signal_timestamp") or original.get("timestamp"),
+                           "original_strategy_configuration_unknown": not bool(
+                               (original.get("strategy_identity") or {}).get("strategy_config_hash")),
                            "timestamp": bar.timestamp.isoformat()})
         if res is None:
             return False
@@ -1636,17 +1678,25 @@ class AutoStrategyEngine:
 
     def _on_signal(self, sym: str, signal: Signal, strategy=None, *,
                    decision_identity: str | None = None) -> Optional[dict]:
+        self._freeze_signal_market_context(sym, signal, strategy)
+        identity = self._capture_signal_identity(sym, signal, strategy, decision_identity)
+        observer = getattr(self.pipeline, "evidence", None)
+        decision_observed_at = None
         # The brain re-asserts its view every bar; only act when it CHANGES the
         # position (open from flat, or flip/close an opposite). Holding the same
         # direction is a no-op, so the decision log stays signal — not spam.
         pos = self.paper.open_position(sym)
         if signal.type == SignalType.FLAT and pos is None:
+            self._observe_signal_outcome(sym, signal, decision_identity, "REJECTED",
+                                         "Flatten signal with no open position")
             return {"kind": "rejected", "stage": "execution",
                     "reason": "Flatten signal with no open position",
                     "blocker": "GATE_REJECTED: NO_OPEN_POSITION"}
         desired = ("long" if signal.type == SignalType.LONG else
                    "short" if signal.type == SignalType.SHORT else None)
         if pos is not None and pos["side"] == desired:
+            self._observe_signal_outcome(sym, signal, decision_identity, "HOLD",
+                                         "Position already aligned")
             return {"kind": "hold", "blocker": "GATE_REJECTED: POSITION_ALREADY_ALIGNED"}
         self.stats["signals"] += 1
         side = ("BUY" if signal.type == SignalType.LONG else
@@ -1696,11 +1746,31 @@ class AutoStrategyEngine:
             decision["ts"] = signal.timestamp.isoformat()
             decision["decision_identity"] = (
                 decision_identity or self._decision_identity(sym, signal.timestamp))
+            for key in ("strategy_id", "strategy_version", "strategy_config_hash", "source_hash",
+                        "simulation_session_id", "execution_mode", "source_kind", "owner_id", "account_id", "lab_id"):
+                decision[key] = self.pipeline.journal_context.get(key)
+            decision_observed_at = datetime.now(timezone.utc).isoformat()
+            decision["decided_at"] = decision_observed_at
             if self.decisions is not None:
                 try:
                     decision_id = self.decisions.record(decision)
+                    decision_observed_at = (self.decisions.get(decision_id) or {}).get("decided_at")
+                    decision["decided_at"] = decision_observed_at
                 except Exception:  # noqa: BLE001 — persistence must never block trading
                     pass
+            if observer is not None:
+                try:
+                    observer.observe_decision(decision, {
+                        "symbol": sym, "timestamp": signal.timestamp.isoformat(),
+                        "decision_identity": decision["decision_identity"],
+                        "journal_decision_id": decision_id,
+                        "decision_observed_at": decision_observed_at,
+                        "journal_execution": dict(self.pipeline.journal_context),
+                        "strategy_identity": identity,
+                    })
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("strategy_decision_capture_failed")
         if decision is not None and decision["decision"] == "rejected":
             self.stats["rejections"] += 1
             self.rejection_counts["quality"] = self.rejection_counts.get("quality", 0) + 1
@@ -1788,6 +1858,10 @@ class AutoStrategyEngine:
             "instance_id": self.instance_id or getattr(self.ledger, "instance_id", "") or "",
             "market_data_source": self.last_source or "",
             "decision_identity": decision_identity or self._decision_identity(sym, signal.timestamp),
+            "strategy_identity": identity,
+            "recovery_strategy_identity": getattr(signal, "recovery_strategy_identity", None),
+            "decision_observed_at": decision_observed_at,
+            "market_context_input": getattr(signal, "market_context_input", None),
         }
         # Maker entry: when FLAT, park a resting limit instead of paying the
         # spread. Flips/closes (opposite side of an open position) stay
@@ -1920,6 +1994,78 @@ class AutoStrategyEngine:
                     "decision": decision, "verdict": v}
         return {"kind": "noop", "decision": decision, "verdict": v}
 
+    def _capture_signal_identity(self, sym, signal, strategy, decision_identity):
+        observer = getattr(self.pipeline, "evidence", None)
+        if observer is None and getattr(self.pipeline, "journal", None) is not None:
+            try:
+                from services.strategy_evidence_capture import StrategyEvidenceCapture
+                observer = StrategyEvidenceCapture(
+                    self.pipeline.journal, decisions=self.decisions,
+                    trade_memory=self.pipeline.trade_memory)
+                self.pipeline.evidence = observer
+                self.paper.evidence_listener = observer.observe_fill
+                self.paper.evidence_prepare_listener = observer.prepare_exit
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("strategy_evidence_initialization_failed")
+        if observer is None:
+            return None
+        try:
+            import copy
+            from services.strategy_identity import observed_strategy_identity, strategy_id_for
+            identity = observed_strategy_identity(
+                strategy, strategy_id=getattr(self, "strategy_key", None)
+                or strategy_id_for(strategy) or "",
+                declared_version=self.strategy_version or None, timeframe=self.timeframe)
+            signal.strategy_identity = copy.deepcopy(identity)
+            # Keep the observed snapshot available to the primary metadata
+            # outbox even when the separate journal cannot accept it yet.
+            signal.recovery_strategy_identity = copy.deepcopy(identity)
+            self.pipeline.journal_context.update({
+                "strategy_id": identity["strategy_id"],
+                "strategy_version": identity["strategy_version"],
+                "declared_strategy_version": identity["declared_version"],
+                "strategy_config_hash": identity["strategy_config_hash"],
+                "source_hash": identity["source_hash"],
+                "identity_status": identity["identity_status"],
+            })
+            observer.observe_signal(signal, identity, {
+                "symbol": sym, "timestamp": signal.timestamp.isoformat(),
+                "signal": {"type": signal.type.value, "entry": signal.entry,
+                           "stop_loss": signal.stop_loss, "take_profit": signal.take_profit,
+                           "confidence": signal.confidence, "reason": signal.reason},
+                "decision_identity": decision_identity or self._decision_identity(sym, signal.timestamp),
+                "journal_execution": dict(self.pipeline.journal_context),
+                "snapshot": copy.deepcopy(getattr(signal, "snapshot", None)),
+                "brain_checklist": copy.deepcopy(getattr(signal, "checklist", None)),
+                "market_context_input": copy.deepcopy(getattr(signal, "market_context_input", None)),
+            })
+            return identity
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("strategy_identity_capture_failed")
+            # A failed frozen observation must not inherit the previous
+            # configuration cohort while execution continues independently.
+            self.pipeline.journal_context.update(
+                strategy_config_hash=None, identity_status="capture_unavailable")
+            if hasattr(signal, "strategy_identity"):
+                signal.strategy_identity["identity_status"] = "capture_unavailable"
+            return None
+
+    def _observe_signal_outcome(self, sym, signal, decision_identity, state, reason):
+        observer = getattr(self.pipeline, "evidence", None)
+        if observer is None:
+            return
+        try:
+            observer.terminal({
+                "symbol": sym, "decision_identity": decision_identity or
+                self._decision_identity(sym, signal.timestamp),
+                "journal_execution": dict(self.pipeline.journal_context),
+            }, state, reason)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("strategy_signal_outcome_capture_failed")
+
     def _finalize_decision(self, decision_id: int | None, *, final_state: str,
                            stage: str, reason: str, blocker: str = "") -> None:
         if decision_id is None or self.decisions is None:
@@ -1928,6 +2074,22 @@ class AutoStrategyEngine:
             self.decisions.finalize(
                 decision_id, final_state=final_state, gate_stage=stage,
                 reason=reason, blocker=blocker)
+            observer = getattr(self.pipeline, "evidence", None)
+            if observer is not None:
+                decision = self.decisions.get(decision_id) or {}
+                observer.terminal({
+                    "symbol": decision.get("symbol"),
+                    "journal_decision_id": decision_id,
+                    "decision_identity": decision.get("decision_identity"),
+                    "journal_execution": {
+                        **dict(self.pipeline.journal_context),
+                        **{key: decision.get(key) for key in (
+                            "strategy_id", "strategy_version", "strategy_config_hash", "source_hash",
+                            "instance_id", "simulation_session_id", "execution_mode", "source_kind",
+                            "owner_id", "account_id", "lab_id")},
+                    },
+                }, ("EXPIRED" if "EXPIRED" in str(blocker) else
+                    "CANCELLED" if "CANCELLED" in str(blocker) else final_state), reason)
         except Exception as exc:  # noqa: BLE001 -- telemetry cannot change execution
             self.ledger.log(
                 level="warning", stage="decision_store",

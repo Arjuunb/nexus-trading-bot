@@ -59,6 +59,11 @@ class DecisionStore:
         ensure_column(self._c, "decisions", "final_state", "TEXT NOT NULL DEFAULT ''")
         ensure_column(self._c, "decisions", "gate_stage", "TEXT NOT NULL DEFAULT ''")
         ensure_column(self._c, "decisions", "blocker", "TEXT NOT NULL DEFAULT ''")
+        # Nullable provenance is additive: old decisions remain unknown.
+        for name in ("strategy_id", "strategy_version", "strategy_config_hash",
+                     "source_hash", "simulation_session_id", "execution_mode",
+                     "source_kind", "owner_id", "account_id", "lab_id", "decided_at"):
+            ensure_column(self._c, "decisions", name, "TEXT")
         self._c.execute(
             "UPDATE decisions SET final_state=CASE "
             "WHEN executed=1 THEN 'FILLED' "
@@ -80,8 +85,10 @@ class DecisionStore:
                     setup_quality_score, volume_score, rr_score, confidence,
                     passed_json, failed_json, decision, reason, executed,
                     final_state, gate_stage, blocker,
-                    components_json, instance_id, decision_identity)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    components_json, instance_id, decision_identity,
+                    strategy_id,strategy_version,strategy_config_hash,source_hash,
+                    simulation_session_id,execution_mode,source_kind,owner_id,account_id,lab_id,decided_at)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(decision_identity) WHERE decision_identity <> '' DO NOTHING""",
                 (d.get("ts") or _utcnow(), d["symbol"], d.get("timeframe"),
                  d.get("strategy"), d.get("side"), d.get("regime"),
@@ -95,13 +102,22 @@ class DecisionStore:
                  d.get("final_state") or ("GATE_REJECTED" if d["decision"] == "rejected" else "QUALIFIED"),
                  d.get("gate_stage") or "", d.get("blocker") or "",
                  json.dumps(d.get("components") or {}), d.get("instance_id") or "",
-                 d.get("decision_identity") or ""))
+                 d.get("decision_identity") or "",
+                 d.get("strategy_id"), d.get("strategy_version"), d.get("strategy_config_hash"),
+                 d.get("source_hash"), d.get("simulation_session_id"),
+                 d.get("execution_mode"), d.get("source_kind"), d.get("owner_id"),
+                 d.get("account_id"), d.get("lab_id"), d.get("decided_at") or _utcnow()))
             if cur.rowcount == 0 and d.get("decision_identity"):
                 row = self._c.execute(
-                    "SELECT id FROM decisions WHERE decision_identity=?",
+                    "SELECT * FROM decisions WHERE decision_identity=?",
                     (d["decision_identity"],),
                 ).fetchone()
                 self._c.commit()
+                for key in ("strategy_id", "strategy_version", "strategy_config_hash", "source_hash",
+                            "instance_id", "simulation_session_id", "execution_mode", "source_kind",
+                            "owner_id", "account_id", "lab_id"):
+                    if key in d and row[key] != d[key]:
+                        raise ValueError(f"immutable decision identity conflict: {key}")
                 return int(row["id"])
             self._c.commit()
             return int(cur.lastrowid)

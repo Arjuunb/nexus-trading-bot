@@ -184,6 +184,7 @@ class AdaptiveTrendPullbackStrategy(HubStrategy):
                 + timedelta(seconds=TF_SECONDS[timeframe])
             ).isoformat()
             for timeframe in self._context
+            if self._context[timeframe]
         }
 
     def _block(self, reason: str, direction=None, regime=None, trend=None) -> None:

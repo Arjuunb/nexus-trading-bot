@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from data.tenant_scope import ensure_column, ensure_tenant_column
+from data.paper_evidence_outbox import (SQLITE_SCHEMA as _OUTBOX_SCHEMA, append_outbox,
+                                        decode_row as _decode_outbox, watermark as _evidence_watermark)
 
 _SCHEMA = (Path(__file__).resolve().parent / "ledger_schema.sql").read_text(encoding="utf-8")
 
@@ -106,19 +108,27 @@ class Ledger(Protocol):
                                  exit_price: float, pnl: float, rr: float,
                                  fees: float = 0.0, realized_pnl: float | None = None,
                                  equity_after_close: float | None = None,
-                                 instance_id: str = "", execution_id: str) -> None: ...
+                                 instance_id: str = "", execution_id: str,
+                                 evidence: dict | None = None) -> None: ...
     def reduce_position_and_trade(self, *, position: dict, trade_id: str,
                                   remainder_position: dict, remainder_trade: dict,
                                   exit_price: float, pnl: float, rr: float,
                                   closed_size: float, fees: float,
                                   equity_after_close: float,
-                                  instance_id: str = "", execution_id: str) -> tuple[str, str]: ...
+                                  instance_id: str = "", execution_id: str,
+                                  evidence: dict | None = None) -> tuple[str, str]: ...
     def close_paper_trade(self, trade_id: str, *, exit_price: float, pnl: float, rr: float,
                           size: float | None = None, fees: float = 0.0,
                           realized_pnl: float | None = None,
                           equity_after_close: float | None = None,
                           instance_id: str = "") -> int: ...
     def get_paper_trades(self, instance_id: str = "", simulation_session_id: str = "") -> list[dict]: ...
+    def get_execution_receipts(self, instance_id: str = "") -> list[dict]: ...
+    def get_evidence_outbox(self, instance_id: str = "", simulation_session_id: str = "") -> list[dict]: ...
+    def get_evidence_outbox_event(self, execution_id: str, instance_id: str = "",
+                                  simulation_session_id: str = "") -> dict | None: ...
+    def get_authoritative_evidence_snapshot(self, instance_id: str = "",
+                                           simulation_session_id: str = "") -> dict: ...
     # logs / alerts
     def log(self, *, level: str, stage: str, message: str, symbol: str = "", instance_id: str = "") -> None: ...
     def get_logs(self, limit: int = 200, instance_id: str = "") -> list[dict]: ...
@@ -134,6 +144,7 @@ class SqliteLedger:
     """Thread-safe SQLite ledger. A single connection is shared across the API
     request threads and the autonomous engine's background thread, so every
     access is guarded by a re-entrant lock."""
+    supports_evidence_outbox = True
 
     def __init__(self, path: str | Path = ":memory:"):
         self.path = str(path)
@@ -144,6 +155,7 @@ class SqliteLedger:
         self._lock = threading.RLock()
         with self._lock:
             self._c.executescript(_SCHEMA)
+            self._c.executescript(_OUTBOX_SCHEMA)
             # Phase C-3: make the ledger tenant-aware (schema only). Each table
             # gains a tenant_id column defaulting to the owner and existing rows
             # are backfilled — additive and behaviour-preserving. Reads do NOT
@@ -372,6 +384,16 @@ class SqliteLedger:
                     "VALUES (?,?,?,?,?,?)",
                     (execution_id, "OPEN", pid, tid, instance_id, opened_at),
                 )
+                append_outbox(
+                    self._c, execution_id=execution_id, action="OPEN", instance_id=instance_id,
+                    simulation_session_id=session_id, trade_id=tid, position_id=pid,
+                    created_at=opened_at, evidence=trade.get("_evidence"),
+                    receipt={"symbol": trade["symbol"], "side": trade["side"],
+                             "entry": trade["entry"], "price": trade["entry"], "size": trade["size"],
+                             "stop": trade.get("stop"), "target": trade.get("target"),
+                             "initial_risk_amount": trade.get("risk_amount_at_entry"),
+                             "risk_amount_at_entry": trade.get("risk_amount_at_entry"),
+                             "booked_fees": 0})
                 self._c.commit()
             except Exception:
                 self._c.rollback()
@@ -393,12 +415,14 @@ class SqliteLedger:
                                  exit_price: float, pnl: float, rr: float,
                                  fees: float = 0.0, realized_pnl: float | None = None,
                                  equity_after_close: float | None = None,
-                                 instance_id: str = "", execution_id: str) -> None:
+                                 instance_id: str = "", execution_id: str,
+                                 evidence: dict | None = None) -> None:
         """Close matching position/trade rows or roll both back."""
         closed_at = _now()
         with self._lock:
             try:
                 self._c.execute("BEGIN IMMEDIATE")
+                source_trade = self._c.execute("SELECT * FROM paper_trades WHERE id=?", (trade_id,)).fetchone()
                 pq = "UPDATE positions SET status='closed', pnl=?, closed_at=? WHERE id=? AND status='open'"
                 pargs: list = [pnl, closed_at, position_id]
                 if instance_id:
@@ -420,6 +444,20 @@ class SqliteLedger:
                     "VALUES (?,?,?,?,?,?)",
                     (execution_id, "CLOSE", position_id, trade_id, instance_id, closed_at),
                 )
+                source_trade = dict(source_trade)
+                append_outbox(
+                    self._c, execution_id=execution_id, action="CLOSE",
+                    instance_id=source_trade.get("instance_id") or instance_id,
+                    simulation_session_id=source_trade.get("simulation_session_id") or "",
+                    trade_id=trade_id, position_id=position_id, created_at=closed_at,
+                    evidence=evidence,
+                    receipt={"symbol": source_trade["symbol"], "side": source_trade["side"],
+                             "entry": source_trade["entry"], "price": exit_price,
+                             "size": source_trade["size"], "stop": source_trade.get("stop"),
+                             "target": source_trade.get("target"),
+                             "initial_risk_amount": source_trade.get("risk_amount_at_entry"),
+                             "risk_amount_at_entry": source_trade.get("risk_amount_at_entry"),
+                             "gross_pnl": pnl + fees, "net_pnl": pnl, "booked_fees": fees})
                 self._c.commit()
             except Exception:
                 self._c.rollback()
@@ -430,7 +468,8 @@ class SqliteLedger:
                                   exit_price: float, pnl: float, rr: float,
                                   closed_size: float, fees: float,
                                   equity_after_close: float,
-                                  instance_id: str = "", execution_id: str) -> tuple[str, str]:
+                                  instance_id: str = "", execution_id: str,
+                                  evidence: dict | None = None) -> tuple[str, str]:
         """Close the fraction and open the remainder as one indivisible unit."""
         new_pid, new_tid, now = _id(), remainder_trade.get("id") or _id(), _now()
         session_id = (remainder_position.get("simulation_session_id")
@@ -439,6 +478,7 @@ class SqliteLedger:
         with self._lock:
             try:
                 self._c.execute("BEGIN IMMEDIATE")
+                source_trade = self._c.execute("SELECT * FROM paper_trades WHERE id=?", (trade_id,)).fetchone()
                 pq = "UPDATE positions SET status='closed',pnl=?,closed_at=? WHERE id=? AND status='open'"
                 pargs: list = [pnl, now, position["id"]]
                 if instance_id:
@@ -481,6 +521,20 @@ class SqliteLedger:
                     "VALUES (?,?,?,?,?,?)",
                     (execution_id, "REDUCE", new_pid, new_tid, instance_id, now),
                 )
+                source_trade = dict(source_trade)
+                append_outbox(
+                    self._c, execution_id=execution_id, action="REDUCE", instance_id=instance_id,
+                    simulation_session_id=session_id, trade_id=trade_id, position_id=position["id"],
+                    parent_trade_id=trade_id, parent_position_id=position["id"],
+                    remainder_trade_id=new_tid, remainder_position_id=new_pid,
+                    created_at=now, evidence=evidence,
+                    receipt={"symbol": source_trade["symbol"], "side": source_trade["side"],
+                             "entry": source_trade["entry"], "price": exit_price, "size": closed_size,
+                             "stop": source_trade.get("stop"), "target": source_trade.get("target"),
+                             "initial_risk_amount": source_trade.get("risk_amount_at_entry"),
+                             "risk_amount_at_entry": source_trade.get("risk_amount_at_entry"),
+                             "remainder_size": remainder_trade["size"],
+                             "gross_pnl": pnl + fees, "net_pnl": pnl, "booked_fees": fees})
                 self._c.commit()
             except Exception:
                 self._c.rollback()
@@ -603,6 +657,94 @@ class SqliteLedger:
             self._c.execute("DELETE FROM positions")
             self._c.commit()
 
+    def get_execution_receipts(self, instance_id=""):
+        """Read the existing committed correlation authority; no accounting writes."""
+        query = "SELECT * FROM paper_executions"
+        args = []
+        if instance_id:
+            query += " WHERE instance_id=?"
+            args.append(instance_id)
+        query += " ORDER BY created_at,execution_id"
+        with self._lock:
+            return [dict(row) for row in self._c.execute(query, args)]
+
+    def get_evidence_outbox(self, instance_id="", simulation_session_id=""):
+        query = "SELECT * FROM paper_evidence_outbox"
+        where, args = [], []
+        if instance_id:
+            where.append("instance_id=?"); args.append(instance_id)
+        if simulation_session_id:
+            where.append("simulation_session_id=?"); args.append(simulation_session_id)
+        if where:
+            query += " WHERE " + " AND ".join(where)
+        query += " ORDER BY rowid"
+        with self._lock:
+            return [_decode_outbox(row) for row in self._c.execute(query, args)]
+
+    def get_evidence_outbox_event(self, execution_id, instance_id="", simulation_session_id=""):
+        """Read exactly one committed immutable receipt by its primary key."""
+        query = "SELECT * FROM paper_evidence_outbox WHERE execution_id=?"
+        args = [execution_id]
+        if instance_id:
+            query += " AND instance_id=?"; args.append(instance_id)
+        if simulation_session_id:
+            query += " AND simulation_session_id=?"; args.append(simulation_session_id)
+        with self._lock:
+            row = self._c.execute(query, args).fetchone()
+            return _decode_outbox(row) if row is not None else None
+
+    def get_authoritative_evidence_snapshot(self, instance_id="", simulation_session_id=""):
+        """Read all accounting authorities under one consistent SQLite snapshot.
+
+        The read lock protects this connection; BEGIN protects against another
+        process committing between table reads. No schema or accounting writes
+        occur here, and no source row count is silently truncated.
+        """
+        with self._lock:
+            self._c.execute("BEGIN")
+            try:
+                where, args = [], []
+                if instance_id:
+                    where.append("instance_id=?"); args.append(instance_id)
+                if simulation_session_id:
+                    where.append("simulation_session_id=?"); args.append(simulation_session_id)
+                clause = " WHERE " + " AND ".join(where) if where else ""
+                trades = [dict(row) for row in self._c.execute(
+                    "SELECT * FROM paper_trades" + clause + " ORDER BY id", args)]
+                positions = [dict(row) for row in self._c.execute(
+                    "SELECT * FROM positions" + clause + " ORDER BY id", args)]
+                outbox = self.get_evidence_outbox(instance_id, simulation_session_id)
+                executions = self.get_execution_receipts()
+                if instance_id:
+                    # Older unscoped close calls wrote an empty receipt
+                    # instance even when their primary trade was scoped. Exact
+                    # trade/outbox IDs establish membership without changing
+                    # those historical financial records.
+                    scoped_trade_ids = {row["id"] for row in trades}
+                    scoped_event_ids = {row["execution_id"] for row in outbox}
+                    executions = [row for row in executions if
+                        row.get("instance_id") == instance_id or
+                        row["trade_id"] in scoped_trade_ids or
+                        row["execution_id"] in scoped_event_ids]
+                unscoped_executions = []
+                if simulation_session_id:
+                    trade_ids = {row["id"] for row in trades}
+                    event_ids = {row["execution_id"] for row in outbox}
+                    # Receipt session membership is proved only by exact IDs.
+                    all_trade_ids = {row[0] for row in self._c.execute("SELECT id FROM paper_trades")}
+                    all_outbox_ids = {row[0] for row in self._c.execute("SELECT execution_id FROM paper_evidence_outbox")}
+                    unscoped_executions = [row for row in executions
+                        if row["trade_id"] not in all_trade_ids and row["execution_id"] not in all_outbox_ids]
+                    executions = [row for row in executions
+                                  if row["trade_id"] in trade_ids or row["execution_id"] in event_ids]
+                payload = {"trades": trades, "positions": positions, "executions": executions,
+                           "outbox": outbox, "unscoped_executions": unscoped_executions}
+                return {**payload, "source_kind": "sqlite", "outbox_supported": True,
+                        "source_complete": not unscoped_executions,
+                        "consistent_snapshot": True, "source_watermark": _evidence_watermark(payload)}
+            finally:
+                self._c.rollback()
+
     def begin_factory_reset_audit(self, row: dict) -> None:
         with self._lock:
             self._c.execute(
@@ -714,6 +856,114 @@ class SupabaseLedger:
     def __init__(self, url: str, key: str):  # pragma: no cover - needs network + creds
         from supabase import create_client
         self._db = create_client(url, key)
+
+    @property
+    def supports_evidence_outbox(self):
+        """Advertise only a positively verified migration capability.
+
+        Reads perform discovery during recovery; execution never introduces a
+        capability network call into the order path. Legacy RPCs safely ignore
+        the additive metadata keys until migration is installed.
+        """
+        return getattr(self, "_evidence_capability", {}).get("atomic_outbox") is True
+
+    def _discover_evidence_capability(self, *, refresh=False):
+        if hasattr(self, "_evidence_capability") and not refresh:
+            return self._evidence_capability
+        try:
+            result = remote_call_with_retry(
+                lambda: self._db.rpc("paper_evidence_capabilities", {}).execute()).data
+        except Exception as exc:
+            # Only a missing migration is a supported legacy state. Permission,
+            # transport and server failures are visible reconciliation failures.
+            code = str(getattr(exc, "code", ""))
+            if code not in ("PGRST202", "42883"):
+                raise
+            result = {}
+        if not isinstance(result, dict):
+            raise ValueError("invalid paper evidence capability response")
+        self._evidence_capability = result
+        return result
+
+    def _read_evidence_rows(self, table, *, instance_id="", simulation_session_id="",
+                            order_by="id"):
+        rows, offset, page_size = [], 0, 1000
+        while True:
+            def query():
+                q = self._t(table).select("*")
+                if instance_id:
+                    q = q.eq("instance_id", instance_id)
+                if simulation_session_id:
+                    q = q.eq("simulation_session_id", simulation_session_id)
+                return q.order(order_by).range(offset, offset + page_size - 1).execute()
+            page = remote_call_with_retry(query).data
+            if not isinstance(page, list):
+                raise ValueError("invalid authoritative evidence page")
+            rows.extend(page)
+            if len(page) < page_size:
+                return rows
+            offset += page_size
+
+    def get_evidence_outbox(self, instance_id="", simulation_session_id=""):
+        capability = self._discover_evidence_capability()
+        if capability.get("atomic_outbox") is not True:
+            return []
+        return [_decode_outbox(row) for row in self._read_evidence_rows(
+            "paper_evidence_outbox", instance_id=instance_id,
+            simulation_session_id=simulation_session_id, order_by="sequence_id")]
+
+    def get_evidence_outbox_event(self, execution_id, instance_id="", simulation_session_id=""):
+        if self._discover_evidence_capability().get("atomic_outbox") is not True:
+            return None
+        def query():
+            q = self._t("paper_evidence_outbox").select("*").eq("execution_id", execution_id)
+            if instance_id:
+                q = q.eq("instance_id", instance_id)
+            if simulation_session_id:
+                q = q.eq("simulation_session_id", simulation_session_id)
+            return q.limit(2).execute()
+        rows = remote_call_with_retry(query).data
+        if not isinstance(rows, list) or len(rows) > 1:
+            raise ValueError("invalid exact authoritative outbox response")
+        return _decode_outbox(rows[0]) if rows else None
+
+    def get_authoritative_evidence_snapshot(self, instance_id="", simulation_session_id=""):
+        """One scalar RPC reads all authorities at a single MVCC snapshot.
+
+        Legacy providers are paginated for recovery but cannot certify a
+        complete cross-table history from independent HTTP requests.
+        """
+        capability = self._discover_evidence_capability(refresh=True)
+        if capability.get("atomic_outbox") is True and capability.get("consistent_snapshot") is True:
+            result = remote_call_with_retry(lambda: self._db.rpc("paper_evidence_snapshot", {
+                "p_instance_id": instance_id or "",
+                "p_simulation_session_id": simulation_session_id or ""}).execute()).data
+            if not isinstance(result, dict) or any(not isinstance(result.get(key), list)
+                for key in ("trades", "positions", "executions", "outbox", "unscoped_executions")):
+                raise ValueError("invalid authoritative evidence snapshot response")
+            if result.get("consistent_snapshot") is not True or result.get("outbox_supported") is not True:
+                raise ValueError("authoritative evidence snapshot capability mismatch")
+            result = {**result, "outbox": [_decode_outbox(row) for row in result["outbox"]]}
+        else:
+            trades = self._read_evidence_rows("paper_trades", instance_id=instance_id,
+                                             simulation_session_id=simulation_session_id)
+            positions = self._read_evidence_rows("positions", instance_id=instance_id,
+                                                simulation_session_id=simulation_session_id)
+            executions = self.get_execution_receipts(instance_id)
+            unresolved = []
+            if simulation_session_id:
+                # Exact primary trade IDs prove membership. Unmatched receipts
+                # cannot be assigned to this session or silently ignored.
+                ids = {row["id"] for row in trades}
+                unresolved = [row for row in executions if row["trade_id"] not in ids]
+                executions = [row for row in executions if row["trade_id"] in ids]
+            result = {"trades": trades, "positions": positions, "executions": executions,
+                      "outbox": [], "unscoped_executions": unresolved,
+                      "source_kind": "postgres_legacy", "outbox_supported": False,
+                      "source_complete": False, "consistent_snapshot": False}
+        payload = {key: result[key] for key in ("trades", "positions", "executions", "outbox",
+                                               "unscoped_executions")}
+        return {**result, "source_watermark": _evidence_watermark(payload)}
 
     def _t(self, name):  # pragma: no cover
         return self._db.table(name)
@@ -939,6 +1189,22 @@ class SupabaseLedger:
                 q = q.eq("simulation_session_id", simulation_session_id)
             return q.order("opened_at", desc=True).execute()
         return remote_call_with_retry(query).data
+
+    def get_execution_receipts(self, instance_id=""):  # pragma: no cover
+        """Paginate the committed receipt table instead of silently truncating it."""
+        rows, offset, page_size = [], 0, 1000
+        while True:
+            def query():
+                q = self._t("paper_executions").select("*")
+                if instance_id:
+                    q = q.eq("instance_id", instance_id)
+                return q.order("created_at").order("execution_id").range(
+                    offset, offset + page_size - 1).execute()
+            page = remote_call_with_retry(query).data
+            rows.extend(page)
+            if len(page) < page_size:
+                return rows
+            offset += page_size
 
     def log(self, *, level, stage, message, symbol="", instance_id=""):  # pragma: no cover
         row = {"id": _id(), "ts": _now(), "symbol": symbol,
