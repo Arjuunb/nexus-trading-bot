@@ -7,15 +7,20 @@ unrealized P&L is computed against supplied mark prices.
 """
 from __future__ import annotations
 
+import copy
 import json
+import logging
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
 
 from data.ledger import DuplicateOrderIntent, Ledger
 from bot.tradecore.rmath import gross_r as _gross_r
+
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,6 +40,12 @@ class FillResult:
     #: notifier, so a field would let one thread erase or overwrite the other's
     #: reason between the rejection and the read.
     reason: str = ""
+    # Observational metadata; the accounting transaction remains authoritative.
+    receipt: dict = field(default_factory=dict)
+    parent_trade_id: str = ""
+    remainder_trade_id: str = ""
+    remainder_position_id: str = ""
+    executed_at: str = ""
 
 
 def _dir(side: str) -> str:
@@ -54,6 +65,12 @@ class PaperExecutionEngine:
         # (current equity / available / realized) so capital survives a restart.
         self.account_store = None
         self.equity_listener = None  # optional callable(current_realized_equity)
+        # Called only after successful accounting commits. Evidence processing
+        # has no order capability and must never change an execution result.
+        self.evidence_listener = None  # optional callable(FillResult)
+        # Optional durable observational preparation for exact-ID restart
+        # reconciliation. It cannot approve/reject or mutate an execution.
+        self.evidence_prepare_listener = None  # callable(action, execution_id, receipt)
         # H-5: history() is read ~10x per signal (PnL/streak/Kelly/curve).
         # Cache the closed-trade list and invalidate on any write, so one
         # process() call scans the ledger once, not ten times.
@@ -92,6 +109,78 @@ class PaperExecutionEngine:
 
     def _invalidate_history(self) -> None:
         self._hist_cache = None
+
+    def _publish_evidence(self, fill: FillResult) -> None:
+        """Deliver a detached receipt; observation failure cannot stop trading."""
+        if self.evidence_listener is None:
+            return
+        try:
+            observed = copy.deepcopy(fill)
+            if (fill.action != "recovered"
+                    and getattr(self.ledger, "supports_evidence_outbox", False)):
+                # SQL REAL/NUMERIC storage can round producer doubles. The
+                # detached observer reports booked authority; the returned
+                # fill and all execution/accounting arithmetic stay intact.
+                row = self.ledger.get_evidence_outbox_event(fill.execution_id)
+                if row is None:
+                    raise RuntimeError("committed fill metadata outbox unavailable")
+                if (row["trade_id"], row["position_id"]) != (fill.trade_id, fill.position_id):
+                    raise ValueError("committed fill metadata references different primary IDs")
+                # Retain producer-only coverage metadata (including restart
+                # labels). Normalize existing receipt fields to booked values.
+                for key in observed.receipt.keys() & row["receipt"].keys():
+                    if observed.receipt[key] != row["receipt"][key]:
+                        observed.receipt[key] = copy.deepcopy(row["receipt"][key])
+                observed.price = row["receipt"]["price"]
+                observed.size = row["receipt"]["size"]
+                observed.pnl = row["receipt"].get("net_pnl", fill.pnl)
+                observed.fee = row["receipt"].get("booked_fees", fill.fee)
+                if observed != fill:
+                    observed.receipt["producer_receipt"] = copy.deepcopy(fill.receipt)
+                    observed.receipt["producer_observation"] = {
+                        key: value for key, value in vars(fill).items() if key != "receipt"}
+            self.evidence_listener(observed)
+        except Exception:  # noqa: BLE001 — evidence is not an execution gate
+            _log.exception("Paper evidence observer failed after %s %s (%s)",
+                           fill.action, fill.symbol, fill.execution_id)
+
+    def _prepare_evidence(self, action: str, execution_id: str, receipt: dict) -> dict | None:
+        """Observe an exit intent before its existing atomic accounting call.
+
+        Preparation alone proves no fill. Consumers must join this execution
+        ID to the authoritative committed execution row during recovery. The
+        stable receipt contains no guessed execution time or future child IDs.
+        """
+        if self.evidence_prepare_listener is None:
+            return
+        try:
+            return self.evidence_prepare_listener(action, execution_id, copy.deepcopy(receipt))
+        except Exception:  # noqa: BLE001 — never gate or change protective exits
+            _log.exception("Paper evidence preparation failed for %s %s (%s)",
+                           action, receipt.get("symbol"), execution_id)
+
+    @staticmethod
+    def _receipt(*, symbol, side, size, entry, stop, target,
+                 initial_risk_amount, gross_pnl, booked_fees, net_pnl,
+                 sizing_context=None) -> dict:
+        """Known facts, with unknown funding explicitly distinct from zero.
+
+        Entry fees are booked by the existing ledger on partial/final closes;
+        this observation does not accrue them again. Initial risk comes from
+        the actual entry or persisted sizing receipt, never the current stop.
+        """
+        receipt = {
+            "symbol": symbol, "side": side, "size": size, "entry": entry,
+            "stop": stop, "target": target,
+            "initial_risk_amount": initial_risk_amount,
+            "risk_amount_at_entry": initial_risk_amount,
+            "gross_pnl": gross_pnl, "booked_fees": booked_fees,
+            "net_pnl": net_pnl, "funding": None,
+            "funding_coverage": "not_modeled",
+        }
+        if sizing_context is not None:
+            receipt["sizing_context"] = dict(sizing_context)
+        return receipt
 
     def update_stop(self, symbol: str, stop: float) -> int:
         """Persist a new stop on the OPEN position for a symbol (manual on-chart
@@ -237,6 +326,17 @@ class PaperExecutionEngine:
             "strategy_id": self.strategy_id,
             **entry_sizing,
         }
+        if getattr(self.ledger, "supports_evidence_outbox", False):
+            trade_row["_evidence"] = {
+                "context": copy.deepcopy(entry_sizing.get("evidence_context")),
+                "observed_at": entry_sizing.get("fill_timestamp"),
+                "receipt": self._receipt(
+                    symbol=symbol, side=direction, size=size, entry=entry,
+                    stop=stop, target=target,
+                    initial_risk_amount=entry_sizing.get("risk_amount_at_entry"),
+                    gross_pnl=0.0, booked_fees=0.0, net_pnl=0.0,
+                    sizing_context=entry_sizing),
+            }
         atomic_open = getattr(self.ledger, "open_position_and_trade", None)
         if not callable(atomic_open):
             raise RuntimeError("Ledger does not support atomic position/trade open")
@@ -250,8 +350,20 @@ class PaperExecutionEngine:
             execution_id=execution_id,
         )
         self._invalidate_history()
-        return FillResult("opened", symbol, direction, size, entry, 0.0, pid, tid,
-                          execution_id=execution_id)
+        fill = FillResult(
+            "opened", symbol, direction, size, entry, 0.0, pid, tid,
+            execution_id=execution_id,
+            executed_at=str(entry_sizing.get("fill_timestamp")
+                            or datetime.now(timezone.utc).isoformat()),
+            receipt=self._receipt(
+                symbol=symbol, side=direction, size=size, entry=entry, stop=stop,
+                target=target,
+                initial_risk_amount=entry_sizing.get("risk_amount_at_entry"),
+                gross_pnl=0.0, booked_fees=0.0, net_pnl=0.0,
+                sizing_context=entry_sizing),
+        )
+        self._publish_evidence(fill)
+        return fill
 
     def reduce(self, *, symbol: str, exit_price: float, fraction: float,
                execution_id: str = "") -> FillResult:
@@ -296,7 +408,20 @@ class PaperExecutionEngine:
         if not callable(atomic_reduce):
             raise RuntimeError("Ledger does not support atomic paper position reduction")
         execution_id = self._execution_id("REDUCE", execution_id)
-        atomic_reduce(
+        execution_receipt = self._receipt(
+            symbol=symbol, side=pos["side"], size=closed_size,
+            entry=pos["entry"], stop=pos.get("stop"), target=pos.get("target"),
+            initial_risk_amount=open_trade.get("risk_amount_at_entry"),
+            gross_pnl=gross, booked_fees=fee, net_pnl=pnl,
+        )
+        execution_receipt.update({
+            "trade_id": open_trade["id"], "parent_trade_id": open_trade["id"],
+            "position_id": pos["id"], "position_size": pos["size"],
+            "closed_size": closed_size, "remainder_size": remainder,
+            "exit_price": exit_price, "position_opened_at": pos.get("opened_at"),
+        })
+        evidence = self._prepare_evidence("reduced", execution_id, execution_receipt)
+        new_pid, new_tid = atomic_reduce(
             position=pos, trade_id=open_trade["id"],
             remainder_position={
                 "symbol": symbol, "side": pos["side"], "size": remainder,
@@ -307,11 +432,21 @@ class PaperExecutionEngine:
             rr=rr, closed_size=closed_size, fees=fee,
             equity_after_close=equity_before_close + pnl,
             execution_id=execution_id,
+            **({"evidence": evidence or {"receipt": execution_receipt}}
+               if getattr(self.ledger, "supports_evidence_outbox", False) else {}),
         )
         self._invalidate_history()
         self._persist_account_snapshot()
-        return FillResult("reduced", symbol, pos["side"], closed_size, exit_price,
-                          pnl, pos["id"], fee=fee, execution_id=execution_id)
+        fill = FillResult(
+            "reduced", symbol, pos["side"], closed_size, exit_price,
+            pnl, pos["id"], open_trade["id"], fee=fee, execution_id=execution_id,
+            parent_trade_id=open_trade["id"], remainder_trade_id=new_tid,
+            remainder_position_id=new_pid,
+            executed_at=datetime.now(timezone.utc).isoformat(),
+            receipt=execution_receipt,
+        )
+        self._publish_evidence(fill)
+        return fill
 
     def close(self, *, symbol: str, exit_price: float,
               execution_id: str = "") -> FillResult:
@@ -342,16 +477,37 @@ class PaperExecutionEngine:
             if not callable(atomic_close):
                 raise RuntimeError("Ledger does not support atomic paper close")
             execution_id = self._execution_id("CLOSE", execution_id)
+            execution_receipt = self._receipt(
+                symbol=symbol, side=pos["side"], size=pos["size"],
+                entry=pos["entry"], stop=pos.get("stop"), target=pos.get("target"),
+                initial_risk_amount=open_trade.get("risk_amount_at_entry"),
+                gross_pnl=gross, booked_fees=fee, net_pnl=pnl,
+            )
+            execution_receipt.update({
+                "trade_id": open_trade["id"], "parent_trade_id": open_trade["id"],
+                "position_id": pos["id"], "position_size": pos["size"],
+                "closed_size": pos["size"], "remainder_size": 0.0,
+                "exit_price": exit_price, "position_opened_at": pos.get("opened_at"),
+            })
+            evidence = self._prepare_evidence("closed", execution_id, execution_receipt)
             atomic_close(
                 position_id=pos["id"], trade_id=open_trade["id"],
                 exit_price=exit_price, pnl=pnl, rr=rr, fees=fee,
                 realized_pnl=pnl, equity_after_close=equity_before_close + pnl,
                 execution_id=execution_id,
+                **({"evidence": evidence or {"receipt": execution_receipt}}
+                   if getattr(self.ledger, "supports_evidence_outbox", False) else {}),
             )
         self._invalidate_history()
         self._persist_account_snapshot()
-        return FillResult("closed", symbol, pos["side"], pos["size"], exit_price,
-                          pnl, pos["id"], fee=fee, execution_id=execution_id)
+        fill = FillResult(
+            "closed", symbol, pos["side"], pos["size"], exit_price,
+            pnl, pos["id"], open_trade["id"], fee=fee, execution_id=execution_id,
+            executed_at=datetime.now(timezone.utc).isoformat(),
+            receipt=execution_receipt,
+        )
+        self._publish_evidence(fill)
+        return fill
 
     # --------------------------------------------------------------- helpers
     def _fee_rate(self, *, maker: bool = False) -> float:
@@ -439,6 +595,41 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
         with self._intent_lock:
             return json.loads(json.dumps(self._intents))
 
+    def _publish_recovered_open(self, intent: dict, pos: dict) -> None:
+        """Observe a known committed open, never claim the recovery quote filled it.
+
+        A stale intent may also encounter an unrelated existing position. Only
+        a matching durable alert ID establishes this causal association. The
+        recovered timestamp is the persisted accounting time; original quote
+        details remain unknown after a crash before their observation persisted.
+        """
+        if self.evidence_listener is None:
+            return
+        try:
+            alert_id = intent.get("alert_id")
+            trade = next((t for t in self.ledger.get_paper_trades()
+                          if alert_id and t.get("alert_id") == alert_id
+                          and t["symbol"] == pos["symbol"] and t["status"] == "open"), None)
+            if trade is None:
+                return
+            receipt = self._receipt(
+                symbol=pos["symbol"], side=pos["side"], size=pos["size"],
+                entry=pos["entry"], stop=pos.get("stop"), target=pos.get("target"),
+                initial_risk_amount=trade.get("risk_amount_at_entry"),
+                gross_pnl=None, booked_fees=None, net_pnl=None,
+                sizing_context=intent.get("sizing_context") or {},
+            )
+            receipt["recovery_coverage"] = "persisted_open"
+            fill = FillResult(
+                "recovered", pos["symbol"], pos["side"], pos["size"], pos["entry"],
+                position_id=pos["id"], trade_id=trade["id"], execution_id=str(alert_id),
+                executed_at=trade.get("opened_at") or pos.get("opened_at") or "",
+                receipt=receipt,
+            )
+            self._publish_evidence(fill)
+        except Exception:  # noqa: BLE001 — recovery observation is best effort
+            _log.exception("Paper evidence recovery observation failed for %s", pos["symbol"])
+
     def open(self, *, symbol: str, side: str, size: float, entry: float,
              stop: Optional[float], target: Optional[float] = None,
              alert_id: str = "", maker: bool = False,
@@ -493,7 +684,9 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
                 # Atomic ledger open may have committed just before a process
                 # crash and before the intent checkpoint cleared. Reconcile
                 # that durable position instead of ever opening it twice.
-                if self.open_position(symbol) is not None:
+                existing_position = self.open_position(symbol)
+                if existing_position is not None:
+                    self._publish_recovered_open(intent, existing_position)
                     self._intents.pop(symbol, None)
                     recovered = True
                     continue
@@ -538,6 +731,7 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
                         "spread": ask - bid,
                         "slippage": abs(fill.price - reference),
                         "commission": commission, "funding": 0.0,
+                        "funding_coverage": "not_modeled",
                         "stop_loss": intent.get("stop"),
                         "take_profit": intent.get("target"),
                         "risk_amount": (abs(fill.price - float(intent["stop"])) * fill.size
@@ -545,6 +739,12 @@ class ForwardPaperExecutionEngine(PaperExecutionEngine):
                         "position_size": fill.size,
                         "strategy": context.get("strategy") or self.strategy_id,
                         "strategy_version": context.get("strategy_version"),
+                        "strategy_config_hash": context.get("strategy_config_hash"),
+                        "observed_decision_timestamp": context.get("observed_decision_timestamp"),
+                        "signal_timestamp": context.get("signal_timestamp"),
+                        "fill_eligibility_timestamp": intent["decision_timestamp"],
+                        "trade_id": fill.trade_id, "position_id": fill.position_id,
+                        "execution_id": fill.execution_id,
                         "symbol": symbol, "timeframe": context.get("timeframe"),
                         "account_id": context.get("account_id"),
                         "execution_engine": "INSTANCE",

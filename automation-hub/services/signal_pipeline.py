@@ -303,6 +303,7 @@ class SignalPipeline:
         # Server-owned execution provenance captured with every journal entry.
         # Instance workers populate this; clients cannot override it.
         self.journal_context: dict[str, object] = {}
+        self.evidence = None  # optional journal-side observer; never an execution gate
         self._halted = False
         self._halt_reason = ""
         # Drawdown is measured from this baseline; a manual Resume rebaselines to
@@ -420,11 +421,29 @@ class SignalPipeline:
         with self._proc_lock:
             return self._process(payload)
 
+    def _execution_provenance(self, payload: dict) -> dict:
+        provenance = dict(self.journal_context)
+        identity = payload.get("strategy_identity")
+        # A queued signal keeps the configuration actually observed when it
+        # was produced. Ownership and execution scope stay server-resolved.
+        if isinstance(identity, dict):
+            for key in ("strategy_id", "strategy_config_hash", "source_hash", "identity_status"):
+                provenance[key] = identity.get(key)
+            provenance["strategy_version"] = identity.get("strategy_version") or identity.get("observed_version")
+        elif "strategy_identity" in payload or payload.get("original_strategy_configuration_unknown"):
+            # Historical pending signals without snapshots cannot acquire the
+            # configuration of the worker that happens to execute them later.
+            provenance.update(strategy_id=payload.get("strategy_id"),
+                              strategy_version=payload.get("strategy_version"),
+                              strategy_config_hash=None, source_hash=None,
+                              identity_status="unavailable")
+        return provenance
+
     def _process(self, payload: dict) -> PipelineResult:
         # Copy before adding server-owned evidence so one worker cannot mutate a
         # payload later reused by another instance or caller.
         payload = dict(payload)
-        payload["journal_execution"] = dict(self.journal_context)
+        payload["journal_execution"] = self._execution_provenance(payload)
         if payload.get("market_data_source"):
             payload["journal_execution"]["market_data_source"] = payload["market_data_source"]
         symbol = payload["symbol"]
@@ -447,6 +466,12 @@ class SignalPipeline:
 
         def reject(stage: str, reason: str, status: str = "rejected") -> PipelineResult:
             steps.append(Step(stage, False, reason))
+            if self.evidence is not None:
+                try:
+                    self.evidence.terminal(payload, "REJECTED", reason)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("strategy_evidence_rejection_capture_failed")
             self.ledger.insert_webhook_event(alert_id=alert_id, symbol=symbol, side=side,
                                               entry=entry, stop=stop, payload=payload,
                                               status=status, reason=reason)
@@ -523,9 +548,22 @@ class SignalPipeline:
             # link the closing trade to its open journal before the ledger row closes
             _open_tid = next((t["id"] for t in self.ledger.get_paper_trades()
                               if t["symbol"] == symbol and t["status"] == "open"), None)
+            if self.evidence is not None and _open_tid:
+                try:
+                    self.evidence.prepare_close_context(_open_tid, {
+                        "exit_reason": payload.get("exit_reason")
+                        or ("opposite-signal" if side not in _CLOSE_SIDES else "manual-close"),
+                        "mfe_r": payload.get("mfe_r"), "mae_r": payload.get("mae_r"),
+                    })
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("strategy_evidence_exit_context_failed")
             fill = self.paper.close(symbol=symbol, exit_price=entry,
                                     execution_id=alert_id)
-            if self.journal is not None and _open_tid:
+            # Instrumented fills own their journal through the committed outbox.
+            # A failed observer must defer to replay rather than persisting raw
+            # producer values through the legacy synchronous journal path.
+            if self.journal is not None and _open_tid and self.evidence is None:
                 try:
                     self.journal.record_exit(
                         # The fill model may move an exit through spread and
@@ -899,6 +937,14 @@ class SignalPipeline:
         # instance reconciliation would later report as position_without_trade.
         # The claim is the same durable constraint, used as a lock: whoever
         # inserts the row owns this entry, and the loser never reaches open().
+        evidence_context = None
+        payload["order_observed_at"] = datetime.now(timezone.utc).isoformat()
+        if self.evidence is not None:
+            try:
+                evidence_context = self.evidence.order_context(payload, steps, realized_equity)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("strategy_evidence_context_capture_failed")
         try:
             self.ledger.insert_webhook_event(
                 alert_id=alert_id, symbol=symbol, side=side, entry=entry,
@@ -909,6 +955,13 @@ class SignalPipeline:
             return PipelineResult(
                 False, "dedup", f"order already claimed for this candle: {exc}",
                 steps, {})
+        if self.evidence is not None and evidence_context is not None:
+            try:
+                self.evidence.persist_order_context(evidence_context)
+                payload["evidence_order_attempt_id"] = evidence_context["evidence_order_attempt_id"]
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception("strategy_evidence_intent_capture_failed")
         try:
             fill = self.paper.open(symbol=symbol, side=side, size=size, entry=entry,
                                    stop=stop, target=payload.get("target"),
@@ -920,11 +973,11 @@ class SignalPipeline:
                                        "risk_pct_at_entry": eff_risk,
                                        "risk_amount_at_entry": abs(entry - stop) * size,
                                        "equity_before_trade": realized_equity,
-                                       "signal_timestamp": payload.get("timestamp"),
+                                       "signal_timestamp": payload.get("original_signal_timestamp") or payload.get("timestamp"),
                                        "decision_timestamp": payload.get("timestamp"),
                                        "signal_price": entry,
                                        "strategy": payload.get("strategy"),
-                                       "strategy_version": self.journal_context.get("strategy_version"),
+                                       "strategy_version": payload["journal_execution"].get("strategy_version"),
                                        "timeframe": payload.get("timeframe"),
                                        "market_data_source": payload.get("market_data_source"),
                                        "candle_id": payload.get("decision_identity"),
@@ -932,6 +985,9 @@ class SignalPipeline:
                                            f"instance:{self.journal_context.get('instance_id')}:"
                                            f"{self.journal_context.get('simulation_session_id')}"),
                                        "execution_engine": "INSTANCE",
+                                       "evidence_context": evidence_context,
+                                       "observed_decision_timestamp": payload.get("decision_observed_at"),
+                                       "strategy_config_hash": payload["journal_execution"].get("strategy_config_hash"),
                                    })
         except Exception:
             # Anything escaping the fill strands the claim, and a stranded
@@ -953,6 +1009,12 @@ class SignalPipeline:
                           getattr(fill, "reason", "")
                           or "Order rejected at fill (execution model)")
         if fill.action == "intent":
+            if self.evidence is not None and evidence_context is not None:
+                try:
+                    self.evidence.observe_deferred_order(evidence_context, fill)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("strategy_evidence_deferred_capture_failed")
             try:
                 # The claim becomes this order's one row. Inserting a second
                 # would put every trade in the event log twice, once as its
@@ -1019,17 +1081,18 @@ class SignalPipeline:
         self._notify("trade", f"📈 {symbol} {side} opened", f"{size:.6f} @ {entry}")
         steps.append(Step("execution", True, f"opened {size:.6f} @ {entry}"))
         # full explainable decision journal for this trade (real data only)
-        if self.journal is not None and fill.trade_id:
+        if self.journal is not None and fill.trade_id and self.evidence is None:
             try:
-                self.journal.record_entry(
-                    trade_id=fill.trade_id, mode=payload.get("mode", "paper"),
-                    symbol=symbol, side=_dir(side),
-                    strategy=payload.get("strategy", brain_reason.split(" ")[0] or "Strategy"),
-                    timeframe=payload.get("timeframe", ""), entry=entry, stop=stop,
-                    target=payload.get("target"), size=size, equity=realized_equity,
-                    confidence=confidence, brain_score=payload.get("brain_score"),
-                    regime=payload.get("regime", ""), steps=steps, payload=payload,
-                    position_id=fill.position_id)
+                if self.journal.store.get(fill.trade_id) is None:
+                    self.journal.record_entry(
+                        trade_id=fill.trade_id, mode=payload.get("mode", "paper"),
+                        symbol=symbol, side=_dir(side),
+                        strategy=payload.get("strategy", brain_reason.split(" ")[0] or "Strategy"),
+                        timeframe=payload.get("timeframe", ""), entry=entry, stop=stop,
+                        target=payload.get("target"), size=size, equity=realized_equity,
+                        confidence=confidence, brain_score=payload.get("brain_score"),
+                        regime=payload.get("regime", ""), steps=steps, payload=payload,
+                        position_id=fill.position_id)
             except Exception:  # noqa: BLE001 — journaling must never block trading
                 pass
         # remember entry context so the learning loop can study this trade later

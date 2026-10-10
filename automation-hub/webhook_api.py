@@ -107,6 +107,8 @@ from data.journal_store import JournalStore as DecisionJournalStore  # noqa: E40
 from services.decision_journal import DecisionJournal  # noqa: E402
 decision_journal_store = DecisionJournalStore(settings.journal_db)
 pipeline.journal = DecisionJournal(decision_journal_store)
+from services.strategy_intelligence_service import StrategyIntelligenceService  # noqa: E402
+strategy_intelligence = StrategyIntelligenceService(decision_journal_store)
 
 # Live-trading readiness gate: an enforced checklist between paper and live.
 # Live stays locked by default; this only reports real state, never fakes it.
@@ -253,6 +255,7 @@ instance_manager = TradingInstanceManager(
     max_weekly_loss_pct=settings.max_weekly_loss_pct,
     max_trades_per_day=settings.max_trades_per_day,
     trading_days_mask=settings.trading_days_mask,
+    intelligence_service=strategy_intelligence,
 )
 
 def _instance_execution_status():

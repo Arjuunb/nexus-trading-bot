@@ -1,12 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { mockApi } from "./mock";
+import { mockApi, mockHeaderInstance } from "./mock";
+import { NAV_LABELS, slug } from "../src/app-context";
 
-const NAV = [
-  "Overview", "Markets", "Strategies", "Backtesting",
-  "Paper Trading", "Bot Terminal", "Portfolio", "Analytics", "Strategy Proof", "Strategy Studio", "Grid & DCA", "AI Intelligence",
-  "Risk Manager", "Evolution", "Journal", "Memory", "Bot Health", "Logs", "Settings", "Safety Center",
-];
-const slug = (p: string) => p.toLowerCase().replace(/ /g, "-");
+const NAV = [...NAV_LABELS, "Settings"];
 
 test("sidebar nav — every item navigates and marks itself active", async ({ page }) => {
   await mockApi(page);
@@ -14,7 +10,7 @@ test("sidebar nav — every item navigates and marks itself active", async ({ pa
   await page.waitForTimeout(500);
 
   for (const label of NAV) {
-    const item = page.locator("aside.sidebar button.nav-item", { hasText: label });
+    const item = page.locator("aside.sidebar").getByRole("button", { name: label, exact: true });
     await item.click();
     await expect(page).toHaveURL(new RegExp(`#/${slug(label)}$`));
     await expect(item).toHaveClass(/active/);
@@ -24,7 +20,8 @@ test("sidebar nav — every item navigates and marks itself active", async ({ pa
 test("top bar icons navigate", async ({ page }) => {
   await mockApi(page);
   await page.goto("/#/overview");
-  await page.getByLabel("Alerts").click();
+  await page.getByRole("button", { name: /^Notifications/ }).click();
+  await page.getByRole("menu").getByRole("button", { name: "View all", exact: true }).click();
   await expect(page).toHaveURL(/#\/alerts$/);
   await page.getByLabel("Settings").click();
   await expect(page).toHaveURL(/#\/settings$/);
@@ -34,8 +31,8 @@ test("Price Action Visual Lab — public stream truth and protected paper modes"
   await mockApi(page);
   await page.goto("/#/price-action-lab");
   await expect(page.getByRole("heading", { name: "Price Action Visual Lab" })).toBeVisible();
-  await expect(page.getByText("PAPER ONLY")).toBeVisible();
-  await expect(page.getByText("REAL ORDERS DISABLED")).toBeVisible();
+  await expect(page.getByText("SIGNALS_ONLY", { exact: true })).toBeVisible();
+  await expect(page.getByText("LIVE ROUTING DISABLED", { exact: true })).toBeVisible();
   await expect(page.getByText(/Binance · SYNCHRONIZED/)).toBeVisible();
   await expect(page.getByText(/PAPER · NO LIVE EXECUTION PATH/)).toBeVisible();
   const ticker = page.locator(".smc-live-price-ticker");
@@ -51,6 +48,7 @@ test("Price Action Visual Lab — public stream truth and protected paper modes"
   ]);
   expect(request.postDataJSON().operating_mode).toBe("automatic");
   await expect(page.locator(".toast.success")).toBeVisible();
+  await expect(page.getByText("ISOLATED_FORWARD_PAPER", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: /connection/i }).click();
   await expect(page.getByText("CLOSED BARS ONLY")).toBeVisible();
@@ -92,9 +90,10 @@ test("Price Action Visual Lab — chart presets and setup focus remain audit-saf
 
 test("Settings > Save Settings shows a success toast", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/settings");
+  await page.goto("/#/settings?section=advanced");
   await page.waitForTimeout(800);
-  const save = page.getByRole("button", { name: /Save Settings/i });
+  await page.locator("summary").filter({ hasText: "Legacy Autonomous Engine" }).click();
+  const save = page.getByRole("button", { name: /Save legacy settings/i });
   await expect(save).toBeEnabled();
   await save.click();
   await expect(page.locator(".toast.success")).toBeVisible();
@@ -102,17 +101,24 @@ test("Settings > Save Settings shows a success toast", async ({ page }) => {
 
 test("Change Password validates empty / short input", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/settings");
+  await page.goto("/#/settings?section=security");
   await page.waitForTimeout(800);
   const btn = page.getByRole("button", { name: /Change password/i });
   await btn.scrollIntoViewIfNeeded();
+  const requests: string[] = [];
+  page.on("request", (request) => { if (request.url().includes("/auth/change-password")) requests.push(request.url()); });
   await btn.click();                                   // empty inputs
-  await expect(page.locator(".toast.error")).toBeVisible();
+  await expect(page.getByText("New passwords must match and contain at least 8 characters.", { exact: true })).toBeVisible();
+  await page.getByLabel("New password", { exact: true }).fill("short");
+  await page.getByLabel("Confirm password", { exact: true }).fill("short");
+  await btn.click();
+  await expect(page.getByText("New passwords must match and contain at least 8 characters.", { exact: true })).toBeVisible();
+  expect(requests).toEqual([]);
 });
 
 test("Log out clears the session (POSTs /auth/logout)", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/settings");
+  await page.goto("/#/settings?section=security");
   await page.waitForTimeout(800);
   const [req] = await Promise.all([
     page.waitForRequest((r) => r.url().includes("/auth/logout") && r.method() === "POST"),
@@ -198,50 +204,59 @@ test("Memory — natural-language ask routes through the query endpoint", async 
 });
 
 test("Header control strip — timeframe, strategy and engine settings are interactive", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await mockApi(page);
+  await mockHeaderInstance(page);
   await page.goto("/#/overview");
   await page.waitForTimeout(600);
+  const header = page.locator(".hdr-controls");
 
-  // timeframe dropdown: current highlighted, picking one POSTs /engine/timeframe + toasts
-  await page.getByRole("button", { name: "Timeframe" }).click();
+  // Current quick controls change the selected instance rather than the legacy engine.
+  await header.getByRole("button", { name: "4h", exact: true }).click();
   await expect(page.locator(".tf-btn.active", { hasText: "4h" })).toBeVisible();
   const [tfReq] = await Promise.all([
-    page.waitForRequest((r) => r.url().includes("/engine/timeframe?timeframe=15m") && r.method() === "POST"),
+    page.waitForRequest((r) => r.url().endsWith("/instances/header-fixture") && r.method() === "PATCH"),
     page.locator(".tf-btn", { hasText: "15m" }).click(),
   ]);
   expect(tfReq).toBeTruthy();
-  await expect(page.locator(".toast.success", { hasText: "Engine switched to 15m" })).toBeVisible();
+  expect(tfReq.postDataJSON()).toEqual({ timeframe: "15m" });
+  await expect(header.getByRole("button", { name: "15m", exact: true })).toBeVisible();
+  await expect(page.locator(".toast.success", { hasText: "Timeframe change to 15m applied" })).toBeVisible();
 
   // strategy menu lists real strategies; active one is marked
-  await page.getByRole("button", { name: "Strategy menu" }).click();
+  await header.getByRole("button", { name: "Decision Brain 1.0", exact: true }).click();
   await expect(page.locator(".hdr-item.active", { hasText: "Decision Brain" })).toBeVisible();
   await expect(page.locator(".hdr-item", { hasText: "Supertrend" })).toBeVisible();
   await page.keyboard.press("Escape");                      // Esc closes
 
-  // account menu shows balance + honest disabled Live Trading
-  await page.getByRole("button", { name: "Trading account" }).click();
-  await expect(page.getByRole("menu").getByText("$10,300")).toBeVisible();
-  await expect(page.locator(".hdr-item", { hasText: "Live Trading" })).toBeDisabled();
+  // Allocation displays the same isolated instance's financial scope.
+  await header.locator(".quick-allocation > button.hdr-chip").click();
+  await expect(page.getByRole("menu", { name: "Capital allocation" }).getByText("$1,000", { exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // gear opens engine settings; editing a field enables Save which POSTs /settings
-  await page.getByRole("button", { name: "Engine configuration" }).click();
-  await expect(page.getByText("Engine settings — Save applies")).toBeVisible();
-  const risk = page.locator(".hdr-settings input[type=number]").first();
-  await risk.fill("2");
+  // Settings remain subject to the header's existing quick-risk limit.
+  await header.locator(".quick-risk > button.hdr-chip").click();
+  await page.getByLabel("Custom risk percent").fill("0.25");
   const [saveReq] = await Promise.all([
-    page.waitForRequest((r) => r.url().includes("/settings") && r.method() === "POST"),
-    page.getByRole("button", { name: /^Save$/ }).click(),
+    page.waitForRequest((r) => r.url().endsWith("/instances/header-fixture") && r.method() === "PATCH"),
+    page.getByRole("menu", { name: "Risk per trade" }).getByRole("button", { name: "Apply", exact: true }).click(),
   ]);
   expect(saveReq).toBeTruthy();
-  await expect(page.locator(".toast.success", { hasText: "Engine settings saved" })).toBeVisible();
+  expect(saveReq.postDataJSON()).toEqual({ risk_per_trade_pct: .0025 });
+  await expect(page.locator(".toast.success", { hasText: "Custom risk updated" })).toBeVisible();
+  await header.getByRole("button", { name: "PAPER", exact: true }).click();
+  await page.getByRole("menu", { name: "Trading mode" }).getByRole("button", { name: "Live gated", exact: true }).click();
+  await expect(page).toHaveURL(/#\/live-trading$/);
+  await expect(page.getByText("LOCKED", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Enable Live Trading/i })).toBeDisabled();
 });
 
 test("Decisions — every cycle explained: checklist, scores, reasons, recommendation", async ({ page }) => {
   await mockApi(page);
   await page.goto("/#/decisions");
   await page.waitForTimeout(700);
-  await expect(page.locator("h1.pagehead-title", { hasText: "Decisions" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Decision Archive", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/#\/journal\?tab=decisions$/);
   // cycle rows render with decision badges (SKIP + WAIT from the mock)
   await expect(page.getByText("SKIP").first()).toBeVisible();
   await expect(page.getByText("WAIT").first()).toBeVisible();
@@ -338,22 +353,23 @@ test("Logs — skipped trades show a rejection category", async ({ page }) => {
 
 test("Paper capital — Current Equity and Initial Capital shown separately", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/paper-trading");
+  await page.goto("/#/paper-account");
   await page.waitForTimeout(600);
   // stat card (main content) shows current equity with initial capital as sub
   await expect(page.locator(".content").getByText("Current Equity")).toBeVisible();
   await expect(page.getByText(/Initial \$10,000/)).toBeVisible();
   await expect(page.locator(".content").getByText("$10,300").first()).toBeVisible();
-  // sidebar account card shows both too
-  await expect(page.locator("aside.sidebar").getByText("Current Equity")).toBeVisible();
-  await expect(page.locator("aside.sidebar").getByText(/Initial capital/)).toBeVisible();
+  // The reorganized sidebar contains navigation; financial authority is the account.
+  await expect(page.locator(".content").getByText("Available Balance", { exact: true })).toBeVisible();
+  await expect(page.locator("aside.sidebar").getByRole("button", { name: "Paper Trading", exact: true })).toBeVisible();
 });
 
 test("Settings — engine timeframe chips switch the candle interval", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/settings");
+  await page.goto("/#/settings?section=advanced");
   await page.waitForTimeout(700);
-  const card = page.locator(".card", { hasText: "Engine Timeframe" });
+  await page.locator("summary").filter({ hasText: "Legacy Autonomous Engine" }).click();
+  const card = page.getByRole("heading", { name: "Legacy Engine Timeframe", exact: true }).locator("xpath=ancestor::section[1]");
   await expect(card).toBeVisible();
   // all six options offered; current (4h from mock) highlighted
   for (const tf of ["1m", "5m", "15m", "1h", "4h", "1d"])
@@ -370,7 +386,7 @@ test("Settings — engine timeframe chips switch the candle interval", async ({ 
 
 test("Trading Mode & Approvals — modes render and a pending idea shows Approve/Reject", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/paper-trading");
+  await page.goto("/#/paper-account");
   await page.waitForTimeout(700);
   await expect(page.getByText("Trading Mode & Approvals")).toBeVisible();
   // the three modes are present; semi is active (mock)
