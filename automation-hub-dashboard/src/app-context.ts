@@ -34,6 +34,7 @@ export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
   { title: "Trading", items: ["Trading Instances", "Strategy Studio", "Paper Trading", "Live Trading"] },
   { title: "Research", items: ["Price Action Lab", "SMC Visual Lab", "SMC Strategy Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },
+  { title: "Strategy Intelligence", items: ["Strategy Intelligence"] },
   { title: "Records", items: ["Journal"] },
   { title: "System", items: ["Market Data", "Risk & Health"] },
 ];

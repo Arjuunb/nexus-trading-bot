@@ -333,7 +333,9 @@ def _persisted_service(tmp_path):
     service = StrategyIntelligenceService(journal)
     definition = classifier_definition()
     journal.context.save_classifier_version(definition)
-    now = datetime.now(timezone.utc).isoformat()
+    # Keep the isolation sentinel (777) out of incidental clock microseconds.
+    # The original whole-response leak assertions remain unchanged.
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     cohorts = []
     for owner, instance, session, symbol, profit in (("alice", "mine", "current", "BTCUSDT", "9"),
                                                    ("bob", "theirs", "other", "ETHUSDT", "777")):
@@ -467,3 +469,60 @@ def test_cache_payload_must_match_every_requested_identity_dimension(tmp_path, c
     assert result.json()["groups"] == []
     assert result.json()["profitability_verified"] is False
     assert "different-observed-identity" not in result.text
+
+
+def test_sprint3_read_routes_use_server_scope_and_do_not_add_write_methods(api):
+    client, _, service = api
+    overview = client.get(BASE + "/overview", params=query())
+    assert overview.status_code == 200
+    assert service.calls[-1][0] == "overview"
+    service.calls.clear()
+    # Overview is the only aggregate view: instance scope is sufficient and
+    # must not force a client to invent a strategy identity.
+    aggregate = client.get(BASE + "/overview", params={"instance_id": "mine"})
+    assert aggregate.status_code == 200
+    assert service.calls[-1][0] == "overview"
+    edge = client.get(BASE + "/edge-map", params=query(x_dimension="session", y_dimension="symbol", metric="expectancy_r"))
+    assert edge.status_code == 200
+    assert service.calls[-1][0] == "edge_map"
+    comparison = client.get(BASE + "/comparison", params=query(strategy_ids="adaptive_trend_pullback,smc"))
+    assert comparison.status_code == 200
+    assert service.calls[-1][0] == "comparison"
+    episodes = client.get(BASE + "/episodes", params=query(limit=10, offset=0))
+    assert episodes.status_code == 200
+    assert service.calls[-1][0] == "episodes"
+    for endpoint in ("/overview", "/edge-map", "/comparison", "/episodes"):
+        assert client.post(BASE + endpoint, json={}).status_code == 405
+
+
+@pytest.mark.parametrize("params", [
+    {"x_dimension": "symbol", "y_dimension": "symbol"},
+    {"x_dimension": "unknown", "y_dimension": "symbol"},
+    {"x_dimension": "session", "y_dimension": "direction"},
+])
+def test_sprint3_edge_map_rejects_unsafe_or_uncached_dimension_pairs(api, params):
+    client, _, service = api
+    response = client.get(BASE + "/edge-map", params=query(**params))
+    assert response.status_code == 422
+    assert service.calls == []
+
+
+def test_sprint3_comparison_requires_two_to_four_distinct_strategies(api):
+    client, _, service = api
+    for value in ("adaptive_trend_pullback", "a,b,c,d,e", "a,a"):
+        response = client.get(BASE + "/comparison", params=query(strategy_ids=value))
+        assert response.status_code == 422
+    assert service.calls == []
+
+
+def test_sprint4_qualification_and_validation_reads_are_scoped_and_read_only(api):
+    client, _, service = api
+    for endpoint in ("/qualification", "/oos", "/walk-forward", "/robustness"):
+        response = client.get(BASE + endpoint, params=query())
+        assert response.status_code == 200
+        assert service.calls[-1][0] in {"qualification", "oos", "walk_forward", "robustness"}
+        assert client.post(BASE + endpoint, json={}).status_code == 405
+    history = client.get(BASE + "/validation-history", params={"instance_id": "mine"})
+    assert history.status_code == 200
+    assert service.calls[-1][0] == "validation_history"
+    assert client.post(BASE + "/validation-history", json={}).status_code == 405

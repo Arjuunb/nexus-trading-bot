@@ -284,6 +284,7 @@ def isolated_postgres():
         pytest.skip("isolated PostgreSQL migration validation requires NEXUS_PG_OUTBOX_TEST=1")
     name = "nexus-evidence-validation-" + uuid.uuid4().hex[:12]
     subprocess.run(["docker", "run", "-d", "--rm", "--network", "none", "--name", name,
+                    *(['--tmpfs','/var/lib/postgresql/data:rw,size=512m'] if os.environ.get('NEXUS_PG_TEST_TMPFS')=='1' else []),
                     "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:16-alpine"],
                    check=True, capture_output=True, text=True)
     try:
@@ -303,7 +304,7 @@ def isolated_postgres():
                        check=True, capture_output=True, text=True)
         yield name
     finally:
-        subprocess.run(["docker", "rm", "-f", name], check=True, capture_output=True)
+        subprocess.run(["docker", "rm", "-f", "-v", name], check=True, capture_output=True)
 
 
 @pytest.fixture
@@ -480,6 +481,7 @@ def isolated_postgrest():
     command(["network", "create", network])
     try:
         command(["run", "-d", "--rm", "--network", network, "--network-alias", "postgres",
+                 *(['--tmpfs','/var/lib/postgresql/data:rw,size=512m'] if os.environ.get('NEXUS_PG_TEST_TMPFS')=='1' else []),
                  "--name", postgres, "-e", "POSTGRES_HOST_AUTH_METHOD=trust", "postgres:16-alpine"])
         for _ in range(100):
             if subprocess.run(["docker", "exec", postgres, "pg_isready", "-h", "127.0.0.1",
@@ -576,7 +578,7 @@ def isolated_postgrest():
         if proxy_thread is not None:
             proxy_thread.join(timeout=2)
         for name in (gateway, postgres):
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+            subprocess.run(["docker", "rm", "-f", "-v", name], capture_output=True)
         command(["network", "rm", network])
 
 

@@ -1,0 +1,33 @@
+# PREPARATION ONLY: never invoke startup without separate deployment approval.
+# Select evaluated local config IDs or approved GHCR @sha256 refs via guarded bindings.
+name: ${NEXUS_REMOTE_STAGING_PROJECT:?independent nexus-remote-stage-* project required}
+services:
+  postgres:
+    extends: {file: staging.remote.compose.yaml, service: postgres}
+  state-init:
+    extends: {file: staging.remote.compose.yaml, service: state-init}
+  metadata-init:
+    extends: {file: staging.remote.compose.yaml, service: metadata-init}
+  api:
+    extends: {file: staging.remote.compose.yaml, service: api}
+    image: ${NEXUS_STAGING_API_IMAGE:?reviewed immutable Alpine API required}
+  ingress:
+    extends: {file: staging.remote.compose.yaml, service: ingress}
+  research-worker:
+    extends: {file: staging.remote.compose.yaml, service: research-worker}
+    image: ${NEXUS_STAGING_WORKER_IMAGE:?reviewed immutable Alpine worker required}
+    profiles: [research]
+  shadow-worker:
+    extends: {file: staging.remote.compose.yaml, service: shadow-worker}
+    image: ${NEXUS_STAGING_WORKER_IMAGE:?reviewed immutable Alpine worker required}
+    profiles: [shadow]
+networks:
+  metadata: {internal: true}
+  ingress: {}
+volumes:
+  postgres-state: {}
+  api-state: {}
+  research-state: {}
+  shadow-state: {}
+  datasets: {}
+  finalized-feed: {}

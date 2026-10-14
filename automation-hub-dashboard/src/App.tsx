@@ -30,6 +30,7 @@ const TradingInstancesPage = lazy(() => import("./pages/TradingInstancesHub"));
 const StrategyStudioPage = lazy(() => import("./pages/StrategyStudioHub"));
 const PortfolioPage = lazy(() => import("./pages/PortfolioHub"));
 const AnalyticsPage = lazy(() => import("./pages/AnalyticsHub"));
+const StrategyIntelligencePage = lazy(() => import("./pages/StrategyIntelligenceHub"));
 const JournalPage = lazy(() => import("./pages/JournalHub"));
 const RiskHealthPage = lazy(() => import("./pages/RiskHealthHub"));
 const ForwardValidationPage = lazy(() => import("./pages/ForwardValidation"));
@@ -128,6 +129,7 @@ export default function App() {
       case "Safety Center": return <SafetyCenterPage />;
       case "Portfolio": return <PortfolioPage tab={route.tab} />;
       case "Analytics": return <AnalyticsPage tab={route.tab} />;
+      case "Strategy Intelligence": return <StrategyIntelligencePage tab={route.tab} />;
       case "Strategy Proof": return <StrategyProofPage />;
       case "Forward Validation": return <ForwardValidationPage />;
       case "SMC Strategy Lab": return <SMCStrategyLabPage />;

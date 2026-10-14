@@ -153,16 +153,16 @@ function SelectedCohort({ cohort, grouping }: { cohort: Cohort; grouping: string
   </>;
 }
 
-export default function ContextIntelligence() {
+export default function ContextIntelligence({ title = "Context Intelligence", defaultGrouping }: { title?: string; defaultGrouping?: string } = {}) {
   const discovery = useLive<Envelope>(`${base}/cohorts`, 30000);
   const [selected, setSelected] = useState("");
-  const [grouping, setGrouping] = useState(groupings[0][0]);
+  const [grouping, setGrouping] = useState(defaultGrouping ?? groupings[0][0]);
   const cohorts = discovery.data?.contract_version === "strategy_intelligence.v2" ? (discovery.data.cohorts ?? []).filter((cohort) => !!cohort.instance_id) : [];
   const cohort = cohorts.find((item) => cohortKey(item) === selected);
   const availableGroupings = discovery.data?.supported_groupings
     ? groupings.filter(([value]) => discovery.data!.supported_groupings!.some((dimensions) => dimensions.join(",") === value)) : groupings;
   return <>
-    <PageHeader title="Context Intelligence" subtitle="Inspect strategy_intelligence.v2 evidence by exact cohort and entry-time market context." />
+    <PageHeader title={title} subtitle="Inspect strategy_intelligence.v2 evidence by exact cohort and entry-time market context." />
     <Card title="Select evidence">
       {discovery.error && <p role="alert">Cohort discovery unavailable: {discovery.error}. <button type="button" className="btn btn-soft btn-sm" onClick={() => void discovery.refetch()}>Retry cohort discovery</button></p>}
       {!discovery.error && discovery.data?.cache_status === "ERROR" && <p role="alert">{discovery.data.error_reason ?? "Cohort cache unavailable"}. <button type="button" className="btn btn-soft btn-sm" onClick={() => void discovery.refetch()}>Retry cohort discovery</button></p>}

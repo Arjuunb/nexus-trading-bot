@@ -1,0 +1,245 @@
+name: Build and manually publish staging release
+
+# No push/tag/PR trigger and no SSH/deployment job. Publication is separate from
+# target transfer, staging startup, worker activation and trading authorization.
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: Exact accepted 40-character commit of the selected release ref
+        required: true
+        type: string
+      expected_source_sha256:
+        description: Accepted source fingerprint from ops/github-release.py freeze
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexus-staging-publication
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/release-validation.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    env:
+      REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+      EXPECTED_SOURCE: ${{ inputs.expected_source_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '20'
+      - name: Define isolated build artifact directories
+        run: |
+          printf 'SOURCE_DIR=%s/frozen-source\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'PACKET_DIR=%s/release-packet\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'WHEEL_DIR=%s/verified-wheels\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'API_INPUT_DIR=%s/verified-api-inputs\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'NPM_CACHE_DIR=%s/public-npm-cache\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Verify manual request and freeze clean reviewed source
+        run: |
+          python ops/github-release.py check-request --reviewed-commit "$REVIEWED_COMMIT" --source-sha "$EXPECTED_SOURCE"
+          python ops/github-release.py freeze --output "$SOURCE_DIR" --reviewed-commit "$REVIEWED_COMMIT" --expected-source "$EXPECTED_SOURCE"
+          mkdir -m 700 "$PACKET_DIR"
+          cp "$SOURCE_DIR/source-manifest.json" "$PACKET_DIR/source-manifest.json"
+      - name: Scan tracked checkout for accidental secrets
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          skip-dirs: .git
+          format: json
+          output: ${{ runner.temp }}/release-packet/source-security.json
+          exit-code: '1'
+      - name: Prepare verified public worker dependencies
+        run: |
+          python ops/prepare-shadow-worker-wheels.py "$WHEEL_DIR" --platform musllinux
+          cp "$WHEEL_DIR/verified-wheel-manifest.json" "$PACKET_DIR/worker-wheels.json"
+      - name: Prepare hash-locked public musllinux API inputs and frontend cache
+        run: |
+          npm ci --prefix automation-hub-dashboard --cache "$NPM_CACHE_DIR"
+          npm ci --prefix tradexa-landing --cache "$NPM_CACHE_DIR"
+          python ops/prepare-api-alpine-inputs.py "$API_INPUT_DIR" --npm-cache "$NPM_CACHE_DIR" > "$PACKET_DIR/api-inputs.json"
+          cp "$API_INPUT_DIR/input-manifest.json" "$PACKET_DIR/api-public-input-manifest.json"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Build exact source into unpublished Linux amd64 images
+        run: |
+          deployed_at=$(git show -s --format=%cI "$REVIEWED_COMMIT")
+          docker buildx build --platform linux/amd64 --network=none --provenance=false --sbom=false \
+            --build-context "build_inputs=$API_INPUT_DIR" -f "$SOURCE_DIR/context/ops/api.alpine.Dockerfile" \
+            --build-arg GIT_COMMIT="$REVIEWED_COMMIT" --build-arg GIT_BRANCH="$GITHUB_REF_NAME" \
+            --build-arg DEPLOYED_AT="$deployed_at" --build-arg NEXUS_SOURCE_SHA256="$EXPECTED_SOURCE" \
+            --label org.opencontainers.image.source=https://github.com/Arjuunb/nexus-trading-bot \
+            -t "nexus-ci-api:$REVIEWED_COMMIT" --output "type=docker,dest=$PACKET_DIR/api.tar" "$SOURCE_DIR/context"
+          docker buildx build --platform linux/amd64 --network=none --provenance=false --sbom=false \
+            --build-context "verified_wheels=$WHEEL_DIR" \
+            --label "org.opencontainers.image.revision=$REVIEWED_COMMIT" --label "nexus.source.sha256=$EXPECTED_SOURCE" \
+            --label org.opencontainers.image.source=https://github.com/Arjuunb/nexus-trading-bot \
+            -f "$SOURCE_DIR/context/ops/research-worker.alpine.Dockerfile" \
+            -t "nexus-ci-worker:$REVIEWED_COMMIT" --output "type=docker,dest=$PACKET_DIR/worker.tar" "$SOURCE_DIR/context"
+          gzip -n "$PACKET_DIR/api.tar" "$PACKET_DIR/worker.tar"
+          docker load -i "$PACKET_DIR/api.tar.gz"
+          docker load -i "$PACKET_DIR/worker.tar.gz"
+          python ops/github-release.py verify-images --source-manifest "$PACKET_DIR/source-manifest.json" \
+            --api-image "nexus-ci-api:$REVIEWED_COMMIT" --worker-image "nexus-ci-worker:$REVIEWED_COMMIT" \
+            --require-alpine --output "$PACKET_DIR/build-proof.json"
+      - name: Required native API regressions in the unpublished actual image
+        run: |
+          api_id=$(docker image inspect "nexus-ci-api:$REVIEWED_COMMIT" --format '{{.Id}}')
+          python ops/run-api-image-regressions.py --image "$api_id" --output "$PACKET_DIR/api-native-regressions"
+      - name: Scan actual API image before approval or publication
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          image-ref: nexus-ci-api:${{ inputs.reviewed_commit }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          format: json
+          output: ${{ runner.temp }}/release-packet/api-security.json
+          exit-code: '1'
+      - name: Scan actual code-only worker image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          image-ref: nexus-ci-worker:${{ inputs.reviewed_commit }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          format: json
+          output: ${{ runner.temp }}/release-packet/worker-security.json
+          exit-code: '1'
+      - name: Require zero api secrets across all severities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          image-ref: nexus-ci-api:${{ inputs.reviewed_commit }}
+          scanners: secret
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: json
+          output: ${{ runner.temp }}/release-packet/api-all-secrets.json
+          exit-code: '1'
+      - name: Require zero worker secrets across all severities
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          image-ref: nexus-ci-worker:${{ inputs.reviewed_commit }}
+          scanners: secret
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          format: json
+          output: ${{ runner.temp }}/release-packet/worker-all-secrets.json
+          exit-code: '1'
+      - name: Seal tested bytes for reviewer and publisher
+        run: python ops/github-release.py seal --directory "$PACKET_DIR" --reviewed-commit "$REVIEWED_COMMIT" --source-sha "$EXPECTED_SOURCE"
+      - id: upload
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: unpublished-staging-images-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-packet/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: [checks, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: ghcr-staging-release
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+      packages: write
+    env:
+      REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+      EXPECTED_SOURCE: ${{ inputs.expected_source_sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Define isolated publication directories
+        run: |
+          printf 'PACKET_DIR=%s/accepted-packet\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'PUBLICATION_DIR=%s/publication\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Verify configured protection and actual approval of this run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -m 700 "$PUBLICATION_DIR"
+          python ops/github-release.py check-approval --reviewed-commit "$REVIEWED_COMMIT" \
+            --source-sha "$EXPECTED_SOURCE" --output "$PUBLICATION_DIR/approval.json"
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact_id }}
+          path: ${{ runner.temp }}/accepted-packet
+          merge-multiple: true
+      - name: Verify the accepted build packet before loading
+        run: |
+          python ops/github-release.py verify-packet --directory "$PACKET_DIR" --reviewed-commit "$REVIEWED_COMMIT" --source-sha "$EXPECTED_SOURCE"
+          docker load -i "$PACKET_DIR/api.tar.gz"
+          docker load -i "$PACKET_DIR/worker.tar.gz"
+          python ops/github-release.py verify-images --source-manifest "$PACKET_DIR/source-manifest.json" \
+            --api-image "nexus-ci-api:$REVIEWED_COMMIT" --worker-image "nexus-ci-worker:$REVIEWED_COMMIT" \
+            --require-alpine --output "$PUBLICATION_DIR/loaded-proof.json"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          original=json.loads((Path(os.environ['PACKET_DIR'])/'build-proof.json').read_text())
+          loaded=json.loads((Path(os.environ['PUBLICATION_DIR'])/'loaded-proof.json').read_text())
+          assert original==loaded, 'ACCEPTED_IMAGE_BYTES_CHANGED'
+          PY
+      - name: Authenticate to GHCR only after the approval guard
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish tested bytes and capture actual registry references
+        run: |
+          for role in api worker; do
+            image="ghcr.io/arjuunb/nexus-trading-bot-$role"
+            docker tag "nexus-ci-$role:$REVIEWED_COMMIT" "$image:sha-$REVIEWED_COMMIT"
+            docker push "$image:sha-$REVIEWED_COMMIT"
+            docker image inspect "$image:sha-$REVIEWED_COMMIT" --format '{{json .RepoDigests}}' > "$PUBLICATION_DIR/$role-repodigests.json"
+          done
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path(os.environ['PUBLICATION_DIR'])
+          for role in ('api','worker'):
+              prefix='ghcr.io/arjuunb/nexus-trading-bot-'+role+'@sha256:'
+              refs=[r for r in json.loads((root/(role+'-repodigests.json')).read_text()) if r.startswith(prefix)]
+              assert len(refs)==1, 'ACTUAL_REGISTRY_DIGEST_REQUIRED'
+              (root/(role+'-reference.txt')).write_text(refs[0]+'\n')
+          PY
+          python ops/github-release.py record-publication --source-manifest "$PACKET_DIR/source-manifest.json" \
+            --build-proof "$PACKET_DIR/build-proof.json" --approval "$PUBLICATION_DIR/approval.json" \
+            --api-ref "$(cat "$PUBLICATION_DIR/api-reference.txt")" --worker-ref "$(cat "$PUBLICATION_DIR/worker-reference.txt")" \
+            --output "$PUBLICATION_DIR/publication.json"
+          python ops/github-release.py config-packet --publication "$PUBLICATION_DIR/publication.json" --output "$PUBLICATION_DIR/staging-config"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: staging-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publication/
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,90 @@
+name: Release validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backend-and-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        python: ['3.11', '3.12']
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HUB_AUTO_ENGINE: '0'
+      HUB_ENABLE_EXTERNAL_LIVE: '0'
+      HUB_USE_LIVE_DATA: '0'
+      HUB_RESEARCH_AUTOSTART: '0'
+      HUB_MONITOR_AGENT: '0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            automation-hub-dashboard/package-lock.json
+            tradexa-landing/package-lock.json
+      - name: Install hash-locked runtime and test dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r ops/api-requirements.lock -r ops/ci-test-requirements.lock
+          .venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+          .venv/bin/python -m pip check
+      - name: Typecheck and build both real frontend bundles
+        run: |
+          npm ci --prefix automation-hub-dashboard
+          npm ci --prefix tradexa-landing
+          npm run typecheck --prefix automation-hub-dashboard
+          DASHBOARD_BASE=/app/ npm run build --prefix automation-hub-dashboard
+          VITE_APP_URL=/app npm run build --prefix tradexa-landing
+          mkdir -p automation-hub/webui automation-hub/landing
+          cp -a automation-hub-dashboard/dist/. automation-hub/webui/
+          cp -a tradexa-landing/dist/. automation-hub/landing/
+      - name: Run complete repository regression suite
+        run: .venv/bin/python -m pytest -q --junitxml=${{ runner.temp }}/root-tests.xml
+      - name: Real disposable PostgreSQL concurrency and recovery
+        if: matrix.python == '3.12'
+        env:
+          NEXUS_PG_WORKER_TEST: '1'
+          NEXUS_PG_TEST_TMPFS: '1'
+          NEXUS_PG_OUTBOX_TEST: '1'
+        run: |
+          docker pull postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+          docker tag postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea postgres:16-alpine
+          .venv/bin/python -m pytest -q automation-hub/tests/test_postgres_workers.py automation-hub/tests/test_sprint11_postgres.py automation-hub/tests/test_sprint13_postgres.py --junitxml=${{ runner.temp }}/postgres-tests.xml
+      - name: Install matched Playwright browser on the disposable CI runner
+        if: matrix.python == '3.12'
+        working-directory: automation-hub-dashboard
+        run: |
+          npx playwright install --with-deps chromium
+          printf 'PW_CHROMIUM=%s\n' "$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - name: Run existing browser regressions with mocked backend
+        if: matrix.python == '3.12'
+        working-directory: automation-hub-dashboard
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: release-validation-${{ github.run_id }}-${{ github.run_attempt }}-py${{ matrix.python }}
+          path: |
+            ${{ runner.temp }}/*-tests.xml
+          if-no-files-found: error
+          retention-days: 7

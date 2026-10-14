@@ -347,6 +347,20 @@ class StrategyIntelligenceService:
         if view in ("sessions", "regimes", "volatility"):
             from services.market_context_classifier import classifier_definition
             return {**envelope, "definition": classifier_definition(), "view": view}
+        if view == "overview":
+            return self._read_overview(scope, filters, envelope)
+        if view == "edge_map":
+            return self._read_edge_map(scope, filters, envelope)
+        if view == "comparison":
+            return self._read_comparison(scope, filters, envelope)
+        if view == "episodes":
+            return self._read_episodes(scope, filters, envelope)
+        if view == "qualification":
+            return self._read_qualification(scope, filters, envelope)
+        if view in ("oos", "walk_forward", "robustness"):
+            return self._read_validation_projection(view, scope, filters, envelope)
+        if view == "validation_history":
+            return self._read_validation_history(scope, filters, envelope)
         if view == "cohorts":
             rows = self.context.cached_cohorts(filters=scope, limit=500)
             cohorts = []
@@ -409,3 +423,182 @@ class StrategyIntelligenceService:
                 group["profitability"] = {**profitability, "verified": False, "status": "UNVERIFIED",
                     "blockers": list(dict.fromkeys(profitability.get("blockers", []) + [result["cache_status"]]))}
         return {**envelope, **result}
+
+    def _read_overview(self, scope, filters, envelope):
+        """Build overview cards from already persisted cohort caches."""
+        cohorts = self.context.cached_cohorts(filters=scope, limit=500)
+        rows, seen = [], set()
+        requested = set(filters.get("strategy_ids") or [])
+        for raw in cohorts:
+            if raw.get("symbol") is None:
+                continue
+            if requested and raw.get("strategy_id") not in requested:
+                continue
+            cohort = _cohort(raw, symbol=raw.get("symbol"))
+            key = evidence_json(cohort.as_dict())
+            if key in seen:
+                continue
+            seen.add(key)
+            grouping = ("symbol",)
+            report = self.context.get_latest_intelligence_run(
+                self._cache_key(cohort, grouping),
+                filters={key: scope.get(key) for key in ("owner_id", "account_id", "instance_id")})
+            if report is None:
+                rows.append({"cohort": cohort.as_dict(), "cache_status": "PENDING",
+                             "evidence_quality": "UNKNOWN", "profitability_verified": False})
+                continue
+            group = next(iter(report.get("groups", [])), {})
+            metrics = group.get("metrics", {})
+            rows.append({"cohort": cohort.as_dict(), "cache_status": "RECONCILIATION_REQUIRED",
+                         "calculation_timestamp": report.get("calculated_at"),
+                         "completed_episode_count": metrics.get("completed_episode_count", report.get("completed_episode_count", 0)),
+                         "win_rate_pct": metrics.get("win_rate_pct"),
+                         "profit_factor": metrics.get("net_profit_factor"),
+                         "expectancy_r": metrics.get("expectancy_net_r"),
+                         "net_pnl": metrics.get("net_pnl"),
+                         "evidence_quality": group.get("evidence_quality", "UNKNOWN"),
+                         "sample_confidence": group.get("sample_confidence", {"classification": "INSUFFICIENT"}),
+                         "cost_coverage": group.get("cost_coverage", {"status": "UNKNOWN"}),
+                         "profitability_verified": False})
+        strategy_ids = {row["cohort"].get("strategy_id") for row in rows}
+        return {**envelope, "view": "overview", "rows": rows,
+                "summary": {"total_strategies": len(strategy_ids),
+                            "strategies_under_observation": len(strategy_ids),
+                            "qualified_strategies": 0,
+                            "total_completed_episodes": sum(int(row.get("completed_episode_count") or 0) for row in rows),
+                            "qualification_status": "NOT_AVAILABLE",
+                            "evidence_quality": "UNKNOWN" if not rows else "PARTIAL"}}
+
+    def _read_edge_map(self, scope, filters, envelope):
+        x_dimension, y_dimension = filters.get("x_dimension"), filters.get("y_dimension")
+        if not isinstance(x_dimension, str) or not isinstance(y_dimension, str) or x_dimension == y_dimension:
+            raise ValueError("edge map dimensions must be distinct")
+        performance = self.read("performance", scope, {**filters, "group_by": [y_dimension, x_dimension]})
+        metric = filters.get("metric", "expectancy_r")
+        metric_aliases = {"expectancy_r": "expectancy_net_r", "profit_factor": "net_profit_factor",
+                          "win_rate": "win_rate_pct", "net_pnl": "net_pnl", "max_drawdown": "max_drawdown",
+                          "completed_episodes": "completed_episode_count", "average_realised_r": "average_realised_rr"}
+        field = metric_aliases.get(metric)
+        if field is None:
+            raise ValueError("unsupported edge map metric")
+        cells = []
+        for group in performance.get("groups", []):
+            dimensions = group.get("group", {})
+            cells.append({"x": dimensions.get(x_dimension), "y": dimensions.get(y_dimension),
+                          "metric": group.get("metrics", {}).get(field),
+                          "completed_episodes": group.get("metrics", {}).get("completed_episode_count"),
+                          "evidence_quality": group.get("evidence_quality", "UNKNOWN"),
+                          "sample_confidence": group.get("sample_confidence", {"classification": "INSUFFICIENT"}),
+                          "cost_coverage": group.get("cost_coverage", {"status": "UNKNOWN"}),
+                          "profitability_verified": group.get("profitability_verified", False),
+                          "group_key": group.get("group_key")})
+        return {**performance, "view": "edge_map", "x_dimension": x_dimension,
+                "y_dimension": y_dimension, "metric": metric, "cells": cells}
+
+    def _read_comparison(self, scope, filters, envelope):
+        requested = [item for item in filters.get("strategy_ids", []) if item]
+        if len(requested) < 2 or len(requested) > 4:
+            raise ValueError("comparison requires two to four strategy IDs")
+        rows = []
+        cohorts = self.context.cached_cohorts(filters=scope, limit=500)
+        for raw in cohorts:
+            if raw.get("strategy_id") not in requested or (filters.get("symbol") and raw.get("symbol") != filters["symbol"]):
+                continue
+            cohort = _cohort(raw, symbol=raw.get("symbol"))
+            report = self.context.get_latest_intelligence_run(self._cache_key(cohort, ("symbol",)),
+                filters={key: scope.get(key) for key in ("owner_id", "account_id", "instance_id")})
+            if not report:
+                continue
+            group = next(iter(report.get("groups", [])), {})
+            rows.append({"strategy_id": cohort.strategy_id, "cohort": cohort.as_dict(),
+                         "metrics": group.get("metrics", {}), "evidence_quality": group.get("evidence_quality", "UNKNOWN"),
+                         "sample_confidence": group.get("sample_confidence", {"classification": "INSUFFICIENT"}),
+                         "cost_coverage": group.get("cost_coverage", {"status": "UNKNOWN"}),
+                         "profitability_verified": False})
+        comparable_keys = {(row["cohort"].get("execution_mode"), row["cohort"].get("source_kind"),
+                           row["cohort"].get("symbol"), row["cohort"].get("simulation_session_id")) for row in rows}
+        compatible = len(comparable_keys) <= 1 and {row["strategy_id"] for row in rows} == set(requested)
+        return {**envelope, "view": "comparison", "rows": rows,
+                "comparison_status": "COMPARABLE" if compatible else "NOT_DIRECTLY_COMPARABLE",
+                "comparison_reasons": [] if compatible else ["COHORT_DIMENSIONS_DO_NOT_MATCH"]}
+
+    def _read_episodes(self, scope, filters, envelope):
+        limit = min(max(int(filters.get("limit", 50)), 1), 100)
+        offset = max(int(filters.get("offset", 0)), 0)
+        query = {key: scope.get(key) for key in SCOPE_FIELDS if key in scope}
+        for key in ("strategy_id", "strategy_version", "config_fingerprint", "execution_mode", "source_kind", "symbol", "episode_id"):
+            if key in filters and filters[key] is not None:
+                query["strategy_config_hash" if key == "config_fingerprint" else key] = filters[key]
+        episodes = self.journal.completed_evidence_episodes(**query)
+        page = episodes[offset:offset + limit]
+        contexts = {row.get("episode_id"): row for row in self.context.market_contexts(filters=query, limit=100000)}
+        rows = []
+        for episode in page:
+            context = contexts.get(episode.get("episode_id"))
+            rows.append({"episode_id": episode.get("episode_id"), "trade_id": episode.get("root_trade_id"),
+                         "strategy_id": episode.get("strategy_id"), "strategy_version": episode.get("strategy_version"),
+                         "config_fingerprint": episode.get("config_fingerprint"), "symbol": episode.get("symbol"),
+                         "opened_at": episode.get("opened_at"), "closed_at": episode.get("closed_at"),
+                         "net_pnl": episode.get("net_pnl"), "gross_pnl": episode.get("gross_pnl"),
+                         "fees": episode.get("fees"), "funding": episode.get("funding"),
+                         "funding_coverage": episode.get("funding_coverage", "UNKNOWN"),
+                         "initial_risk": episode.get("initial_risk"), "trade_ids": episode.get("trade_ids", []),
+                         "context": context, "evidence_quality": "UNKNOWN" if context is None else context.get("evidence_quality", "UNKNOWN")})
+        return {**envelope, "view": "episodes", "rows": rows, "total": len(episodes),
+                "offset": offset, "limit": limit}
+
+    def _validation_filters(self, scope, filters):
+        result = {}
+        for key in _SCOPE_FIELDS:
+            if scope.get(key) is not None:
+                result["config_fingerprint" if key == "strategy_config_hash" else key] = scope[key]
+        for key in ("run_id", "strategy_id", "strategy_version", "config_fingerprint", "dataset_identity",
+                    "execution_mode", "method", "status"):
+            if filters.get(key) is not None:
+                result[key] = filters[key]
+        return result
+
+    def _read_validation_history(self, scope, filters, envelope):
+        from services.worker_backends import research_context
+        rows = research_context(self.context).validation_runs(filters=self._validation_filters(scope, filters),
+                                            limit=min(int(filters.get("limit", 100)), 1000))
+        return {**envelope, "view": "validation_history", "rows": rows, "total": len(rows)}
+
+    def _read_validation_projection(self, view, scope, filters, envelope):
+        method = {"oos": "out_of_sample", "walk_forward": "walk_forward", "robustness": "robustness"}[view]
+        from services.worker_backends import research_context
+        rows = research_context(self.context).validation_runs(filters=self._validation_filters(scope, {**filters, "method": method}), limit=100)
+        latest = rows[0] if rows else None
+        return {**envelope, "view": view, "status": "UNKNOWN" if latest is None else latest.get("status", "UNKNOWN"),
+                "result": latest, "rows": rows, "available": latest is not None}
+
+    def _read_qualification(self, scope, filters, envelope):
+        from services.strategy_qualification import QualificationPolicy, evaluate_qualification
+        identity = {key: filters.get(key) for key in (
+            "strategy_id", "strategy_version", "config_fingerprint", "symbol", "execution_mode",
+            "source_kind", "instance_id", "simulation_session_id", "account_id") if filters.get(key) is not None}
+        metrics = {}
+        if filters.get("strategy_id") and filters.get("execution_mode") and filters.get("source_kind"):
+            performance = self.read("performance", scope, {**filters, "group_by": ["symbol"]})
+            groups = performance.get("groups", [])
+            if groups:
+                metrics = groups[0].get("metrics", {})
+                metrics["cost_coverage"] = groups[0].get("cost_coverage")
+                evidence_quality = (groups[0].get("evidence_quality") or {}).get("status", "UNKNOWN")
+            else:
+                evidence_quality = "UNKNOWN"
+        else:
+            evidence_quality = "UNKNOWN"
+        from services.worker_backends import research_context
+        records = research_context(self.context).validation_runs(filters=self._validation_filters(scope, filters), limit=1000)
+        by_method = {}
+        for row in records:
+            by_method.setdefault(row.get("method"), row)
+        report = evaluate_qualification(identity, metrics,
+            oos=(by_method.get("out_of_sample") or {}).get("report"),
+            walk_forward=(by_method.get("walk_forward") or {}).get("report"),
+            robustness=(by_method.get("robustness") or {}).get("report"),
+            forward_paper=(by_method.get("forward_paper") or {}).get("report"),
+            policy=QualificationPolicy(), evidence_quality=evidence_quality)
+        return {**envelope, "view": "qualification", **report,
+                "validation_history": records, "qualification_status": report["status"]}

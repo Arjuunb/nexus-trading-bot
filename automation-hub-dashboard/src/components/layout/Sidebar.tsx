@@ -2,7 +2,7 @@ import Logo from "../common/Logo";
 import {
   LayoutDashboard, CandlestickChart, Search, Layers, FlaskConical, RefreshCw, PlayCircle,
   NotebookPen, Rocket, Wallet, BarChart3, ShieldAlert, Brain,
-  BookOpen, Activity, BadgeCheck, Settings, Lock, Blocks, SquareTerminal, SlidersHorizontal, GitCompareArrows, type LucideIcon,
+  BookOpen, Activity, BadgeCheck, Settings, Lock, Blocks, SquareTerminal, SlidersHorizontal, GitCompareArrows, BrainCircuit, type LucideIcon,
 } from "lucide-react";
 import { NAV_GROUPS } from "../../app-context";
 
@@ -29,6 +29,7 @@ const NAV_LUCIDE: Record<string, LucideIcon> = {
   "SMC Visual Lab": CandlestickChart,
   "Price Action Lab": Activity,
   "Risk & Health": ShieldAlert,
+  "Strategy Intelligence": BrainCircuit,
   Evolution: Brain,
   Journal: BookOpen,
   Settings: Settings,

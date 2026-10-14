@@ -523,6 +523,7 @@ def _start_auto_engine() -> None:
     """Start the autonomous strategy engine when the server boots (real signals
     -> paper execution -> ledger). Disabled under pytest and via HUB_AUTO_ENGINE=0."""
     import os
+    _restore_shadow_observations()
     backend = type(webhook_api.ledger).__name__
     print(f"[startup] ledger backend = {backend} "
           f"(Supabase active: {backend == 'SupabaseLedger'})", flush=True)
@@ -591,6 +592,18 @@ def _start_auto_engine() -> None:
               f"{webhook_api.engine.autostart_enabled})", flush=True)
 
 
+def _restore_shadow_observations() -> None:
+    """Restore ONLY explicitly authorized durable observation intent."""
+    if "PYTEST_CURRENT_TEST" in _sec_os.environ:
+        return
+    try:
+        if webhook_api.shadow_router.store.registrations(active_only=True, limit=1):
+            webhook_api.shadow_observation_worker.start()
+    except Exception as exc:
+        # Observation failure must not change sibling execution startup gates.
+        print(f"[startup] shadow observation unavailable: {type(exc).__name__}", flush=True)
+
+
 @app.on_event("shutdown")
 def _shutdown_all_runtimes() -> None:
     """One process-wide shutdown boundary for every execution authority."""
@@ -615,6 +628,10 @@ def _shutdown_all_runtimes() -> None:
     run("autonomous_engine", lambda: webhook_api.engine.stop("Process shutdown"))
     run("legacy_bot_runners", manager.emergency_stop_all)
     run("research_observer", webhook_api.research_observer.stop)
+    run("shadow_observation", webhook_api.shadow_observation_worker.stop)
+    research_worker = getattr(webhook_api.strategy_intelligence.context, "_research_worker", None)
+    if research_worker is not None:
+        run("research_worker", research_worker.stop)
     run("price_action_lab", webhook_api.price_action_runtime.stop)
     run("smc_lab", webhook_api.smc_runtime.stop)
     if errors:

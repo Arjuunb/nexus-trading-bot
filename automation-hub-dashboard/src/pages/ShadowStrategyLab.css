@@ -1,0 +1,22 @@
+/* Scoped to the existing dark-theme research page; no unrelated layout edits. */
+.shadow-lab { display: grid; gap: 16px; min-width: 0; max-width: 100%; }
+.shadow-lab .card-body { display: grid; gap: 10px; min-width: 0; }
+.shadow-lab p { margin: 0; overflow-wrap: anywhere; }
+.shadow-lab label { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.shadow-lab select, .shadow-lab input:not([type=checkbox]) {
+  background: var(--bg, #0b0d11); color: var(--text, #e4ebf5);
+  border: 1px solid var(--card-border, #30343b); border-radius: 7px;
+  padding: 8px; max-width: 100%; min-width: 0;
+}
+.shadow-lab button { background: var(--card, #191b20); color: var(--text, #e4ebf5); border: 1px solid var(--card-border, #30343b); border-radius: 7px; padding: 8px 12px; cursor: pointer; }
+.shadow-lab button:disabled { opacity: .5; cursor: not-allowed; }
+.shadow-lab button:focus-visible, .shadow-lab input:focus-visible, .shadow-lab select:focus-visible { outline: 2px solid var(--gold, #eab54f); outline-offset: 2px; }
+.shadow-lab .flex { display: flex; flex-wrap: wrap; gap: 8px; }
+.shadow-lab .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; }
+.shadow-lab .overflow-auto { overflow: auto; max-width: 100%; min-width: 0; }
+.shadow-lab pre { font-size: 11px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.shadow-lab table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.shadow-lab td, .shadow-lab th { text-align: left; padding: 8px; border-bottom: 1px solid var(--card-border, #30343b); vertical-align: top; }
+.shadow-lab details { min-width: 0; }
+.shadow-lab summary { cursor: pointer; }
+.shadow-lab [role=alert] { color: var(--red, #ff8585); }

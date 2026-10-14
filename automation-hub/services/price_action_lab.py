@@ -97,12 +97,15 @@ class PaperExecutionConfig:
 class PriceActionPaperAccount:
     """Persistent, Price-Action-only paper ledger with durable sessions."""
 
-    def __init__(self, path: str | Path, *, starting_balance: float = 10_000.0):
+    def __init__(self, path: str | Path, *, starting_balance: float = 10_000.0,
+                 evidence_owner: str | None = None):
         self.path = str(path)
+        self.evidence_owner = evidence_owner
         self.starting_balance = float(starting_balance)
         self.broker = PaperBrokerV2(
             self.path, starting_balance=self.starting_balance,
             account_type="PA_LAB", execution_engine="PA_LAB",
+            evidence_owner=evidence_owner,
         )
         self._lock = threading.RLock()
         # Metadata and the broker share one SQLite file but use separate
@@ -186,6 +189,9 @@ class PriceActionPaperAccount:
               CREATE INDEX IF NOT EXISTS pa_remediations_session_created
                 ON pa_position_remediations(session_id, created_at DESC);
             """)
+            from services.active_evidence_capture import install_active_evidence, reconcile_active_evidence
+            install_active_evidence(self._db, "pa")
+            reconcile_active_evidence(self._db, "pa")
             session_columns = {row[1] for row in self._db.execute("PRAGMA table_info(pa_sessions)")}
             for name, ddl in (
                 ("mode", "TEXT NOT NULL DEFAULT 'LIVE_PAPER'"),
@@ -818,7 +824,7 @@ class PriceActionPaperAccount:
         }
 
     def record_evaluation(self, visual_state: dict, candle: Bar,
-                          feed_status: dict) -> dict:
+                          feed_status: dict, *, evidence_execution_config=None) -> dict:
         """Persist exactly one saved-strategy decision for a confirmed candle."""
         from services.mtf_policy import material_evidence
 
@@ -860,6 +866,15 @@ class PriceActionPaperAccount:
             "saved_execution_config": asdict(config),
         }
         now = _iso()
+        from services.active_evidence_capture import lab_capture
+        payload["active_evidence"] = lab_capture(
+            visual_state.get("active_evidence_input"), proposals=proposals, feed_status=feed_status,
+            decision_mtf_evidence=visual_state.get("mtf_evidence"),
+            configuration_consistent=evidence_execution_config is None or evidence_execution_config==config,
+            owner=self.evidence_owner, session=current, strategy_id=config.strategy_id,
+            version=PRICE_ACTION_STRATEGY_VERSION, execution_config=asdict(evidence_execution_config or config),
+            missing=missing, reasons=[str(reason)],
+            decision_id=corr, recorded_at=now)
         self._db.execute(
             "INSERT INTO pa_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (corr, current["id"], idempotency, candle_time, current["symbol"],
@@ -1251,6 +1266,10 @@ class PriceActionPaperAccount:
             "correlation_id": correlation_id, "idempotency_key": idempotency_key,
             "live_execution_allowed": False,
         }
+        from services.native_paper_evidence import original_lab_context
+        evidence_context = original_lab_context(self._db, 'pa', correlation_id=correlation_id,
+            owner=self.evidence_owner, session=current, execution_config=asdict(config),
+            strategy=proposal['strategy_id'], version=PRICE_ACTION_STRATEGY_VERSION)
         order = self.broker.submit(symbol=current.get("symbol") or proposal.get("symbol") or "BTCUSDT",
                                    side="buy" if is_long else "sell", order_type="stop",
                                    quantity=quantity, stop_price=entry, market_open=True,
@@ -1265,7 +1284,7 @@ class PriceActionPaperAccount:
                                    strategy_version=PRICE_ACTION_STRATEGY_VERSION,
                                    timeframe=current.get("timeframe") or "",
                                    market_data_source="Binance USD-M public WebSocket",
-                                   candle_id=str(idempotency_key or ""))
+                                   candle_id=str(idempotency_key or ""), evidence_context=evidence_context)
         now = _iso()
         self._db.execute(
             "INSERT INTO pa_order_meta(order_id,session_id,proposal_id,setup_id,zone_id,direction,strategy_id,config_json,status,reason,created_at,updated_at,valid_until_index) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -1299,7 +1318,8 @@ class PriceActionPaperAccount:
             "health_reason": "caller supplied only the reliability boundary",
             "reliable": feed_reliable,
         }
-        evaluation = self.record_evaluation(visual_state, candle, observed_health)
+        evaluation = self.record_evaluation(visual_state, candle, observed_health,
+                                            evidence_execution_config=config)
         correlation = evaluation["correlation_id"]
         idempotency = evaluation["idempotency_key"]
         evaluation_payload = json.loads(evaluation.get("payload_json") or "{}")
@@ -1603,13 +1623,15 @@ class PriceActionPaperAccount:
             if existing:
                 return {"applied": False, "reason": "funding event already processed",
                         "originally_applied": bool(existing["applied"]), "funding": existing["amount"]}
-            result = self.broker.apply_funding(symbol, rate, mark_price)
             owning = self._db.execute(
                 "SELECT order_id FROM pa_order_meta WHERE session_id=? AND status='ENTERED' ORDER BY created_at DESC LIMIT 1",
                 (session_id,)).fetchone()
+            result = self.broker.apply_funding(symbol, rate, mark_price, funding_reference={
+                'lab':'pa','session_id':session_id,'provider_timestamp':funding_time,
+                'source':'BINANCE_USDM_PUBLIC_FUNDING_HISTORY','order_id':owning['order_id'] if owning else None})
             with self._db:
                 self._db.execute(
-                    "INSERT INTO pa_funding_events(session_id,symbol,funding_time,funding_rate,mark_price,applied,amount,order_id) VALUES (?,?,?,?,?,?,?,?)",
+                    "INSERT INTO pa_funding_events(session_id,symbol,funding_time,funding_rate,mark_price,applied,amount,order_id) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(session_id,symbol,funding_time) DO NOTHING",
                     (*key, float(rate), float(mark_price), int(bool(result.get("applied"))),
                      float(result.get("funding") or 0), owning["order_id"] if owning else None),
                 )
@@ -1800,6 +1822,8 @@ class PriceActionLabRuntime:
 
     def _maintain_live_session(self) -> dict:
         """Keep the saved LIVE_PAPER session running without any browser client."""
+        from services.active_evidence_capture import reconcile_active_evidence
+        reconcile_active_evidence(self.account._db, "pa")
         session = self.account.session()
         if not session:
             return {"active": False, "reason": "no active Price Action session"}
@@ -1892,6 +1916,9 @@ class PriceActionLabRuntime:
                 self.engine.set_native_mtf_context(self._native_context(*self.identity))
                 self.engine.ingest_closed_bars(rows, market_data_health=status["state"])
             state = self.engine.visual_state(candle_window=1500)
+            from services.active_evidence_capture import native_input
+            state["active_evidence_input"] = native_input(
+                self.engine, venue="binance_usdm", source="BINANCE_USDM_PUBLIC")
             self._advance_shadows(bar)
             rules = self.market.usdm_contract_rules(self.identity[0])
             session = self.account.session()

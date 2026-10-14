@@ -1,0 +1,42 @@
+# DESIGN/CONFIG VALIDATION ONLY. Remote startup requires separate authorization.
+# Never combine with production compose.yaml. Images must be immutable digests.
+name: ${NEXUS_REMOTE_STAGING_PROJECT:?unique nexus-remote-stage-* project required}
+services:
+  postgres:
+    extends: {file: staging.local.compose.yaml, service: postgres}
+    image: ${NEXUS_REMOTE_POSTGRES_IMAGE:?reviewed postgres digest required}
+  state-init:
+    extends: {file: staging.local.compose.yaml, service: state-init}
+  metadata-init:
+    extends: {file: staging.local.compose.yaml, service: metadata-init}
+  api:
+    extends: {file: staging.local.compose.yaml, service: api}
+    environment:
+      HUB_AUTH_MODE: supabase
+      HUB_EMERGENCY_ADMIN_ENABLED: "0"
+  ingress:
+    extends: {file: staging.local.compose.yaml, service: ingress}
+    image: ${NEXUS_REMOTE_INGRESS_IMAGE:?reviewed nginx digest required}
+    ports: !override ["127.0.0.1:${NEXUS_REMOTE_HTTPS_PORT:?reviewed free loopback port required}:8443"]
+    volumes: !override
+      - ./staging.remote.nginx.conf:/etc/nginx/nginx.conf:ro
+      - ${NEXUS_STAGING_TLS_DIR:?separate reviewed staging certificate directory required}:/run/fixture:ro
+  research-worker:
+    extends: {file: staging.local.compose.yaml, service: research-worker}
+  shadow-worker:
+    extends: {file: staging.local.compose.yaml, service: shadow-worker}
+    profiles: [shadow]
+    # Disabled by default. Publisher and observation each need authorization.
+    command: !override ["--shadow-db", "/observation/unused-shadow.sqlite", "--journal-db", "/observation/unused-journal.sqlite", "--market-data-dir", "/observation/market", "--health-file", "/observation/shadow-health.json", "--feed-journal", "/feed/candles.sqlite", "--feed-revision", "binance-usdm-finalized.v1", "--feed-cursors", "/observation/feed-cursors.sqlite"]
+    volumes:
+      - finalized-feed:/feed:ro
+networks:
+  metadata: {internal: true}
+  ingress: {}
+volumes:
+  postgres-state: {}
+  api-state: {}
+  research-state: {}
+  shadow-state: {}
+  datasets: {}
+  finalized-feed: {}

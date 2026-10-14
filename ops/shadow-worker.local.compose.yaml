@@ -1,0 +1,43 @@
+# Opt-in DISPOSABLE LOCAL validation only. Never merge into production compose.
+# No env_file, production volume, trading credential, exposed port or network.
+services:
+  shadow-worker:
+    image: ${NEXUS_SHADOW_WORKER_IMAGE:-nexus-shadow-worker:sprint9-local}
+    build:
+      context: ..
+      dockerfile: ops/shadow-worker.Dockerfile
+      additional_contexts:
+        verified_wheels: ${NEXUS_SHADOW_WHEELHOUSE:-/tmp/nexus-sprint9-wheels}
+    user: "${NEXUS_SHADOW_UID:-1000}:${NEXUS_SHADOW_GID:-1000}"
+    command:
+      - --shadow-db
+      - /observation/shadow.sqlite
+      - --journal-db
+      - /inputs/candidates.sqlite
+      - --market-data-dir
+      - /observation/market
+      - --health-file
+      - /observation/health.json
+    volumes:
+      - ${NEXUS_SHADOW_CANDIDATE_DB:?local candidate fixture file required}:/inputs/candidates.sqlite:ro
+      - ${NEXUS_SHADOW_LOCAL_DATA:?disposable observation directory required}:/observation
+    read_only: true
+    init: true
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    cpus: 0.50
+    mem_limit: 384m
+    pids_limit: 64
+    restart: "on-failure:2"
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.shadow_worker_health", "/observation/health.json"]
+      interval: 2s
+      timeout: 2s
+      start_period: 3s
+      retries: 6
+    logging:
+      driver: local
+      options: {max-size: "1m", max-file: "2"}
