@@ -114,4 +114,3 @@ def test_native_v2_financial_target_rejected_before_any_shadow_schema(tmp_path,m
     with sqlite3.connect(path) as db:
         assert db.execute('SELECT name FROM sqlite_master').fetchall()==before
         assert db.execute('SELECT balance FROM v2_account').fetchone()[0]=='1000.10'
-

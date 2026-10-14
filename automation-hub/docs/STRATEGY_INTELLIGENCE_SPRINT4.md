@@ -171,4 +171,3 @@ promotion or deployment is permitted.
 4. Human-reviewed policy thresholds and an explicit approval process for any
    future lifecycle transition.
 5. Independent forward-paper evidence with complete fee/funding coverage.
-

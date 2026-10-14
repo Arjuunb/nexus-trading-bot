@@ -83,4 +83,3 @@ def test_validation_runs_are_immutable_and_holdout_reuse_is_counted(tmp_path):
         assert "immutable" in str(error)
     else:
         raise AssertionError("conflicting validation result was accepted")
-

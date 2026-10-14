@@ -56,4 +56,3 @@ def test_migration_rerun_preserves_metadata_and_role_restrictions(pg):
     with psycopg.connect(pg[0]) as db:
         role=db.execute('SELECT rolsuper,rolcreatedb,rolcreaterole,rolbypassrls FROM pg_roles WHERE rolname=current_user').fetchone()
     assert role==(False,False,False,False)
-

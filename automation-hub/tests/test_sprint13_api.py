@@ -28,4 +28,3 @@ def test_diagnostics_owned_by_other_user_are_not_exposed(client,tmp_path,monkeyp
     r=client.get('/api/v2/strategy-intelligence/remote-staging-readiness',headers={'x-test-owner':'bob','x-test-role':'operator'})
     assert r.status_code==200 and 'alice' not in r.text and 'PRIVATE_SENTINEL' not in r.text and str(path) not in r.text
     assert r.json()['gates']['BACKUP_FRESHNESS']['status']=='UNKNOWN'
-

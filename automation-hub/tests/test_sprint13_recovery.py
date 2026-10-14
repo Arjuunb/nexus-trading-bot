@@ -49,4 +49,3 @@ def test_duplicate_cutover_identity_is_reported_before_import(tmp_path):
     x=frozen_export(paths,tmp_path/'snapshots')
     assert x['status']=='BLOCKED'
     assert any(b['code']=='DUPLICATE_METADATA_IDENTITY' for b in x['blockers'])
-

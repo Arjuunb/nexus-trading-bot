@@ -104,4 +104,3 @@ def test_real_compose_resolution_keeps_independent_volume_names_and_ports(tmp_pa
     assert all(v['name'].startswith(x['project']+'_') for v in config['volumes'].values())
     assert config['services']['shadow-worker']['command'][-1]=='/observation/feed-cursors.sqlite'
     assert '--feed-journal' in config['services']['shadow-worker']['command']
-

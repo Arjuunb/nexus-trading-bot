@@ -253,5 +253,3 @@ def test_duplicate_cannot_change_original_receipt_origin_or_timestamp(journal):
     journal.clock=lambda:NOW+timedelta(seconds=5)
     replay=journal.append(receipt(origin='LIVE_WEBSOCKET',delivery_observed_at=(NOW+timedelta(seconds=5)).isoformat()))
     assert replay==original and replay['origin']=='REST_REPAIR'
-
-
