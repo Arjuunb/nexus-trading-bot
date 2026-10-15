@@ -189,8 +189,8 @@ def image_identity(inspect, metadata):
             and labels.get('nexus.source.sha256') == SOURCE, 'IMAGE_SOURCE_LABEL_MISMATCH')
     require(metadata.get('containerimage.config.digest') == inspect['Id'], 'BUILDKIT_CONFIG_ID_MISMATCH')
     digest = metadata.get('containerimage.digest', '')
-    require(re.fullmatch(r'sha256:[a-f0-9]{64}', digest) is not None, 'LOCAL_MANIFEST_DIGEST_REQUIRED')
-    return {'config_id': inspect['Id'], 'buildkit_local_manifest_digest': digest,
+    require(re.fullmatch(r'sha256:[a-f0-9]{64}', digest) is not None, 'LOCAL_EXPORT_DIGEST_REQUIRED')
+    return {'config_id': inspect['Id'], 'buildkit_reported_local_digest': digest,
             'repo_digests': inspect.get('RepoDigests', []), 'tags': inspect['RepoTags'],
             'platform': 'linux/amd64', 'size_bytes': inspect['Size'], 'labels': labels,
             'registry_publication': False}
@@ -281,7 +281,7 @@ def build(source, evidence, scratch, archives):
           'source_sha256': SOURCE, 'images': identities, 'publication_authorized': False,
           'deployment_authorized': False, 'application_started': False,
           'worker_activation_authorized': False, 'scope': 'STAGE_A_ONLY',
-          'note': 'Local BuildKit manifest digests and config IDs; no registry digests or bit-identical rebuild claim.'})
+          'note': 'Local Docker exporter digests may equal config IDs; no registry manifest digests or bit-identical rebuild claim.'})
 
 
 def main():

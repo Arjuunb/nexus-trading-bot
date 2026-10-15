@@ -29,12 +29,13 @@ Scanner failures, malformed reports and mismatched image IDs fail closed.
 The accepted source's read-only image probes verify file hashes, runtime versions,
 non-root users, disabled execution flags and the Alpine package inventory. They
 do not start the API or worker services. The existing Stage A limitation remains:
-the worker is not certified for activation (its optional pandas dependency is
-absent); a passing build cannot authorize worker execution or trading.
+the worker is not certified for activation; a passing build cannot authorize
+worker execution or trading.
 
 `rc3-image-evidence-*` retains sanitized reports, exact build commands, resource
-measurements, source/input hashes, image config IDs and local BuildKit manifest
-digests for seven days. Raw secret matches are never uploaded. Only a fully
+measurements, source/input hashes, image config IDs and local Docker exporter
+digests for seven days. The exporter can report the config ID as its output digest;
+this is not a registry manifest digest. Raw secret matches are never uploaded. Only a fully
 passing run uploads `rc3-local-images-*` containing Docker archives and records
 their SHA256 values in the evidence. Download them before the seven-day expiry.
 No registry digest exists before a separately approved publication.

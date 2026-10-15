@@ -108,7 +108,7 @@ class Gates(unittest.TestCase):
             value = m.sanitized_scan(data, 0, artifact_types={'repository', 'filesystem'})
             self.assertTrue(value['passed'])
 
-    def test_image_identity_binds_config_manifest_and_source(self):
+    def test_image_identity_binds_config_exporter_digest_and_source(self):
         inspect = {'Os': 'linux', 'Architecture': 'amd64', 'Id': 'sha256:' + 'a' * 64,
                    'RepoTags': ['nexus:fixture'], 'Size': 100, 'RepoDigests': [],
                    'Config': {'Labels': {'org.opencontainers.image.revision': m.COMMIT,
