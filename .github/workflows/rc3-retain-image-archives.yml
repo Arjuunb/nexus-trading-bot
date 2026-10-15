@@ -1,0 +1,106 @@
+name: Retain exact scanned RC3 image archives separately
+
+# Packaging only: no build, registry login/push, image execution, SSH or deploy.
+on:
+  push:
+    branches: [ci/rc3-isolated-image-build]
+    paths: [.github/workflows/rc3-retain-image-archives.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  retain:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Require the isolated repository runner
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = Arjuunb/nexus-trading-bot
+          test "$GITHUB_REF" = refs/heads/ci/rc3-isolated-image-build
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+      - name: Download only the two archives from the successful build run
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          run-id: '38767616216'
+          artifact-ids: '11989463144'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/rc3-original-images
+          merge-multiple: true
+      - name: Verify archive SHA256, config IDs, labels, tags and every layer digest
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, tarfile
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'rc3-original-images'
+          expected = {
+              'api': ('00925c3630805b106e2e84fbcaeef5bbb62a4aae5ade04480ecda4a4b7f97896',
+                      '8803f66d1abb938c2a7aceb1f7d7cd947bf52f2f724cd1091d1d264acd75cd26'),
+              'worker': ('4df0a36e74f4d9c38d033794f6d707d9e9674d65862bdf284a1abf8c5a7be7b3',
+                         '654bc9deb2841183835f4a7b4563fe37d62d9fdb1295a3bd4107a12710e602db'),
+          }
+          def digest(stream):
+              value = hashlib.sha256()
+              for block in iter(lambda: stream.read(1024 * 1024), b''):
+                  value.update(block)
+              return value.hexdigest()
+          images = {}
+          for role, (archive_hash, config_hash) in expected.items():
+              archive = root / (role + '.docker.tar')
+              with archive.open('rb') as stream:
+                  assert digest(stream) == archive_hash, 'ARCHIVE_HASH_MISMATCH'
+              with tarfile.open(archive) as tar:
+                  manifest = json.load(tar.extractfile('manifest.json'))
+                  assert len(manifest) == 1, 'ONE_IMAGE_PER_ARCHIVE_REQUIRED'
+                  row = manifest[0]
+                  payload = tar.extractfile(row['Config']).read()
+                  assert hashlib.sha256(payload).hexdigest() == config_hash, 'CONFIG_ID_MISMATCH'
+                  config = json.loads(payload)
+                  assert config['os'] == 'linux' and config['architecture'] == 'amd64'
+                  labels = config['config']['Labels']
+                  assert labels['org.opencontainers.image.revision'] == '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+                  assert labels['nexus.source.sha256'] == '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d'
+                  assert row['RepoTags'] == ['nexus-rc3-' + role + ':28acdbccc4f9-38767616216-1']
+                  layers = config['rootfs']['diff_ids']
+                  assert len(layers) == len(row['Layers'])
+                  for name, layer_hash in zip(row['Layers'], layers):
+                      assert 'sha256:' + digest(tar.extractfile(name)) == layer_hash, 'LAYER_DIGEST_MISMATCH'
+              images[role] = {'config_id': 'sha256:' + config_hash, 'docker_archive_sha256': archive_hash,
+                              'tags': row['RepoTags'], 'layer_diff_ids': layers, 'all_layer_hashes_verified': True}
+          (root / 'archive-verification.json').write_text(json.dumps({
+              'original_build_run': 38767616216, 'original_artifact_id': 11989463144,
+              'packaging_run': os.environ['GITHUB_RUN_ID'], 'images': images,
+              'buildkit_digest_interpretation': 'The Docker exporter reported config IDs as its local output digests; no registry manifest digest exists.',
+              'rebuilt': False, 'images_executed': False, 'registry_publication': False,
+              'vps_access': False, 'deployment': False}, indent=2) + '\n')
+          PY
+      - name: Retain API archive separately below the connector size limit
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-api-exact-38767616216
+          path: ${{ runner.temp }}/rc3-original-images/api.docker.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain worker archive separately below the connector size limit
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-worker-exact-38767616216
+          path: ${{ runner.temp }}/rc3-original-images/worker.docker.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain independent archive integrity evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-archive-verification-${{ github.run_id }}
+          path: ${{ runner.temp }}/rc3-original-images/archive-verification.json
+          if-no-files-found: error
+          retention-days: 7
