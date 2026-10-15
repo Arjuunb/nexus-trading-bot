@@ -248,6 +248,40 @@ jobs:
           .venv/bin/python -m pytest -q \
             automation-hub/tests/test_postgres_workers.py::test_real_container_research_supervision_and_kernel_limits \
             --junitxml="$EVIDENCE_DIR/supervisor-tests.xml" --basetemp="$RUNNER_TEMP/supervisor-fixtures"
+      - name: Check out reviewed CI-only browser harness from this controller
+        if: matrix.python == '3.12'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          ref: ${{ github.workflow_sha }}
+          path: validation-controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-browser
+      - name: Verify separate browser harness provenance and unchanged RC3 inputs
+        if: matrix.python == '3.12'
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          controller = workspace / 'validation-controller'
+          source = workspace / 'source'
+          def git(directory, *args):
+              return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
+          assert git(controller, 'rev-parse', 'HEAD') == os.environ['GITHUB_WORKFLOW_SHA'], 'Controller identity mismatch'
+          assert git(source, 'rev-parse', 'HEAD') == '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+          subprocess.run(['git', '-C', str(source), 'diff', '--quiet', 'HEAD', '--', 'automation-hub-dashboard'], check=True)
+          expected = {'playwright.config.cjs': '6b1cb8d1827f2301c567fe50b4a3957cf9ed2cde28aa62b7a6f0e57478e2a6da', 'clipboard.spec.cjs': '4185ce2a072662f04649a67763321b4de03cdb81dfcc55f8ae179d3d919d219e'}
+          for name, digest in expected.items():
+              assert hashlib.sha256((controller / '.github/rc3-browser' / name).read_bytes()).hexdigest() == digest, name
+          (Path(os.environ['EVIDENCE_DIR']) / 'browser-harness.json').write_text(json.dumps({
+              'controller_commit': os.environ['GITHUB_WORKFLOW_SHA'],
+              'tested_source_commit': '28acdbccc4f9b737c683d94e15bb16a09e50aa85',
+              'source_sha256': '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d',
+              'harness_sha256': expected, 'permissions': ['clipboard-read', 'clipboard-write'],
+              'application_source_modified': False,
+          }, indent=2))
+          PY
       - name: Install matched Chromium browser
         if: matrix.python == '3.12'
         timeout-minutes: 10
@@ -259,9 +293,12 @@ jobs:
         if: matrix.python == '3.12'
         timeout-minutes: 10
         working-directory: source/automation-hub-dashboard
-        run: npx playwright test --reporter=list,junit --output="$RUNNER_TEMP/browser-output"
+        run: npx playwright test --config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs" --reporter=list,junit --output="$RUNNER_TEMP/browser-output"
         env:
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/rc3-${{ matrix.python }}/browser-tests.xml
+      - name: Verify browser execution did not modify accepted RC3 frontend inputs
+        if: always() && matrix.python == '3.12'
+        run: git diff --quiet HEAD -- automation-hub-dashboard
       - name: Require complete integration evidence with no opt-in skips
         if: matrix.python == '3.12'
         run: |
@@ -270,7 +307,7 @@ jobs:
           from pathlib import Path
           from xml.etree import ElementTree as ET
           evidence = Path(os.environ['EVIDENCE_DIR'])
-          for filename, minimum in [('postgres-outbox-tests.xml', 57), ('supervisor-tests.xml', 2), ('browser-tests.xml', 1)]:
+          for filename, minimum in [('postgres-outbox-tests.xml', 57), ('supervisor-tests.xml', 2), ('browser-tests.xml', 156)]:
               cases = ET.parse(evidence / filename).findall('.//testcase')
               assert len(cases) >= minimum, filename
               assert not any(case.find(tag) is not None for case in cases for tag in ('skipped', 'failure', 'error')), filename
