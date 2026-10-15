@@ -137,3 +137,84 @@ def test_required_schema_metadata_cannot_be_missing(tmp_path, field):
     del data[field]
     result, _ = run_guard(tmp_path, data)
     assert result.returncode != 0
+
+
+def browser_provenance_code():
+    step = WORKFLOW.read_text().split('      - name: Verify separate browser harness provenance and unchanged RC3 inputs', 1)[1]
+    return textwrap.dedent(step.split("          python3 - <<'PY'\n", 1)[1].split('\n          PY', 1)[0])
+
+
+@pytest.mark.parametrize('tamper', [None, 'controller-identity', 'source-identity', 'config', 'spec', 'application'])
+def test_browser_harness_provenance_is_fail_closed(tmp_path, tamper):
+    import shutil
+
+    def git(directory, *args):
+        return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
+
+    def commit(directory):
+        git(directory, 'add', '.')
+        git(directory, '-c', 'user.name=CI fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-qm', 'isolated fixture')
+        return git(directory, 'rev-parse', 'HEAD')
+
+    source = tmp_path / 'source'
+    controller = tmp_path / 'validation-controller'
+    for directory in (source, controller):
+        directory.mkdir()
+        git(directory, 'init', '-q')
+    app = source / 'automation-hub-dashboard/src/App.tsx'
+    app.parent.mkdir(parents=True)
+    app.write_text('unchanged application fixture\n')
+    source_commit = commit(source)
+    harness = controller / '.github/rc3-browser'
+    harness.parent.mkdir()
+    shutil.copytree(WORKFLOW.parents[1] / 'rc3-browser', harness)
+    controller_commit = commit(controller)
+    evidence = tmp_path / 'evidence'
+    evidence.mkdir()
+    code = browser_provenance_code()
+    assert "'28acdbccc4f9b737c683d94e15bb16a09e50aa85'" in code
+    # Only substitute the synthetic fixture's source identity; validation logic is unchanged.
+    code = code.replace('28acdbccc4f9b737c683d94e15bb16a09e50aa85', source_commit)
+    if tamper == 'config':
+        (harness / 'playwright.config.cjs').write_text('unreviewed config')
+    if tamper == 'spec':
+        (harness / 'clipboard.spec.cjs').write_text('unreviewed test')
+    if tamper == 'application':
+        app.write_text('changed application')
+    if tamper == 'source-identity':
+        app.write_text('different committed application')
+        commit(source)
+    env = {**os.environ, 'GITHUB_WORKSPACE': str(tmp_path), 'GITHUB_WORKFLOW_SHA': '0' * 40 if tamper == 'controller-identity' else controller_commit, 'EVIDENCE_DIR': str(evidence)}
+    result = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True, text=True)
+    assert (result.returncode == 0) is (tamper is None), result.stderr
+    assert (evidence / 'browser-harness.json').exists() is (tamper is None)
+    if tamper is None:
+        report = json.loads((evidence / 'browser-harness.json').read_text())
+        assert report['application_source_modified'] is False
+        assert report['controller_commit'] == controller_commit
+        assert report['tested_source_commit'] == source_commit
+
+
+def test_browser_wrapper_preserves_rc3_assertions_and_security():
+    text = WORKFLOW.read_text()
+    config = (WORKFLOW.parents[1] / 'rc3-browser/playwright.config.cjs').read_text()
+    assert 'ref: ${{ github.workflow_sha }}' in text
+    assert 'sparse-checkout: .github/rc3-browser' in text
+    assert 'path: validation-controller' in text
+    assert 'persist-credentials: false' in text
+    assert '--config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs"' in text
+    assert "permissions: ['clipboard-read', 'clipboard-write']" in config
+    assert "original.use.baseURL !== 'http://localhost:4173'" in config
+    assert "testDir: path.join(dashboard, 'e2e')" in config
+    assert '...original' in config
+    assert 'reuseExistingServer: false' in config
+    assert 'timeout:' not in config
+    assert 'workers:' not in config
+    assert '.catch(' not in config
+    assert 'addInitScript' not in config
+
+
+def test_browser_gate_requires_original_suite_and_new_regressions():
+    text = WORKFLOW.read_text()
+    assert "('browser-tests.xml', 156)" in text
+    assert "for tag in ('skipped', 'failure', 'error')" in text
