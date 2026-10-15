@@ -383,7 +383,7 @@ def test_report_commit_failure_rolls_back_window_and_replays_once(forward):
     raw.set_authorizer(deny)
     try:
         with pytest.raises(sqlite3.DatabaseError): svc.create(request,owner_id='alice')
-    finally: raw.set_authorizer(None)
+    finally: raw.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     assert raw.execute('SELECT COUNT(*) FROM forward_qualification_reports').fetchone()[0]==0
     assert raw.execute('SELECT COUNT(*) FROM forward_observation_windows').fetchone()[0]==0
     first=svc.create(request,owner_id='alice')
@@ -420,7 +420,7 @@ def test_partial_additive_migration_recovers_without_erasing_existing_evidence(t
     raw._db.set_authorizer(interrupt)
     try:
         with pytest.raises(sqlite3.DatabaseError): ForwardQualificationStore(shadow)
-    finally: raw._db.set_authorizer(None)
+    finally: raw._db.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     assert raw._db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='forward_observation_windows'").fetchone()[0]==1
     ForwardQualificationStore(shadow)
     ForwardQualificationStore(shadow)

@@ -90,7 +90,7 @@ def test_interrupted_migration_forward_recovery(tmp_path):
         return sqlite3.SQLITE_DENY if action==sqlite3.SQLITE_CREATE_TABLE and table=="shadow_comparison_requests" else sqlite3.SQLITE_OK
     raw._db.set_authorizer(deny)
     with pytest.raises(sqlite3.DatabaseError): ShadowObservationStore(raw)
-    raw._db.set_authorizer(None)
+    raw._db.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     store=ShadowObservationStore(raw)
     assert raw._db.execute("SELECT COUNT(*) FROM shadow_comparison_requests").fetchone()[0]==0
     assert raw._db.execute("PRAGMA integrity_check").fetchone()[0]=="ok"

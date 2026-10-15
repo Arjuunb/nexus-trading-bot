@@ -78,7 +78,7 @@ def test_projection_outage_recovers_original_receipt(captured):
     state=engine.visual_state();state["active_evidence_input"]=native_input(engine,venue="binance_usdm",source="BINANCE_USDM_PUBLIC")
     original=account.record_evaluation(state,bar,{"state":"SYNCHRONIZED","reliable":True})
     assert reconcile_active_evidence(account._db,"pa")["backlog"]==1
-    account._db.set_authorizer(None)
+    account._db.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     report=reconcile_active_evidence(account._db,"pa")
     assert report["recovered"]==1
     assert reconcile_active_evidence(account._db,"pa")["recovered"]==0
@@ -430,7 +430,7 @@ def test_additive_migration_and_interruption_preserve_prior_rows(tmp_path,partia
     if partial:
         db.set_authorizer(lambda action,table,*_:sqlite3.SQLITE_DENY if action==sqlite3.SQLITE_CREATE_TABLE and table=="active_evidence_supersessions" else sqlite3.SQLITE_OK)
         with pytest.raises(sqlite3.DatabaseError): install_active_evidence(db,"pa")
-        db.set_authorizer(None)
+        db.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     for _ in range(2): install_active_evidence(db,"pa")
     assert [tuple(r) for r in db.execute("SELECT * FROM pa_evaluations")]==before
     assert db.execute("SELECT COUNT(*) FROM active_decision_receipts").fetchone()[0]==0

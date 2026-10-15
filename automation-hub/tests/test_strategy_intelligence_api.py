@@ -429,6 +429,62 @@ def test_old_persisted_cache_remains_visible_but_unverified_after_restart(monkey
     assert all(group["profitability"]["verified"] is False for group in response.json()["groups"])
 
 
+def _assert_owned_persisted_result(payload, identity, episode_ids):
+    """Check decoded identities/values, never substrings of opaque watermarks."""
+    from decimal import Decimal, InvalidOperation
+
+    forbidden = {"bob", "theirs", "other", "instance:theirs:other", "ETHUSDT",
+                 "trade-theirs", "position-theirs", "open-theirs", "close-theirs",
+                 "run-theirs", "wrong-scope-cache-key", "observed-test-input-theirs"}
+    scope_keys = ("owner_id", "account_id", "instance_id", "simulation_session_id")
+
+    def inspect(value, key=None):
+        if isinstance(value, dict):
+            if key == "cohort":
+                for field, expected in identity.items():
+                    assert value.get(field) == expected, (field, value.get(field))
+            if key == "scope":
+                for field in scope_keys:
+                    assert value.get(field) == identity[field], field
+            for field, child in value.items():
+                if field in scope_keys:
+                    assert child == identity[field], field
+                inspect(child, field)
+        elif isinstance(value, list):
+            if key in {"episode_ids", "subgroup_episode_ids", "missing_context_episode_ids",
+                       "unreliable_context_episode_ids"}:
+                assert set(value) <= episode_ids, key
+            for child in value:
+                inspect(child, key)
+        else:
+            if isinstance(value, str):
+                assert value not in forbidden
+            # Recognize only schema-defined opaque hashes; do not parse them as money.
+            if (key in {"context_watermark", "source_watermark", "subgroup_evidence_watermark",
+                        "parameter_hash", "config_fingerprint", "group_key"}
+                    and isinstance(value, str) and len(value) == 64
+                    and all(character in "0123456789abcdef" for character in value)):
+                return
+            # A foreign financial scalar is forbidden regardless of JSON number/text encoding.
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                try:
+                    amount = Decimal(str(value))
+                except InvalidOperation:
+                    pass
+                else:
+                    assert amount != Decimal("777"), key
+            if key == "episode_id" and value is not None:
+                assert value in episode_ids
+
+    assert payload["cohort"] == identity
+    assert payload["groups"]
+    for group in payload["groups"]:
+        assert group["cohort"] == identity
+        assert group["group"]["symbol"] == "BTCUSDT"
+        assert group["metrics"]["net_pnl"] == "9"
+    inspect(payload)
+
+
 def test_corrupt_cache_key_cannot_expose_another_owners_persisted_result(tmp_path):
     from datetime import datetime, timedelta, timezone
     from routers.strategy_intelligence import create_router
@@ -447,7 +503,55 @@ def test_corrupt_cache_key_cannot_expose_another_owners_persisted_result(tmp_pat
     assert result.status_code == 200
     assert result.json()["cohort"]["owner_id"] == "alice"
     assert result.json()["groups"][0]["metrics"]["net_pnl"] == "9"
-    assert "ETHUSDT" not in result.text and "777" not in result.text
+    assert "ETHUSDT" not in result.text
+    own_episode = journal.episode_for_trade("trade-mine")["episode_id"]
+    _assert_owned_persisted_result(result.json(), identities[0], {own_episode})
+
+
+@pytest.mark.parametrize("injection", [None, "numeric_hash", "owner", "account", "instance", "session",
+                                      "financial_text", "financial_number", "financial_decimal",
+                                      "foreign_group", "episode", "trade", "run", "input"])
+def test_persisted_result_isolation_guard_accepts_opaque_hash_but_rejects_foreign_evidence(tmp_path, injection):
+    _, journal, _, identities = _persisted_service(tmp_path)
+    # Exercise the same guard against real persisted reports, including opaque hash collisions.
+    import json
+    row = journal._c.execute(
+        "SELECT report_json FROM intelligence_calculation_runs WHERE owner_id='alice'"
+    ).fetchone()
+    payload = json.loads(row[0])
+    payload["context_watermark"] = "eeb30eded3292d059c3ab880a6d501477706dec52831e7c4542415161103389c"
+    own_episode = journal.episode_for_trade("trade-mine")["episode_id"]
+    if injection == "numeric_hash":
+        payload["context_watermark"] = "0" * 61 + "777"
+    elif injection == "owner":
+        payload["groups"][0]["cohort"]["owner_id"] = "bob"
+    elif injection == "account":
+        payload["scope"]["account_id"] = "instance:theirs:other"
+    elif injection == "instance":
+        payload["groups"][0]["metrics"]["cohort"]["instance_id"] = "theirs"
+    elif injection == "session":
+        payload["scope"]["simulation_session_id"] = "other"
+    elif injection in {"financial_text", "financial_number", "financial_decimal"}:
+        payload["foreign_financial_value"] = {"financial_text": "777", "financial_number": 777,
+                                              "financial_decimal": "777.00"}[injection]
+    elif injection == "foreign_group":
+        foreign = journal._c.execute(
+            "SELECT report_json FROM intelligence_calculation_runs WHERE owner_id='bob'"
+        ).fetchone()
+        payload["groups"].extend(json.loads(foreign[0])["groups"])
+    elif injection == "episode":
+        payload["groups"][0]["episode_ids"].append(journal.episode_for_trade("trade-theirs")["episode_id"])
+    elif injection == "trade":
+        payload.setdefault("rows", []).append({"trade_id": "trade-theirs"})
+    elif injection == "run":
+        payload["run_id"] = "run-theirs"
+    elif injection == "input":
+        payload["input_watermark"] = "observed-test-input-theirs"
+    if injection in {None, "numeric_hash"}:
+        _assert_owned_persisted_result(payload, identities[0], {own_episode})
+    else:
+        with pytest.raises(AssertionError):
+            _assert_owned_persisted_result(payload, identities[0], {own_episode})
 
 
 @pytest.mark.parametrize("changed", ["strategy_version", "config_fingerprint", "execution_mode", "simulation_session_id"])
