@@ -173,7 +173,7 @@ def test_interrupted_additive_migration_supports_forward_recovery(tmp_path):
     with pytest.raises(sqlite3.DatabaseError, match="not authorized"):
         apply_evidence_migrations(connection)
     connection.rollback()
-    connection.set_authorizer(None)
+    connection.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     # DDL already committed by executescript may survive the interruption.
     # Reapplication creates only missing pieces instead of deleting captures.
     apply_evidence_migrations(connection)

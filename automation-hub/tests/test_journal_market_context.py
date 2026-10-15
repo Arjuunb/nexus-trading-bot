@@ -276,7 +276,7 @@ def test_interrupted_additive_context_migration_is_recoverable_without_backfilli
     connection.set_authorizer(interruption)
     with pytest.raises(sqlite3.DatabaseError):
         apply_context_migrations(connection)
-    connection.set_authorizer(None)
+    connection.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
     apply_context_migrations(connection)
     apply_context_migrations(connection)
     assert connection.execute("SELECT * FROM strategy_position_episodes").fetchall() == before
