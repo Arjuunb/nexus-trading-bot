@@ -1,0 +1,57 @@
+name: RC3 PostgreSQL support build and scan only
+
+on:
+  push:
+    branches: [ci/rc3-isolated-image-build]
+    paths:
+      - .github/rc3-postgres/**
+      - .github/workflows/rc3-postgres-build-scan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc3-postgres-support-build-only
+  cancel-in-progress: false
+
+jobs:
+  postgres-build-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HUB_AUTO_ENGINE: '0'
+      HUB_ENABLE_EXTERNAL_LIVE: '0'
+      HUB_USE_LIVE_DATA: '0'
+      HUB_RESEARCH_AUTOSTART: '0'
+      HUB_MONITOR_AGENT: '0'
+    steps:
+      - name: Check out support-image controller
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-postgres
+      - name: Check build, isolation and scan gates
+        run: python3 controller/.github/rc3-postgres/test_build.py
+      - name: Rebuild the pinned helper, test disposable PostgreSQL and scan
+        run: python3 controller/.github/rc3-postgres/build.py
+      - name: Retain sanitized build and scan evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-postgres-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rc3-postgres-evidence/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain the image archive only after every gate passes
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-postgres-image-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rc3-postgres-archive/postgres.docker.tar
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
