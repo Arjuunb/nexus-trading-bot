@@ -111,6 +111,7 @@ jobs:
           assert len(manifest['files']) == 1386
           PY
       - name: Scan complete clean checkout for source secrets at every severity
+        id: source-secret-scan
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
           version: v0.69.3
@@ -124,6 +125,8 @@ jobs:
           exit-code: '1'
       - name: Retain sanitized secret-scan evidence without matched secret contents
         if: always()
+        env:
+          SECRET_SCAN_OUTCOME: ${{ steps.source-secret-scan.outcome }}
         working-directory: ${{ github.workspace }}
         run: |
           python3 - <<'PY'
@@ -133,11 +136,20 @@ jobs:
           if not raw.is_file():
               raise SystemExit('Secret scan evidence unavailable; no pass inferred')
           data = json.loads(raw.read_text())
+          assert isinstance(data, dict), 'Malformed scanner report'
           assert data.get('SchemaVersion') == 2 and data.get('ArtifactType') == 'filesystem'
-          assert isinstance(data.get('Results'), list), 'Incomplete scanner evidence'
+          assert data.get('Trivy') == {'Version': '0.69.3'}, 'Unexpected scanner identity'
+          assert all(isinstance(data.get(key), str) and data[key].strip()
+                     for key in ('ReportID', 'CreatedAt', 'ArtifactName')), 'Incomplete scanner evidence'
+          # Trivy 0.69.3 omits Results when no file has reportable findings.
+          # Accept that native encoding only with a successful scanner step.
+          assert 'Results' not in data or isinstance(data['Results'], list), 'Malformed results'
           findings = []
           for result in data.get('Results', []):
+              assert isinstance(result, dict), 'Malformed result'
+              assert 'Secrets' not in result or isinstance(result['Secrets'], list), 'Malformed secrets'
               for finding in result.get('Secrets', []):
+                  assert isinstance(finding, dict), 'Malformed secret finding'
                   findings.append({'file': result.get('Target'), **{key: finding.get(key) for key in ('RuleID', 'Severity', 'StartLine', 'EndLine')}})
           evidence = Path(os.environ['RUNNER_TEMP']) / ('rc3-' + os.environ['PYTHON_VERSION'])
           (evidence / 'source-secrets.json').write_text(json.dumps({
@@ -146,6 +158,8 @@ jobs:
           }, indent=2))
           if findings:
               raise SystemExit('Source secrets detected')
+          if os.environ.get('SECRET_SCAN_OUTCOME') != 'success':
+              raise SystemExit('Secret scanner did not succeed; no pass inferred')
           PY
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
