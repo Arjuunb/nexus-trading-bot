@@ -372,10 +372,70 @@ def _persisted_service(tmp_path):
     return path, journal, service, cohorts
 
 
+def _assert_owned_api_response(payload, identity, episode_ids):
+    """Check decoded identities/values, never substrings of opaque watermarks."""
+    from decimal import Decimal, InvalidOperation
+
+    forbidden = {"bob", "theirs", "other", "instance:theirs:other", "ETHUSDT",
+                 "trade-theirs", "position-theirs", "open-theirs", "close-theirs",
+                 "run-theirs", "wrong-scope-cache-key", "observed-test-input-theirs"}
+    scope_keys = ("owner_id", "account_id", "instance_id", "simulation_session_id")
+
+    def inspect(value, key=None):
+        if isinstance(value, dict):
+            if key == "cohort":
+                for field, expected in identity.items():
+                    assert value.get(field) == expected, (field, value.get(field))
+            if key == "scope":
+                for field in scope_keys:
+                    assert value.get(field) == identity[field], field
+            for field, child in value.items():
+                if field in scope_keys:
+                    assert child == identity[field], field
+                inspect(child, field)
+        elif isinstance(value, list):
+            if key in {"episode_ids", "subgroup_episode_ids", "missing_context_episode_ids",
+                       "unreliable_context_episode_ids"}:
+                assert set(value) <= episode_ids, key
+            for child in value:
+                inspect(child, key)
+        else:
+            if isinstance(value, str):
+                assert value not in forbidden
+            # Recognize only schema-defined opaque hashes; do not parse them as money.
+            if (key in {"context_watermark", "source_watermark", "subgroup_evidence_watermark",
+                        "parameter_hash", "config_fingerprint", "group_key"}
+                    and isinstance(value, str) and len(value) == 64
+                    and all(character in "0123456789abcdef" for character in value)):
+                return
+            # A foreign financial scalar is forbidden regardless of JSON number/text encoding.
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                try:
+                    amount = Decimal(str(value))
+                except InvalidOperation:
+                    pass
+                else:
+                    assert amount != Decimal("777"), key
+            if key == "episode_id" and value is not None:
+                assert value in episode_ids
+
+    if "cohort" in payload:
+        assert payload["cohort"] == identity
+    for returned_cohort in payload.get("cohorts", []):
+        assert returned_cohort == identity
+    if "groups" in payload:
+        for group in payload["groups"]:
+            assert group["cohort"] == identity
+            assert group["group"]["symbol"] == "BTCUSDT"
+            assert group["metrics"]["net_pnl"] == "9"
+    inspect(payload)
+
+
 def test_registered_api_reads_persisted_groups_and_context_without_reconciliation_or_writes(monkeypatch, tmp_path):
     import app as hub_app
     import webhook_api
     path, journal, service, identities = _persisted_service(tmp_path)
+    own_episode = journal.episode_for_trade("trade-mine")["episode_id"]
     manager = Manager()
     monkeypatch.setenv("HUB_MULTI_USER", "1")
     monkeypatch.setattr(hub_app.settings, "auth_mode", "legacy")
@@ -407,7 +467,8 @@ def test_registered_api_reads_persisted_groups_and_context_without_reconciliatio
     assert [row["trade_id"] for row in contexts.json()["contexts"]] == ["trade-mine"]
     assert contexts.json()["contexts"][0]["signal_timestamp"] == "2026-09-01T10:00:00+00:00"
     for result in (discovery, performance, contexts):
-        assert "ETHUSDT" not in result.text and "777" not in result.text
+        assert "ETHUSDT" not in result.text
+        _assert_owned_api_response(result.json(), identities[0], {own_episode})
         assert result.headers["cache-control"] == "no-store"
     assert path.read_bytes() == before
 
@@ -467,3 +528,46 @@ def test_cache_payload_must_match_every_requested_identity_dimension(tmp_path, c
     assert result.json()["groups"] == []
     assert result.json()["profitability_verified"] is False
     assert "different-observed-identity" not in result.text
+
+
+@pytest.mark.parametrize("view", ["cohorts", "performance", "context"])
+@pytest.mark.parametrize("injection", [None, "numeric_hash", "owner", "account", "instance", "session",
+                                      "financial_text", "financial_number", "financial_decimal",
+                                      "foreign_cohort", "episode", "trade", "run", "input"])
+def test_registered_api_response_guard_accepts_hashes_and_rejects_foreign_evidence(tmp_path, view, injection):
+    from routers.strategy_intelligence import create_router
+    _, journal, service, identities = _persisted_service(tmp_path)
+    app = FastAPI()
+    app.include_router(create_router(service_provider=lambda: service, manager_provider=Manager,
+                                    owner_resolver=lambda _request: "alice"))
+    params = {} if view == "cohorts" else query(config_fingerprint=identities[0]["config_fingerprint"])
+    response = TestClient(app).get(BASE + "/" + view, params=params)
+    assert response.status_code == 200
+    payload = response.json()
+    payload["context_watermark"] = "eeb30eded3292d059c3ab880a6d501477706dec52831e7c4542415161103389c"
+    own_episode = journal.episode_for_trade("trade-mine")["episode_id"]
+    if injection == "numeric_hash":
+        payload["context_watermark"] = "0" * 61 + "777"
+    elif injection in {"owner", "account", "instance", "session"}:
+        field, value = {"owner": ("owner_id", "bob"), "account": ("account_id", "instance:theirs:other"),
+                        "instance": ("instance_id", "theirs"), "session": ("simulation_session_id", "other")}[injection]
+        payload.setdefault("scope", {key: identities[0][key] for key in
+                                     ("owner_id", "account_id", "instance_id", "simulation_session_id")})[field] = value
+    elif injection in {"financial_text", "financial_number", "financial_decimal"}:
+        payload["foreign_financial_value"] = {"financial_text": "777", "financial_number": 777,
+                                              "financial_decimal": "777.00"}[injection]
+    elif injection == "foreign_cohort":
+        payload.setdefault("cohorts", []).append(identities[1])
+    elif injection == "episode":
+        payload["episode_ids"] = [journal.episode_for_trade("trade-theirs")["episode_id"]]
+    elif injection == "trade":
+        payload.setdefault("rows", []).append({"trade_id": "trade-theirs"})
+    elif injection == "run":
+        payload["run_id"] = "run-theirs"
+    elif injection == "input":
+        payload["input_watermark"] = "observed-test-input-theirs"
+    if injection in {None, "numeric_hash"}:
+        _assert_owned_api_response(payload, identities[0], {own_episode})
+    else:
+        with pytest.raises(AssertionError):
+            _assert_owned_api_response(payload, identities[0], {own_episode})
