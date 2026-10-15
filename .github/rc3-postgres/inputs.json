@@ -1,0 +1,22 @@
+{
+  "schema_version": "nexus-staging-postgres-inputs.v1",
+  "scope": "POSTGRES_SUPPORT_IMAGE_BUILD_SCAN_ONLY",
+  "base": "postgres@sha256:1a66d744c1b459e13b05a8fca341da84cb63383e99ce262210efee5a319d4551",
+  "base_config_id": "sha256:81bd698b4594e751a3269e4dcd3e03a4a0ec0daf7b72e7aa1abd43cce9887542",
+  "postgres_version": "16.15",
+  "gosu_version": "1.19",
+  "gosu_commit": "6456aaa0f3c854d199d0f037f068eb97515b7513",
+  "gosu_module_version": "v0.0.0-20250923190938-6456aaa0f3c8",
+  "gosu_archive_url": "https://codeload.github.com/tianon/gosu/tar.gz/6456aaa0f3c854d199d0f037f068eb97515b7513",
+  "gosu_archive_sha256": "33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b",
+  "go_mod_sha256": "0475f1708db81d718b633faf2d9dd64695037eabdc8562125060607bcb01b2ba",
+  "go_sum_sha256": "2a8f3fb6adb84839bbb9999f12f1416fb86c184135aaa1c2e489b35203c08346",
+  "go_version": "1.27.2",
+  "go_archive_url": "https://go.dev/dl/go1.27.2.linux-amd64.tar.gz",
+  "go_archive_sha256": "ecbadb99091a3f46e31f5f934b068b1864eafa7995211b39eaddf76996045fe5",
+  "trivy_version": "0.75.0",
+  "trivy_archive_sha256": "c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f",
+  "publication_authorized": false,
+  "vps_access_authorized": false,
+  "deployment_authorized": false
+}
