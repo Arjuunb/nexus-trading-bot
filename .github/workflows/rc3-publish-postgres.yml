@@ -1,0 +1,111 @@
+name: Publish exact scanned PostgreSQL support image only
+
+# Direct user approval covers this fixed, reviewed archive and staging tag.
+# No rebuild, image execution, package visibility changes or VPS access.
+on:
+  push:
+    branches: [ci/rc3-isolated-image-build]
+    paths:
+      - .github/rc3-postgres-publication/**
+      - .github/workflows/rc3-publish-postgres.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc3-postgres-publication-build-38788079327
+  cancel-in-progress: false
+
+jobs:
+  publish-postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: ghcr-staging-release
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Require the authorized disposable runner and first attempt
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = Arjuunb/nexus-trading-bot
+          test "$GITHUB_REF" = refs/heads/ci/rc3-isolated-image-build
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -sm)" = 'Linux x86_64'
+          test -z "${DOCKER_HOST:-}"
+          test -z "${DOCKER_CONTEXT:-}"
+          mkdir -p "$RUNNER_TEMP/rc3-postgres-publication-evidence"
+          printf 'DOCKER_CONFIG=%s/rc3-postgres-ghcr-auth\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Check out publication controller only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-postgres-publication
+      - name: Test publication guards
+        run: python3 controller/.github/rc3-postgres-publication/test_publish.py
+      - name: Download the exact successfully scanned image archive
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          run-id: '38788079327'
+          artifact-ids: '11999595298'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/rc3-postgres-scanned-archive
+          merge-multiple: true
+      - name: Download original build, test and scan evidence
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          run-id: '38788079327'
+          artifact-ids: '11999390308'
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/rc3-postgres-original-evidence
+          merge-multiple: true
+      - name: Verify every pinned evidence file, image config and archive layer
+        shell: bash
+        run: |
+          python3 controller/.github/rc3-postgres-publication/publish.py verify \
+            --archive "$RUNNER_TEMP/rc3-postgres-scanned-archive/postgres.docker.tar" \
+            --evidence "$RUNNER_TEMP/rc3-postgres-original-evidence" \
+            --out "$RUNNER_TEMP/rc3-postgres-publication-evidence"
+      - name: Authenticate to GHCR using only the scoped workflow token
+        env:
+          GHCR_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -m 700 -p "$DOCKER_CONFIG"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Publish unchanged archive and verify by digest and registry bytes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python3 controller/.github/rc3-postgres-publication/publish.py publish \
+            --archive "$RUNNER_TEMP/rc3-postgres-scanned-archive/postgres.docker.tar" \
+            --evidence "$RUNNER_TEMP/rc3-postgres-original-evidence" \
+            --out "$RUNNER_TEMP/rc3-postgres-publication-evidence"
+      - name: Remove disposable registry credentials
+        if: always()
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/rc3-postgres-ghcr-auth
+        shell: bash
+        run: |
+          docker logout ghcr.io || true
+          rm -rf -- "$RUNNER_TEMP/rc3-postgres-ghcr-auth"
+      - name: Retain publication evidence including partial outcomes
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-postgres-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rc3-postgres-publication-evidence/
+          retention-days: 30
+          if-no-files-found: error
