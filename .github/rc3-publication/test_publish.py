@@ -66,6 +66,27 @@ class PublicationGuards(unittest.TestCase):
             with self.subTest(manifest=manifest), self.assertRaises(ValueError):
                 m.check_existing(manifest, expected)
 
+    def test_missing_package_metadata_still_checks_registry_before_any_push(self):
+        images = {'api': {'config_id': 'sha256:expected', 'local_tag': 'fixture:accepted'}}
+        def api(path, **kwargs):
+            if '/actions/runs/' in path:
+                return {'status': 'completed', 'conclusion': 'success', 'head_sha': (
+                    m.CONTROLLER if str(m.BUILD_RUN) in path else '161404df82cb7ec77e97eeaf1a2621af8d9afe87')}
+            return None
+        def command(args, **kwargs):
+            if args[:3] == ['docker', 'context', 'inspect']:
+                return json.dumps([{'Endpoints': {'docker': {'Host': 'unix:///var/run/docker.sock'}}}])
+            return ''
+        with tempfile.TemporaryDirectory() as directory, patch.object(m, 'guard'), \
+                patch.object(m, 'verify', return_value=images), patch.object(m, 'github', side_effect=api), \
+                patch.object(m, 'command', side_effect=command) as cmd, patch.object(m, 'inspect_image'), \
+                patch.object(m, 'remote_manifest', return_value={'schemaVersion': 2, 'config': {'digest': 'wrong'}}) as remote:
+            with self.assertRaisesRegex(ValueError, 'REFUSE_OVERWRITE'):
+                m.publish(Path('/archives'), Path('/evidence'), Path(directory))
+            remote.assert_called_once()
+            self.assertFalse(any(call.args[0][:3] in (['docker', 'image', 'push'], ['docker', 'image', 'tag'])
+                                 for call in cmd.call_args_list))
+
     def fixture_archive(self, root, *, config_change=None, stored_layer=b'layer payload', tag='fixture:accepted'):
         layers = ['sha256:' + hashlib.sha256(b'layer payload').hexdigest()]
         config = {'os': 'linux', 'architecture': 'amd64',

@@ -194,7 +194,9 @@ def publish(archives, evidence, out):
             'id': package.get('id') if package else None,
             'visibility': package.get('visibility') if package else None})
         target = 'ghcr.io/arjuunb/' + name + ':' + TAG
-        existing = remote_manifest(target) if package else None
+        # Package metadata can be unavailable while a registry tag is readable.
+        # Always check the registry directly before deciding a tag is absent.
+        existing = remote_manifest(target)
         if existing is not None:
             check_existing(existing, expected)
         expected.update({'tag': target, 'existing_same_config': existing is not None})
