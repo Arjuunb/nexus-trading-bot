@@ -88,14 +88,21 @@ def fetch(url, target, expected):
     require(sha(target) == expected, 'DOWNLOAD_SHA256_MISMATCH: ' + Path(target).name)
 
 
-def extract(archive, output):
+def extract(archive, output, *, unused_symlinks=None):
+    unused_symlinks = unused_symlinks or {}
     with tarfile.open(archive) as tar:
+        regular_members = []
         for member in tar.getmembers():
             name = PurePosixPath(member.name)
             require(not name.is_absolute() and '..' not in name.parts and '\\' not in member.name,
                     'UPSTREAM_ARCHIVE_PATH_INVALID')
+            if member.issym() and unused_symlinks.get(member.name) == member.linkname:
+                # The pinned source's .dockerignore -> .gitignore link is not
+                # needed by Go. Validate its exact identity and never create it.
+                continue
             require(member.isfile() or member.isdir(), 'UPSTREAM_ARCHIVE_LINK_OR_DEVICE_FORBIDDEN')
-        tar.extractall(output)
+            regular_members.append(member)
+        tar.extractall(output, members=regular_members)
 
 
 def compile_helper(scratch, evidence):
@@ -104,7 +111,8 @@ def compile_helper(scratch, evidence):
     extract(scratch / 'go.tar.gz', scratch)
     original = scratch / 'upstream'
     original.mkdir()
-    extract(scratch / 'gosu.tar.gz', original)
+    extract(scratch / 'gosu.tar.gz', original, unused_symlinks={
+        'gosu-' + INPUTS['gosu_commit'] + '/.dockerignore': '.gitignore'})
     original = original / ('gosu-' + INPUTS['gosu_commit'])
     require(sha(original / 'go.mod') == INPUTS['go_mod_sha256'] and
             sha(original / 'go.sum') == INPUTS['go_sum_sha256'], 'UPSTREAM_DEPENDENCY_LOCK_MISMATCH')

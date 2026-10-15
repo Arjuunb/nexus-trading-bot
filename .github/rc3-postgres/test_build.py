@@ -117,6 +117,18 @@ class SupportBuildTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 m.extract(path, Path(d) / 'out')
 
+    def test_known_unused_source_symlink_is_never_materialized(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / 'upstream.tar'; out = Path(d) / 'out'; out.mkdir()
+            with tarfile.open(path, 'w') as t:
+                entry = tarfile.TarInfo('.dockerignore'); entry.type = tarfile.SYMTYPE; entry.linkname = '.gitignore'
+                t.addfile(entry)
+            m.extract(path, out, unused_symlinks={'.dockerignore': '.gitignore'})
+            self.assertFalse((out / '.dockerignore').exists())
+            self.assertFalse((out / '.dockerignore').is_symlink())
+            with self.assertRaises(ValueError):
+                m.extract(path, out, unused_symlinks={'.dockerignore': 'different-target'})
+
     def test_modified_postgres_entrypoint_is_rejected(self):
         base = {'Id': m.INPUTS['base_config_id'], 'RootFS': {'Layers': ['sha256:base']},
                 'Config': {'Entrypoint': ['docker-entrypoint.sh']}}
