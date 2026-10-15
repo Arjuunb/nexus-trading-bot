@@ -163,6 +163,12 @@ def image_provenance(base, image, metadata, helper_sha, controller):
         require(base['Config'].get(key) == image['Config'].get(key), 'UPSTREAM_RUNTIME_CONFIG_CHANGED: ' + key)
 
 
+def verify_gosu_version(output):
+    expected = INPUTS['gosu_version'] + ' (go' + INPUTS['go_version'] + ' on linux/amd64; gc)'
+    require(output.strip() == expected, 'GOSU_VERSION_OR_COMPILER_MISMATCH')
+    return output.strip()
+
+
 def smoke_test(image, evidence, run_id):
     # Every object is created fresh on the verified ephemeral VM, with no host
     # bind mounts, external networks, public ports or production credentials.
@@ -195,8 +201,7 @@ def smoke_test(image, evidence, run_id):
         run(['docker', 'start', name]); ready()
         tests['version'] = execute(['postgres', '--version']).stdout.strip()
         require(tests['version'].endswith(INPUTS['postgres_version']), 'POSTGRES_VERSION_CHANGED')
-        require('gosu version ' + INPUTS['gosu_version'] in execute(['gosu', '--version']).stdout,
-                'GOSU_VERSION_CHANGED')
+        tests['gosu_version_output'] = verify_gosu_version(execute(['gosu', '--version']).stdout)
         require(execute(['gosu', 'nobody', 'id', '-u']).stdout.strip() == '65534', 'GOSU_NOBODY_TRANSITION_FAILED')
         require(execute(['gosu', 'postgres', 'id', '-u']).stdout.strip() == '70', 'GOSU_POSTGRES_TRANSITION_FAILED')
         uid_line = next(s for s in execute(['cat', '/proc/1/status']).stdout.splitlines() if s.startswith('Uid:'))

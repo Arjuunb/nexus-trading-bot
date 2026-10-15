@@ -93,6 +93,14 @@ class SupportBuildTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.scan_gate(r, 0, 'sha256:fixture')
 
+    def test_actual_upstream_version_output_and_compiler_are_checked(self):
+        expected = '1.19 (go1.27.2 on linux/amd64; gc)'
+        self.assertEqual(m.verify_gosu_version(expected + '\n'), expected)
+        for wrong in ('1.19 (go1.24.6 on linux/amd64; gc)', '1.18 (go1.27.2 on linux/amd64; gc)',
+                      'gosu version ' + expected, ''):
+            with self.subTest(output=wrong), self.assertRaises(ValueError):
+                m.verify_gosu_version(wrong)
+
     def test_raw_secret_matches_are_not_retained(self):
         r = self.report(); r['Results'][0]['Secrets'] = [{'Severity': 'LOW', 'Match': 'sensitive fixture',
             'Code': {'Lines': 'surrounding fixture'}, 'RuleID': 'fixture'}]
