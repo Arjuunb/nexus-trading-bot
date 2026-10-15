@@ -46,9 +46,12 @@ def test_malformed_evidence_fails(tmp_path, field, value):
     assert result.returncode != 0
 
 
+@pytest.mark.parametrize('artifact_type', ['filesystem', 'repository'])
 @pytest.mark.parametrize('outcome', ['failure', 'skipped', 'cancelled', ''])
-def test_unsuccessful_scanner_never_passes(tmp_path, outcome):
-    result, _ = run_guard(tmp_path, clean_report(), outcome)
+def test_unsuccessful_scanner_never_passes(tmp_path, outcome, artifact_type):
+    data = clean_report()
+    data['ArtifactType'] = artifact_type
+    result, _ = run_guard(tmp_path, data, outcome)
     assert result.returncode != 0
 
 
@@ -92,3 +95,45 @@ def test_truncated_json_fails(tmp_path):
     result = subprocess.run([sys.executable, '-c', code], env={**os.environ, 'RUNNER_TEMP': str(tmp_path), 'PYTHON_VERSION': '3.12', 'SECRET_SCAN_OUTCOME': 'success'}, capture_output=True)
     assert result.returncode != 0
     assert not (tmp_path / 'rc3-3.12/source-secrets.json').exists()
+
+
+@pytest.mark.parametrize('artifact_type', ['filesystem', 'repository'])
+@pytest.mark.parametrize('with_results', [False, True])
+def test_native_git_and_plain_directory_metadata(tmp_path, artifact_type, with_results):
+    # Trivy 0.69.3 local/fs.go switches fs scans of Git roots to repository.
+    data = clean_report()
+    data['ArtifactType'] = artifact_type
+    if artifact_type == 'repository':
+        data['Metadata'] = {'Commit': '28acdbccc4f9b737c683d94e15bb16a09e50aa85'}
+    if with_results:
+        data['Results'] = []
+    result, output = run_guard(tmp_path, data)
+    assert result.returncode == 0, result.stderr
+    assert output['secret_count_all_severities'] == 0
+
+
+@pytest.mark.parametrize('field,value', [('SchemaVersion', None), ('SchemaVersion', '2'), ('SchemaVersion', 2.0), ('SchemaVersion', True), ('SchemaVersion', 3), ('ArtifactType', None), ('ArtifactType', ''), ('ArtifactType', 'unknown'), ('ArtifactType', []), ('ArtifactType', 2)])
+def test_invalid_schema_or_artifact_metadata(tmp_path, field, value):
+    data = clean_report()
+    data[field] = value
+    result, _ = run_guard(tmp_path, data)
+    assert result.returncode != 0
+
+
+@pytest.mark.parametrize('severity', ['UNKNOWN', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
+def test_git_checkout_secrets_still_fail(tmp_path, severity):
+    data = clean_report()
+    data['ArtifactType'] = 'repository'
+    data['Results'] = [{'Target': 'fixture.txt', 'Secrets': [{'RuleID': 'fixture', 'Severity': severity, 'Match': 'REPOSITORY_MATCH_SENTINEL'}]}]
+    result, output = run_guard(tmp_path, data)
+    assert result.returncode != 0
+    assert output['secret_count_all_severities'] == 1
+    assert 'REPOSITORY_MATCH_SENTINEL' not in json.dumps(output)
+
+
+@pytest.mark.parametrize('field', ['SchemaVersion', 'ArtifactType'])
+def test_required_schema_metadata_cannot_be_missing(tmp_path, field):
+    data = clean_report()
+    del data[field]
+    result, _ = run_guard(tmp_path, data)
+    assert result.returncode != 0

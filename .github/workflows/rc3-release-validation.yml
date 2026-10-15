@@ -137,7 +137,10 @@ jobs:
               raise SystemExit('Secret scan evidence unavailable; no pass inferred')
           data = json.loads(raw.read_text())
           assert isinstance(data, dict), 'Malformed scanner report'
-          assert data.get('SchemaVersion') == 2 and data.get('ArtifactType') == 'filesystem'
+          assert type(data.get('SchemaVersion')) is int and data['SchemaVersion'] == 2, 'Unsupported scanner schema'
+          # trivy fs reports Git roots as repository (v0.69.3 local/fs.go).
+          # Plain directories are filesystem; neither implies missing scan evidence.
+          assert data.get('ArtifactType') in ('filesystem', 'repository'), 'Unexpected artifact type'
           assert data.get('Trivy') == {'Version': '0.69.3'}, 'Unexpected scanner identity'
           assert all(isinstance(data.get(key), str) and data[key].strip()
                      for key in ('ReportID', 'CreatedAt', 'ArtifactName')), 'Incomplete scanner evidence'
