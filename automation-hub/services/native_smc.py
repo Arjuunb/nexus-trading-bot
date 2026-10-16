@@ -104,6 +104,14 @@ class ProposedTrade:
     id: str; setup_id: str; direction: str; entry: float; stop: float; target: float; risk_distance: float
     rr_ratio: float; snapshot_id: str; risk_percent: float | None = None; position_size: float | None = None
     execution_allowed: bool = False; risk_status: str = "PENDING_RISK_ENGINE"
+    # Paper and live are separate permissions, as they already are for the
+    # native Price Action engine. execution_allowed stays False and is still
+    # refused outright by the constructor above; this one lets a proposal be
+    # simulated against the paper broker. Approved delta, recorded in
+    # data/native_smc_engine_freeze_manifest.json -- it changes who may act on
+    # a proposal, never when one is made: the state machine, its thresholds and
+    # its output are untouched, and state_machine_hash is unchanged.
+    paper_execution_allowed: bool = True
 
 
 @dataclass(frozen=True)
@@ -506,7 +514,7 @@ class SMCMarketStructureEngine:
         return set(self.pivots) | set(self.events) | set(self.fvgs) | set(self.obs) | set(self.setups) | set(self.proposals)
 
     def public_state(self) -> dict:
-        return {"research_id": NATIVE_SMC_ID, "execution_allowed": False, "config": asdict(self.config), "snapshot": asdict(self.latest_snapshot) if self.latest_snapshot else None, "setups": [asdict(x) for x in self.setups.values()], "events": [asdict(x) for x in self.events.values()], "proposals": [asdict(x) for x in self.proposals.values()], "chart_objects": [asdict(x) for x in self.chart_objects()]}
+        return {"research_id": NATIVE_SMC_ID, "execution_allowed": False, "paper_execution_allowed": True, "config": asdict(self.config), "snapshot": asdict(self.latest_snapshot) if self.latest_snapshot else None, "setups": [asdict(x) for x in self.setups.values()], "events": [asdict(x) for x in self.events.values()], "proposals": [asdict(x) for x in self.proposals.values()], "chart_objects": [asdict(x) for x in self.chart_objects()]}
 
     def checkpoint(self) -> dict:
         """Durable, JSON-safe recovery payload; no order or authority is stored."""

@@ -32,6 +32,13 @@ def test_ws_feed_ingests_and_updates_in_progress_candle():
     assert len(bars) == 3 and bars[-1].close == 123.45
 
 
+class _AliveThread:
+    """Stands in for the stream thread: ws_feed only asks is_alive()."""
+
+    def is_alive(self) -> bool:
+        return True
+
+
 def test_ws_fetcher_serves_cache_when_fresh_and_falls_back_when_not():
     feed = WebSocketFeed(["BTCUSDT"], timeframe="1h")
     calls = []
@@ -44,6 +51,14 @@ def test_ws_fetcher_serves_cache_when_fresh_and_falls_back_when_not():
     # empty cache -> REST fallback
     bars, src = fetcher("BTCUSDT", "1h", 50)
     assert src == "live (ccxt)" and calls == ["BTCUSDT"]
+
+    # The cache is only served while the stream that fills it is actually
+    # running. ingest_rows is called from the watch loop and nowhere else, so
+    # a dead thread means a frozen cache -- serving that as "live (websocket)"
+    # would hand a strategy data nothing is updating. Production always has the
+    # thread; the test has to say so rather than skip the condition.
+    feed._thread = _AliveThread()
+
     # fresh cache with enough depth -> served from the stream
     feed.ingest_rows("BTCUSDT", _rows(40, start_min=40 * 60, tf_min=60))
     bars, src = fetcher("BTCUSDT", "1h", 30)
@@ -52,6 +67,13 @@ def test_ws_fetcher_serves_cache_when_fresh_and_falls_back_when_not():
     # a different timeframe is never served from this stream
     bars, src = fetcher("BTCUSDT", "4h", 50)
     assert src == "live (ccxt)"
+
+    # and when the stream thread dies the cache stops being served, even
+    # though the bars in it are unchanged and still look recent.
+    feed._thread = None
+    bars, src = fetcher("BTCUSDT", "1h", 30)
+    assert src == "live (ccxt)", (
+        "a frozen cache was served as a live websocket read")
 
 
 def test_ws_feed_stale_cache_is_not_fresh():

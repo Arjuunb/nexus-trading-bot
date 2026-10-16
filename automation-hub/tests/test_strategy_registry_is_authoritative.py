@@ -176,16 +176,33 @@ def test_the_engine_warms_up_to_at_least_what_each_strategy_declares():
             f"{entry.warmup_candles}")
 
 
+#: Settings whose value is NOT a number of candles, identified by the unit in
+#: their name. Comparing these against warmup_candles compares a duration, a
+#: price fraction or a multiplier against a bar count. SMCConfig.htf_minutes is
+#: the one that bites: 240 means four hours of higher-timeframe context, and
+#: reading it as 240 candles demanded a warm-up the strategy has never needed
+#: (measured: the engine forms its bias by bar 23 and its first setup by bar
+#: 56). The bar-count settings -- *_bars, *_length, *_lookback, *_period and the
+#: bare indicator periods -- all still count, so the assertion below is exactly
+#: as strict as it was.
+_NON_CANDLE_UNITS = ("_minutes", "_seconds", "_bps", "_pct", "_fraction",
+                     "_mult", "_multiplier", "_ratio")
+
+
+def _candle_lookbacks(source) -> list:
+    return [value for name, value in source.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+            and not name.endswith(_NON_CANDLE_UNITS)]
+
+
 def test_a_declared_warm_up_covers_the_strategys_longest_lookback():
     """The declared figure must actually exceed the indicator it names."""
     for entry in registry.all_entries():
         strategy = make_builtin_strategy(entry.strategy_id, "BTCUSDT")
-        lookbacks = [value for value in (getattr(strategy, "params", {}) or {}).values()
-                     if isinstance(value, (int, float))]
+        lookbacks = _candle_lookbacks(getattr(strategy, "params", {}) or {})
         config = getattr(strategy, "config", None)
         if config is not None:
-            lookbacks += [value for value in vars(config).values()
-                          if isinstance(value, (int, float))]
+            lookbacks += _candle_lookbacks(vars(config))
         longest = max(lookbacks) if lookbacks else 0
         assert entry.warmup_candles >= longest, (
             f"{entry.strategy_id} declares {entry.warmup_candles} candles but has a "

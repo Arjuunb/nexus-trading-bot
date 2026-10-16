@@ -56,6 +56,18 @@ SCORE_THRESHOLD = 60
 MIN_HTF_CANDLES = 10  # higher-tf trend needs at least this many candles to be meaningful
 PARTIAL_FRAC = 0.5    # portion booked at the first target
 TP1_R = 1.0           # first (partial) target, in R
+
+# How recently an SMC structure event still counts towards the confluence this
+# module scores and tags on the chart. These are replay's own display/scoring
+# windows, not entry rules: the SMC entry sequence is the state machine in
+# services/native_smc.py, which has its own expiry. They used to be read off
+# strategies/smc_strategy.py's params, back when that module was a second,
+# self-contained confluence model; it is a thin adapter over the lab engine
+# now and carries no such knobs. The values are the ones it shipped, so no
+# replay result moves because of where they are defined.
+SMC_SWEEP_RECENCY = 10
+SMC_STRUCT_RECENCY = 8
+SMC_FVG_RECENCY = 5
 PARTIAL_MIN_RR = 1.5  # only scale out when the final target is at least this many R
 
 
@@ -639,10 +651,9 @@ def build_replay(symbol: str, exec_tf: str = "15m", limit: int = 800,
             if strat._last_bear_fvg == gi:
                 fvg = True
                 markers.append({"idx": li, "price": round(bar.close, 6), "type": "FVG", "side": "bear"})
-            p = strat.params
-            recent_sweep = min(gi - strat._last_sweep_low, gi - strat._last_sweep_high) <= p["sweep_lookback"]
-            recent_struct = min(gi - strat._last_bull_struct, gi - strat._last_bear_struct) <= p["choch_lookback"]
-            recent_fvg = min(gi - strat._last_bull_fvg, gi - strat._last_bear_fvg) <= p["fvg_lookback"]
+            recent_sweep = min(gi - strat._last_sweep_low, gi - strat._last_sweep_high) <= SMC_SWEEP_RECENCY
+            recent_struct = min(gi - strat._last_bull_struct, gi - strat._last_bear_struct) <= SMC_STRUCT_RECENCY
+            recent_fvg = min(gi - strat._last_bull_fvg, gi - strat._last_bear_fvg) <= SMC_FVG_RECENCY
 
         trends = trends_at(gi)
         regime = detector.detect(bars[:gi + 1]).name

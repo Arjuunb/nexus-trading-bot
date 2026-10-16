@@ -255,23 +255,30 @@ function _subscribe(path: string, sub: _Sub): () => void {
 
 /** Poll a GET endpoint every `intervalMs` and expose data/error/loading.
  *  Identical paths share one deduped, backoff-aware, tab-visibility-aware poller. */
-export function useLive<T>(path: string, intervalMs = 2500): LiveState<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+export function useLive<T>(path: string | null, intervalMs = 2500): LiveState<T> {
+  const [snapshot, setSnapshot] = useState<{ path: string | null; data: T | null; error: string | null; loading: boolean }>({ path: null, data: null, error: null, loading: true });
 
   useEffect(() => {
-    setLoading(true);
+    if (!path) return;
+    let active = true;
+    const update = (patch: Partial<LiveState<T>>) => {
+      if (active) setSnapshot((previous) => ({
+        ...(previous.path === path ? previous : { data: null, error: null, loading: true }),
+        ...patch, path,
+      }));
+    };
     const sub: _Sub = {
       interval: intervalMs,
-      onData: (d) => setData(d as T),
-      onError: setError,
-      onLoading: setLoading,
+      onData: (d) => update({ data: d as T }),
+      onError: (error) => update({ error }),
+      onLoading: (loading) => update({ loading }),
     };
-    return _subscribe(path, sub);
+    const unsubscribe = _subscribe(path, sub);
+    return () => { active = false; unsubscribe(); };
   }, [path, intervalMs]);
 
   const refetch = useCallback(async () => {
+    if (!path) return false;
     const p = _pollers.get(path);
     if (p) {
       if (p.timer) clearTimeout(p.timer);
@@ -281,7 +288,9 @@ export function useLive<T>(path: string, intervalMs = 2500): LiveState<T> {
     return false;
   }, [path]);
 
-  return { data, error, loading, refetch };
+  // Never render the previous market's candles under a new request identity.
+  const current = snapshot.path === path && path ? snapshot : { data: null, error: null, loading: Boolean(path) };
+  return { data: current.data, error: current.error, loading: current.loading, refetch };
 }
 
 // ---- response shapes (match the FastAPI endpoints) ----
@@ -530,9 +539,12 @@ export interface WatchRow {
   last?: number; change_pct?: number; vol_pct?: number; spark?: number[]; bars?: number;
 }
 export interface Watchlist { timeframe: string; symbols: WatchRow[]; }
-export interface ScanSignal { symbol?: string; type: string; side: string; strength: number; detail: string; }
-export interface ScanRow { symbol: string; available: boolean; source?: string; signals: ScanSignal[]; score: number; bias?: string; last?: number; }
-export interface ScanResult { timeframe: string; symbols: ScanRow[]; opportunities: ScanSignal[]; count: number; }
+export interface CandleFreshness { status: string; blocker?: string; age_seconds?: number | null; allowed_age_seconds?: number; last_close?: string | null; }
+// as_of/stale ride on the signal too: opportunities are rendered detached from
+// their row, so one that left its age behind arrives on screen looking current.
+export interface ScanSignal { symbol?: string; type: string; side: string; strength: number; detail: string; as_of?: string | null; stale?: boolean; }
+export interface ScanRow { symbol: string; available: boolean; source?: string; signals: ScanSignal[]; score: number; bias?: string; last?: number; as_of?: string | null; stale?: boolean; freshness?: CandleFreshness; }
+export interface ScanResult { timeframe: string; symbols: ScanRow[]; opportunities: ScanSignal[]; count: number; stale_symbols?: string[]; fresh?: boolean; }
 export interface HealthCard {
   available?: boolean; error?: string; needs_download?: boolean;
   status: string; classification?: string; unhealthy: boolean; win_rate: number; profit_factor: number; expectancy: number;

@@ -14,6 +14,8 @@ field is ``None``, never a plausible-looking default.
 """
 from __future__ import annotations
 
+from services.market_data_freshness import grace_for_interval
+
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------- runtime
@@ -110,7 +112,11 @@ def market_status(*, worker_state: str, feed: dict | None,
         return WAITING_FOR_DATA_MARKET, "no closed candle observed yet"
     if data_age_seconds > timeframe_seconds * 3:
         return DISCONNECTED, f"no closed candle for {data_age_seconds:.0f}s"
-    if data_age_seconds > timeframe_seconds * 1.5:
+    # The same boundary the trading gate uses, so the badge on the dashboard
+    # can never read LIVE while services/auto_engine.py is refusing entries on
+    # that very candle. The 3-interval rule above is a different question --
+    # "no candle at all" -- and keeps its own threshold.
+    if data_age_seconds > timeframe_seconds + grace_for_interval(timeframe_seconds):
         return STALE, f"newest closed candle is {data_age_seconds:.0f}s old"
     return LIVE, "closed candles are current"
 

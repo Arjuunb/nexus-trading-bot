@@ -31,8 +31,8 @@ export const useApp = () => useContext(AppContext);
 // instead of a flat list of pages.
 export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
   { title: null, items: ["Dashboard"] },
-  { title: "Trading", items: ["Trading Instances", "Strategy Studio", "Paper Trading", "Live Trading"] },
-  { title: "Research", items: ["Price Action Lab", "SMC Visual Lab", "SMC Strategy Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
+  { title: "Trading", items: ["Trading Instances", "Instance Visual Lab", "Strategy Studio", "Paper Trading", "Live Trading"] },
+  { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },
   { title: "Records", items: ["Journal"] },
   { title: "System", items: ["Market Data", "Risk & Health"] },
@@ -45,10 +45,13 @@ export const NAV_LABELS: string[] = NAV_GROUPS.flatMap((g) => g.items);
 // a sidebar slot (Markets/Symbols from Portfolio, Strategies + Strategy Proof
 // from Strategy Studio, Simulation from Backtesting, Safety Center from Live
 // Trading + Risk Manager, Evolution from Memory, Paper Account from the Paper
-// Trading terminal, AI Assistant from AI Intelligence).
+// Trading terminal, AI Assistant from AI Intelligence, SMC Visual Lab from the
+// SMC Strategy Lab, whose market section points at it for the Pine reference
+// and parity review).
 const EXTRA_ROUTES = [
   "Alerts", "Symbols", "Markets", "Strategies", "Strategy Proof",
   "Simulation", "Evolution", "Safety Center", "Paper Account", "AI Assistant", "Settings",
+  "SMC Visual Lab",
 ] as const;
 
 // Old bookmarks / saved hashes keep working after the reorganisation.

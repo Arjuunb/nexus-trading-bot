@@ -48,7 +48,7 @@ test("SMC Visual Lab and SMC Strategy Lab have separate sidebar routes and page 
   await expect(page.getByText("SMC session market", { exact: true })).toBeVisible();
   await expect(page.locator(".pa-lab.smc-strategy-lab")).toBeVisible();
 
-  await page.locator("aside.sidebar").getByRole("button", { name: "SMC Visual Lab" }).click();
+  await page.locator(".pa-context-note").getByRole("button", { name: "SMC Visual Lab", exact: true }).click();
   await expect(page).toHaveURL(/#\/smc-visual-lab$/);
   await expect(page.getByRole("heading", { name: "Native SMC Visual Lab" })).toBeVisible();
 });

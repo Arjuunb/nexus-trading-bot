@@ -104,9 +104,19 @@ def scan_bars(bars, *, lookback: int = 20) -> list:
 
 
 def scan(symbols, timeframe: str = "4h", bars: int = 300,
-         types: Optional[list] = None, loader=None) -> dict:
-    """Scan ``symbols`` over real candles and rank the opportunities."""
+         types: Optional[list] = None, loader=None, now=None) -> dict:
+    """Scan ``symbols`` over real candles and rank the opportunities.
+
+    Every row carries the age of the candles it was computed from. The store
+    this reads can be hours behind the venue with nothing in the return value
+    saying so -- it was observed 15.8h stale for BTCUSDT and absent for
+    BNBUSDT -- and a ranked "opportunity" with a last price is read as a
+    statement about now. Ranking is unchanged: this reports the age, it does
+    not reorder, filter or suppress on it. What to do about a stale row is the
+    caller's decision, made with the number in hand instead of without it.
+    """
     from data.market_data import get_bars
+    from services.market_data_freshness import judge_bars
     results, opps = [], []
     tset = set(types) if types else None
     for sym in symbols:
@@ -114,8 +124,12 @@ def scan(symbols, timeframe: str = "4h", bars: int = 300,
             rows, src = loader(sym, timeframe, bars)
         else:
             rows, src = get_bars(sym, n=max(60, min(int(bars), 1000)), timeframe=timeframe, require_real=True)
+        verdict = judge_bars(sym, timeframe, rows, now=now)
+        age = {"as_of": verdict.last_close.isoformat() if verdict.last_close else None,
+               "stale": not verdict.fresh, "freshness": verdict.to_dict()}
         if not rows:
-            results.append({"symbol": sym, "available": False, "source": src, "signals": [], "score": 0})
+            results.append({"symbol": sym, "available": False, "source": src,
+                            "signals": [], "score": 0, **age})
             continue
         sigs = scan_bars(rows)
         if tset:
@@ -124,9 +138,16 @@ def scan(symbols, timeframe: str = "4h", bars: int = 300,
         bias = "long" if sum(1 for s in sigs if s["side"] == "long") > sum(1 for s in sigs if s["side"] == "short") \
             else "short" if sigs else "—"
         results.append({"symbol": sym, "available": True, "source": src, "signals": sigs,
-                        "score": score, "bias": bias, "last": round(rows[-1].close, 6)})
+                        "score": score, "bias": bias, "last": round(rows[-1].close, 6), **age})
+        # An opportunity travels to the UI on its own, detached from its row,
+        # so it has to carry its own age or it arrives looking current.
         for s in sigs:
-            opps.append({"symbol": sym, **s})
+            opps.append({"symbol": sym, **s, "as_of": age["as_of"], "stale": age["stale"]})
     opps.sort(key=lambda o: o["strength"], reverse=True)
     results.sort(key=lambda r: r.get("score", 0), reverse=True)
-    return {"timeframe": timeframe, "symbols": results, "opportunities": opps, "count": len(opps)}
+    stale = [r["symbol"] for r in results if r.get("stale")]
+    return {"timeframe": timeframe, "symbols": results, "opportunities": opps,
+            "count": len(opps), "stale_symbols": stale,
+            # False the moment ANY scanned symbol is behind: a ranking mixing
+            # current and day-old symbols is not a ranking.
+            "fresh": not stale}

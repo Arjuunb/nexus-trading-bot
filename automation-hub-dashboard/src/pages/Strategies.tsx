@@ -190,14 +190,32 @@ function Marketplace() {
 }
 
 
+type LeagueFreshness = { status: string; age_seconds: number | null };
 type LeagueData = {
   available: boolean; detail?: string; data_source?: string; symbols?: string[];
+  live?: boolean;
+  provenance?: Record<string, { source: string; candles: number; first: string;
+    last: string; live?: boolean; freshness?: LeagueFreshness | null }>;
+  dropped?: { symbol: string; candles: number; required: number }[];
+  window?: { bars_requested: number; first: string; last: string };
   table?: { strategy: string; trades: number; win_rate: number | null; expectancy_r: number | null;
     net_r: number; profit_factor: number | null; max_drawdown_pct: number; verdict: string }[];
   correlations?: { a: string; b: string; correlation: number; relation: string }[];
   best_combo?: { a: string; b: string; correlation: number } | null;
   guidance?: string[];
 };
+
+/** The badge has to distinguish "measured minutes ago" from "measured on
+ *  whatever the last manual sync left behind". Both are real candles; only one
+ *  describes the market being traded now. */
+const leagueBadge = (d: LeagueData) => {
+  const stale = Object.values(d.provenance ?? {}).some(
+    (row) => row.freshness && row.freshness.status !== "FRESH");
+  if (stale) return { text: `stale candles · ${d.symbols?.join(" + ")}`, tone: "red" as const };
+  if (d.live) return { text: `live · ${d.symbols?.join(" + ")}`, tone: "green" as const };
+  return { text: `cached · ${d.symbols?.join(" + ")}`, tone: "amber" as const };
+};
+const shortStamp = (v?: string) => (v ? v.replace("T", " ").slice(0, 16) : "—");
 
 const vTone = (v: string) => v === "earning" ? "green" : v === "losing" ? "red" : v === "breakeven" ? "amber" : "default";
 const rTone = (r: string) => r === "diversifying" ? "green" : r === "redundant" ? "red" : "amber";
@@ -207,9 +225,11 @@ function StrategyLeague() {
   const d = lg.data;
   return (
     <Card title="Strategy League" subtitle="every strategy on the SAME real candles — ranked by what pays, with correlations"
-      right={d?.available ? <Badge text={`real data · ${d.symbols?.join(" + ")}`} tone="green" /> : undefined}>
+      right={d?.available
+        ? <Badge text={leagueBadge(d).text} tone={leagueBadge(d).tone} />
+        : undefined}>
       {!d ? (
-        <div className="dim" style={{ padding: 12 }}>Running the league on real candles…</div>
+        <div className="dim" style={{ padding: 12 }}>Running the league on live candles…</div>
       ) : !d.available ? (
         <div className="dim" style={{ padding: 12 }}>{d.detail}</div>
       ) : (
@@ -255,8 +275,19 @@ function StrategyLeague() {
             </>
           )}
 
+          {/* Which candles produced these verdicts. A ranking is only as good
+              as its window, and the window is not something to have to infer
+              from a badge. */}
+          {d.window ? (
+            <p className="dim" style={{ marginTop: 10, fontSize: 12 }}>
+              <Icon name="info" size={12} /> Measured on {shortStamp(d.window.first)} →{" "}
+              {shortStamp(d.window.last)} ({d.window.bars_requested} bars requested) ·
+              source {d.data_source}
+            </p>
+          ) : null}
+
           {d.guidance?.map((g, i) => (
-            <p key={i} className="dim" style={{ marginTop: i === 0 ? 10 : 4, fontSize: 12 }}>
+            <p key={i} className="dim" style={{ marginTop: 4, fontSize: 12 }}>
               <Icon name="info" size={12} /> {g}
             </p>
           ))}

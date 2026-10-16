@@ -77,6 +77,21 @@ def _fingerprint(value: object, prefix: str) -> str:
     return f"{prefix}-{hashlib.sha256(raw).hexdigest()}"
 
 
+def _transition_key(row: dict) -> tuple:
+    """Identify a state transition by the event, not by its recorded values.
+
+    The id is a fingerprint of the setup, the status and the moment, so it is
+    the right key when it is present. A legacy row without one falls back to
+    the same four facts, so it still matches itself across captures instead of
+    being appended again on every poll.
+    """
+    identifier = row.get("id")
+    if identifier:
+        return ("id", str(identifier))
+    return ("event", str(row.get("setup_id")), str(row.get("from_phase")),
+            str(row.get("to_phase")), str(row.get("timestamp")))
+
+
 def _latest_by(rows: list[dict], key: str, value: str) -> dict | None:
     return next((row for row in reversed(rows) if str(row.get(key) or "") == value), None)
 
@@ -298,7 +313,12 @@ class PriceActionJournalStore:
                 "stop": proposal.get("stop"), "target": proposal.get("target"),
                 "signal_at": proposal.get("signal_at"),
                 "entry_model": proposal.get("entry_model"),
-                "valid_until_index": proposal.get("valid_until_index"),
+                # valid_until_index is deliberately absent. It is len(bars) - 1
+                # + entry_expiry_bars, so it identifies where the rolling
+                # buffer happened to end, not the data the decision was made
+                # on: two replays over identical candles would fingerprint the
+                # same decision differently. entry_expiry_bars is part of the
+                # configuration fingerprint, which is where it belongs.
             } if proposal else None),
         }
         dataset_fingerprint = _fingerprint(decision_evidence, "decision-evidence")
@@ -439,12 +459,54 @@ class PriceActionJournalStore:
 
         Quotes shown by the UI and current feed explanations are useful in a
         response, but are not new evidence about an already-created setup.
+
+        The bar counters and the entry expiry belong here for a sharper reason:
+        they are not facts about the setup at all, they are positions in the
+        runtime's rolling candle buffer. ``bars_in_trade`` is ``index -
+        filled_index``, and ``expiry_index`` is ``len(bars) - 1 +
+        entry_expiry_bars`` (native_price_action.py). Both shift as the window
+        slides and jump outright when it is re-seeded by a restart or a
+        re-sync -- observed going *down*, 1254 to 1253 for the counter and 1242
+        to 235 for the expiry. Since the hash is what decides whether to append
+        another copy of the record, a number that changes on its own writes a
+        revision on its own.
+
+        Between them they cost 59,560 of 72,443 revisions on the production
+        lab -- 82% of them recording no lifecycle event at all, at ~9.5 KB each
+        -- and grew the journal until writes began timing out and the lab
+        refused to place orders it could not durably record.
+
+        The split between the two was measured, not assumed, by
+        scripts/pa_journal_churn.py, after excluding the counters alone turned
+        out not to be enough. Of the 7,833 revisions still being written on the
+        counters-only build, ``expiry_index`` was the ONLY field that differed
+        in 5,212 of them (50.0 MB of 75.0 MB) and appeared in 99.8% of all
+        differing pairs. The excursions, which were the standing hypothesis at
+        the time, accounted for 10 revisions and 0.1 MB and are deliberately
+        still hashed: a real move in MFE or MAE is evidence.
+
+        Any rate quoted for this is an average over a bursty process, not a
+        steady drip: a revision is only written per open setup, so an active
+        trade with a drifting number produced hundreds in minutes while a quiet
+        book produced almost none.
+        An early estimate of ~860 MB/day came from extrapolating one burst
+        across a gap that had not been measured, and a later observation of 36
+        revisions in 46 minutes disproved it.
+
+        Excluding them here does not hide them: every stored payload still
+        carries its counters and its expiry index, and any revision written
+        for a real reason
+        captures whatever they are at that moment.
         """
         material = _canonical(record)
         material.get("market_context", {}).pop("data_health_reason", None)
         order_risk = material.get("order_risk", {})
         order_risk.pop("bid_ask_decision", None)
         order_risk.pop("spread", None)
+        order_risk.pop("expiry_index", None)
+        outcome = material.get("outcome", {})
+        outcome.pop("bars_in_trade", None)
+        outcome.pop("bars_to_entry", None)
         return material
 
     @classmethod
@@ -503,6 +565,18 @@ class PriceActionJournalStore:
                             "confirmation_candle", "invalidation_price",
                             "acceptance_reasons", "rejection_reasons"):
                             record["setup"][key] = prior["setup"].get(key)
+                        # A transition records something that happened. Rebuilt
+                        # every capture, it stamps the feed state and the
+                        # proposal prices of *now* onto a past event, so the
+                        # same transition keeps changing while the event does
+                        # not -- and _classification reads that health back,
+                        # flipping the setup's learning classification with the
+                        # feed. Keep what was recorded, append only what is new.
+                        recorded = prior["setup"].get("state_transitions") or []
+                        seen = {_transition_key(row) for row in recorded}
+                        record["setup"]["state_transitions"] = list(recorded) + [
+                            row for row in (record["setup"].get("state_transitions") or [])
+                            if _transition_key(row) not in seen]
                         record["chart_state"] = prior["chart_state"]
                         # Runtime capture may append lifecycle evidence but may
                         # never erase an immutable researcher annotation.

@@ -44,8 +44,12 @@ VPS; `scripts/check_binance_feed.sh` already exists for it.
 
 ```
 Binance USD-M public WebSocket
-  fstream.binance.com/market/stream?streams=<sym>@kline_<tf>/<sym>@markPrice@1s
-  fstream.binance.com/public/stream?streams=<sym>@bookTicker
+  fstream.binance.com/stream?streams=<sym>@kline_<tf>/<sym>@markPrice@1s
+  fstream.binance.com/stream?streams=<sym>@bookTicker
+    (both on the venue's one combined path. "market" and "public" are this
+     application's channel names; between 2026-08-24 and the fix they were
+     written into the URL path, which Binance does not serve, and no live
+     candle reached the platform for the whole of that window.)
         │  services/price_action_stream.py — PriceActionPublicStream
         │    per-channel reconnect, 2^n backoff capped at 30s, REST reconcile
         ▼

@@ -1257,6 +1257,27 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 }
 .scan-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--sc-accent, var(--purple)); }
 .scan-card:hover { border-color: rgba(234, 181, 79, 0.3); transform: translateY(-1px); }
+
+/* The age of the candles a ranking was computed from. The scanner reads a
+   local cache that nothing refreshes on a schedule, so "no setups" and "no
+   recent data" have to look different on screen. */
+.scan-stale {
+  display: inline-flex; align-items: center; gap: 4px; margin-top: 6px;
+  font-size: 10px; font-weight: 600; letter-spacing: .02em;
+  color: var(--gold); opacity: .95;
+}
+.scan-stale-note {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 12px;
+  padding: 9px 11px; border-radius: 8px; font-size: 12px; line-height: 1.5;
+  text-align: left;
+  color: var(--gold);
+  background: rgba(234, 181, 79, 0.08);
+  border: 1px solid rgba(234, 181, 79, 0.28);
+}
+.scan-stale-note code {
+  font-size: 11px; padding: 1px 5px; border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+}
 .scan-type { font-size: 13px; font-weight: 600; }
 .scan-strength { display: flex; align-items: center; gap: 8px; }
 .scan-bar { flex: 1; height: 6px; border-radius: 3px; background: #131315; overflow: hidden; }
@@ -1697,6 +1718,12 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 .pa-layer-mode { display: grid; gap: 5px; margin-top: 3px; color: var(--dim); font-size: 9px; font-weight: 700; }
 .pa-layer-mode select { width: 100%; height: 31px; }
 .pa-context-note { padding: 7px; border-left: 2px solid rgba(105,185,255,.38); background: rgba(105,185,255,.05); color: #91a6bf !important; line-height: 1.45 !important; }
+/* An inline navigation link inside body text. A button rather than an anchor
+   because the app routes by assigning window.location.hash, and an <a> would
+   also need the href kept in step with the route it points at. */
+.link-button { background: none; border: 0; padding: 0; font: inherit; color: #69b9ff; text-decoration: underline; cursor: pointer; }
+.link-button:hover { color: #9ed0ff; }
+.link-button:focus-visible { outline: 2px solid #69b9ff; outline-offset: 2px; border-radius: 2px; }
 .pa-syncing { color: var(--gold) !important; }
 .pa-focus-setup { width: 100%; min-height: 31px; border: 1px solid rgba(105,185,255,.3); border-radius: 5px; background: rgba(105,185,255,.09); color: #c8e7ff; font-size: 9px; font-weight: 800; cursor: pointer; }
 .pa-focus-setup:disabled { opacity: .45; cursor: not-allowed; }
@@ -1862,3 +1889,277 @@ html[data-density="compact"] .data-table th, html[data-density="compact"] .data-
 @media (max-width: 560px) {
   .instance-axes { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Instance Visual Lab ────────────────────────────────────────────────────
+   One page for every instance strategy. The colour language is deliberately
+   narrow: a gate is passed, failed or waiting, and a failed gate is the only
+   thing on the page allowed to shout. */
+.ivl { display: grid; gap: 14px; }
+.ivl-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.ivl-head h1 { margin: 0 0 4px; font-size: 18px; }
+.ivl-head .lede { margin: 0; max-width: 68ch; font-size: 12px; line-height: 1.5; color: var(--text-dim); }
+.ivl-head select { min-width: 280px; padding: 8px 10px; }
+
+.ivl-identity { display: flex; flex-wrap: wrap; gap: 10px 22px; padding: 12px 14px;
+  border: 1px solid var(--border, #222a35); border-radius: 10px; background: #0d1117; }
+.ivl-identity span { display: grid; gap: 2px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-dim); }
+.ivl-identity b { font-size: 12.5px; text-transform: none; letter-spacing: 0; color: #e6edf3; }
+.ivl-identity small { font-size: 10px; text-transform: none; letter-spacing: 0; color: #6b7787; }
+
+.ivl-state { display: grid; gap: 6px; padding: 14px 16px; border-radius: 10px;
+  border: 1px solid #1f6f43; background: #0c1a12; }
+.ivl-state.is-blocked { border-color: #7a3030; background: #1a0f0f; }
+.ivl-state b { font-size: 16px; letter-spacing: .04em; }
+.ivl-state span, .ivl-state em, .ivl-state small { font-size: 12px; color: var(--text-dim); font-style: normal; }
+.ivl-state em { color: #e6c07b; }
+.ivl-code { font-family: ui-monospace, monospace; font-size: 11px; color: #ff9b9b; }
+
+.ivl-pipeline { display: flex; flex-wrap: wrap; gap: 4px; }
+.ivl-pipeline span { padding: 5px 10px; border-radius: 999px; font-size: 10.5px;
+  border: 1px solid var(--border, #222a35); color: var(--text-dim); }
+.ivl-pipeline .is-current { border-color: #e6c07b; color: #e6c07b; background: #1b1710; }
+
+.ivl-chart { width: 100%; height: 320px; background: #0b0e13; border-radius: 10px;
+  border: 1px solid var(--border, #222a35); }
+.ivl-chart g.up line, .ivl-chart g.up rect { stroke: #3d8bff; fill: #3d8bff; stroke-width: .8; }
+.ivl-chart g.down line, .ivl-chart g.down rect { stroke: #ff6b6b; fill: #ff6b6b; stroke-width: .8; }
+.ivl-marker line { stroke-width: 1; stroke-dasharray: 3 3; }
+.ivl-marker.accepted line, .ivl-marker.accepted circle { stroke: #4ec9a0; fill: #4ec9a0; }
+.ivl-marker.rejected line, .ivl-marker.rejected circle { stroke: #e6c07b; fill: none; }
+.ivl-marker.is-focus circle { stroke-width: 2; }
+.ivl-provenance { font-size: 10.5px; color: var(--text-dim); }
+
+.ivl-grid { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .ivl-grid { grid-template-columns: 1fr; } }
+.ivl-panel { padding: 14px 16px; border-radius: 10px; background: #0d1117;
+  border: 1px solid var(--border, #222a35); }
+.ivl-panel h2 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; }
+.ivl-panel h3 { margin: 12px 0 6px; font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .07em; color: var(--text-dim); }
+.ivl-panel small { display: block; margin-top: 10px; font-size: 10.5px; line-height: 1.5; color: #6b7787; }
+
+.ivl-gates { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ivl-gate { display: grid; grid-template-columns: 18px 1fr; gap: 8px; align-items: start;
+  font-size: 12px; }
+.ivl-gate b { font-weight: 500; }
+.ivl-gate em { display: block; font-style: normal; font-size: 10.5px; color: #6b7787; line-height: 1.45; }
+.ivl-mark { font-family: ui-monospace, monospace; }
+.ivl-gate.is-pass .ivl-mark { color: #4ec9a0; }
+.ivl-gate.is-fail .ivl-mark { color: #ff6b6b; }
+.ivl-gate.is-waiting .ivl-mark, .ivl-gate.is-waiting b { color: #6b7787; }
+.ivl-blocker { display: block; margin-top: 3px; font-size: 10.5px; font-weight: 400; color: #ff9b9b; }
+
+.ivl-features { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.ivl-features li { padding: 3px 8px; border-radius: 999px; font-size: 10.5px;
+  border: 1px solid #2a3442; color: #9fb0c3; }
+.ivl-panel dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0; font-size: 11.5px; }
+.ivl-panel dt { color: var(--text-dim); }
+.ivl-panel dd { margin: 0; }
+.ivl-note { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: #e6c07b; }
+
+.ivl-focus { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.ivl-focus button { padding: 5px 11px; font-size: 11px; }
+.ivl-focus button.active { border-color: #e6c07b; color: #e6c07b; }
+.ivl-evidence { display: grid; gap: 3px; padding: 10px 12px; margin-bottom: 10px;
+  border-radius: 8px; background: #11161d; font-size: 11.5px; }
+.ivl-evidence span { color: var(--text-dim); }
+
+.ivl-table-wrap { overflow: auto; max-height: 420px; }
+.ivl-table { width: 100%; border-collapse: collapse; font: 10px/1.4 ui-monospace, monospace; }
+.ivl-table th { position: sticky; top: 0; padding: 7px 9px; background: #10141a;
+  color: #8693a6; text-align: left; text-transform: uppercase; letter-spacing: .05em; }
+.ivl-table td { padding: 6px 9px; border-top: 1px solid #1a212b; }
+.ivl-table tbody tr { cursor: pointer; }
+.ivl-table tbody tr:hover { background: #141a22; }
+.ivl-table tr.is-accepted td:nth-child(4) { color: #4ec9a0; }
+.ivl-table tr.is-rejected td:nth-child(4) { color: #e6c07b; }
+.ivl-table tr.is-focus { background: #1b2230; }
+
+.ivl-alert { display: grid; gap: 4px; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid #7a3030; background: #1a0f0f; font-size: 12px; }
+.ivl-alert span, .ivl-alert small { color: #d9a5a5; }
+.ivl-empty { padding: 20px; text-align: center; font-size: 12px; color: var(--text-dim); }
+.ivl-foot { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: center;
+  padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border, #222a35);
+  font-size: 11px; }
+.ivl-foot b { letter-spacing: .06em; }
+.ivl-foot span { color: var(--text-dim); }
+
+/* Instance Visual Lab — live chart layer. */
+.ivl-feed { display: flex; flex-wrap: wrap; gap: 10px 20px; padding: 10px 14px;
+  border-radius: 10px; border: 1px solid var(--border, #222a35); background: #0b0e13;
+  font-variant-numeric: tabular-nums; }
+.ivl-feed.is-stale { border-color: #7a3030; background: #1a0f0f; }
+.ivl-feed span { display: grid; gap: 2px; font-size: 10px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--text-dim); }
+.ivl-feed b { font-size: 13px; text-transform: none; letter-spacing: 0; color: #e6edf3; }
+.ivl-feed small { font-size: 9.5px; text-transform: none; letter-spacing: 0; color: #6b7787; }
+
+.ivl-toggles { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.ivl-toggles button { padding: 4px 10px; font-size: 11px; opacity: .45; }
+.ivl-toggles button.active { opacity: 1; border-color: #3d8bff; color: #9ec5ff; }
+.ivl-forming-tag { margin-left: auto; font-size: 10px; letter-spacing: .06em;
+  color: #e6c07b; }
+
+.ivl-chart { height: 460px; }
+.ivl-chart g.is-forming line, .ivl-chart g.is-forming rect {
+  stroke-dasharray: 2 2; opacity: .75; }
+.ivl-zone rect { opacity: .13; }
+.ivl-zone text { font-size: 8px; fill: #8693a6; }
+.ivl-zone.is-invalid rect { opacity: .06; }
+.ivl-zone.is-invalid text { fill: #6b5b5b; }
+.ivl-zone.is-support rect, .ivl-zone.is-demand rect { fill: #3d8bff; }
+.ivl-zone.is-resistance rect, .ivl-zone.is-supply rect { fill: #ff6b6b; }
+.ivl-zone.is-fvg rect { fill: #e6c07b; }
+.ivl-line polyline { fill: none; stroke-width: 1.1; }
+.ivl-line.is-ema polyline { stroke: #e6c07b; }
+.ivl-line.is-donchian_channel polyline { stroke: #8f7bff; stroke-dasharray: 4 3; }
+.ivl-fmarker circle { fill: none; stroke: #9fb0c3; stroke-width: 1.2; }
+.ivl-fmarker text { font-size: 8px; fill: #9fb0c3; }
+.ivl-fmarker.is-bos circle, .ivl-fmarker.is-choch circle { stroke: #4ec9a0; }
+.ivl-fmarker.is-bos text, .ivl-fmarker.is-choch text { fill: #4ec9a0; }
+.ivl-fmarker.is-liquidity_sweep circle { stroke: #e6c07b; }
+.ivl-fmarker.is-rejection_candle circle { stroke: #ff9b9b; }
+.ivl-level line { stroke-width: 1.2; stroke-dasharray: 5 3; }
+.ivl-level text { font-size: 9px; }
+.ivl-level.entry line, .ivl-level.entry text { stroke: #4ec9a0; fill: #4ec9a0; }
+.ivl-level.stop line, .ivl-level.stop text { stroke: #ff6b6b; fill: #ff6b6b; }
+.ivl-level.target line, .ivl-level.target text { stroke: #3d8bff; fill: #3d8bff; }
+.ivl-decision line { stroke-width: 1; stroke-dasharray: 3 3; cursor: pointer; }
+.ivl-decision text { font-size: 8px; cursor: pointer; }
+.ivl-decision.accepted line, .ivl-decision.accepted text { stroke: #4ec9a0; fill: #4ec9a0; }
+.ivl-decision.rejected line, .ivl-decision.rejected text { stroke: #e6c07b; fill: #e6c07b; }
+.ivl-decision.is-focus line { stroke-width: 2; stroke-dasharray: none; }
+.ivl-evidence { position: relative; }
+.ivl-close { position: absolute; top: 8px; right: 8px; padding: 2px 8px; font-size: 10px; }
+.ivl-prov { font-size: 10px; color: #6b7787; }
+.ivl-note-inline { margin-left: auto; font-size: 10px; color: #6b7787; }
+.ivl-alert-soft { border-color: #6b5a30; background: #17130c; }
+.ivl-alert-soft span, .ivl-alert-soft small { color: #d9c9a5; }
+
+/* Instance Visual Lab — the chart shell.
+   The frame, its controls and its scale stay on screen through an outage; the
+   reason is written across the plot instead of replacing it. */
+.ivl-chartwrap { border: 1px solid var(--border, #222a35); border-radius: 10px;
+  background: #0b0e13; overflow: hidden; }
+.ivl-chartbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
+  padding: 8px 12px; border-bottom: 1px solid #1a212b; background: #0d1117; }
+.ivl-chartsym { display: flex; align-items: baseline; gap: 7px; }
+.ivl-chartsym b { font-size: 12.5px; letter-spacing: .04em; }
+.ivl-chartsym em { font-style: normal; font-size: 11px; color: #e6c07b; }
+.ivl-offframe { font-style: normal; font-size: 9.5px; color: #6b7787; }
+.ivl-frames, .ivl-view, .ivl-layers { display: flex; flex-wrap: wrap; gap: 4px;
+  align-items: center; font-size: 10px; color: var(--text-dim);
+  text-transform: uppercase; letter-spacing: .06em; }
+.ivl-layers { margin-left: auto; }
+.ivl-frames button, .ivl-view button, .ivl-layers button {
+  padding: 3px 9px; font-size: 10.5px; opacity: .45; text-transform: none;
+  letter-spacing: 0; }
+.ivl-frames button.active, .ivl-view button.active, .ivl-layers button.active {
+  opacity: 1; border-color: #3d8bff; color: #9ec5ff; }
+/* A frame the running strategy is actually holding is worth telling apart from
+   one the chart would have to fetch separately. */
+.ivl-frames button.is-held { opacity: .8; border-color: #4a6a4a; }
+.ivl-frames button.is-held.active { border-color: #4ec9a0; color: #7fe0bd; }
+.ivl-view select { padding: 3px 6px; font-size: 10.5px; }
+
+.ivl-chartnote { display: grid; gap: 3px; padding: 8px 12px;
+  border-bottom: 1px solid #1a212b; font-size: 11.5px; }
+.ivl-chartnote b { letter-spacing: .06em; }
+.ivl-chartnote.is-bad { background: #1a0f0f; color: #ffb3b3; }
+.ivl-chartnote.is-bad span, .ivl-chartnote.is-bad small { color: #d9a5a5; }
+.ivl-chartnote.is-warn { background: #17130c; color: #e6c07b; }
+.ivl-chartnote.is-warn span, .ivl-chartnote.is-warn small { color: #d9c9a5; }
+
+.ivl-chartwrap .ivl-chart { border: 0; border-radius: 0; display: block; }
+.ivl-grid > rect { fill: none; stroke: #1a212b; stroke-width: .6; }
+.ivl-grid line { stroke: #161c25; stroke-width: .5; }
+.ivl-grid text { font-size: 8px; fill: #6b7787; }
+.ivl-time-tick { font-size: 8px; fill: #6b7787; }
+.ivl-chart-void { font-size: 13px; fill: #8693a6; letter-spacing: .1em; }
+.ivl-chart-void-sub { font-size: 9px; fill: #6b7787; }
+.ivl-chart.is-empty { background: #0b0e13; }
+
+.ivl-chartfoot { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: center;
+  padding: 8px 12px; border-top: 1px solid #1a212b; background: #0d1117;
+  font-variant-numeric: tabular-nums; }
+.ivl-chartfoot span { display: grid; gap: 1px; font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--text-dim); }
+.ivl-chartfoot b { font-size: 11.5px; text-transform: none; letter-spacing: 0;
+  color: #e6edf3; font-weight: 500; }
+.ivl-chartfoot small { font-size: 9px; text-transform: none; letter-spacing: 0;
+  color: #6b7787; }
+.ivl-foot-right { margin-left: auto; color: #6b7787; letter-spacing: .08em; }
+
+/* The freshness verdict, as the backend reported it. */
+.ivl-fresh { font-style: normal; font-size: 9.5px; letter-spacing: .07em;
+  padding: 2px 7px; border-radius: 999px; border: 1px solid; }
+.ivl-fresh.is-fresh { color: #4ec9a0; border-color: #2f5f4d; background: #0e1a15; }
+.ivl-fresh.is-stale, .ivl-fresh.is-missing { color: #ff9b9b; border-color: #7a3030;
+  background: #1a0f0f; }
+.ivl-fresh.is-unknown { color: #8693a6; border-color: #2a3442; }
+
+
+/* ── SMC Agent ─────────────────────────────────────────────────────────────
+   The agent trades with nobody approving, so this page is the record that
+   holds it to account. The four outcomes are colour-coded by what they mean
+   for the operator, not by good/bad: MISSED is the only one that says
+   something is broken, so it is the only one carrying the loss colour. */
+.smc-agent .pa-grid { display: grid; gap: var(--space-1);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); margin: 0 0 var(--space-2); }
+.smc-agent .pa-grid > div { display: grid; gap: 4px; padding: 12px;
+  border: 1px solid var(--card-border-soft); border-radius: var(--radius-sm);
+  background: var(--card-2); }
+.smc-agent .pa-grid small { color: var(--dim-2); font-size: 8.5px;
+  letter-spacing: .06em; text-transform: uppercase; }
+.smc-agent .pa-grid b { color: var(--text); font: 700 13px/1.3 ui-monospace, monospace; }
+.smc-agent .pa-grid small + b + small { text-transform: none; letter-spacing: 0;
+  color: var(--dim-2); font-size: 9px; }
+
+.smc-agent .pa-note { margin: var(--space-1) 0; padding: 10px 12px;
+  border: 1px solid var(--card-border-soft); border-left: 2px solid var(--gold);
+  border-radius: var(--radius-sm); background: var(--card-2);
+  color: var(--dim); font-size: 10px; line-height: 1.5; }
+.smc-agent .pa-note b { color: var(--text); }
+
+.smc-agent .pa-blockers { margin: var(--space-1) 0; padding: 10px 12px 10px 28px;
+  border: 1px solid rgba(239, 68, 68, .28); border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, .06); color: #f3b5b5; font-size: 10px; }
+
+.smc-agent .pa-filters { display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 var(--space-1); }
+.smc-agent .pa-filters button { padding: 6px 11px; border: 1px solid var(--card-border-soft);
+  border-radius: 999px; background: var(--card-2); color: var(--dim);
+  font: 700 9px/1 ui-monospace, monospace; letter-spacing: .04em; cursor: pointer; }
+.smc-agent .pa-filters button:hover { border-color: rgba(234, 181, 79, .45); color: var(--text); }
+.smc-agent .pa-filters button.is-on { border-color: var(--gold);
+  background: rgba(234, 181, 79, .12); color: #f7dca4; }
+
+.smc-agent .pa-outcome { display: inline-block; padding: 3px 7px; border-radius: 4px;
+  font: 800 8.5px/1 ui-monospace, monospace; letter-spacing: .05em; }
+.smc-agent .pa-outcome.is-taken { background: rgba(34, 197, 94, .14); color: #7ee2a8; }
+.smc-agent .pa-outcome.is-rejected { background: rgba(234, 181, 79, .14); color: #f1cf88; }
+.smc-agent .pa-outcome.is-not_ready { background: rgba(255, 255, 255, .06); color: var(--dim-2); }
+.smc-agent .pa-outcome.is-missed { background: rgba(239, 68, 68, .16); color: #f3a0a0; }
+
+/* The reason is the substance of the row, so it is allowed to wrap where the
+   shared table would otherwise clip it to one ellipsised line. */
+.smc-agent .pa-table td { max-width: 420px; white-space: normal; vertical-align: top; }
+.smc-agent .pa-table td small { color: var(--dim-2); }
+.smc-agent .pa-table td b { color: #dce5f1; font-size: 9px; }
+
+.smc-agent .pa-rules { display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  margin: 0 0 var(--space-2); }
+.smc-agent .pa-rules label { display: grid; gap: 5px; padding: 11px 12px;
+  border: 1px solid var(--card-border-soft); border-radius: var(--radius-sm);
+  background: var(--card-2); color: var(--dim); font-size: 9.5px; }
+.smc-agent .pa-rules label b { color: var(--text); font-size: 10.5px; }
+.smc-agent .pa-rules label small { color: var(--dim-2); font-size: 9px; line-height: 1.5; }
+.smc-agent .pa-rules input[type="checkbox"] { justify-self: start; accent-color: var(--gold); }
+.smc-agent .pa-rules input[type="text"], .smc-agent .pa-rules input:not([type]) {
+  padding: 6px 8px; border: 1px solid var(--card-border-soft); border-radius: 5px;
+  background: var(--bg-2); color: var(--text);
+  font: 10px/1.2 ui-monospace, monospace; }
+.smc-agent .pa-export { margin: 0 0 var(--space-1); }

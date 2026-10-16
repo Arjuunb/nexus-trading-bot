@@ -56,7 +56,12 @@ def test_engine_freeze_fingerprints_match_the_current_exact_engine():
         (DATA / "native_smc_visual_verification_final.json").read_text(encoding="utf-8")
     )["visual_evidence_hash"]
     assert frozen["execution_allowed"] is False
-    assert frozen["paper_trading_enabled"] is False
+    # Paper simulation was authorised by the repository owner as an approved
+    # non-alpha delta; the manifest records who authorised it and the evidence.
+    # The three permissions below it did NOT move, and this is the test that
+    # says so -- paper trading is not a foothold for live routing.
+    assert frozen["paper_trading_enabled"] is True
+    assert frozen["paper_execution_authorised_by"]
     assert frozen["forward_paper_enabled"] is False
     assert frozen["live_trading_enabled"] is False
 

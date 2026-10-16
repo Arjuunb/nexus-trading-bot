@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Which strategy actually produced each instance's paper trades.
+
+The dashboard labels an instance's record with the strategy it is running
+*now*. The record itself is every paper trade that instance ever closed:
+services/trading_instances.py scopes them by instance_id and never by strategy.
+Switch an instance to a new strategy and the old strategy's wins and losses
+keep being reported under the new one's name -- including in the "best measured
+instance" banner.
+
+This says whether that has happened, by grouping the same trades the dashboard
+counts by the strategy_id stored on each one.
+
+Read-only. The ledger is opened mode=ro and this script cannot write to it.
+
+    python scripts/trade_attribution.py
+    python scripts/trade_attribution.py --symbol BNBUSDT
+    python scripts/trade_attribution.py --instance 5038a3d8e5974a09b3f7106d2ba7127d
+"""
+from __future__ import annotations
+
+import argparse
+import sqlite3
+import sys
+from collections import defaultdict
+from pathlib import Path
+
+DB = "/var/lib/tradexa/ledger.db"
+_LIST_LIMIT = 20
+
+
+def _pnl(row: dict) -> float:
+    for key in ("pnl", "realized_pnl", "net_pnl"):
+        if row.get(key) is not None:
+            try:
+                return float(row[key])
+            except (TypeError, ValueError):
+                return 0.0
+    return 0.0
+
+
+def attribute(db_path: str, *, symbol: str | None, instance: str | None, out) -> dict:
+    db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    where, params = [], []
+    if symbol:
+        where.append("symbol=?")
+        params.append(symbol.upper())
+    if instance:
+        where.append("instance_id=?")
+        params.append(instance)
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    rows = [dict(r) for r in db.execute(f"SELECT * FROM paper_trades{clause}", params)]
+    # An empty filtered result has two very different meanings and the caller
+    # cannot tell them apart from a bare "trades 0". Ask the unfiltered table
+    # what it actually holds before closing the connection.
+    present: dict = {}
+    held = 0
+    if not rows and clause:
+        held = int(db.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0])
+        for column in ("symbol", "instance_id"):
+            distinct = int(db.execute(
+                f"SELECT COUNT(DISTINCT {column}) FROM paper_trades").fetchone()[0])
+            listed = [
+                (str(r[0] or "(blank)"), int(r[1]))
+                for r in db.execute(
+                    f"SELECT {column}, COUNT(*) FROM paper_trades "
+                    f"GROUP BY {column} ORDER BY COUNT(*) DESC LIMIT {_LIST_LIMIT}")]
+            present[column] = (listed, distinct)
+    db.close()
+
+    by_instance: dict = defaultdict(lambda: defaultdict(list))
+    for row in rows:
+        key = str(row.get("instance_id") or "(no instance)")
+        by_instance[key][str(row.get("strategy_id") or "(unattributed)")].append(row)
+
+    print(f"Paper trade attribution -- READ ONLY\n  ledger  {db_path}", file=out)
+    if symbol or instance:
+        print(f"  filter  {symbol or ''} {instance or ''}".rstrip(), file=out)
+    print(f"  trades  {len(rows)}\n", file=out)
+
+    if not rows:
+        if not clause:
+            print("NO TRADES: this ledger holds no paper trades at all.", file=out)
+            print("  Nothing has been recorded here -- check that this is the"
+                  " ledger the instance writes to.", file=out)
+            return {"trades": 0, "instances": 0, "mixed": [], "matched": False}
+        if not held:
+            print("NO TRADES: this ledger holds no paper trades at all, so the"
+                  " filter is not what excluded them.", file=out)
+            return {"trades": 0, "instances": 0, "mixed": [], "matched": False}
+        print(f"FILTER MATCHED NOTHING: the ledger holds {held} paper trades,"
+              " none of them under this filter.", file=out)
+        for column, label in (("symbol", "symbols"), ("instance_id", "instances")):
+            listed, distinct = present.get(column) or ([], 0)
+            if not listed:
+                continue
+            more = distinct - len(listed)
+            suffix = f" (top {len(listed)} of {distinct})" if more > 0 else ""
+            print(f"  {label} present{suffix}:", file=out)
+            for value, count in listed:
+                print(f"    {count:>6}  {value}", file=out)
+        print("  Re-run with one of the values above. A dashboard card that"
+              " reports trades this ledger does not hold is the finding, not"
+              " a typo.", file=out)
+        return {"trades": 0, "instances": 0, "mixed": [], "matched": False}
+
+    mixed = []
+    for instance_id, strategies in sorted(by_instance.items()):
+        total = sum(len(v) for v in strategies.values())
+        flag = "  <-- MIXED" if len(strategies) > 1 else ""
+        print(f"instance {instance_id}   {total} trades{flag}", file=out)
+        for strategy_id, trades in sorted(strategies.items(),
+                                          key=lambda kv: -len(kv[1])):
+            closed = [t for t in trades if str(t.get("status")) != "open"]
+            wins = [t for t in closed if _pnl(t) > 0]
+            losses = [t for t in closed if _pnl(t) < 0]
+            gross_win = sum(_pnl(t) for t in wins)
+            gross_loss = -sum(_pnl(t) for t in losses)
+            pf = (gross_win / gross_loss) if gross_loss else None
+            head = f"    {len(trades):>5}  {strategy_id:<40}  closed {len(closed):>4}"
+            if not closed:
+                print(head, file=out)
+                continue
+            print(f"{head}  win {100 * len(wins) / len(closed):>5.1f}%", file=out)
+            # Average win against average loss is the number that says whether
+            # a trade reached the target its own gate demanded. A strategy that
+            # required 2.5R and whose winners average 0.6R is being closed
+            # somewhere other than its target.
+            print(f"           {'':<40}"
+                  f"  PF {'n/a' if pf is None else round(pf, 2)}"
+                  f"   net {gross_win - gross_loss:+.2f}"
+                  f"   avg win {gross_win / max(len(wins), 1):.2f}"
+                  f"   avg loss {gross_loss / max(len(losses), 1):.2f}", file=out)
+        if len(strategies) > 1:
+            mixed.append(instance_id)
+        print(file=out)
+
+    # A ledger where nothing is attributed satisfies "one strategy per instance"
+    # trivially -- one group, named (unattributed), under one instance, named
+    # (no instance) -- and the all-clear below would be printed over exactly
+    # the situation this tool exists to catch. Count it before concluding.
+    unowned = sum(len(rows) for strategies in by_instance.values()
+                  for key, rows in strategies.items()
+                  if key == "(unattributed)")
+    no_instance = sum(len(v) for v in by_instance.get("(no instance)", {}).values())
+    orphaned = max(unowned, no_instance)
+
+    if mixed:
+        print("MIXED ATTRIBUTION: the instances above hold trades from more than one"
+              " strategy.", file=out)
+        print("  The dashboard reports all of them under whichever strategy is"
+              " configured now.", file=out)
+    elif orphaned == len(rows) and rows:
+        print(f"NOTHING IS ATTRIBUTED: all {len(rows)} trades carry no instance and"
+              " no strategy.", file=out)
+        print("  This is not a clean bill of health. Every per-instance card and"
+              " every per-strategy", file=out)
+        print("  statistic scopes by instance_id, so these trades are invisible to"
+              " all of them --", file=out)
+        print("  a real record that no page can report and no strategy can be"
+              " credited or blamed for.", file=out)
+        print("  Trades written by the global webhook paper engine carry no"
+              " instance; per-instance", file=out)
+        print("  workers write through a scoped ledger and do. A table that is"
+              " entirely unscoped", file=out)
+        print("  means the instance workers have recorded nothing here.", file=out)
+    elif orphaned:
+        print(f"PARTIALLY ATTRIBUTED: {orphaned} of {len(rows)} trades carry no"
+              " instance or no strategy.", file=out)
+        print("  Those are invisible to the per-instance cards, which scope by"
+              " instance_id.", file=out)
+    elif by_instance:
+        print("Every instance's trades come from a single strategy: the dashboard's"
+              " attribution is correct.", file=out)
+    return {"trades": len(rows), "instances": len(by_instance), "mixed": mixed,
+            "unattributed": orphaned, "matched": True}
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--db", default=DB)
+    parser.add_argument("--symbol")
+    parser.add_argument("--instance")
+    args = parser.parse_args(argv)
+    if not Path(args.db).exists():
+        print(f"no such ledger: {args.db}", file=sys.stderr)
+        return 2
+    attribute(args.db, symbol=args.symbol, instance=args.instance, out=sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

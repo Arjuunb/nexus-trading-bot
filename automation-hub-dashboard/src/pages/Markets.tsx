@@ -123,15 +123,20 @@ function OpportunityScanner({ symbols }: { symbols: string }) {
   };
 
   return (
-    <Card title="Opportunity Scanner" subtitle="breakouts · sweeps · volume · momentum · trend · pullbacks — ranked from real candles"
+    <Card title="Opportunity Scanner" subtitle="breakouts · sweeps · volume · momentum · trend · pullbacks — ranked from the cached candles, at the age shown"
       right={<div className="row-actions" style={{ gap: 6 }}>
         <select value={tf} onChange={(e) => setTf(e.target.value)}>{SCAN_TFS.map((t) => <option key={t}>{t}</option>)}</select>
         <button className="btn btn-primary" disabled={busy} onClick={run}><Icon name="target" size={14} /> {busy ? "Scanning…" : "Scan"}</button>
       </div>}>
       {!data ? (
-        <div className="dim ta-center" style={{ padding: 16 }}>Run a scan to rank live setups across your symbols.</div>
+        <div className="dim ta-center" style={{ padding: 16 }}>Run a scan to rank setups across your symbols.</div>
       ) : (data.opportunities?.length ?? 0) === 0 ? (
-        <div className="dim ta-center" style={{ padding: 16 }}>No setups firing right now ({(data.symbols ?? []).filter((s) => s.available).length} symbols scanned). Try another timeframe.</div>
+        <div className="ta-center" style={{ padding: 16 }}>
+          <div className="dim">No setups in these candles ({(data.symbols ?? []).filter((s) => s.available).length} symbols scanned). Try another timeframe.</div>
+          {/* Without this, a scan over day-old candles and a scan that genuinely
+              found nothing are the same empty box. */}
+          <StaleNote data={data} />
+        </div>
       ) : (
         <div className="scan-grid">
           {(data.opportunities ?? []).slice(0, 12).map((o, i) => (
@@ -146,10 +151,53 @@ function OpportunityScanner({ symbols }: { symbols: string }) {
                 <b style={{ color: strColor(o.strength) }}>{o.strength}</b>
               </div>
               <span className="dim" style={{ fontSize: 11 }}>{o.detail}</span>
+              {o.stale ? (
+                <span className="scan-stale" title={`Computed from candles that closed ${fmtAge(o.as_of)} ago`}>
+                  <Icon name="alert" size={11} /> {fmtAge(o.as_of)} old
+                </span>
+              ) : null}
             </div>
           ))}
         </div>
       )}
+      {data && (data.opportunities?.length ?? 0) > 0 ? <StaleNote data={data} /> : null}
     </Card>
+  );
+}
+
+/** How long ago a candle closed, in the coarsest unit that stays honest. */
+function fmtAge(iso?: string | null): string {
+  if (!iso) return "unknown";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return "unknown";
+  const m = Math.round(ms / 60000);
+  if (m < 60) return `${m}m`;
+  const h = ms / 3600000;
+  return h < 48 ? `${h.toFixed(1)}h` : `${Math.round(h / 24)}d`;
+}
+
+/** What the ranking was actually computed on.
+ *
+ * The scanner reads a local candle cache that nothing refreshes on a schedule
+ * -- it was measured 15.8h behind for BTCUSDT and empty for BNBUSDT. The page
+ * used to present that as "live setups" with a last price. It reports the age
+ * the server measured; it never decides freshness itself. */
+function StaleNote({ data }: { data: ScanResult }) {
+  const stale = data.stale_symbols ?? [];
+  if (!stale.length) return null;
+  const missing = (data.symbols ?? []).filter((r) => r.stale && !r.available).map((r) => r.symbol);
+  const behind = (data.symbols ?? []).filter((r) => r.stale && r.available);
+  const oldest = behind.reduce<string | null>(
+    (acc, r) => (!acc || (r.as_of ?? "") < acc ? r.as_of ?? acc : acc), null);
+  return (
+    <div className="scan-stale-note">
+      <Icon name="alert" size={13} />
+      <span>
+        <b>Not current.</b>{" "}
+        {behind.length ? <>{behind.length} of {(data.symbols ?? []).length} symbols ranked from candles up to <b>{fmtAge(oldest)}</b> old ({behind.map((r) => r.symbol.replace("USDT", "")).join(", ")}). </> : null}
+        {missing.length ? <>No candles at all for {missing.map((s) => s.replace("USDT", "")).join(", ")}. </> : null}
+        Refresh the cache with <code>/data/sync</code> — nothing does it on a schedule.
+      </span>
+    </div>
   );
 }

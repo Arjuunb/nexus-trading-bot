@@ -1,34 +1,135 @@
 {
-  "BTCUSDT|15m|1200|Supply/Demand": [
+  "BTCUSDT|15m|1200|Supply/Demand": [],
+  "BTCUSDT|15m|1200|Support/Resistance Rejection": [
     {
-      "entry": 131.751366,
-      "exit": 131.751366,
-      "exit_reason": "Break-even stop after partial",
+      "entry": 135.115325,
+      "exit": 129.75214,
+      "exit_reason": "Stop loss hit",
       "partial": true,
-      "result": "Winner",
-      "rr": 0.5,
+      "result": "Loser",
+      "rr": -1.0,
       "side": "long",
-      "sl": 127.843692
+      "sl": 129.75214
     },
     {
-      "entry": 121.560422,
-      "exit": 121.560422,
-      "exit_reason": "Break-even stop after partial",
+      "entry": 130.682254,
+      "exit": 127.808714,
+      "exit_reason": "Stop loss hit",
       "partial": true,
-      "result": "Winner",
-      "rr": 0.5,
+      "result": "Loser",
+      "rr": -1.0,
       "side": "long",
-      "sl": 117.346143
+      "sl": 127.808714
     },
     {
-      "entry": 124.559464,
-      "exit": 124.559464,
+      "entry": 128.559671,
+      "exit": 125.599145,
+      "exit_reason": "Stop loss hit",
+      "partial": true,
+      "result": "Loser",
+      "rr": -1.0,
+      "side": "long",
+      "sl": 125.599145
+    },
+    {
+      "entry": 124.871999,
+      "exit": 121.306958,
+      "exit_reason": "Stop loss hit",
+      "partial": true,
+      "result": "Loser",
+      "rr": -1.0,
+      "side": "long",
+      "sl": 121.306958
+    },
+    {
+      "entry": 120.334738,
+      "exit": 120.334738,
       "exit_reason": "Break-even stop after partial",
       "partial": true,
       "result": "Winner",
       "rr": 0.5,
       "side": "long",
-      "sl": 120.871636
+      "sl": 116.698032
+    },
+    {
+      "entry": 114.232331,
+      "exit": 121.823548,
+      "exit_reason": "Final take-profit reached",
+      "partial": true,
+      "result": "Winner",
+      "rr": 1.5,
+      "side": "long",
+      "sl": 110.436722
+    },
+    {
+      "entry": 131.254473,
+      "exit": 131.254473,
+      "exit_reason": "Break-even stop after partial",
+      "partial": true,
+      "result": "Winner",
+      "rr": 0.5,
+      "side": "long",
+      "sl": 127.555292
+    },
+    {
+      "entry": 136.060724,
+      "exit": 132.207524,
+      "exit_reason": "Stop loss hit",
+      "partial": true,
+      "result": "Loser",
+      "rr": -1.0,
+      "side": "long",
+      "sl": 132.207524
+    },
+    {
+      "entry": 127.844933,
+      "exit": 135.948087,
+      "exit_reason": "Final take-profit reached",
+      "partial": true,
+      "result": "Winner",
+      "rr": 1.5,
+      "side": "long",
+      "sl": 123.793356
+    },
+    {
+      "entry": 132.02342,
+      "exit": 132.02342,
+      "exit_reason": "Break-even stop after partial",
+      "partial": true,
+      "result": "Winner",
+      "rr": 0.5,
+      "side": "long",
+      "sl": 128.960419
+    },
+    {
+      "entry": 129.939148,
+      "exit": 125.075361,
+      "exit_reason": "Stop loss hit",
+      "partial": true,
+      "result": "Loser",
+      "rr": -1.0,
+      "side": "long",
+      "sl": 125.075361
+    },
+    {
+      "entry": 126.024617,
+      "exit": 134.613711,
+      "exit_reason": "Final take-profit reached",
+      "partial": true,
+      "result": "Winner",
+      "rr": 1.5,
+      "side": "long",
+      "sl": 121.730071
+    },
+    {
+      "entry": 123.571875,
+      "exit": 129.847667,
+      "exit_reason": "Final take-profit reached",
+      "partial": true,
+      "result": "Winner",
+      "rr": 1.5,
+      "side": "long",
+      "sl": 120.433979
     }
   ],
   "BTCUSDT|15m|1200|Trend Following": [
@@ -53,36 +154,5 @@
       "sl": 129.501215
     }
   ],
-  "ETHUSDT|15m|1200|Supply/Demand": [
-    {
-      "entry": 131.751366,
-      "exit": 131.751366,
-      "exit_reason": "Break-even stop after partial",
-      "partial": true,
-      "result": "Winner",
-      "rr": 0.5,
-      "side": "long",
-      "sl": 127.843692
-    },
-    {
-      "entry": 121.560422,
-      "exit": 121.560422,
-      "exit_reason": "Break-even stop after partial",
-      "partial": true,
-      "result": "Winner",
-      "rr": 0.5,
-      "side": "long",
-      "sl": 117.346143
-    },
-    {
-      "entry": 124.559464,
-      "exit": 124.559464,
-      "exit_reason": "Break-even stop after partial",
-      "partial": true,
-      "result": "Winner",
-      "rr": 0.5,
-      "side": "long",
-      "sl": 120.871636
-    }
-  ]
+  "ETHUSDT|15m|1200|Supply/Demand": []
 }
