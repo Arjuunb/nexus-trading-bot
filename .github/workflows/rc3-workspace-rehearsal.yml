@@ -1,0 +1,45 @@
+name: RC3 workspace migration rehearsal only
+on:
+  push:
+    branches: [ci/rc3-workspace-acceptance-rehearsal]
+    paths:
+      - .github/rc3-workspace-rehearsal/**
+      - .github/workflows/rc3-workspace-rehearsal.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rehearse:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Require disposable Linux runner
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test -z "${DOCKER_HOST:-}"
+          test -z "${DOCKER_CONTEXT:-}"
+      - name: Check out rehearsal controller separately
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-workspace-rehearsal
+      - name: Check out exact approved correction
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: f8778ed42039d415f3829e08a05225976fe0d0a5
+          path: source
+          persist-credentials: false
+      - name: Exercise actual PostgreSQL row policies and gateway syntax
+        run: python3 controller/.github/rc3-workspace-rehearsal/rehearse.py
+      - name: Retain synthetic rehearsal evidence
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-workspace-rehearsal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rc3-workspace-rehearsal-evidence/
+          if-no-files-found: error
+          retention-days: 7
