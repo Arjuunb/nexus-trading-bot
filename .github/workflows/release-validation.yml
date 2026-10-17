@@ -16,6 +16,9 @@ jobs:
   backend-and-ui:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: source
     strategy:
       fail-fast: false
       max-parallel: 2
@@ -31,6 +34,10 @@ jobs:
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: source
+          persist-credentials: false
+        with:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -40,8 +47,8 @@ jobs:
           node-version: '20'
           cache: npm
           cache-dependency-path: |
-            automation-hub-dashboard/package-lock.json
-            tradexa-landing/package-lock.json
+            source/automation-hub-dashboard/package-lock.json
+            source/tradexa-landing/package-lock.json
       - name: Install hash-locked runtime and test dependencies
         run: |
           python -m venv .venv
@@ -73,14 +80,52 @@ jobs:
           .venv/bin/python -m pytest -q automation-hub/tests/test_postgres_workers.py automation-hub/tests/test_sprint11_postgres.py automation-hub/tests/test_sprint13_postgres.py --junitxml=${{ runner.temp }}/postgres-tests.xml
       - name: Install matched Playwright browser on the disposable CI runner
         if: matrix.python == '3.12'
-        working-directory: automation-hub-dashboard
+        working-directory: source/automation-hub-dashboard
         run: |
           npx playwright install --with-deps chromium
           printf 'PW_CHROMIUM=%s\n' "$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
-      - name: Run existing browser regressions with mocked backend
+      - name: Check out the reviewed RC3 clipboard harness separately
         if: matrix.python == '3.12'
-        working-directory: automation-hub-dashboard
-        run: npm run test:e2e
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          ref: '24b67bf43e1712b5566fa33b457814ceac5ec30b'
+          path: validation-controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-browser
+      - name: Verify the reviewed harness and unchanged dashboard source
+        if: matrix.python == '3.12'
+        run: |
+          python - <<'PY'
+          import hashlib, os, subprocess
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          controller = workspace / 'validation-controller'
+          actual = subprocess.check_output(['git', '-C', str(controller), 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == '24b67bf43e1712b5566fa33b457814ceac5ec30b'
+          expected = {'playwright.config.cjs': '6b1cb8d1827f2301c567fe50b4a3957cf9ed2cde28aa62b7a6f0e57478e2a6da', 'clipboard.spec.cjs': '4185ce2a072662f04649a67763321b4de03cdb81dfcc55f8ae179d3d919d219e'}
+          for name, digest in expected.items():
+              assert hashlib.sha256((controller / '.github/rc3-browser' / name).read_bytes()).hexdigest() == digest
+          subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--', 'automation-hub-dashboard'], check=True)
+          PY
+      - name: Run unchanged browser regressions with the reviewed clipboard harness
+        if: matrix.python == '3.12'
+        working-directory: source/automation-hub-dashboard
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/browser-tests.xml
+        run: npx playwright test --config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs" --reporter=list,junit --output="$RUNNER_TEMP/browser-output"
+      - name: Require full browser evidence and unchanged original assertions
+        if: matrix.python == '3.12'
+        run: |
+          git diff --exit-code HEAD -- automation-hub-dashboard
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          cases = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'browser-tests.xml').findall('.//testcase')
+          assert len(cases) >= 156
+          assert not any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped'))
+          PY
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
