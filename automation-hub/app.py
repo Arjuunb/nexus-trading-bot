@@ -42,6 +42,10 @@ from core_engine.persistence import ShadowDecisionStore  # noqa: E402
 from routers.core_v2 import create_router as create_core_v2_router  # noqa: E402
 from routers.strategy_intelligence import create_router as create_intelligence_router  # noqa: E402
 from services.supabase_auth import Principal, SupabaseAuth, SupabaseAuthError  # noqa: E402
+from services.customer_workspaces import (  # noqa: E402
+    CustomerWorkspaces, WorkspaceError, validate_data as validate_workspace_data,
+    validate_namespace as validate_workspace_namespace,
+)
 
 # The API version prefix, declared before the app so the OpenAPI docs can live
 # under it (see below). The router mount further down reuses this constant.
@@ -63,27 +67,28 @@ app = FastAPI(
 # mode. Customer identity is Supabase Auth; do not seed an env-password user in
 # that mode because it would silently create a second login authority.
 store = SqliteStore(settings.db_path)
-# Durable settings mirror: when SUPABASE_URL + SUPABASE_KEY are set, per-user
-# settings persist to Supabase so they survive an ephemeral-disk restart (no
-# more "defaults on every login") without needing a paid disk. No-op otherwise.
-try:
-    from data.settings_store import make_settings_mirror, SETTINGS_MIRROR_STATUS  # noqa: E402
-    store.settings_mirror = make_settings_mirror()
-    if store.settings_mirror is not None:
-        print("[settings] durable Supabase mirror CONNECTED — settings survive redeploys.", flush=True)
-    elif SETTINGS_MIRROR_STATUS["configured"]:
-        print(f"[settings] Supabase configured but NOT working: {SETTINGS_MIRROR_STATUS['error']} "
-              f"— settings will still reset on redeploy until this is fixed.", flush=True)
-    else:
-        print("[settings] no Supabase (SUPABASE_URL/KEY unset) — settings are local only "
-              "and reset on an ephemeral-disk redeploy.", flush=True)
-except Exception:  # noqa: BLE001 — never let settings persistence break boot
-    pass
+# Keep the historical global mirror only in legacy mode. Its shared key and
+# boot-time write probe must never serve the customer workspace path.
+if settings.auth_mode == "legacy":
+    try:
+        from data.settings_store import make_settings_mirror, SETTINGS_MIRROR_STATUS  # noqa: E402
+        store.settings_mirror = make_settings_mirror()
+        if store.settings_mirror is not None:
+            print("[settings] durable Supabase mirror CONNECTED — settings survive redeploys.", flush=True)
+        elif SETTINGS_MIRROR_STATUS["configured"]:
+            print(f"[settings] Supabase configured but NOT working: {SETTINGS_MIRROR_STATUS['error']} "
+                  f"— settings will still reset on redeploy until this is fixed.", flush=True)
+        else:
+            print("[settings] no Supabase (SUPABASE_URL/KEY unset) — settings are local only "
+                  "and reset on an ephemeral-disk redeploy.", flush=True)
+    except Exception:  # noqa: BLE001 — never let legacy settings persistence break boot
+        pass
 if settings.auth_mode == "legacy":
     store.seed_admin(settings.username, settings.password)
 elif settings.auth_mode != "supabase":
     raise RuntimeError("HUB_AUTH_MODE must be 'supabase' or 'legacy'")
 supabase_auth = SupabaseAuth()
+customer_workspaces = CustomerWorkspaces(supabase_auth)
 manager = BotManager(store=store)
 # V2 records are kept in a distinct table in the durable decisions database.
 # They are shadow observations, not legacy decisions and never execution input.
@@ -320,10 +325,14 @@ async def _require_auth(request: Request, call_next):
     # verified account/profile routes remain available under /auth/ and the
     # protected settings SPA under /settings/.
     principal = None
+    customer_workspace_path = (settings.auth_mode == "supabase"
+                               and path == "/user/settings"
+                               and request.method in {"GET", "POST"})
     if settings.auth_mode == "supabase":
         principal = _supabase_principal(request)
         legacy_engine_path = not (path.startswith("/auth/") or path.startswith("/settings/")
-                                  or path == "/app" or path.startswith("/app/"))
+                                  or path == "/app" or path.startswith("/app/")
+                                  or customer_workspace_path)
         if principal and not principal.is_admin and legacy_engine_path:
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": "This deployment-wide engine is restricted to administrators while its legacy data is migrated."}, status_code=403)
@@ -343,7 +352,7 @@ async def _require_auth(request: Request, call_next):
         # A regular Supabase customer never receives this bridge, preserving the
         # fail-closed boundary around the deployment-wide legacy engine.
         is_control_operator = _has_role(request, "operator")
-        if is_control_operator and not hdr:
+        if is_control_operator and not hdr and not customer_workspace_path:
             request.scope["headers"] = list(request.scope["headers"]) + [
                 (b"x-webhook-secret", settings.admin_key.encode("utf-8"))]
         return await call_next(request)
@@ -1685,16 +1694,29 @@ def oauth_unlink(request: Request, provider: str):
 
 
 # ------------------------------------------------- persistent user workspace
-# Per-user settings blobs (namespace -> JSON), session-authenticated and
-# strictly isolated by username. The backend DB is the source of truth; the
-# frontends use localStorage only as a fast-boot cache. Nothing here is ever
-# reset implicitly — DELETE is wired only to the user's explicit Reset actions.
+# Supabase customers use only settings-center metadata in a dedicated RLS
+# store, owned by the UUID verified from their access token. No SQLite cache,
+# shared-key mirror or reset endpoint participates in that mode. Legacy mode
+# retains its username-scoped SQLite/mirror namespaces and explicit resets.
 _SETTINGS_NAMESPACES = ("settings-center", "dashboard", "preferences", "profile")
+_CUSTOMER_WORKSPACE_MAX_BODY_BYTES = 232_768
 
 
 @app.get("/user/settings")
 async def user_settings_get(request: Request, ns: str = "settings-center"):
     from fastapi.responses import JSONResponse
+    if settings.auth_mode == "supabase":
+        principal = _supabase_principal(request)
+        if not principal:
+            return JSONResponse({"error": "Sign in required"}, status_code=401)
+        if not principal.email_confirmed:
+            return JSONResponse({"error": "Confirm your email before using your workspace."}, status_code=403)
+        try:
+            validate_workspace_namespace(ns)
+            data = customer_workspaces.get(_supabase_token(request), ns)
+        except WorkspaceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
+        return {"ns": ns, "data": data}
     u = _user(request)
     if not u:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -1706,6 +1728,33 @@ async def user_settings_get(request: Request, ns: str = "settings-center"):
 @app.post("/user/settings")
 async def user_settings_set(request: Request):
     from fastapi.responses import JSONResponse
+    if settings.auth_mode == "supabase":
+        principal = _supabase_principal(request)
+        if not principal:
+            return JSONResponse({"error": "Sign in required"}, status_code=401)
+        if not principal.email_confirmed:
+            return JSONResponse({"error": "Confirm your email before using your workspace."}, status_code=403)
+        # Bound the entire streamed envelope before JSON parsing. A small data
+        # object must not permit unlimited whitespace or unrelated fields.
+        raw_body = bytearray()
+        async for chunk in request.stream():
+            if len(raw_body) + len(chunk) > _CUSTOMER_WORKSPACE_MAX_BODY_BYTES:
+                return JSONResponse({"error": "workspace request too large"}, status_code=413)
+            raw_body.extend(chunk)
+        try:
+            body = _json.loads(raw_body)
+        except (ValueError, UnicodeError, RecursionError):
+            return JSONResponse({"error": "A JSON object is required"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "A JSON object is required"}, status_code=400)
+        ns, data = body.get("ns", "settings-center"), body.get("data")
+        try:
+            validate_workspace_namespace(ns)
+            validate_workspace_data(data)
+            customer_workspaces.put(_supabase_token(request), ns, data)
+        except WorkspaceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
+        return {"saved": True, "ns": ns}
     u = _user(request)
     if not u:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -1726,6 +1775,8 @@ async def user_settings_set(request: Request):
 async def user_settings_reset(request: Request, ns: str = ""):
     """Explicit reset only (Reset Settings / Reset Dashboard / Factory Reset)."""
     from fastapi.responses import JSONResponse
+    if settings.auth_mode == "supabase":
+        return JSONResponse({"error": "Customer workspace reset is not available."}, status_code=403)
     u = _user(request)
     if not u:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
