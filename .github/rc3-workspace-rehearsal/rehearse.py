@@ -126,6 +126,10 @@ insert into auth.users values (''' + "'" + A + "'), ('" + B + "');")
     case('guard_rejects_missing_expected_profile_schema', guarded.read_text(), role=None, uid=None, error='P0001')
     sql('create table public.tradexa_profiles (id uuid primary key references auth.users(id), full_name text);')
     sql(guarded.read_text())
+    inspection = sql(Path(__file__).resolve().with_name('INSPECT_EXISTING_WORKSPACE.sql').read_text())
+    inspection_result = json.loads(inspection.stdout)
+    assert inspection_result['status'] == 'WORKSPACE_SCHEMA_MATCHES_REVIEW' and inspection_result['existing_row_count'] == 0
+    REPORT['existing_schema_inspector_rehearsal'] = inspection_result
     case('guarded_batch_refuses_reapplication', guarded.read_text(), role=None, uid=None, error='P0001')
     case('row_security_enabled_and_forced', "select relrowsecurity::text || ',' || relforcerowsecurity::text from pg_class where oid='public.tradexa_customer_workspaces'::regclass", 'true,true', role=None, uid=None)
     case('exact_three_authenticated_policies', "select string_agg(cmd, ',' order by cmd) from pg_policies where schemaname='public' and tablename='tradexa_customer_workspaces' and roles='{authenticated}'::name[]", 'INSERT,SELECT,UPDATE', role=None, uid=None)
