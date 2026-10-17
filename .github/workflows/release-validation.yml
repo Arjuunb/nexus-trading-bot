@@ -55,6 +55,7 @@ jobs:
           npm run typecheck --prefix automation-hub-dashboard
           DASHBOARD_BASE=/app/ npm run build --prefix automation-hub-dashboard
           VITE_APP_URL=/app npm run build --prefix tradexa-landing
+          npm run test:workspace --prefix tradexa-landing
           mkdir -p automation-hub/webui automation-hub/landing
           cp -a automation-hub-dashboard/dist/. automation-hub/webui/
           cp -a tradexa-landing/dist/. automation-hub/landing/
