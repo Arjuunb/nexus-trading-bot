@@ -12,6 +12,7 @@ import traceback
 COMMIT = 'f8778ed42039d415f3829e08a05225976fe0d0a5'
 MIGRATION_SHA = 'f254393c9d9562ea9d1f468f59c5044914b1281cb041950c586f305328db4cec'
 GATEWAY_SHA = 'fce20490330ed57befad016892a549f3c7aa169c9c1aec7f5c1ffd7156a8e4b4'
+GUARDED_SHA = '93f8152f918391f6aea58518be19a363785f97e521f53fa1a72f6379b8300c03'
 PG = 'ghcr.io/arjuunb/nexus-trading-bot-postgres@sha256:0c184f826eac85c55b6abd3ad520470cc5556870570e287997109e860dcce8f9'
 PG_CONFIG = 'sha256:9223b83d7d0ed373a991c449034e0d1f054f9cc920369463fa7360a911f9a17c'
 NGINX = 'nginx@sha256:959ae6b898852db82e5b29b929388e59914f42be0a8f4d44c89a4c1f53b49208'
@@ -28,6 +29,7 @@ NAME = 'rc3-workspace-rehearsal-' + os.environ['GITHUB_RUN_ID']
 CASES = []
 REPORT = {'started_at': datetime.now(timezone.utc).isoformat(), 'status': 'RUNNING',
           'source_commit': COMMIT, 'migration_sha256': MIGRATION_SHA, 'gateway_sha256': GATEWAY_SHA,
+          'guarded_migration_sha256': GUARDED_SHA,
           'controller_commit': os.environ['GITHUB_SHA'], 'run_id': os.environ['GITHUB_RUN_ID'],
           'synthetic_data_only': True, 'real_provider_called': False,
           'VPS_access': False, 'publication': False, 'cases': CASES}
@@ -87,8 +89,12 @@ def main():
     assert run(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD']).stdout.strip() == COMMIT
     migration = SOURCE / 'supabase/migrations/0006_customer_workspaces.sql'
     gateway = SOURCE / 'ops/staging.customer-workspace.nginx.conf'
+    guarded = Path(__file__).resolve().with_name('0006_customer_workspaces.guarded.sql')
     assert hashlib.sha256(migration.read_bytes()).hexdigest() == MIGRATION_SHA
     assert hashlib.sha256(gateway.read_bytes()).hexdigest() == GATEWAY_SHA
+    assert hashlib.sha256(guarded.read_bytes()).hexdigest() == GUARDED_SHA
+    source_body = migration.read_text().split('begin;\n',1)[1].rsplit('commit;',1)[0]
+    assert guarded.read_text().split('-- BEGIN exact source migration body; only original transaction markers removed.\n',1)[1].split('-- END exact source migration body.',1)[0] == source_body
     REPORT['postgres_image'] = verify_image(PG, PG_CONFIG)
     REPORT['nginx_image'] = verify_image(NGINX, NGINX_CONFIG)
     # No host networking, published ports, host state mounts or named volumes.
@@ -101,7 +107,8 @@ def main():
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         ready = run(['docker', 'exec', NAME, 'pg_isready', '-U', 'postgres'], check=False)
-        if ready.returncode == 0:
+        log = run(['docker', 'logs', NAME], check=False)
+        if ready.returncode == 0 and 'PostgreSQL init process complete; ready for start up.' in log.stdout + log.stderr:
             break
         time.sleep(1)
     else:
@@ -116,7 +123,10 @@ grant usage on schema public, auth to anon, authenticated;
 create table public.legacy_sentinel (name text primary key, value text);
 insert into public.legacy_sentinel values ('preserve', 'unchanged');
 insert into auth.users values (''' + "'" + A + "'), ('" + B + "');")
-    sql(migration.read_text())
+    case('guard_rejects_missing_expected_profile_schema', guarded.read_text(), role=None, uid=None, error='P0001')
+    sql('create table public.tradexa_profiles (id uuid primary key references auth.users(id), full_name text);')
+    sql(guarded.read_text())
+    case('guarded_batch_refuses_reapplication', guarded.read_text(), role=None, uid=None, error='P0001')
     case('row_security_enabled_and_forced', "select relrowsecurity::text || ',' || relforcerowsecurity::text from pg_class where oid='public.tradexa_customer_workspaces'::regclass", 'true,true', role=None, uid=None)
     case('exact_three_authenticated_policies', "select string_agg(cmd, ',' order by cmd) from pg_policies where schemaname='public' and tablename='tradexa_customer_workspaces' and roles='{authenticated}'::name[]", 'INSERT,SELECT,UPDATE', role=None, uid=None)
     case('authenticated_no_bypass_or_superuser', "select rolsuper::text || ',' || rolbypassrls::text from pg_roles where rolname='authenticated'", 'false,false', role=None, uid=None)
