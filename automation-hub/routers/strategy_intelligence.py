@@ -9,6 +9,7 @@ from __future__ import annotations
 import hmac
 import importlib
 import logging
+from datetime import date
 from typing import Annotated, Callable, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
@@ -104,6 +105,24 @@ class SelectionQuery(BaseModel):
     classifier_id: str | None = Field(default=None, min_length=1, max_length=120)
     classifier_version: str | None = Field(default=None, min_length=1, max_length=120)
     parameter_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class MonitoringQuery(CohortQuery):
+    strategy_id: str = Field(min_length=1,max_length=120,pattern=r"\S")
+    strategy_version: str = Field(min_length=1,max_length=120)
+    config_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    symbol: str = Field(min_length=1,max_length=40,pattern=r"\S")
+    execution_mode: Literal["paper"] = "paper"
+    source_kind: Literal["forward_paper"] = "forward_paper"
+    classifier_id: str | None = Field(default=None,min_length=1,max_length=120)
+    classifier_version: str | None = Field(default=None,min_length=1,max_length=120)
+    parameter_hash: str | None = Field(default=None,pattern=r"^[0-9a-f]{64}$")
+    monitor_policy_version: Literal["edge_decay.v1"] = "edge_decay.v1"
+
+
+class WeeklyResearchQuery(MonitoringQuery):
+    week_start: date | None = None
+    limit: int = Field(default=50,ge=1,le=100)
 
 
 class ValidationHistoryQuery(CohortQuery):
@@ -919,6 +938,49 @@ def create_router(*, service_provider: Callable | None = None,
     @router.get("/edge-score/policies")
     def edge_score_policies(request: Request, response: Response, query: Annotated[DefinitionsQuery, Query()]):
         return read("edge_score_policies", {"owner_id": owner(request, response)}, {})
+
+    @router.get("/monitoring/policies")
+    def monitoring_policies(request:Request,response:Response,query:Annotated[DefinitionsQuery,Query()]):
+        return read("monitoring_policies",{"owner_id":owner(request,response)},{})
+
+    def monitoring_request(request,response,query):
+        identity=owner(request,response)
+        classifier={key:getattr(query,key) for key in ("classifier_id","classifier_version","parameter_hash")}
+        if any(classifier.values()) and not all(classifier.values()):
+            raise HTTPException(422,"Complete classifier identity is required")
+        filters={**exact_filters(query),**classifier,"monitor_policy_version":query.monitor_policy_version}
+        if isinstance(query,WeeklyResearchQuery):
+            from services.weekly_strategy_research import review_week
+            from datetime import datetime,timezone
+            try: filters["week_start"]=review_week(query.week_start.isoformat() if query.week_start else None,datetime.now(timezone.utc).isoformat())
+            except ValueError as exc: raise HTTPException(422,str(exc)) from None
+            filters["limit"]=query.limit
+        return instance_scope(query.instance_id,query.simulation_session_id,identity),filters
+
+    @router.get("/decay")
+    def decay(request:Request,response:Response,query:Annotated[MonitoringQuery,Query()]):
+        scope,filters=monitoring_request(request,response,query)
+        return {"status":"UNKNOWN","windows":[],**read("decay",scope,filters),
+                "advisory_only":True,"orders_allowed":False,"strategy_changes_allowed":False}
+
+    @router.get("/weekly-research")
+    def weekly_research(request:Request,response:Response,query:Annotated[WeeklyResearchQuery,Query()]):
+        scope,filters=monitoring_request(request,response,query)
+        return {**read("weekly_research",scope,filters),"advisory_only":True,
+                "orders_allowed":False,"strategy_changes_allowed":False}
+
+    @router.post("/weekly-research",status_code=201)
+    def generate_weekly_research(request:Request,response:Response,body:WeeklyResearchQuery):
+        scope,filters=monitoring_request(request,response,body)
+        try:
+            service=provider()
+            if service is None: raise HTTPException(503,"Research evidence unavailable")
+            return service.generate_weekly_review(scope,filters)
+        except ValueError as exc: raise HTTPException(409,str(exc)) from None
+        except HTTPException: raise
+        except Exception:
+            logger.exception("weekly_research_generation_failed")
+            raise HTTPException(503,"Research evidence unavailable") from None
 
     @router.get("/edge-score")
     def edge_score(request: Request, response: Response, query: Annotated[EdgeScoreQuery, Query()]):

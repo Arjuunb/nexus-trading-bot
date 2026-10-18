@@ -295,6 +295,16 @@ class JournalContextStore:
     def get_latest_intelligence_run(self, cache_key: str, *, filters: dict | None = None) -> dict | None:
         return self._get_run(cache_key, filters=filters)
 
+    def intelligence_runs(self, cache_key: str, *, filters: dict, limit=50) -> list[dict]:
+        """Bounded immutable snapshot history, always under an explicit owner."""
+        self._required_text(filters, "owner_id")
+        where,args=self._filters({"cache_key":cache_key, **filters},
+            allowed={"cache_key","contract_version","owner_id","account_id","instance_id","run_id"})
+        with self.journal._lock:
+            rows=self.journal._c.execute("SELECT report_json FROM intelligence_calculation_runs"+where
+                +" ORDER BY calculated_at DESC,rowid DESC LIMIT ?",(*args,_positive_limit(limit,100)))
+            return [json.loads(row[0]) for row in rows]
+
     def get_intelligence_run(self, cache_key: str, input_watermark: str, *, filters: dict | None = None) -> dict | None:
         return self._get_run(cache_key, input_watermark=input_watermark, filters=filters)
 

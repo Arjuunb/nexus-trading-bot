@@ -1,0 +1,44 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> automation-hub-dashboard@0.1.0 test:e2e
+> playwright test e2e/strategy-monitoring.spec.ts e2e/strategy-intelligence.spec.ts
+
+[WebServer] (node:78) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+[WebServer] (node:91) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer]
+[WebServer] (!) Some chunks are larger than 500 kB after minification. Consider:
+[WebServer] - Using dynamic import() to code-split the application
+[WebServer] - Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+[WebServer] - Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+[WebServer] (node:116) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+[WebServer] npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+[WebServer] (node:129) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+[WebServer] (Use `node --trace-warnings ...` to show where the warning was created)
+
+Running 15 tests using 1 worker
+
+(node:147) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:147) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+(Use `node --trace-warnings ...` to show where the warning was created)
+  ✓  1 strategy-intelligence.spec.ts:44:1 › Sprint 3 Strategy Intelligence navigation exposes evidence views without qualification claims (442ms)
+  ✓  2 strategy-intelligence.spec.ts:57:1 › context intelligence uses an explicit exact cohort and separates sample, evidence and costs (594ms)
+  ✓  3 strategy-intelligence.spec.ts:86:1 › pending intelligence never presents empty results as zero performance (460ms)
+  ✓  4 strategy-intelligence.spec.ts:95:1 › unauthorized intelligence requests show a recoverable error without fabricated metrics (351ms)
+  ✓  5 strategy-intelligence.spec.ts:103:1 › incomplete costs cannot display verified profitability even if the payload flag is inconsistent (485ms)
+  ✓  6 strategy-intelligence.spec.ts:115:1 › unknown metrics stay unavailable and stale cache cannot verify profitability (474ms)
+  ✓  7 strategy-intelligence.spec.ts:131:1 › a cache failure is an explicit evidence error rather than a valid empty result (423ms)
+  ✓  8 strategy-intelligence.spec.ts:142:1 › Champion Challenger view keeps comparison advisory and exposes explicit recommendation (575ms)
+  ✓  9 strategy-intelligence.spec.ts:167:1 › the versioned profitability flag requires independent complete evidence and cost gates (420ms)
+  ✓  10 strategy-intelligence.spec.ts:181:1 › an identity binding conflict is an explicit blocked cache result (272ms)
+  ✓  11 strategy-intelligence.spec.ts:193:1 › Research Agent requires a frozen plan and exposes real approval states (621ms)
+  ✓  12 strategy-monitoring.spec.ts:31:1 › decay windows require an exact cohort and never offer execution actions (956ms)
+  ✓  13 strategy-monitoring.spec.ts:53:1 › incomplete monitoring never renders fabricated zero performance (337ms)
+  ✓  14 strategy-monitoring.spec.ts:59:1 › weekly report creation is explicit, scoped and has no proposal apply control (590ms)
+  ✓  15 strategy-monitoring.spec.ts:79:1 › changing asset cannot leave another asset's weekly report visible (425ms)
+
+  15 passed (16.7s)

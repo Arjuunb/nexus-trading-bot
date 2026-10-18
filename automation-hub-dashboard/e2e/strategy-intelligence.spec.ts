@@ -50,7 +50,8 @@ test("Sprint 3 Strategy Intelligence navigation exposes evidence views without q
   await expect(page.getByRole("tab", { name: "Strategy Comparison" })).toBeVisible();
   await expect(page.getByText("Not assessed")).toHaveCount(0);
   await page.getByRole("tab", { name: "Research Findings" }).click();
-  await expect(page.getByText("No findings are generated or inferred by Sprint 3.", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Weekly Research", exact: true })).toBeVisible();
+  await expect(page.getByText("Select a cohort and exact asset to inspect evidence.", {exact:true})).toBeVisible();
 });
 
 test("context intelligence uses an explicit exact cohort and separates sample, evidence and costs", async ({ page }) => {

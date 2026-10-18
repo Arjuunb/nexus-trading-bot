@@ -199,6 +199,8 @@ class StrategyIntelligenceService:
                           if _entry_key(row, tid) in journals
                           and journals[_entry_key(row, tid)].get("closed_at") == row.get("closed_at")), {})
             exit_context = (final.get("sections") or {}).get("exit_decision") or {}
+            row["setup"] = ((journal.get("sections") or {}).get("entry_decision") or {}).get("setup_type")
+            row["exit_reason"] = exit_context.get("exit_reason")
             row["mfe_r"] = _finite(exit_context.get("max_profit_r"))
             row["mae_r"] = _finite(exit_context.get("max_drawdown_r"))
             # Existing receipts do not quantify actual slippage separately.
@@ -278,7 +280,14 @@ class StrategyIntelligenceService:
                 ready = source_stable and self._scope_generations[self._scope_key(scope)] == generation
                 if ready:
                     self._ready_scopes.add(self._scope_key(scope))
-        return {"processed_contexts": processed, "calculation_runs": runs,
+        weekly = {"status":"RECOVERING"}
+        if ready:
+            try:
+                weekly=self.run_weekly_research(scope=scope,cohorts=[c.as_dict() for c in cohorts.values()])
+            except Exception:
+                log.exception("weekly_strategy_research_refresh_failed")
+                weekly={"status":"ERROR"}
+        return {"processed_contexts": processed, "calculation_runs": runs, "weekly_research":weekly,
                 "cohort_count": len(cohorts), "calculation_timestamp": now,
                 "status": "READY" if ready else "RECOVERING"}
 
@@ -347,6 +356,27 @@ class StrategyIntelligenceService:
         if view in ("sessions", "regimes", "volatility"):
             from services.market_context_classifier import classifier_definition
             return {**envelope, "definition": classifier_definition(), "view": view}
+        if view == "monitoring_policies":
+            from services.strategy_decay import decay_policy
+            from services.weekly_strategy_research import weekly_policy
+            return {**envelope,"view":view,"cache_status":"READY","decay_policy":decay_policy(),
+                    "weekly_policy":weekly_policy(),"orders_allowed":False,"strategy_changes_allowed":False}
+        if view == "weekly_research":
+            return {**envelope,**self._weekly_history(scope,filters)}
+        if view == "decay":
+            from services.strategy_decay import calculate_decay
+            with self._lock, self.journal.transaction():
+                before=self._monitoring_generations(scope)
+                try:
+                    result=calculate_decay(self._monitoring_evidence(scope,filters),as_of=_now())
+                    if self._monitoring_generations(scope)!=before:
+                        raise ValueError("SCOPE_CHANGED_DURING_MONITORING")
+                    return {**envelope,**result,"contract_version":CONTRACT_VERSION,
+                            "monitor_contract_version":result["contract_version"],"cache_status":"READY"}
+                except ValueError as exc:
+                    return {**envelope,"view":view,"status":"UNKNOWN","windows":[],"persistence_windows":[],
+                        "blocking_reasons":[str(exc)],"orders_allowed":False,"strategy_changes_allowed":False,
+                        "advisory_only":True,"suggested_lifecycle_state":None}
         if view == "edge_score_policies":
             from services.strategy_edge_score import EdgeScorePolicy
             return {**envelope, "view": view, "cache_status": "READY", "policies": [EdgeScorePolicy().as_dict()],
@@ -670,3 +700,125 @@ class StrategyIntelligenceService:
         cache_status = next((value.get("cache_status", "PENDING") for value in (performance, regimes)
                              if value.get("cache_status") != "READY"), "READY")
         return {**result, "cache_status": cache_status}
+
+    def _monitoring_generations(self, scope):
+        with self._ready_lock:
+            return {key:value for key,value in self._scope_generations.items() if _scope_match(scope,json.loads(key))}
+
+    @staticmethod
+    def _monitoring_scope(scope, filters):
+        from services.market_context_classifier import classifier_definition
+        from services.strategy_edge_score import CLASSIFIER_FIELDS
+        if filters.get("monitor_policy_version","edge_decay.v1")!="edge_decay.v1":
+            raise ValueError("UNSUPPORTED_MONITORING_POLICY")
+        if any(not scope.get(k) for k in _SCOPE_FIELDS):
+            raise ValueError("EXACT_OWNER_ACCOUNT_INSTANCE_SESSION_REQUIRED")
+        cohort=_cohort({**{k:filters.get(k) for k in _COHORT_FIELDS},**scope},symbol=filters.get("symbol"))
+        if (not all(cohort.as_dict().get(k) for k in ("strategy_id","strategy_version","config_fingerprint","symbol"))
+                or cohort.execution_mode!="paper" or cohort.source_kind!="forward_paper"):
+            raise ValueError("EXACT_FROZEN_FORWARD_PAPER_COHORT_REQUIRED")
+        classifier={k:filters.get(k) for k in CLASSIFIER_FIELDS}
+        if not any(classifier.values()):
+            definition=classifier_definition()
+            classifier={k:definition[k] for k in CLASSIFIER_FIELDS}
+        elif not all(classifier.values()):
+            raise ValueError("COMPLETE_CLASSIFIER_REQUIRED")
+        return cohort,classifier
+
+    def _monitoring_evidence(self, scope, filters):
+        from services.strategy_intelligence_v2 import _selected_episodes
+        from services.strategy_decay import bind_monitoring_evidence
+        cohort,classifier=self._monitoring_scope(scope,filters)
+        material=self.journal.get_evidence_completeness_snapshot(max_records=self.max_records)
+        context=self.context.context_snapshot(max_records=self.max_records,filters=scope)
+        if material.get("source_complete") is not True or context.get("source_complete") is not True:
+            raise ValueError("MONITORING_SOURCE_BOUND_OR_COMPLETENESS_UNKNOWN")
+        rows,_,duplicates=_selected_episodes(self._enrich_episodes(material),cohort)
+        if duplicates:
+            raise ValueError("DUPLICATE_ORIGINAL_EPISODES")
+        qualification=self.read("qualification",scope,cohort.as_dict())
+        performance=self.read("performance",scope,{**cohort.as_dict(),"group_by":["symbol"]})
+        frozen=self.journal.strategy_identity(cohort.strategy_id,cohort.strategy_version,cohort.config_fingerprint)
+        result=bind_monitoring_evidence(cohort.as_dict(),qualification,performance,rows,context["contexts"],
+            classifier=classifier,frozen=frozen)
+        after=self.journal.get_evidence_completeness_snapshot(max_records=self.max_records)
+        context_after=self.context.context_snapshot(max_records=self.max_records,filters=scope)
+        if (after.get("source_complete") is not True or after.get("watermark")!=material.get("watermark")
+                or context_after.get("source_complete") is not True or context_after.get("watermark")!=context.get("watermark")):
+            raise ValueError("MONITORING_SOURCE_CHANGED_DURING_READ")
+        result["lineage"].update(journal_watermark=material["watermark"],context_watermark=context["watermark"])
+        return result
+
+    def _weekly_key(self,scope,filters,as_of):
+        from services.weekly_strategy_research import review_week,weekly_policy
+        cohort,classifier=self._monitoring_scope(scope,filters)
+        week=review_week(filters.get("week_start"),as_of)
+        key="weekly-research:"+_hash({"cohort":cohort.as_dict(),"classifier":classifier,"week_start":week,
+                                      "policy":weekly_policy()})
+        return key,cohort,week
+
+    def _weekly_history(self,scope,filters):
+        key,cohort,week=self._weekly_key(scope,filters,_now())
+        rows=self.context.intelligence_runs(key,filters={k:scope[k] for k in ("owner_id","account_id","instance_id")},
+                                           limit=min(int(filters.get("limit",50)),100))
+        # A corrupt storage key can never serve another cohort's report.
+        rows=[row for row in rows if row.get("cohort")==cohort.as_dict()
+              and row.get("identity")==cohort.as_dict() and row.get("scope")==scope
+              and row.get("contract_version")=="weekly_strategy_research.v1"]
+        return {"view":"weekly_research","rows":rows,"week_start":week,"cache_status":"HISTORICAL_SNAPSHOT",
+            "source_freshness":"NOT_REVALIDATED","advisory_only":True,"orders_allowed":False,"strategy_changes_allowed":False}
+
+    def generate_weekly_review(self,scope,filters,*,as_of=None):
+        """Explicit metadata-only write. GET reads never generate or enqueue work."""
+        from services.weekly_strategy_research import build_weekly_review
+        as_of=as_of or _now()
+        with self._lock,self.journal.transaction():
+            before=self._monitoring_generations(scope)
+            key,cohort,week=self._weekly_key(scope,filters,as_of)
+            report=build_weekly_review(self._monitoring_evidence(scope,filters),week_start=week,as_of=as_of)
+            existing=self.context.get_intelligence_run(key,report["review_id"],filters={k:scope[k] for k in ("owner_id","account_id","instance_id")})
+            with self._ready_lock:
+                generations={key:value for key,value in self._scope_generations.items() if _scope_match(scope,json.loads(key))}
+                if generations!=before:
+                    raise ValueError("SCOPE_CHANGED_DURING_WEEKLY_RESEARCH")
+                if existing:
+                    if existing.get("cohort")!=cohort.as_dict() or existing.get("scope")!=scope:
+                        raise ValueError("WEEKLY_SNAPSHOT_IDENTITY_CONFLICT")
+                    return existing
+                previous=self.context.get_latest_intelligence_run(key,filters={k:scope[k] for k in ("owner_id","account_id","instance_id")})
+                report.update(run_id=report["review_id"],cache_key=key,input_watermark=report["review_id"],
+                    calculated_at=_now(),scope=dict(scope),cohort=cohort.as_dict(),
+                    supersedes_review_id=previous.get("review_id") if previous else None)
+                self.context.record_intelligence_run(report)
+            return report
+
+    def run_weekly_research(self,*,scope,cohorts,as_of=None,classifier=None):
+        """Existing recovery tick produces the latest completed week once.
+
+        No new thread, notification destination, model call, historical search,
+        candidate promotion or order is started. Missed ticks retry naturally.
+        """
+        from services.weekly_strategy_research import completed_week
+        as_of=as_of or _now()
+        week=completed_week(as_of)
+        result={"week_start":week,"created":0,"existing":0,"incomplete":0,"status":"COMPLETE"}
+        eligible=[c for c in cohorts if c.get("symbol") and c.get("execution_mode")=="paper"
+                  and c.get("source_kind")=="forward_paper" and _scope_match(c,scope)]
+        bound=min(self.batch_size,50)
+        if len(eligible)>bound: result["status"]="COHORT_BOUND_EXCEEDED"
+        for cohort in eligible[:bound]:
+            query={**cohort,**(classifier or {}),"week_start":week}
+            try:
+                key,_,_=self._weekly_key(scope,query,as_of)
+                old=self.context.get_latest_intelligence_run(key,filters={k:scope[k] for k in ("owner_id","account_id","instance_id")})
+                if old:
+                    result["existing"]+=1
+                    continue
+                self.generate_weekly_review(scope,query,as_of=as_of)
+                result["created"]+=1
+            except ValueError:
+                result["incomplete"]+=1
+            except Exception:
+                result["status"]="ERROR"
+                log.exception("weekly_strategy_research_failed")
+        return result

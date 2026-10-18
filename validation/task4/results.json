@@ -1,0 +1,59 @@
+{
+  "task": 4,
+  "base_commit": "d306f4a789754ee0b5f2fece08ab7dd952f11085",
+  "branch": "finish/strategy-intelligence-staging",
+  "checkpoint": "PRE_PUBLICATION",
+  "recorded_at": "2026-10-18T18:04:30.466772+00:00",
+  "focused": {
+    "tests": 445,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 445,
+    "seconds": 80.558
+  },
+  "engine_client": {
+    "tests": 530,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 530,
+    "seconds": 6.037
+  },
+  "browser": {
+    "intelligence_and_monitoring": {
+      "passed": 15,
+      "failed": 0,
+      "seconds": 16.7
+    },
+    "final_monitoring_after_table_styling": {
+      "passed": 4,
+      "failed": 0,
+      "seconds": 11.8
+    },
+    "fixtures_only": true
+  },
+  "dashboard_build": "typecheck and production build passed; existing bundle-size warning",
+  "dependency_check": "No broken requirements found",
+  "full_hub_local": {
+    "status": "RUNNING",
+    "passed_claim": false
+  },
+  "full_branch_ci": {
+    "status": "NOT_STARTED",
+    "passed_claim": false
+  },
+  "known_prior_sandbox_limits": [
+    "standalone worker health uses unavailable procfs namespace",
+    "Docker CLI missing for compose config check"
+  ],
+  "strategy_rules_changed": false,
+  "financial_records_changed": false,
+  "execution_changed": false,
+  "notifications_sent": false,
+  "deployed": false,
+  "task5_started": false,
+  "policy_calibration": "UNCALIBRATED_RESEARCH_POLICY",
+  "data_limits": "No real-market profitability proof. Unknown costs, MAE/MFE, missed opportunities and violations are not zero-filled.",
+  "test_fix": "Replaced whole-response 777 substring leak check with decoded identity/scalar checks and existing financial/scope isolation guard; opaque hashes may contain 777."
+}

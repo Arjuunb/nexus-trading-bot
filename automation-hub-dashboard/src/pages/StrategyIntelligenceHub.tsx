@@ -6,6 +6,7 @@ import ShadowStrategyLab from "./ShadowStrategyLab";
 import ForwardQualification from "./ForwardQualification";
 import IntegrityOperations from "./IntegrityOperations";
 import LocalReadiness from "./LocalReadiness";
+import StrategyMonitoring from "./StrategyMonitoring";
 import { PageHeader, StatCard } from "../components/common/ui";
 import { apiPostJson, useLive } from "../lib/api";
 
@@ -25,7 +26,7 @@ const tabs = [
   ["comparison", "Strategy Comparison"], ["regimes", "Market Regimes"], ["sessions", "Session Analysis"],
   ["evidence", "Trade Evidence"], ["qualification", "Qualification"], ["oos", "Out-of-Sample"],
   ["walk-forward", "Walk-Forward"], ["robustness", "Stress & Monte Carlo"],
-  ["validation-history", "Validation History"], ["champion-challenger", "Champion / Challenger"], ["findings", "Research Findings"],
+  ["validation-history", "Validation History"], ["champion-challenger", "Champion / Challenger"], ["edge-monitoring", "Edge Monitoring"], ["findings", "Research Findings"],
   ["research-agent", "Research Agent"], ["shadow-lab", "Shadow Strategy Lab"],
   ["forward-qualification", "Forward Qualification"],
   ["operations", "Operational Reliability"], ["paper-reconciliation", "Paper Reconciliation"],
@@ -243,5 +244,6 @@ export default function StrategyIntelligenceHub({ tab }: { tab?: string }) {
   if (active === "forward-qualification") return <><SectionTabs tabs={tabs.map(([id, label]) => ({ id, label }))} active={active} /><ForwardQualification /></>;
   if (active === 'operations' || active === 'paper-reconciliation') return <><SectionTabs tabs={tabs.map(([id,label])=>({id,label}))} active={active}/><IntegrityOperations key={active} mode={active==='operations'?'operations':'reconciliation'}/></>;
   if (active === 'local-readiness') return <><SectionTabs tabs={tabs.map(([id,label])=>({id,label}))} active={active}/><LocalReadiness/></>;
-  return <><SectionTabs tabs={tabs.map(([id, label]) => ({ id, label }))} active={active} />{active === "overview" ? <Overview /> : active === "edge-map" ? <EdgeMap /> : active === "comparison" ? <Comparison /> : active === "explorer" ? <ContextIntelligence title="Strategy Explorer" /> : active === "regimes" ? <ContextIntelligence title="Market Regimes" defaultGrouping="trend_regime" /> : active === "sessions" ? <ContextIntelligence title="Session Analysis" /> : active === "evidence" ? <EvidenceExplorer /> : active === "qualification" ? <QualificationArea view="qualification" /> : active === "oos" ? <QualificationArea view="oos" /> : active === "walk-forward" ? <QualificationArea view="walk-forward" /> : active === "robustness" ? <QualificationArea view="robustness" /> : active === "validation-history" ? <QualificationArea view="validation-history" /> : active === "champion-challenger" ? <ChampionChallenger /> : active === "research-agent" ? <ResearchAgent /> : active === "findings" ? <><PageHeader title="Research Findings" subtitle="Read-only placeholder until an evidence-backed findings engine exists." /><Card title="Not assessed"><p>No findings are generated or inferred by Sprint 3.</p></Card></> : <ContextIntelligence />}</>;
+  if (active === 'edge-monitoring' || active === 'findings') return <><SectionTabs tabs={tabs.map(([id,label])=>({id,label}))} active={active}/><StrategyMonitoring key={active} mode={active==='edge-monitoring'?'decay':'weekly'}/></>;
+  return <><SectionTabs tabs={tabs.map(([id, label]) => ({ id, label }))} active={active} />{active === "overview" ? <Overview /> : active === "edge-map" ? <EdgeMap /> : active === "comparison" ? <Comparison /> : active === "explorer" ? <ContextIntelligence title="Strategy Explorer" /> : active === "regimes" ? <ContextIntelligence title="Market Regimes" defaultGrouping="trend_regime" /> : active === "sessions" ? <ContextIntelligence title="Session Analysis" /> : active === "evidence" ? <EvidenceExplorer /> : active === "qualification" ? <QualificationArea view="qualification" /> : active === "oos" ? <QualificationArea view="oos" /> : active === "walk-forward" ? <QualificationArea view="walk-forward" /> : active === "robustness" ? <QualificationArea view="robustness" /> : active === "validation-history" ? <QualificationArea view="validation-history" /> : active === "champion-challenger" ? <ChampionChallenger /> : active === "research-agent" ? <ResearchAgent /> : <ContextIntelligence />}</>;
 }
