@@ -347,6 +347,20 @@ class StrategyIntelligenceService:
         if view in ("sessions", "regimes", "volatility"):
             from services.market_context_classifier import classifier_definition
             return {**envelope, "definition": classifier_definition(), "view": view}
+        if view == "selection":
+            from services.strategy_selection import recommend_strategies
+            # A refresh cannot interleave candidate reads. Independent scope
+            # invalidation still revokes the assembled advisory immediately.
+            with self._lock:
+                with self._ready_lock:
+                    generation = self._scope_generations.get(self._scope_key(scope), 0)
+                result = recommend_strategies(self, scope, filters)
+                with self._ready_lock:
+                    if self._scope_generations.get(self._scope_key(scope), 0) != generation:
+                        result.update(status="INSUFFICIENT_EVIDENCE", recommendation=None,
+                            cache_status="RECONCILIATION_REQUIRED", blocking_reasons=["SCOPE_CHANGED_DURING_SELECTION"])
+                        result.pop("selection_id", None)
+            return {**envelope, **result}
         if view == "overview":
             return self._read_overview(scope, filters, envelope)
         if view == "edge_map":

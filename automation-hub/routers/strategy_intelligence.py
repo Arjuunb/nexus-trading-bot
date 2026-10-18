@@ -78,6 +78,21 @@ class QualificationQuery(CohortQuery):
     pass
 
 
+class SelectionQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    instance_id: str = Field(min_length=1, max_length=120)
+    simulation_session_id: str | None = Field(default=None, min_length=1, max_length=120)
+    lab_id: str | None = Field(default=None, min_length=1, max_length=120)
+    symbol: str = Field(min_length=1, max_length=40, pattern=r"\S")
+    session: Literal["ASIA", "LONDON", "NEW_YORK", "LONDON_NEW_YORK_OVERLAP", "OFF_SESSION"]
+    trend_regime: Literal["BULL", "BEAR", "STRONG_BULL", "STRONG_BEAR", "RANGE"]
+    volatility_regime: Literal["LOW", "NORMAL", "HIGH", "EXTREME"]
+    entry_timeframe: str = Field(min_length=2, max_length=12, pattern=r"^[1-9][0-9]*[mhdw]$")
+    classifier_id: str | None = Field(default=None, min_length=1, max_length=120)
+    classifier_version: str | None = Field(default=None, min_length=1, max_length=120)
+    parameter_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 class ValidationHistoryQuery(CohortQuery):
     method: str | None = Field(default=None, max_length=40)
     status: str | None = Field(default=None, max_length=40)
@@ -887,6 +902,17 @@ def create_router(*, service_provider: Callable | None = None,
     @router.get("/qualification")
     def qualification(request: Request, response: Response, query: Annotated[QualificationQuery, Query()]):
         return scoped_read(request, response, query, "qualification")
+
+    @router.get("/selection")
+    def selection(request: Request, response: Response, query: Annotated[SelectionQuery, Query()]):
+        identity = owner(request, response)
+        values = query.model_dump(exclude={"instance_id", "simulation_session_id"})
+        classifier = [values.get(key) for key in ("classifier_id", "classifier_version", "parameter_hash")]
+        if any(classifier) and not all(classifier):
+            raise HTTPException(422, "Complete classifier identity is required")
+        result = read("selection", instance_scope(query.instance_id, query.simulation_session_id, identity), values)
+        return {"status": "UNAVAILABLE", "recommendation": None, **result,
+                "advisory_only": True, "orders_allowed": False}
 
     @router.get("/oos")
     def oos(request: Request, response: Response, query: Annotated[QualificationQuery, Query()]):

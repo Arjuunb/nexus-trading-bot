@@ -1,0 +1,36 @@
+........................................................................ [ 23%]
+........................................................................ [ 46%]
+........................................................................ [ 70%]
+........................................................................ [ 93%]
+....................                                                     [100%]
+=============================== warnings summary ===============================
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/app.py:530: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/.venv/lib/python3.12/site-packages/fastapi/applications.py:4745: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/app.py:616: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+308 passed, 4 warnings in 46.67s

@@ -81,6 +81,43 @@ def query(**changes):
 BASE = "/api/v2/strategy-intelligence"
 
 
+def selection_query(**changes):
+    return {"instance_id": "mine", "symbol": "XRPUSDT", "session": "LONDON",
+            "trend_regime": "BULL", "volatility_regime": "NORMAL", "entry_timeframe": "5m", **changes}
+
+
+def test_selection_is_advisory_and_server_scoped(api):
+    client, manager, service = api
+    service.payload.update(status="RECOMMENDED", recommendation={"cohort": cohort(symbol="XRPUSDT")})
+    result = client.get(BASE + "/selection", params=selection_query())
+    assert result.status_code == 200 and result.headers["cache-control"] == "no-store"
+    assert result.json()["orders_allowed"] is False and result.json()["advisory_only"] is True
+    view, scope, filters = service.calls[0]
+    assert view == "selection" and scope["account_id"] == "instance:mine:current"
+    assert scope["owner_id"] == "alice" and filters["entry_timeframe"] == "5m"
+
+
+@pytest.mark.parametrize("changes", [{"owner_id": "bob"}, {"account_id": "foreign"},
+    {"qualification_status": "QUALIFIED"}, {"policy": "relaxed"}, {"execution_mode": "live"},
+    {"source_kind": "shadow"}, {"session": "UNKNOWN"}, {"entry_timeframe": "invalid"},
+    {"classifier_version": "1.0.0"}])
+def test_selection_rejects_forged_scope_evidence_and_partial_classifier(api, changes):
+    client, _, service = api
+    assert client.get(BASE + "/selection", params=selection_query(**changes)).status_code == 422
+    assert service.calls == []
+
+
+def test_selection_authorizes_instances_sessions_and_fails_closed_on_cache_error(api):
+    client, _, service = api
+    assert client.get(BASE + "/selection", params=selection_query(instance_id="theirs")).status_code == 404
+    assert client.get(BASE + "/selection", params=selection_query(simulation_session_id="other")).status_code == 404
+    assert service.calls == []
+    service.fail = True
+    result = client.get(BASE + "/selection", params=selection_query()).json()
+    assert result["status"] == "UNAVAILABLE" and result["recommendation"] is None
+    assert result["orders_allowed"] is False
+
+
 def test_exact_cohort_is_server_resolved_and_reads_one_cache(api):
     client, manager, service = api
     response = client.get(BASE + "/performance", params=query(group_by="symbol,session,trend_regime"))

@@ -26,6 +26,7 @@ SUPPORTED_GROUPINGS = (
     ("direction",), ("entry_timeframe",), ("symbol", "session"),
     ("symbol", "trend_regime"), ("symbol", "volatility_regime"),
     ("symbol", "session", "trend_regime"), ("entry_timeframe", "direction"),
+    ("symbol", "session", "trend_regime", "volatility_regime", "entry_timeframe"),
 )
 _CLASSIFIER_FIELDS = ("classifier_id", "classifier_version", "parameter_hash")
 _MODEL_FIELDS = ("fees_cost_model", "funding_cost_model", "slippage_cost_model")
@@ -361,14 +362,22 @@ def _extended_metrics(rows, v1):
     all_net, all_gross = all(v is not None for v in net), all(v is not None for v in gross)
     wins = [v for v in net if v is not None and v > 0]
     losses = [v for v in net if v is not None and v < 0]
-    winning_r, losing_r = [], []
+    winning_r, losing_r, realised_r = [], [], []
     for row, value in zip(rows, net):
         risk = _decimal(row.get("initial_risk", row.get("initial_risk_amount")), "initial_risk")
         if value is not None and risk is not None and risk > 0:
+            realised_r.append((_timestamp(row.get("closed_at")), row["episode_id"], value / risk))
             if value > 0:
                 winning_r.append(value / risk)
             elif value < 0:
                 losing_r.append(value / risk)
+    drawdown_r = None
+    if rows and len(realised_r) == len(rows) and all(item[0] is not None for item in realised_r):
+        equity = peak = drawdown_r = Decimal(0)
+        for _, _, value in sorted(realised_r):
+            equity += value
+            peak = max(peak, equity)
+            drawdown_r = max(drawdown_r, peak - equity)
     mean = lambda values: _text(sum(values, Decimal(0)) / len(values)) if values else None
     result = {
         "loss_rate_pct": _text(Decimal(len(losses)) * 100 / len(rows)) if rows and all_net else None,
@@ -380,6 +389,8 @@ def _extended_metrics(rows, v1):
         "winning_r_sample_size": len(winning_r), "losing_r_sample_size": len(losing_r),
         "average_realised_rr": v1["expectancy_net_r"],
         "realised_rr_basis": "authoritative_episode_net_pnl_divided_by_original_observed_episode_risk",
+        "max_drawdown_r": _text(drawdown_r),
+        "max_drawdown_r_basis": "closed_episode_net_r_using_original_risk_ordered_by_actual_close_time_then_episode_id",
         "slippage": None,
     }
     slippage = [_decimal(row.get("slippage"), "slippage") if str(row.get("slippage_coverage") or "UNKNOWN").upper()
