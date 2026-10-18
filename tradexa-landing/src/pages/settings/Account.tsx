@@ -18,12 +18,11 @@ function Value({ children, muted }: { children?: ReactNode; muted?: boolean }) {
 }
 
 export default function Account() {
-  const { settings, backendConnected } = useSettings();
+  const { identity, backendConnected } = useSettings();
   const { toast } = useToast();
   const [deleteOpen, setDeleteOpen] = useState(false);
 
-  const email = settings.profile.email;
-  const phone = settings.profile.phone;
+  const email = identity?.email;
 
   return (
     <>
@@ -35,16 +34,16 @@ export default function Account() {
       <div className="space-y-5">
         <Section title="Identity" description="Read-only account details.">
           <SettingRow label="Account ID" description="Your unique account reference.">
-            <Value muted>{backendConnected ? undefined : "Not connected"}</Value>
+            <Value muted={!identity}>{identity?.id ?? "Not connected"}</Value>
           </SettingRow>
           <SettingRow label="Member since" description="When this account was created.">
-            <Value muted>{backendConnected ? undefined : "Not set"}</Value>
+            <Value muted>Not available</Value>
           </SettingRow>
           <SettingRow label="Current plan" description="Your active subscription tier.">
-            <Value>Self-hosted · Free</Value>
+            <Value muted>Not available</Value>
           </SettingRow>
           <SettingRow label="Account status" description="Overall standing of your account.">
-            <Badge tone="emerald">Active</Badge>
+            <Badge tone={identity ? "emerald" : "neutral"}>{identity ? "Signed in" : "Not connected"}</Badge>
           </SettingRow>
         </Section>
 
@@ -58,11 +57,14 @@ export default function Account() {
             }
           >
             <div className="flex items-center gap-3 sm:justify-end">
-              <Badge tone="neutral">Unverified</Badge>
+              <Badge tone={identity?.email_confirmed ? "emerald" : "neutral"}>
+                {identity ? (identity.email_confirmed ? "Verified" : "Unverified") : "Not available"}
+              </Badge>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => toast("Verification email sent.", "success")}
+                disabled
+                title="Manage email verification from the sign-in page."
               >
                 Resend verification
               </Button>
@@ -72,16 +74,17 @@ export default function Account() {
             label="Phone verification"
             description={
               <span className="inline-flex items-center gap-1.5">
-                <Phone className="h-3.5 w-3.5" /> {phone || "No phone on file"}
+                <Phone className="h-3.5 w-3.5" /> Not available
               </span>
             }
           >
             <div className="flex items-center gap-3 sm:justify-end">
-              <Badge tone="neutral">Unverified</Badge>
+              <Badge tone="neutral">Not available</Badge>
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => toast("Verification code sent.", "success")}
+                disabled
+                title="Phone verification is not available."
               >
                 Resend verification
               </Button>
@@ -101,6 +104,7 @@ export default function Account() {
               size="sm"
               variant="outline"
               className="border-loss/40 text-loss hover:bg-loss/10"
+              disabled={!backendConnected}
               onClick={() => setDeleteOpen(true)}
             >
               <Trash2 className="h-3.5 w-3.5" /> Delete account request

@@ -581,8 +581,8 @@ class StrategyIntelligenceService:
         if filters.get("strategy_id") and filters.get("execution_mode") and filters.get("source_kind"):
             performance = self.read("performance", scope, {**filters, "group_by": ["symbol"]})
             groups = performance.get("groups", [])
-            if groups:
-                metrics = groups[0].get("metrics", {})
+            if len(groups) == 1:
+                metrics = copy.deepcopy(groups[0].get("metrics", {}))
                 metrics["cost_coverage"] = groups[0].get("cost_coverage")
                 evidence_quality = (groups[0].get("evidence_quality") or {}).get("status", "UNKNOWN")
             else:
@@ -593,12 +593,21 @@ class StrategyIntelligenceService:
         records = research_context(self.context).validation_runs(filters=self._validation_filters(scope, filters), limit=1000)
         by_method = {}
         for row in records:
-            by_method.setdefault(row.get("method"), row)
+            # The newest attempt owns the method's state. An incomplete or
+            # failed retry must not resurrect an older passing report.
+            if row.get("method") in by_method:
+                continue
+            status = row.get("status")
+            by_method[row.get("method")] = (
+                row if status in {"COMPLETE", "COMPLETED", "PASS"}
+                else {**row, "report": {"status": "FAIL"}} if status == "FAIL"
+                else {})
         report = evaluate_qualification(identity, metrics,
             oos=(by_method.get("out_of_sample") or {}).get("report"),
             walk_forward=(by_method.get("walk_forward") or {}).get("report"),
             robustness=(by_method.get("robustness") or {}).get("report"),
             forward_paper=(by_method.get("forward_paper") or {}).get("report"),
+            cost_stress=(by_method.get("cost_stress") or {}).get("report"),
             policy=QualificationPolicy(), evidence_quality=evidence_quality)
         return {**envelope, "view": "qualification", **report,
                 "validation_history": records, "qualification_status": report["status"]}
