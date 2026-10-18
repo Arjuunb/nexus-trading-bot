@@ -111,7 +111,10 @@ jobs:
         working-directory: source/automation-hub-dashboard
         env:
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/browser-tests.xml
-        run: npx playwright test --config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs" --reporter=list,junit --output="$RUNNER_TEMP/browser-output"
+        run: |
+          ../.venv/bin/python ../ops/run-release-browser-checks.py \
+            --config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs" \
+            --output "$RUNNER_TEMP/browser-acceptance"
       - name: Require full browser evidence and unchanged original assertions
         if: matrix.python == '3.12'
         run: |

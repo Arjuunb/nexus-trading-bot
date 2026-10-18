@@ -1,0 +1,62 @@
+{
+  "task": 6,
+  "phase": "PRE_PUBLICATION",
+  "status": "BLOCKED_NOT_DEPLOYED",
+  "branch": "finish/strategy-intelligence-staging",
+  "base_commit": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+  "release_guards": {
+    "tests": 82,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 0.988
+  },
+  "evidence_integration": {
+    "tests": 32,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 14.143
+  },
+  "reviewed_rc3_browser": {
+    "tests": 165,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 358.413
+  },
+  "focused_original_browser_regressions": {
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0
+  },
+  "temporary_measurement_diagnostic": {
+    "passed": 1,
+    "removed_from_source": true
+  },
+  "dashboard_typecheck": "PASS",
+  "dashboard_production_build": "PASS",
+  "original_browser_assertions": "UNCHANGED",
+  "unreviewed_harness": "REJECTED_BEFORE_OUTPUT_OR_FIXTURE_CREATION",
+  "fixture_cleanup": "OWNED_FIXTURE_STOPPED_PORT_18005_CLOSED",
+  "strategy_and_financial_logic": "UNCHANGED_BY_TASK_6",
+  "financial_events_validation_snapshot_checks": "PASS_UNCHANGED",
+  "prior_failed_browser_runs": "RETAINED; missing browser prerequisite and 160 passed / 5 failed layout/load run",
+  "candidate_ci": "NOT_STARTED_BEFORE_PUBLICATION",
+  "source_freeze": "PENDING_EXACT_PUBLISHED_COMMIT",
+  "fresh_images_built_scanned_published": false,
+  "ssh_probe": {
+    "exit_code": 255,
+    "result": "ssh: connect to host 57.129.155.230 port 22: Network is unreachable",
+    "remote_command_ran": false
+  },
+  "target_resources_measured": false,
+  "staging_started": false,
+  "production_changed": false,
+  "blockers": [
+    "Manual staging publication workflow is absent on main; diverged branches need reviewed integration",
+    "Protected environment and fresh build/scan/publication evidence are not yet verified",
+    "VPS network access and the existing local SSH key are unavailable in this workspace",
+    "Actual target isolation/auth/TLS/backups/health/research acceptance remains unperformed"
+  ]
+}
