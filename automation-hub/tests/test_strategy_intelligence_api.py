@@ -86,6 +86,44 @@ def selection_query(**changes):
             "trend_regime": "BULL", "volatility_regime": "NORMAL", "entry_timeframe": "5m", **changes}
 
 
+def edge_query(**changes):
+    return {**query(symbol="XRPUSDT"), "execution_mode": "paper", **changes}
+
+
+def test_edge_score_api_resolves_scope_and_exposes_no_execution_rights(api):
+    client, _, service = api
+    service.payload.update(status="SCORED", score="72.5")
+    response = client.get(BASE + "/edge-score", params=edge_query())
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert response.json()["score"] == "72.5"
+    assert response.json()["orders_allowed"] is False and response.json()["recommendation_eligible"] is False
+    view, scope, filters = service.calls[0]
+    assert view == "edge_score" and scope["owner_id"] == "alice"
+    assert scope["account_id"] == "instance:mine:current"
+    assert filters["score_policy_version"] == "edge_score.v1"
+
+
+@pytest.mark.parametrize("changes", [{"owner_id": "bob"}, {"account_id": "foreign"}, {"weights": "{}"},
+    {"score": "100"}, {"score_policy_version": "edge_score.v2"}, {"source_watermark": "forged"},
+    {"execution_mode": "live"}, {"execution_mode": "backtest"}, {"source_kind": "shadow"},
+    {"classifier_id": "market_context_classifier"}, {"config_fingerprint": "bad"}])
+def test_edge_score_rejects_forged_scope_evidence_weights_and_unsupported_policies(api, changes):
+    client, _, service = api
+    assert client.get(BASE + "/edge-score", params=edge_query(**changes)).status_code == 422
+    assert service.calls == []
+
+
+def test_edge_score_authorization_unavailable_cache_and_read_only_routes(api):
+    client, _, service = api
+    assert client.get(BASE + "/edge-score", params=edge_query(instance_id="theirs")).status_code == 404
+    assert client.get(BASE + "/edge-score", params=edge_query(simulation_session_id="other")).status_code == 404
+    assert service.calls == []
+    service.fail = True
+    result = client.get(BASE + "/edge-score", params=edge_query()).json()
+    assert result["score"] is None and result["status"] == "UNSCORED"
+    assert client.post(BASE + "/edge-score", json={"weights": {}}).status_code == 405
+
+
 def test_selection_is_advisory_and_server_scoped(api):
     client, manager, service = api
     service.payload.update(status="RECOMMENDED", recommendation={"cohort": cohort(symbol="XRPUSDT")})

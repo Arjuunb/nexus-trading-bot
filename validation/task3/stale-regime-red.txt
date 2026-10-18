@@ -1,0 +1,26 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_____________ test_stale_regime_view_cannot_be_advertised_as_ready _____________
+
+evidence = (<data.journal_store.JournalStore object at 0x7f006be6b0b0>, <services.strategy_intelligence_service.StrategyIntellige...al_calculation_version': 'strategy_intelligence.v1', 'calculation_timestamp': '2026-10-18T16:09:12.475232+00:00', ...})
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f006be6b440>
+
+    def test_stale_regime_view_cannot_be_advertised_as_ready(evidence, monkeypatch):
+        from services.strategy_intelligence_service import StrategyIntelligenceService
+        _, service, filters, _, _, regimes = evidence
+        regimes["cache_status"] = "STALE"
+        read = service.read
+        monkeypatch.setattr(service, "read", lambda view, scope, query:
+            deepcopy(regimes) if view == "performance" and query.get("group_by") == ["trend_regime"]
+            else read(view, scope, query))
+        result = StrategyIntelligenceService.read(service, "edge_score", SCOPE, {**filters, **CLASSIFIER})
+>       assert result["score"] is None and result["cache_status"] == "STALE"
+E       AssertionError: assert (None is None and 'READY' == 'STALE'
+E
+E         - STALE
+E         + READY)
+
+automation-hub/tests/test_strategy_edge_score.py:410: AssertionError
+=========================== short test summary info ============================
+FAILED automation-hub/tests/test_strategy_edge_score.py::test_stale_regime_view_cannot_be_advertised_as_ready
+1 failed in 1.24s

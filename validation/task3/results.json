@@ -1,0 +1,41 @@
+{
+  "task": 3,
+  "scope": "versioned descriptive Edge Score backend and authenticated read-only API",
+  "branch": "finish/strategy-intelligence-staging",
+  "base_commit": "d2c2ef4511a9ec221b195bb6ce776d0f931368aa",
+  "policy_version": "edge_score.v1",
+  "policy_fingerprint": "503fa1c6e14181bd00b8fca86b695330f4bfa02144376a89b929176706b1bd88",
+  "policy_calibration": "UNCALIBRATED_RESEARCH_POLICY",
+  "focused": {
+    "tests": 382,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 382,
+    "duration_seconds": 65.432,
+    "warnings": 4
+  },
+  "engine_client": {
+    "tests": 530,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 530,
+    "duration_seconds": 5.493
+  },
+  "full_regression": {
+    "status": "PENDING_BRANCH_CI",
+    "local_full_run_claim": false,
+    "reason": "Use existing branch CI engine/hub workflow; prior local broad runs encountered sandbox network approval and procfs namespace limitations."
+  },
+  "dependency_check": "No broken requirements found",
+  "financial_records_changed": false,
+  "strategy_rules_changed": false,
+  "task2_ranking_changed": false,
+  "dashboard_changed": false,
+  "new_dependencies": false,
+  "deployed": false,
+  "task4_started": false,
+  "notifications": "destinations cleared; transport failure tests use local stubs",
+  "evidence_limits": "No real-market profitability proof; PostgreSQL/container/provider opt-in drills require separate acceptance."
+}

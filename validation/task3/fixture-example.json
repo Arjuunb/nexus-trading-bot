@@ -1,0 +1,326 @@
+{
+  "fixture_only": true,
+  "real_market_profitability_claim": false,
+  "report": {
+    "edge_score_contract_version": "strategy_edge_score.v1",
+    "view": "edge_score",
+    "identity": {
+      "owner_id": "owner",
+      "instance_id": "one",
+      "account_id": "account-one",
+      "simulation_session_id": "session",
+      "strategy_id": "adaptive_trend_pullback",
+      "strategy_version": "1.0.0",
+      "config_fingerprint": "5fdd854b3cdd91092728a2a44460a91fc0bfa1b8c8c7ca3b8bf4f1b4f2fe4f51",
+      "symbol": "XRPUSDT",
+      "execution_mode": "paper",
+      "source_kind": "forward_paper",
+      "lab_id": null
+    },
+    "policy": {
+      "policy_version": "edge_score.v1",
+      "weights": {
+        "expectancy": "15",
+        "profit_factor": "10",
+        "drawdown": "10",
+        "trade_count": "10",
+        "consistency": "10",
+        "out_of_sample": "10",
+        "forward_performance": "15",
+        "regime_robustness": "10",
+        "cost_resilience": "10"
+      },
+      "minimum_historical_episodes": 100,
+      "minimum_forward_episodes": 30,
+      "historical_sample_target": 300,
+      "forward_sample_target": 100,
+      "minimum_walk_forward_windows": 3,
+      "minimum_regimes": 2,
+      "minimum_regime_episodes": 30,
+      "expectancy_target_r": "0.5",
+      "profit_factor_target": "2",
+      "drawdown_half_score_r": "10",
+      "regime_expectancy_target_r": "0.25",
+      "calibration_status": "UNCALIBRATED_RESEARCH_POLICY",
+      "formula_version": "clamped_weighted_components.v1",
+      "bands": {
+        "LOW_SCORE": "0 <= score < 40",
+        "MID_SCORE": "40 <= score < 70",
+        "HIGH_SCORE": "70 <= score <= 100"
+      },
+      "fingerprint": "503fa1c6e14181bd00b8fca86b695330f4bfa02144376a89b929176706b1bd88"
+    },
+    "status": "SCORED",
+    "score": "80.749576",
+    "band": "HIGH_SCORE",
+    "advisory_only": true,
+    "orders_allowed": false,
+    "recommendation_eligible": false,
+    "statistical_proof_of_profitability": false,
+    "qualification_status": "QUALIFIED",
+    "components": [
+      {
+        "name": "expectancy",
+        "weight": "15",
+        "status": "KNOWN",
+        "normalized_score": "66.666667",
+        "weighted_points": "10",
+        "inputs": {
+          "historical_net_expectancy_r": "0.33333333333333333333333333333333333333333333333333",
+          "target_r": "0.5"
+        },
+        "formula": "100 * clamp(historical net expectancy / target R, 0, 1)",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "profit_factor",
+        "weight": "10",
+        "status": "KNOWN",
+        "normalized_score": "100",
+        "weighted_points": "10",
+        "inputs": {
+          "historical_monetary_profit_factor": "2",
+          "ratio_state": "FINITE",
+          "target": "2"
+        },
+        "formula": "100 * clamp((historical monetary profit factor - 1) / (target - 1), 0, 1)",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "drawdown",
+        "weight": "10",
+        "status": "KNOWN",
+        "normalized_score": "84.745763",
+        "weighted_points": "8.474576",
+        "inputs": {
+          "historical_drawdown_r": "1",
+          "forward_drawdown_r": "1.8",
+          "half_score_r": "10"
+        },
+        "formula": "100 * half-score R / (half-score R + worst historical/forward R drawdown)",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "trade_count",
+        "weight": "10",
+        "status": "KNOWN",
+        "normalized_score": "40",
+        "weighted_points": "4",
+        "inputs": {
+          "historical_episodes": 120,
+          "forward_episodes": 80,
+          "historical_target": 300,
+          "forward_target": 100
+        },
+        "formula": "100 * min(historical count / target, forward count / target, 1)",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "consistency",
+        "weight": "10",
+        "status": "KNOWN",
+        "normalized_score": "100",
+        "weighted_points": "10",
+        "inputs": {
+          "evaluation_windows": 3,
+          "positive_windows": 3,
+          "minimum_windows": 3
+        },
+        "formula": "100 * positive walk-forward evaluation windows / all bound evaluation windows",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "out_of_sample",
+        "weight": "10",
+        "status": "KNOWN",
+        "normalized_score": "100",
+        "weighted_points": "10",
+        "inputs": {
+          "train_expectancy_r": "0.33333333333333333333333333333333333333333333333333",
+          "holdout_expectancy_r": "0.33333333333333333333333333333333333333333333333333",
+          "holdout_access_count": 1
+        },
+        "formula": "100 * clamp(holdout net expectancy / positive training net expectancy, 0, 1)",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "forward_performance",
+        "weight": "15",
+        "status": "KNOWN",
+        "normalized_score": "58.5",
+        "weighted_points": "8.775",
+        "inputs": {
+          "actual_paper_expectancy_r": "0.2925",
+          "target_r": "0.5"
+        },
+        "formula": "100 * clamp(actual paper net expectancy / target R, 0, 1)",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "regime_robustness",
+        "weight": "10",
+        "status": "KNOWN",
+        "normalized_score": "100",
+        "weighted_points": "10",
+        "inputs": {
+          "observed_regimes": [
+            "BEAR",
+            "BULL"
+          ],
+          "minimum_regimes": 2,
+          "minimum_episodes_each": 30,
+          "worst_expectancy_r": "0.27",
+          "target_r": "0.25"
+        },
+        "formula": "100 * clamp(worst observed regime net expectancy / target R, 0, 1)",
+        "reason": "COMPLETE_BOUND_EVIDENCE"
+      },
+      {
+        "name": "cost_resilience",
+        "weight": "10",
+        "status": "KNOWN",
+        "normalized_score": "95",
+        "weighted_points": "9.5",
+        "inputs": {
+          "gross_r": "40",
+          "net_r": "38",
+          "fee": "1",
+          "slippage": "1",
+          "funding": "0"
+        },
+        "formula": "100 * clamp(adversely stressed net R / positive base net R, 0, 1)",
+        "reason": "COMPLETE_BOUND_ADVERSE_STRESS"
+      }
+    ],
+    "blocking_reasons": [],
+    "evidence": {
+      "historical_run_id": "historical_backtest",
+      "validation_run_ids": {
+        "historical_backtest": "historical_backtest",
+        "out_of_sample": "out_of_sample",
+        "walk_forward": "walk_forward",
+        "robustness": "robustness",
+        "cost_stress": "cost_stress"
+      },
+      "paper_cache_run_id": "symbol",
+      "regime_cache_run_id": "trend_regime",
+      "source_watermark": "source-one",
+      "classifier": {
+        "classifier_id": "market_context_classifier",
+        "classifier_version": "1.0.0",
+        "parameter_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "cost_model": {
+        "fees_cost_model": "booked-v1",
+        "funding_cost_model": "funding-zero-v1",
+        "slippage_cost_model": "no-slippage-v1"
+      },
+      "paper_episode_ids": [
+        "forward-0",
+        "forward-1",
+        "forward-10",
+        "forward-11",
+        "forward-12",
+        "forward-13",
+        "forward-14",
+        "forward-15",
+        "forward-16",
+        "forward-17",
+        "forward-18",
+        "forward-19",
+        "forward-2",
+        "forward-20",
+        "forward-21",
+        "forward-22",
+        "forward-23",
+        "forward-24",
+        "forward-25",
+        "forward-26",
+        "forward-27",
+        "forward-28",
+        "forward-29",
+        "forward-3",
+        "forward-30",
+        "forward-31",
+        "forward-32",
+        "forward-33",
+        "forward-34",
+        "forward-35",
+        "forward-36",
+        "forward-37",
+        "forward-38",
+        "forward-39",
+        "forward-4",
+        "forward-40",
+        "forward-41",
+        "forward-42",
+        "forward-43",
+        "forward-44",
+        "forward-45",
+        "forward-46",
+        "forward-47",
+        "forward-48",
+        "forward-49",
+        "forward-5",
+        "forward-50",
+        "forward-51",
+        "forward-52",
+        "forward-53",
+        "forward-54",
+        "forward-55",
+        "forward-56",
+        "forward-57",
+        "forward-58",
+        "forward-59",
+        "forward-6",
+        "forward-60",
+        "forward-61",
+        "forward-62",
+        "forward-63",
+        "forward-64",
+        "forward-65",
+        "forward-66",
+        "forward-67",
+        "forward-68",
+        "forward-69",
+        "forward-7",
+        "forward-70",
+        "forward-71",
+        "forward-72",
+        "forward-73",
+        "forward-74",
+        "forward-75",
+        "forward-76",
+        "forward-77",
+        "forward-78",
+        "forward-79",
+        "forward-8",
+        "forward-9"
+      ],
+      "historical_episodes": 120,
+      "forward_episodes": 80,
+      "historical_dataset": {
+        "content_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "coverage": {
+          "status": "COMPLETE"
+        },
+        "dataset_id": "dataset-one",
+        "period_end": "2025-02-01T00:00:00+00:00",
+        "period_start": "2025-01-01T00:00:00+00:00",
+        "symbol": "XRPUSDT",
+        "timeframe": "5m"
+      },
+      "forward_observation_period": {
+        "first_opened_at": "2025-03-01T00:00:00+00:00",
+        "last_closed_at": "2025-04-01T00:00:00+00:00"
+      }
+    },
+    "limitations": [
+      "Uncalibrated descriptive score; not a probability of profit or proof of independent edge.",
+      "Regime robustness covers observed regimes only; unseen conditions remain unknown.",
+      "Sample counts describe volume and do not establish independent observations.",
+      "Qualification and selection policies remain separate; the score grants no promotion or execution rights."
+    ],
+    "score_id": "edge_score:08e946e90b9b7eba08ecd4950b1f3781a8325e34056463d1f2c6f9f638bddc86"
+  }
+}

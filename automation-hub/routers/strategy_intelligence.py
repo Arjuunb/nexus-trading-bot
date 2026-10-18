@@ -78,6 +78,19 @@ class QualificationQuery(CohortQuery):
     pass
 
 
+class EdgeScoreQuery(CohortQuery):
+    strategy_id: str = Field(min_length=1, max_length=120, pattern=r"\S")
+    strategy_version: str = Field(min_length=1, max_length=120)
+    config_fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+    symbol: str = Field(min_length=1, max_length=40, pattern=r"\S")
+    execution_mode: Literal["paper"] = "paper"
+    source_kind: Literal["forward_paper"] = "forward_paper"
+    classifier_id: str | None = Field(default=None, min_length=1, max_length=120)
+    classifier_version: str | None = Field(default=None, min_length=1, max_length=120)
+    parameter_hash: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    score_policy_version: Literal["edge_score.v1"] = "edge_score.v1"
+
+
 class SelectionQuery(BaseModel):
     model_config = ConfigDict(extra="forbid")
     instance_id: str = Field(min_length=1, max_length=120)
@@ -902,6 +915,21 @@ def create_router(*, service_provider: Callable | None = None,
     @router.get("/qualification")
     def qualification(request: Request, response: Response, query: Annotated[QualificationQuery, Query()]):
         return scoped_read(request, response, query, "qualification")
+
+    @router.get("/edge-score/policies")
+    def edge_score_policies(request: Request, response: Response, query: Annotated[DefinitionsQuery, Query()]):
+        return read("edge_score_policies", {"owner_id": owner(request, response)}, {})
+
+    @router.get("/edge-score")
+    def edge_score(request: Request, response: Response, query: Annotated[EdgeScoreQuery, Query()]):
+        identity = owner(request, response)
+        classifier = {key: getattr(query, key) for key in ("classifier_id", "classifier_version", "parameter_hash")}
+        if any(classifier.values()) and not all(classifier.values()):
+            raise HTTPException(422, "Complete classifier identity is required")
+        filters = {**exact_filters(query), **classifier, "score_policy_version": query.score_policy_version}
+        result = read("edge_score", instance_scope(query.instance_id, query.simulation_session_id, identity), filters)
+        return {"status": "UNSCORED", "score": None, "band": None, **result,
+                "advisory_only": True, "orders_allowed": False, "recommendation_eligible": False}
 
     @router.get("/selection")
     def selection(request: Request, response: Response, query: Annotated[SelectionQuery, Query()]):

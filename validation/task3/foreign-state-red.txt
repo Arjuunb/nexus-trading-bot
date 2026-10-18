@@ -1,0 +1,23 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_foreign_provenance_cannot_leak_qualification_or_financial_values _____
+
+evidence = (<data.journal_store.JournalStore object at 0x7f43ea9c3860>, <services.strategy_intelligence_service.StrategyIntellige...al_calculation_version': 'strategy_intelligence.v1', 'calculation_timestamp': '2026-10-18T16:00:07.326358+00:00', ...})
+
+    def test_foreign_provenance_cannot_leak_qualification_or_financial_values(evidence):
+        evidence[3]["identity"]["owner_id"] = "foreign"
+        evidence[3]["qualification_status"] = "PRIVATE_FOREIGN_STATE"
+        result = score(evidence)
+>       assert "PRIVATE_FOREIGN_STATE" not in str(result)
+E       assert 'PRIVATE_FOREIGN_STATE' not in "{'edge_scor...n rights.']}"
+E
+E         'PRIVATE_FOREIGN_STATE' is contained here:
+E         ?           ^^^^^^^^^^^^^^^^
+E           status': 'PRIVATE_FOREIGN_STATE', 'components': [{'name': 'expectancy', 'weight': '15', 'status': 'UNKNOWN', 'normalized_score': None, 'weighted_points': None, 'inputs': {}, 'formula': '100 * clamp(historical net expectancy / target R, 0, 1)', 'reason': 'BOUND_EVIDENCE_REQUIRED'}, {'name': 'profit_factor', 'weight': '10', 'status': 'UNKNOWN', 'normalized_score': None, 'weighted_points': None, 'inputs': {}, 'formula': '100 * clamp((historical monetary profit factor - 1) / (target - 1), 0, 1)', 'reason': '...
+E
+E         ...Full output truncated (2 lines hidden), use '-vv' to show
+
+automation-hub/tests/test_strategy_edge_score.py:348: AssertionError
+=========================== short test summary info ============================
+FAILED automation-hub/tests/test_strategy_edge_score.py::test_foreign_provenance_cannot_leak_qualification_or_financial_values
+1 failed in 1.08s

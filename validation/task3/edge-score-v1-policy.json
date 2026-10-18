@@ -1,0 +1,33 @@
+{
+  "policy_version": "edge_score.v1",
+  "weights": {
+    "expectancy": "15",
+    "profit_factor": "10",
+    "drawdown": "10",
+    "trade_count": "10",
+    "consistency": "10",
+    "out_of_sample": "10",
+    "forward_performance": "15",
+    "regime_robustness": "10",
+    "cost_resilience": "10"
+  },
+  "minimum_historical_episodes": 100,
+  "minimum_forward_episodes": 30,
+  "historical_sample_target": 300,
+  "forward_sample_target": 100,
+  "minimum_walk_forward_windows": 3,
+  "minimum_regimes": 2,
+  "minimum_regime_episodes": 30,
+  "expectancy_target_r": "0.5",
+  "profit_factor_target": "2",
+  "drawdown_half_score_r": "10",
+  "regime_expectancy_target_r": "0.25",
+  "calibration_status": "UNCALIBRATED_RESEARCH_POLICY",
+  "formula_version": "clamped_weighted_components.v1",
+  "bands": {
+    "LOW_SCORE": "0 <= score < 40",
+    "MID_SCORE": "40 <= score < 70",
+    "HIGH_SCORE": "70 <= score <= 100"
+  },
+  "fingerprint": "503fa1c6e14181bd00b8fca86b695330f4bfa02144376a89b929176706b1bd88"
+}

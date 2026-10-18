@@ -347,6 +347,27 @@ class StrategyIntelligenceService:
         if view in ("sessions", "regimes", "volatility"):
             from services.market_context_classifier import classifier_definition
             return {**envelope, "definition": classifier_definition(), "view": view}
+        if view == "edge_score_policies":
+            from services.strategy_edge_score import EdgeScorePolicy
+            return {**envelope, "view": view, "cache_status": "READY", "policies": [EdgeScorePolicy().as_dict()],
+                    "advisory_only": True, "orders_allowed": False}
+        if view == "edge_score":
+            with self._lock:
+                def generations():
+                    return {key: value for key, value in self._scope_generations.items()
+                            if _scope_match(scope, json.loads(key))}
+                with self._ready_lock:
+                    before = generations()
+                result = self._read_edge_score(scope, filters)
+                with self._ready_lock:
+                    if generations() != before:
+                        result.update(status="UNSCORED", score=None, band=None,
+                            cache_status="RECONCILIATION_REQUIRED", blocking_reasons=["SCOPE_CHANGED_DURING_SCORING"])
+                        result.pop("score_id", None)
+                        for component in result.get("components", []):
+                            component.update(status="UNKNOWN", normalized_score=None, weighted_points=None,
+                                             reason="SCOPE_CHANGED_DURING_SCORING")
+            return {**envelope, **result}
         if view == "selection":
             from services.strategy_selection import recommend_strategies
             # A refresh cannot interleave candidate reads. Independent scope
@@ -627,3 +648,25 @@ class StrategyIntelligenceService:
         return {**envelope, "view": "qualification", **report,
                 "contract_version": CONTRACT_VERSION, "qualification_contract_version": report["contract_version"],
                 "evidence_chain": chain, "validation_history": records, "qualification_status": report["status"]}
+
+    def _read_edge_score(self, scope, filters):
+        from services.market_context_classifier import classifier_definition
+        from services.strategy_edge_score import EdgeScorePolicy, calculate_edge_score, CLASSIFIER_FIELDS
+        policy = EdgeScorePolicy()
+        if filters.get("score_policy_version", policy.policy_version) != policy.policy_version:
+            raise ValueError("unsupported Edge Score policy version")
+        classifier = {key: filters.get(key) for key in CLASSIFIER_FIELDS}
+        if not any(classifier.values()):
+            definition = classifier_definition()
+            classifier = {key: definition[key] for key in CLASSIFIER_FIELDS}
+        elif not all(classifier.values()):
+            raise ValueError("complete classifier identity is required")
+        identity = _cohort({**{key: filters.get(key) for key in _COHORT_FIELDS}, **scope},
+                           symbol=filters.get("symbol")).as_dict()
+        qualification = self.read("qualification", scope, identity)
+        performance = self.read("performance", scope, {**identity, "group_by": ["symbol"]})
+        regimes = self.read("performance", scope, {**identity, "group_by": ["trend_regime"]})
+        result = calculate_edge_score(identity, qualification, performance, regimes, classifier=classifier, policy=policy)
+        cache_status = next((value.get("cache_status", "PENDING") for value in (performance, regimes)
+                             if value.get("cache_status") != "READY"), "READY")
+        return {**result, "cache_status": cache_status}
