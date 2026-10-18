@@ -13,6 +13,7 @@ from decimal import Decimal, InvalidOperation
 import hashlib
 import json
 import random
+import re
 from statistics import median
 from typing import Any, Iterable
 
@@ -25,7 +26,7 @@ QUALIFICATION_STATES = (
 
 @dataclass(frozen=True)
 class QualificationPolicy:
-    policy_version: str = "qualification.v1"
+    policy_version: str = "qualification.v2"
     minimum_episodes: int = 100
     minimum_profit_factor: str = "1.30"
     require_positive_expectancy: bool = True
@@ -35,6 +36,8 @@ class QualificationPolicy:
     require_concentration_test: bool = True
     require_forward_paper: bool = True
     minimum_forward_paper_episodes: int = 30
+    require_cost_stress: bool = True
+    require_monte_carlo: bool = True
     maximum_drawdown_r: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
@@ -69,6 +72,7 @@ def evaluate_qualification(identity: dict[str, Any], metrics: dict[str, Any], *,
                            walk_forward: dict[str, Any] | None = None,
                            robustness: dict[str, Any] | None = None,
                            forward_paper: dict[str, Any] | None = None,
+                           cost_stress: dict[str, Any] | None = None,
                            policy: QualificationPolicy | None = None,
                            evidence_quality: str = "UNKNOWN") -> dict[str, Any]:
     """Evaluate a frozen cohort without ever treating missing data as zero."""
@@ -83,8 +87,25 @@ def evaluate_qualification(identity: dict[str, Any], metrics: dict[str, Any], *,
             return None
         return value.get("status") == "PASS"
 
+    def enough(value, minimum):
+        number = _decimal(value)
+        return number is not None and number == number.to_integral_value() and number >= minimum
+
+    concentration = (robustness or {}).get("concentration", robustness or {})
+    simulation = (robustness or {}).get("monte_carlo") or {}
+    stressed = (cost_stress or {}).get("stress", cost_stress or {})
+    stressed_net = _decimal(stressed.get("net_r"))
+    forward = forward_paper or {}
+    forward_expectancy = _decimal(forward.get("expectancy_net_r"))
+
+    def optional_check(required, value, condition):
+        return True if not required else None if value is None else condition
+
     checks = [
-        _check(episodes is not None and int(episodes) >= policy.minimum_episodes,
+        _check(bool(identity.get("strategy_id") and identity.get("strategy_version")
+                    and re.fullmatch(r"[0-9a-f]{64}", str(identity.get("config_fingerprint") or ""))),
+               name="frozen_strategy_identity", reason="exact strategy version and SHA-256 configuration fingerprint are required"),
+        _check(enough(episodes, policy.minimum_episodes),
                name="minimum_historical_episodes", reason=f"requires {policy.minimum_episodes}; observed {episodes if episodes is not None else 'UNKNOWN'}"),
         _check(pf is not None and pf >= _decimal(policy.minimum_profit_factor),
                name="historical_profit_factor", reason=f"requires >= {policy.minimum_profit_factor}; observed {pf if pf is not None else 'UNKNOWN'}"),
@@ -96,11 +117,24 @@ def evaluate_qualification(identity: dict[str, Any], metrics: dict[str, Any], *,
                name="out_of_sample", reason="independent chronological OOS result is required" if policy.require_oos else "policy does not require OOS"),
         _check(required_result(walk_forward, "status") if policy.require_walk_forward else True,
                name="walk_forward", reason="walk-forward evaluation is required" if policy.require_walk_forward else "policy does not require walk-forward"),
-        _check(None if robustness is None and policy.require_concentration_test else ((robustness or {}).get("concentration_status") == "PASS") if policy.require_concentration_test else True,
+        _check(None if robustness is None and policy.require_concentration_test else (concentration.get("concentration_status") == "PASS") if policy.require_concentration_test else True,
                name="concentrated_returns", reason="largest-winner concentration test is required" if policy.require_concentration_test else "policy does not require concentration test"),
-        _check(None if forward_paper is None and policy.require_forward_paper else ((forward_paper or {}).get("completed_episodes", 0) >= policy.minimum_forward_paper_episodes)
+        _check(None if forward_paper is None and policy.require_forward_paper else enough(forward.get("completed_episodes"), policy.minimum_forward_paper_episodes)
                if policy.require_forward_paper else True,
                name="forward_paper", reason=f"requires {policy.minimum_forward_paper_episodes} completed forward-paper episodes" if policy.require_forward_paper else "policy does not require forward paper"),
+        _check(optional_check(policy.require_forward_paper, forward_paper, (
+            forward.get("status") == "PASS" and forward_expectancy is not None and forward_expectancy > 0
+            and forward.get("evidence_quality") in {"COMPLETE", "VERIFIED"}
+            and forward.get("cost_coverage_status") in {"COMPLETE", "APPROVED_CONSERVATIVE_MODEL"}
+            and forward.get("independence_status") == "VERIFIED_INDEPENDENT")),
+            name="forward_paper_profitability", reason="independent, complete forward-paper evidence must have positive expectancy after costs"),
+        _check(optional_check(policy.require_cost_stress, cost_stress,
+            stressed.get("status") == "PASS" and stressed_net is not None and stressed_net > 0),
+            name="cost_stress", reason="fee, slippage and funding stress must pass"),
+        _check(optional_check(policy.require_monte_carlo, robustness, simulation.get("status") == "PASS"),
+            name="monte_carlo", reason="Monte Carlo analysis must be available"),
+        _check(evidence_quality in {"COMPLETE", "VERIFIED"}, name="evidence_quality",
+            reason="complete reconciled evidence is required"),
     ]
     if policy.maximum_drawdown_r is not None:
         limit = _decimal(policy.maximum_drawdown_r)
