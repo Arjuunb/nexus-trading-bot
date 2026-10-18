@@ -94,11 +94,11 @@ def test_qualification_projection_ignores_uncommitted_results(tmp_path, monkeypa
     filters = {"strategy_id": "adaptive_trend_pullback", "strategy_version": "1.0.0",
                "config_fingerprint": "a" * 64, "execution_mode": "paper", "source_kind": "forward_paper"}
     journal.context.record_validation_run({
-        **scope, **filters, "run_id": "older-passing-oos", "dataset_identity": "dataset",
+        **scope, **filters, "execution_mode": "backtest", "run_id": "older-passing-oos", "dataset_identity": "dataset",
         "created_at": "2026-01-01T00:00:00+00:00",
         "method": "out_of_sample", "status": "PASS", "report": {"status": "PASS"}})
     journal.context.record_validation_run({
-        **scope, **filters, "run_id": "uncommitted-oos", "dataset_identity": "dataset",
+        **scope, **filters, "execution_mode": "backtest", "run_id": "uncommitted-oos", "dataset_identity": "dataset",
         "method": "out_of_sample", "status": status, "report": {"status": "PASS"}})
     group = {"metrics": evidence()["metrics"], "cost_coverage": {"status": "COMPLETE"},
              "evidence_quality": {"status": "COMPLETE"}}

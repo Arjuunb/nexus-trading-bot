@@ -566,48 +566,50 @@ class StrategyIntelligenceService:
 
     def _read_validation_projection(self, view, scope, filters, envelope):
         method = {"oos": "out_of_sample", "walk_forward": "walk_forward", "robustness": "robustness"}[view]
-        from services.worker_backends import research_context
-        rows = research_context(self.context).validation_runs(filters=self._validation_filters(scope, {**filters, "method": method}), limit=100)
-        latest = rows[0] if rows else None
-        return {**envelope, "view": view, "status": "UNKNOWN" if latest is None else latest.get("status", "UNKNOWN"),
-                "result": latest, "rows": rows, "available": latest is not None}
+        qualification = self._read_qualification(scope, filters, envelope)
+        chain = qualification["evidence_chain"]
+        rows = [row for row in qualification["validation_history"] if row.get("method") == method]
+        run_id = chain["validation_run_ids"].get(method)
+        latest = next((row for row in rows if row.get("run_id") == run_id), None)
+        stage = chain["stages"][method]
+        return {**envelope, "view": view, "status": stage["status"], "binding_status": stage["binding_status"],
+                "result": latest, "rows": rows, "available": latest is not None,
+                "evidence_chain": chain}
 
     def _read_qualification(self, scope, filters, envelope):
         from services.strategy_qualification import QualificationPolicy, evaluate_qualification
+        from services.historical_forward_evidence import build_evidence_chain, _authorized
         identity = {key: filters.get(key) for key in (
             "strategy_id", "strategy_version", "config_fingerprint", "symbol", "execution_mode",
-            "source_kind", "instance_id", "simulation_session_id", "account_id") if filters.get(key) is not None}
-        metrics = {}
+            "source_kind", "lab_id")}
+        identity.update({key: scope.get(key) for key in _SCOPE_FIELDS})
+        performance = {}
         if filters.get("strategy_id") and filters.get("execution_mode") and filters.get("source_kind"):
             performance = self.read("performance", scope, {**filters, "group_by": ["symbol"]})
-            groups = performance.get("groups", [])
-            if len(groups) == 1:
-                metrics = copy.deepcopy(groups[0].get("metrics", {}))
-                metrics["cost_coverage"] = groups[0].get("cost_coverage")
-                evidence_quality = (groups[0].get("evidence_quality") or {}).get("status", "UNKNOWN")
-            else:
-                evidence_quality = "UNKNOWN"
-        else:
-            evidence_quality = "UNKNOWN"
         from services.worker_backends import research_context
-        records = research_context(self.context).validation_runs(filters=self._validation_filters(scope, filters), limit=1000)
-        by_method = {}
-        for row in records:
-            # The newest attempt owns the method's state. An incomplete or
-            # failed retry must not resurrect an older passing report.
-            if row.get("method") in by_method:
-                continue
-            status = row.get("status")
-            by_method[row.get("method")] = (
-                row if status in {"COMPLETE", "COMPLETED", "PASS"}
-                else {**row, "report": {"status": "FAIL"}} if status == "FAIL"
-                else {})
+        context = research_context(self.context)
+        # Deliberately omit execution_mode: identity joins the backtest and
+        # paper partitions. Scope remains explicit, including isolated research.
+        query = {"owner_id": scope["owner_id"], **{key: identity.get(key) for key in (
+            "strategy_id", "strategy_version", "config_fingerprint")}}
+        candidates = context.validation_runs(filters=query, limit=1000)
+        records = [row for row in candidates if _authorized(row, scope)]
+        jobs = context.research_jobs(filters={"owner_id": scope["owner_id"],
+                                               "strategy_id": identity.get("strategy_id")}, limit=1000)
+        frozen = self.journal.strategy_identity(identity.get("strategy_id"), identity.get("strategy_version"),
+                                                identity.get("config_fingerprint"))
+        chain = build_evidence_chain(scope=scope, identity=identity, frozen=frozen, records=records,
+            performance=performance, jobs=jobs, bounded=len(candidates) == 1000 or len(jobs) == 1000)
+        reports = chain["reports"]
+        metrics = chain["historical"]["metrics"]
         report = evaluate_qualification(identity, metrics,
-            oos=(by_method.get("out_of_sample") or {}).get("report"),
-            walk_forward=(by_method.get("walk_forward") or {}).get("report"),
-            robustness=(by_method.get("robustness") or {}).get("report"),
-            forward_paper=(by_method.get("forward_paper") or {}).get("report"),
-            cost_stress=(by_method.get("cost_stress") or {}).get("report"),
-            policy=QualificationPolicy(), evidence_quality=evidence_quality)
+            oos=reports.get("out_of_sample"), walk_forward=reports.get("walk_forward"),
+            robustness=reports.get("robustness"), forward_paper=chain["forward_paper"],
+            cost_stress=reports.get("cost_stress"), policy=QualificationPolicy(),
+            evidence_quality=metrics.get("evidence_quality", "UNKNOWN"))
+        if chain["status"] != "COMPLETE" and report["status"] == "QUALIFIED":
+            report.update(status="NOT_QUALIFIED", blocking_reasons=chain["blocking_reasons"])
+        chain.pop("reports")
         return {**envelope, "view": "qualification", **report,
-                "validation_history": records, "qualification_status": report["status"]}
+                "contract_version": CONTRACT_VERSION, "qualification_contract_version": report["contract_version"],
+                "evidence_chain": chain, "validation_history": records, "qualification_status": report["status"]}

@@ -475,6 +475,11 @@ def calculate_context_performance(episodes: Iterable[Mapping], contexts: Iterabl
                 verification_contract_version=SUBGROUP_REPORT_VERSION)
             output.append({"group_key": key, **group["selector"], "cohort": cohort.as_dict(),
                 "episode_ids": [row["episode_id"] for row in rows], "metrics": metrics,
+                "observation_period": {
+                    "first_opened_at": min(_timestamp(row["opened_at"]) for row in rows).isoformat()
+                        if rows and all(_timestamp(row.get("opened_at")) is not None for row in rows) else None,
+                    "last_closed_at": max(_timestamp(row["closed_at"]) for row in rows).isoformat()
+                        if rows and all(_timestamp(row.get("closed_at")) is not None for row in rows) else None},
                 "evidence_quality": subgroup_report,
                 "context_quality": {"status": context_status, "counts": dict(sorted(quality_counts.items()))},
                 "cost_coverage": costs, "sample_confidence": sample_confidence(rows),

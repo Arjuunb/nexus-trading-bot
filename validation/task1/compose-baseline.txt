@@ -1,0 +1,16 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_real_compose_resolution_keeps_independent_volume_names_and_ports _____
+automation-hub/tests/test_sprint13_remote_readiness.py:98: in test_real_compose_resolution_keeps_independent_volume_names_and_ports
+    r=subprocess.run(['docker','compose','--env-file',str(bindings),'-f',str(root/'ops/staging.remote.compose.yaml'),'--profile','shadow','config','--format','json'],
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py:1955: in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+E   FileNotFoundError: [Errno 2] No such file or directory: 'docker'
+=========================== short test summary info ============================
+FAILED automation-hub/tests/test_sprint13_remote_readiness.py::test_real_compose_resolution_keeps_independent_volume_names_and_ports
+1 failed in 0.89s

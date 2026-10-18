@@ -331,9 +331,9 @@ class JournalContextStore:
             if frozen.get("method") in {"out_of_sample", "walk_forward"}:
                 prior = self.journal._c.execute(
                     "SELECT COUNT(*) FROM strategy_validation_runs WHERE strategy_id=? AND strategy_version IS ? "
-                    "AND config_fingerprint IS ? AND dataset_identity=? AND method=?",
+                    "AND config_fingerprint IS ? AND dataset_identity=? AND method=? AND owner_id IS ?",
                     (frozen["strategy_id"], frozen.get("strategy_version"), frozen.get("config_fingerprint"),
-                     frozen["dataset_identity"], frozen["method"])).fetchone()[0]
+                     frozen["dataset_identity"], frozen["method"], frozen.get("owner_id"))).fetchone()[0]
                 frozen["holdout_access_count"] = int(prior) + 1
             else:
                 frozen.setdefault("holdout_access_count", 0)

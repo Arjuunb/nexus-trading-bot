@@ -56,8 +56,8 @@ def _tf_ms(timeframe):
 
 
 def _metrics(result):
-    from services.strategy_presets import _metrics as preset_metrics
-    return preset_metrics(result or {})
+    from services.historical_forward_evidence import historical_metrics
+    return historical_metrics(result or {})
 
 
 class ResearchJobService:
@@ -159,28 +159,35 @@ class ResearchJobService:
             raise RuntimeError("DATASET_REVISION_MISMATCH: requested data revision is unavailable")
         manifest["retention"] = retention.retain(job, manifest, rows)
         tuning = job.get("frozen_config") or {}
+        observed_identities, evaluated_results = [], []
         def evaluate(segment, **_):
             if checkpoint:
                 checkpoint()
-            return _metrics(_run_on(strategy_for_engine, symbol, timeframe, tuning, None, segment))
+            result = _run_on(strategy_for_engine, symbol, timeframe, tuning, None, segment, capture_identity=True)
+            observed_identities.append(result.get("_strategy_identity"))
+            evaluated_results.append(result)
+            return _metrics(result)
         method = job["job_type"]
         if method == "HISTORICAL_BACKTEST":
-            report = {"status": "COMPLETE", "method": "historical_backtest", "metrics": evaluate(rows), "dataset": manifest}
+            report = {"status": "COMPLETE", "method": "historical_backtest", "metrics": evaluate(evaluation_rows), "dataset": manifest}
         elif method == "OUT_OF_SAMPLE_VALIDATION":
-            parts = chronological_partition([{"bar": row, "timestamp": row.timestamp.isoformat()} for row in rows],
+            parts = chronological_partition([{"bar": row, "timestamp": row.timestamp.isoformat()} for row in evaluation_rows],
                                             train=float(request.get("train_fraction", .6)), validation=float(request.get("validation_fraction", .2)),
                                             holdout=float(request.get("holdout_fraction", .2)), warmup=int(request.get("warmup", 0)))
             report = out_of_sample_report({key: [item["bar"] for item in value] for key, value in parts.items() if key in {"train", "validation", "holdout"}}, evaluate)
             report["dataset"] = manifest; report["partitions"] = parts["boundaries"]
         elif method in {"ANCHORED_WALK_FORWARD", "ROLLING_WALK_FORWARD"}:
-            windows = walk_forward_windows([{"bar": row, "timestamp": row.timestamp.isoformat()} for row in rows],
-                development_size=int(request.get("development_size", max(1, len(rows) // 3))),
-                evaluation_size=int(request.get("evaluation_size", max(1, len(rows) // 6))), anchored=method == "ANCHORED_WALK_FORWARD")
+            windows = walk_forward_windows([{"bar": row, "timestamp": row.timestamp.isoformat()} for row in evaluation_rows],
+                development_size=int(request.get("development_size") or max(1, len(evaluation_rows) // 3)),
+                evaluation_size=int(request.get("evaluation_size") or max(1, len(evaluation_rows) // 6)), anchored=method == "ANCHORED_WALK_FORWARD")
             report = walk_forward_report([{**window, "development": [item["bar"] for item in window["development"]],
                                            "evaluation": [item["bar"] for item in window["evaluation"]]} for window in windows], evaluate)
             report["dataset"] = manifest
         else:
-            base = evaluate(rows); outcomes = [trade.get("r") for trade in (_run_on(strategy_for_engine, symbol, timeframe, tuning, None, rows).get("trades") or [])]
+            base = evaluate(evaluation_rows)
+            from decimal import Decimal
+            outcomes = ([str(Decimal(trade["net_pnl"]) / Decimal(trade["initial_risk"]))
+                         for trade in evaluated_results[-1]["trades"]] if base["financial_evidence_complete"] else [])
             if method == "COST_STRESS":
                 report = {"method": "cost_stress", "base": base,
                           "stress": stress_costs(outcomes, fee=request.get("fee", "0"), slippage=request.get("slippage", "0"), funding=request.get("funding"))}
@@ -192,7 +199,23 @@ class ResearchJobService:
                 report = {"method": "qualification_refresh", "status": "COMPLETE", "note": "Qualification refresh reads persisted validation evidence only."}
             report["dataset"] = manifest
         report.setdefault("status", "COMPLETE")
-        validation_method = report.get("method", method.lower())
+        # Durable worker completion is distinct from validation passing. Both
+        # SQLite and PostgreSQL commit the completed calculation; qualification
+        # consumes the separate result and can still reject FAIL/UNKNOWN.
+        report["result_status"] = report["status"]
+        report["status"] = "COMPLETE"
+        observed = observed_identities[0] if observed_identities else None
+        report["identity"] = observed
+        report["identity_binding_status"] = ("MATCHED" if observed and
+            all(item == observed for item in observed_identities)
+            and not tuning
+            and observed.get("identity_status") == "observed"
+            and observed.get("strategy_id") == job.get("strategy_id")
+            and observed.get("strategy_version") == job.get("strategy_version")
+            and observed.get("strategy_config_hash") == job.get("config_fingerprint") else "UNVERIFIED")
+        report["execution_assumptions"] = {"engine": "existing_strategy_presets_simulator",
+            "tuning_overrides": tuning, "identity_binding_limitation":
+                "Simulator overrides are not part of the observed strategy configuration" if tuning else None}
         return report
 
     @staticmethod
