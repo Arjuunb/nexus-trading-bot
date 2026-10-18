@@ -42,8 +42,12 @@ The connected GitHub tools support source publication and CI inspection, but
 do not expose workflow dispatch. GitHub returned 404 for
 `.github/workflows/staging-release.yml` on `main`: this workflow has not landed
 on the default branch, which GitHub requires for manual dispatch. The development
-branch and `main` have diverged. Default-branch integration must preserve those
-existing changes; no merge/reset or production-branch update was performed here.
+branch and `main` required integration. The development branch now preserves
+`main`'s accepted RC3 controller, sanitizer tests and API isolation regressions.
+One test file required conflict resolution: both scalar ownership guards and
+both sets of added tests are retained. The historical manual RC3 controller and
+its fixed source identity remain unchanged. No default/production-branch update
+was performed here. Draft PR #41 makes the development integration reviewable.
 Protected environment configuration could not be verified through the connector.
 This does not establish that protection is absent and does not waive it.
 Any integration or conflict resolution that changes the candidate requires a new
@@ -87,8 +91,13 @@ expected. The six original focused layout regressions also passed, along with
 one temporary measurement diagnostic. Release guards passed 82 tests; the
 historical/actual-paper evidence integration checks passed 32 tests. Dashboard
 typechecking and the production build passed. See `validation/task6/results.json`
-for the pre-publication result; the final receipt adds the published candidate,
-exact source hash and actual CI state.
+for the pre-publication result. These browser results were collected for
+`1188aac`; the subsequent main integration changes only controller/test inputs.
+All 284 focused main-integration, ownership, workflow-guard and evidence tests
+passed after resolving the conflict. All 141 API tests passed again after the
+final test arrangement, with every original assertion preserved. The final receipt adds the new published
+candidate, its exact source hash, the candidate's full browser rerun and actual
+CI state.
 
 ## Exact-source preparation and publication
 

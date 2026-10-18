@@ -23,7 +23,8 @@
     "failed": 0,
     "errors": 0,
     "skipped": 0,
-    "seconds": 358.413
+    "seconds": 358.413,
+    "validated_commit": "1188aac254ba54782a880631caf732fc67f099e9"
   },
   "focused_original_browser_regressions": {
     "passed": 6,
@@ -42,7 +43,7 @@
   "strategy_and_financial_logic": "UNCHANGED_BY_TASK_6",
   "financial_events_validation_snapshot_checks": "PASS_UNCHANGED",
   "prior_failed_browser_runs": "RETAINED; missing browser prerequisite and 160 passed / 5 failed layout/load run",
-  "candidate_ci": "NOT_STARTED_BEFORE_PUBLICATION",
+  "candidate_ci": "NOT_STARTED_FOR_MERGE_BEFORE_PUBLICATION",
   "source_freeze": "PENDING_EXACT_PUBLISHED_COMMIT",
   "fresh_images_built_scanned_published": false,
   "ssh_probe": {
@@ -54,9 +55,30 @@
   "staging_started": false,
   "production_changed": false,
   "blockers": [
-    "Manual staging publication workflow is absent on main; diverged branches need reviewed integration",
+    "Manual staging publication workflow is absent on main; reviewed draft integration PR #41 is required",
     "Protected environment and fresh build/scan/publication evidence are not yet verified",
     "VPS network access and the existing local SSH key are unavailable in this workspace",
     "Actual target isolation/auth/TLS/backups/health/research acceptance remains unperformed"
-  ]
+  ],
+  "main_integration": {
+    "main_commit": "24b67bf43e1712b5566fa33b457814ceac5ec30b",
+    "tests": 284,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 57.577,
+    "both_sets_of_conflicting_tests_and_guards": "PRESERVED",
+    "historical_rc3_controller": "UNCHANGED",
+    "main_branch_changed": false
+  },
+  "candidate_browser_after_main_integration": "PENDING_FINAL_RECEIPT; browser application and API fixture sources unchanged",
+  "final_api_merge_regressions": {
+    "tests": 141,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "seconds": 35.009,
+    "original_assertion_ast_multisets_identical": true,
+    "merge_tree_check_against_main": "PASS"
+  }
 }
