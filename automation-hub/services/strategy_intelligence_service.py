@@ -71,6 +71,7 @@ class StrategyIntelligenceService:
         self._ready_lock = threading.Lock()
         self._ready_scopes = set()
         self._scope_generations = {}
+        self._weekly_cursors = {}
 
     @staticmethod
     def _scope_key(scope):
@@ -806,7 +807,17 @@ class StrategyIntelligenceService:
                   and c.get("source_kind")=="forward_paper" and _scope_match(c,scope)]
         bound=min(self.batch_size,50)
         if len(eligible)>bound: result["status"]="COHORT_BOUND_EXCEEDED"
-        for cohort in eligible[:bound]:
+        # Rotate bounded work even when earlier cohorts remain incomplete.
+        # An eligible later cohort must not starve behind the first fifty.
+        eligible=sorted(eligible,key=evidence_json)
+        with self._lock:
+            cursor_key=_hash({"scope":scope,"week":week,"classifier":classifier,"cohorts":eligible})
+            offset=self._weekly_cursors.get(cursor_key,0)
+            selected=[eligible[(offset+i)%len(eligible)] for i in range(min(bound,len(eligible)))]
+            if len(self._weekly_cursors)>=256 and cursor_key not in self._weekly_cursors:
+                self._weekly_cursors.pop(next(iter(self._weekly_cursors)))
+            self._weekly_cursors[cursor_key]=(offset+bound)%len(eligible) if eligible else 0
+        for cohort in selected:
             query={**cohort,**(classifier or {}),"week_start":week}
             try:
                 key,_,_=self._weekly_key(scope,query,as_of)

@@ -86,8 +86,9 @@ def historical_metrics(result):
                 pnls.append(amounts["net_pnl"])
             for component in ("fees", "funding", "slippage"):
                 coverage = trade.get(component + "_coverage")
-                if (coverage not in {"BOOKED", "MODELED", "VERIFIED_ZERO"}
-                        or trade.get(component + "_cost_model") in (None, "", "UNKNOWN")
+                model = trade.get(component + "_cost_model")
+                if (not isinstance(coverage, str) or coverage not in {"BOOKED", "MODELED", "VERIFIED_ZERO"}
+                        or not isinstance(model, str) or not model.strip() or model.strip().upper() == "UNKNOWN"
                         or (coverage == "VERIFIED_ZERO" and amounts[component] != 0)
                         or (component != "funding" and amounts[component] is not None and amounts[component] < 0)):
                     reasons.add(component.upper() + "_COST_EVIDENCE_INCOMPLETE")

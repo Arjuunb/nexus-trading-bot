@@ -218,7 +218,7 @@ class ChampionDesignationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scope_key: str = Field(min_length=1, max_length=240)
     candidate_id: str = Field(min_length=1, max_length=240)
-    selection_policy_version: str = Field(default="challenger.v1", min_length=1, max_length=80)
+    selection_policy_version: str = Field(default="challenger.v2", min_length=1, max_length=80)
     reason: str = Field(min_length=1, max_length=1000)
     evidence_reference: str | None = Field(default=None, max_length=240)
 
@@ -261,7 +261,7 @@ class MatchedExperimentRequest(BaseModel):
     runs: int = Field(default=1000, ge=100, le=5000)
     random_seed: int = Field(default=1, ge=0, le=2**31 - 1)
     policy_version: str | None = Field(default="qualification.v1", max_length=80)
-    comparison_policy_version: str | None = Field(default="challenger.v1", max_length=80)
+    comparison_policy_version: str | None = Field(default="challenger.v2", max_length=80)
     cost_model_version: str | None = Field(default=None, max_length=80)
     classifier_version: str | None = Field(default=None, max_length=80)
     software_revision: str | None = Field(default=None, max_length=160)

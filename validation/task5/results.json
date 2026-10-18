@@ -1,0 +1,47 @@
+{
+  "task": 5,
+  "branch": "finish/strategy-intelligence-staging",
+  "base_commit": "567157c9d820847e94c1a854049e141e4e63d48e",
+  "focused": {
+    "tests": 490,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "time": 102.493
+  },
+  "engine_and_client": {
+    "tests": 530,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "time": 5.65
+  },
+  "final_integration": {
+    "tests": 121,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "time": 38.338
+  },
+  "browser": {
+    "passed": 20,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 23.9,
+    "includes_real_http_paper_api": true
+  },
+  "final_mobile_browser": {
+    "passed": 4,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 15.6
+  },
+  "dashboard_typecheck_and_build": "PASS",
+  "pip_check": "PASS",
+  "local_full_hub": "RUNNING",
+  "github_ci": "NOT_STARTED",
+  "actual_paper_fixture": "NOT_QUALIFIED; missing costs remain unknown; one completed position episode",
+  "financial_and_strategy_records": "UNCHANGED",
+  "deployment": "NOT_STARTED",
+  "task_6": "NOT_STARTED"
+}

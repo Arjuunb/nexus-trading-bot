@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import uuid
 
 from services.research_jobs import ResearchJobService
-from services.strategy_comparison import StrategyComparisonService
+from services.strategy_comparison import StrategyComparisonService, ChallengerEvaluationPolicy
 
 
 EXPERIMENT_METHODS = {"HISTORICAL_BACKTEST", "OUT_OF_SAMPLE_VALIDATION",
@@ -74,6 +74,8 @@ class MatchedExperimentService:
         method = request.get("method", "OUT_OF_SAMPLE_VALIDATION")
         if method not in EXPERIMENT_METHODS:
             raise ValueError("unsupported matched research method")
+        comparison_policy = request.get("comparison_policy_version") or "challenger.v2"
+        ChallengerEvaluationPolicy(policy_version=comparison_policy)
         status = "BLOCKED" if reasons else "DRAFT"
         scope = {**(champion.get("scope") or {}), **(request.get("scope") or {})}
         for key in ("period_start", "period_end", "symbol", "timeframe", "venue", "market_type",
@@ -84,7 +86,7 @@ class MatchedExperimentService:
         scope.setdefault("dataset_identity", champion.get("dataset_identity")); scope.setdefault("data_revision", champion.get("data_revision"))
         spec = {key: value for key, value in request.items() if key not in {"idempotency_key", "champion_candidate_id", "challenger_candidate_ids", "scope"}}
         spec.update({"method": method, "cost_model_version": request.get("cost_model_version") or champion.get("cost_model_version"),
-                     "policy_version": request.get("policy_version"), "comparison_policy_version": request.get("comparison_policy_version"),
+                     "policy_version": request.get("policy_version"), "comparison_policy_version": comparison_policy,
                      "classifier_version": request.get("classifier_version"), "software_revision": request.get("software_revision"),
                      "random_seed": request.get("random_seed", 1)})
         experiment = {"experiment_id": "experiment:" + uuid.uuid4().hex,
@@ -169,7 +171,8 @@ class MatchedExperimentService:
             for challenger_id in experiment["challenger_candidate_ids"]:
                 request = {"idempotency_key": f"{experiment_id}:comparison:{challenger_id}", "champion_candidate_id": experiment["champion_candidate_id"],
                            "challenger_candidate_id": challenger_id, "random_seed": experiment["frozen_spec"].get("random_seed", 1),
-                           "scope": experiment["scope"], "validation_overrides": overrides, "validation_run_ids": list(refs.values())}
+                           "scope": experiment["scope"], "validation_run_ids": list(refs.values()),
+                           "policy": {"policy_version": experiment["frozen_spec"].get("comparison_policy_version") or "challenger.v2"}}
                 comparisons.append(self.comparisons.compare(request, owner_id=owner_id))
             recommendations = {item["recommendation"] for item in comparisons}
             recommendation = comparisons[0]["recommendation"] if len(recommendations) == 1 else "INCONCLUSIVE"

@@ -103,7 +103,8 @@ def test_complete_historical_chain_uses_backtest_metrics_and_actual_forward_epis
 
 @pytest.mark.parametrize("field,value", [("net_pnl", None), ("funding", None), ("initial_risk", "0"),
     ("fees", True), ("gross_pnl", "NaN"), ("fees_coverage", "UNKNOWN"), ("slippage_cost_model", None),
-    ("gross_pnl", "999"), ("funding_coverage", "NOT_MODELED")])
+    ("gross_pnl", "999"), ("funding_coverage", "NOT_MODELED"), ("fees_cost_model", 7),
+    ("fees_cost_model", ["model"]), ("slippage_cost_model", " "), ("fees_coverage", [])])
 def test_incomplete_financial_samples_never_become_qualification_metrics(field, value):
     from services.historical_forward_evidence import historical_metrics
     trades = financial_trades()

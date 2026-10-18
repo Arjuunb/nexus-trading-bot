@@ -27,6 +27,7 @@ def test_matched_experiment_freezes_candidates_and_submits_idempotent_jobs(tmp_p
                                              "challenger_candidate_ids": [challenger["candidate_id"]], "scope": champion["scope"],
                                              "method": "OUT_OF_SAMPLE_VALIDATION"}, owner_id="owner")
     assert experiment["status"] == "DRAFT"
+    assert experiment["frozen_spec"]["comparison_policy_version"] == "challenger.v2"
     submitted = service.submit(experiment["experiment_id"], owner_id="owner")
     assert submitted["status"] == "QUEUED"
     assert len(submitted["candidate_job_ids"]) == 2

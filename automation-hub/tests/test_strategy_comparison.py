@@ -51,8 +51,11 @@ def test_comparison_is_deterministic_and_idempotent(tmp_path):
     first = service.compare(request, owner_id="owner")
     second = service.compare(request, owner_id="owner")
     assert first["comparison_id"] == second["comparison_id"]
-    assert first["recommendation"] == "CHALLENGER_PREFERRED"
-    assert first["report"]["metrics"]["expectancy_difference_r"] == "1"
+    # Legacy summary-only reports remain inspectable, but are not evidence of
+    # financial superiority. Complete raw-evidence preference is tested in
+    # test_strategy_comparison_evidence.py.
+    assert first["recommendation"] == "INSUFFICIENT_EVIDENCE"
+    assert first["report"]["metrics"]["expectancy_difference_r"] is None
 
 
 def test_champion_designation_is_explicit_and_owner_scoped(tmp_path):

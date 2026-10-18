@@ -206,7 +206,7 @@ class ResearchAgentService:
         experiment = self.matched.create_experiment({"idempotency_key": f"agent:{hypothesis_id}:{approval['plan_fingerprint']}",
             "champion_candidate_id": hypothesis["plan"].get("baseline_candidate_id") or hypothesis.get("baseline_candidate_id"),
             "challenger_candidate_ids": [candidate["candidate_id"]], "method": plan["methodology"].get("method", "OUT_OF_SAMPLE_VALIDATION"),
-            "scope": plan["dataset_scope"], "policy_version": plan.get("policy_version"), "comparison_policy_version": "challenger.v1",
+            "scope": plan["dataset_scope"], "policy_version": plan.get("policy_version"), "comparison_policy_version": "challenger.v2",
             "cost_model_version": plan.get("cost_assumptions", {}).get("version"), "warmup": plan.get("warmup", 0)}, owner_id=owner_id)
         self.context.update_agent_hypothesis(hypothesis_id, owner_id=owner_id, status="SUBMITTED")
         self._event(owner_id, "RESEARCH_SUBMITTED", hypothesis_id=hypothesis_id, payload={"experiment_id": experiment["experiment_id"], "candidate_id": candidate["candidate_id"]})

@@ -5,9 +5,10 @@ const bundledChromium = "/opt/pw-browsers/chromium_headless_shell-1194/chrome-li
 const localChrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const linuxChrome = "/usr/bin/chromium";
 
-// E2E clickability audit. Serves the production build via `vite preview` and
-// drives it with a fully mocked backend (see e2e/mock.ts), so no API/auth is
-// needed. Chromium is the environment's pre-installed browser.
+const researchAcceptance = process.env.NEXUS_RESEARCH_E2E === "1";
+const python = process.env.NEXUS_TEST_PYTHON || (existsSync("../.venv/bin/python") ? "../.venv/bin/python" : "python");
+// Production-build browser checks. Most use deterministic API fixtures;
+// explicit acceptance mode also starts the isolated loopback SQLite API.
 export default defineConfig({
   testDir: "./e2e",
   timeout: 45_000,
@@ -19,18 +20,21 @@ export default defineConfig({
     baseURL: "http://localhost:4173",
     headless: true,
     actionTimeout: 8_000,
-    // Use the environment's pre-installed Chromium (our pinned @playwright/test
-    // expects a different revision; do not download).
     launchOptions: {
       executablePath: process.env.PW_CHROMIUM
-        || (process.platform === "darwin" ? localChrome : (existsSync(bundledChromium) ? bundledChromium : linuxChrome)),
+        || [localChrome, bundledChromium, linuxChrome].find(path => existsSync(path)),
       args: process.platform === "darwin" ? ["--headless=new"] : [],
     },
   },
-  webServer: {
+  webServer: [{
     command: "npm run build && npm run preview -- --port 4173 --strictPort",
     url: "http://localhost:4173",
     timeout: 180_000,
     reuseExistingServer: true,
-  },
+  }, ...(researchAcceptance ? [{
+    command: `${python} e2e/fixtures/strategy_api.py`,
+    url: "http://127.0.0.1:18005/__acceptance__/state",
+    timeout: 60_000,
+    reuseExistingServer: false,
+  }] : [])],
 });

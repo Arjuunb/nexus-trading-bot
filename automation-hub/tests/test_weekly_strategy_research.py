@@ -108,6 +108,25 @@ def test_due_weekly_loop_is_bounded_idempotent_and_does_not_run_future_weeks(tmp
     assert service.run_weekly_research(scope=SCOPE,cohorts=cohorts,as_of=AS_OF,classifier=CLASSIFIER)["created"]==0
 
 
+def test_bounded_weekly_ticks_eventually_visit_every_cohort_even_when_first_cohorts_are_incomplete(tmp_path,monkeypatch):
+    from services.strategy_intelligence_service import StrategyIntelligenceService
+    from data.journal_store import JournalStore
+    from test_historical_forward_evidence import SCOPE
+    service=StrategyIntelligenceService(JournalStore(tmp_path/"journal.sqlite"),batch_size=2)
+    cohorts=[{**SCOPE,"symbol":f"ASSET{i}","execution_mode":"paper","source_kind":"forward_paper"} for i in range(5)]
+    visited=[]
+    monkeypatch.setattr(service,"_weekly_key",lambda scope,query,as_of:(query["symbol"],None,None))
+    def incomplete(scope,query,**kwargs):
+        visited.append(query["symbol"])
+        raise ValueError("incomplete observed costs")
+    monkeypatch.setattr(service,"generate_weekly_review",incomplete)
+    for _ in range(3):
+        result=service.run_weekly_research(scope=SCOPE,cohorts=cohorts,as_of=AS_OF)
+        assert result["status"]=="COHORT_BOUND_EXCEEDED"
+        assert result["incomplete"]==2
+    assert set(visited)=={c["symbol"] for c in cohorts}
+
+
 def test_weekly_source_change_prevents_persisting_a_mixed_snapshot(tmp_path,monkeypatch):
     from test_historical_forward_evidence import SCOPE
     from test_strategy_decay import CLASSIFIER
