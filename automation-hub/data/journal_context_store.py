@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from services.strategy_evidence import SCOPE_FIELDS, evidence_json
@@ -293,6 +295,16 @@ class JournalContextStore:
     def get_latest_intelligence_run(self, cache_key: str, *, filters: dict | None = None) -> dict | None:
         return self._get_run(cache_key, filters=filters)
 
+    def intelligence_runs(self, cache_key: str, *, filters: dict, limit=50) -> list[dict]:
+        """Bounded immutable snapshot history, always under an explicit owner."""
+        self._required_text(filters, "owner_id")
+        where,args=self._filters({"cache_key":cache_key, **filters},
+            allowed={"cache_key","contract_version","owner_id","account_id","instance_id","run_id"})
+        with self.journal._lock:
+            rows=self.journal._c.execute("SELECT report_json FROM intelligence_calculation_runs"+where
+                +" ORDER BY calculated_at DESC,rowid DESC LIMIT ?",(*args,_positive_limit(limit,100)))
+            return [json.loads(row[0]) for row in rows]
+
     def get_intelligence_run(self, cache_key: str, input_watermark: str, *, filters: dict | None = None) -> dict | None:
         return self._get_run(cache_key, input_watermark=input_watermark, filters=filters)
 
@@ -306,3 +318,761 @@ class JournalContextStore:
             row = self.journal._c.execute("SELECT report_json FROM intelligence_calculation_runs" + where
                 + " ORDER BY calculated_at DESC,rowid DESC LIMIT 1", args).fetchone()
             return json.loads(row[0]) if row else None
+
+    def record_validation_run(self, report: dict) -> bool:
+        """Persist one immutable research result; retries are logical no-ops."""
+        frozen = dict(report)
+        for field in ("run_id", "strategy_id", "dataset_identity", "execution_mode", "method", "status"):
+            self._required_text(frozen, field)
+        frozen.setdefault("created_at", _now())
+        frozen.setdefault("completed_at", frozen.get("created_at"))
+        with self.journal.transaction():
+            row = self.journal._c.execute("SELECT report_json FROM strategy_validation_runs WHERE run_id=?",
+                                          (frozen["run_id"],)).fetchone()
+            if row:
+                prior_payload = json.loads(row[0])
+                for field in ("created_at", "completed_at", "holdout_access_count"):
+                    if field in prior_payload:
+                        frozen[field] = prior_payload[field]
+                encoded = evidence_json(frozen)
+                if row[0] != encoded:
+                    raise ValueError("immutable strategy validation run conflict")
+                return False
+            if frozen.get("method") in {"out_of_sample", "walk_forward"}:
+                prior = self.journal._c.execute(
+                    "SELECT COUNT(*) FROM strategy_validation_runs WHERE strategy_id=? AND strategy_version IS ? "
+                    "AND config_fingerprint IS ? AND dataset_identity=? AND method=? AND owner_id IS ?",
+                    (frozen["strategy_id"], frozen.get("strategy_version"), frozen.get("config_fingerprint"),
+                     frozen["dataset_identity"], frozen["method"], frozen.get("owner_id"))).fetchone()[0]
+                frozen["holdout_access_count"] = int(prior) + 1
+            else:
+                frozen.setdefault("holdout_access_count", 0)
+            encoded = evidence_json(frozen)
+            columns = ("run_id", "strategy_id", "strategy_version", "config_fingerprint", "dataset_identity",
+                       "data_revision", "execution_mode", "method", "period_start", "period_end", "policy_version",
+                       "cost_model_version", "classifier_version", "software_revision", "random_seed", "status",
+                       "failure_reason", "holdout_access_count", "report_json", "created_at", "completed_at",
+                       "owner_id", "account_id", "instance_id", "simulation_session_id")
+            self.journal._c.execute(f"INSERT INTO strategy_validation_runs ({','.join(columns)}) VALUES ({','.join('?' for _ in columns)})",
+                tuple(encoded if column == "report_json" else frozen.get(column)
+                      for column in columns))
+        return True
+
+    def validation_runs(self, *, filters: dict | None = None, limit=100) -> list[dict]:
+        filters = filters or {}
+        allowed = {"run_id", "strategy_id", "strategy_version", "config_fingerprint", "dataset_identity",
+                   "execution_mode", "method", "status", "owner_id", "account_id", "instance_id", "simulation_session_id"}
+        clauses, args = [], []
+        for key, value in filters.items():
+            if key not in allowed:
+                raise ValueError(f"unsupported validation filter: {key}")
+            column = key
+            if value is None:
+                clauses.append(f"{column} IS NULL")
+            else:
+                clauses.append(f"{column}=?")
+                args.append(value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT report_json FROM strategy_validation_runs" + where
+                + " ORDER BY created_at DESC, rowid DESC LIMIT ?", (*args, _positive_limit(limit, 1000))).fetchall()
+            return [json.loads(row[0]) for row in rows]
+
+    def get_validation_run(self, run_id: str) -> dict | None:
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT report_json FROM strategy_validation_runs WHERE run_id=?", (run_id,)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def create_research_job(self, job: dict) -> dict:
+        frozen = dict(job)
+        for field in ("job_id", "idempotency_key", "owner_id", "job_type", "strategy_id", "status"):
+            self._required_text(frozen, field)
+        frozen.setdefault("progress", 0)
+        frozen.setdefault("requested_at", _now())
+        frozen.setdefault("frozen_config", {})
+        frozen.setdefault("request", {})
+        frozen.setdefault("max_attempts", 3)
+        frozen.setdefault("logical_result_key", "validation:" + frozen["job_id"])
+        with self.journal.transaction():
+            existing = self.journal._c.execute(
+                "SELECT request_json FROM research_jobs WHERE owner_id=? AND idempotency_key=?",
+                (frozen["owner_id"], frozen["idempotency_key"])).fetchone()
+            if existing:
+                return json.loads(existing[0])
+            self.journal._c.execute("""INSERT INTO research_jobs
+                (job_id,idempotency_key,owner_id,account_id,instance_id,simulation_session_id,
+                 job_type,strategy_id,strategy_version,config_fingerprint,frozen_config_json,request_json,
+                 status,progress,requested_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (frozen["job_id"], frozen["idempotency_key"], frozen["owner_id"], frozen.get("account_id"),
+                 frozen.get("instance_id"), frozen.get("simulation_session_id"), frozen["job_type"],
+                 frozen["strategy_id"], frozen.get("strategy_version"), frozen.get("config_fingerprint"),
+                 evidence_json(frozen.get("frozen_config", {})), evidence_json(frozen),
+                 frozen["status"], int(frozen.get("progress", 0)), frozen["requested_at"]))
+            self.journal._c.execute("UPDATE research_jobs SET max_attempts=?,logical_result_key=? WHERE job_id=?",
+                                    (int(frozen["max_attempts"]), frozen["logical_result_key"], frozen["job_id"]))
+        return frozen
+
+    def get_research_job(self, job_id: str, *, owner_id: str | None = None) -> dict | None:
+        clauses, args = ["job_id=?"], [job_id]
+        if owner_id is not None:
+            clauses.append("owner_id=?"); args.append(owner_id)
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT * FROM research_jobs WHERE " + " AND ".join(clauses), args).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["frozen_config"] = json.loads(result.pop("frozen_config_json"))
+            raw_request = json.loads(result.pop("request_json"))
+            result["request"] = raw_request.get("request", raw_request)
+            if result.get("result_json"):
+                result["result"] = json.loads(result.pop("result_json"))
+            else:
+                result.pop("result_json", None)
+            return result
+
+    def research_jobs(self, *, filters: dict | None = None, limit=100) -> list[dict]:
+        filters = filters or {}
+        allowed = {"owner_id", "account_id", "instance_id", "simulation_session_id", "status", "job_type", "strategy_id"}
+        clauses, args = [], []
+        for key, value in filters.items():
+            if key not in allowed:
+                raise ValueError(f"unsupported research job filter: {key}")
+            clauses.append(f"{key}=?"); args.append(value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        with self.journal._lock:
+            ids = self.journal._c.execute("SELECT job_id FROM research_jobs" + where
+                + " ORDER BY requested_at DESC LIMIT ?", (*args, _positive_limit(limit, 1000))).fetchall()
+        return [self.get_research_job(row[0]) for row in ids]
+
+    def update_research_job(self, job_id: str, *, owner_id: str, **changes) -> dict:
+        allowed = {"status", "progress", "error_class", "error_message", "result", "started_at", "completed_at", "lease_until"}
+        if set(changes) - allowed:
+            raise ValueError("unsupported research job update")
+        assignments, args = [], []
+        for key, value in changes.items():
+            column = "result_json" if key == "result" else key
+            assignments.append(column + "=?")
+            args.append(evidence_json(value) if key == "result" else value)
+        if not assignments:
+            return self.get_research_job(job_id, owner_id=owner_id)
+        args.extend((job_id, owner_id))
+        with self.journal.transaction():
+            self.journal._c.execute("UPDATE research_jobs SET " + ",".join(assignments) + " WHERE job_id=? AND owner_id=?", args)
+        return self.get_research_job(job_id, owner_id=owner_id)
+
+    # ------------------------------------------------------- Sprint 4.6 queue
+    JOB_TRANSITIONS = {
+        "QUEUED": {"CLAIMED", "CANCELLED"},
+        "CLAIMED": {"RUNNING", "CANCEL_REQUESTED", "INTERRUPTED", "FAILED"},
+        "RUNNING": {"COMPLETED", "FAILED", "CANCEL_REQUESTED", "INTERRUPTED"},
+        "CANCEL_REQUESTED": {"CANCELLED"},
+        "INTERRUPTED": {"RETRY_PENDING", "FAILED"},
+        "RETRY_PENDING": {"CLAIMED", "CANCELLED"},
+        "FAILED": set(), "COMPLETED": set(), "CANCELLED": set(),
+    }
+
+    @staticmethod
+    def _job_stamp(value=None) -> str:
+        return (value or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat()
+
+    @staticmethod
+    def _job_dt(value: str | None):
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return None
+
+    def _job_event_locked(self, job_id, from_status, to_status, *, attempt=0,
+                          worker_id=None, reason=None, payload=None):
+        self.journal._c.execute(
+            """INSERT INTO research_job_events
+               (event_id,job_id,from_status,to_status,attempt_number,worker_id,reason,payload_json,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            ("research-event:" + uuid.uuid4().hex, job_id, from_status, to_status,
+             int(attempt or 0), worker_id, reason, evidence_json(payload or {}), _now()))
+
+    def _transition_job_locked(self, row, to_status, *, worker_id=None, lease_token=None,
+                               reason=None, changes=None, force=False):
+        current = row["status"]
+        if not force and to_status not in self.JOB_TRANSITIONS.get(current, set()):
+            raise ValueError(f"invalid research job transition {current}->{to_status}")
+        if lease_token is not None and row["lease_token"] != lease_token:
+            raise ValueError("research job lease fencing token mismatch")
+        changes = dict(changes or {})
+        changes["status"] = to_status
+        assignments, args = [], []
+        for key, value in changes.items():
+            column = "result_json" if key == "result" else key
+            assignments.append(column + "=?")
+            args.append(evidence_json(value) if key == "result" else value)
+        args.append(row["job_id"])
+        self.journal._c.execute("UPDATE research_jobs SET " + ",".join(assignments) + " WHERE job_id=?", args)
+        self._job_event_locked(row["job_id"], current, to_status,
+                               attempt=row["attempt_number"], worker_id=worker_id,
+                               reason=reason, payload=changes)
+
+    def claim_research_job(self, *, worker_id: str, lease_seconds: int = 60,
+                           max_active: int = 1) -> dict | None:
+        """Atomically claim one eligible job on the journal's SQLite writer lock."""
+        if not worker_id.strip():
+            raise ValueError("worker_id is required")
+        now = datetime.now(timezone.utc)
+        stamp = self._job_stamp(now)
+        expiry = self._job_stamp(now + timedelta(seconds=max(5, int(lease_seconds))))
+        with self.journal.transaction():
+            active = self.journal._c.execute(
+                """SELECT COUNT(*) FROM research_jobs
+                   WHERE status IN ('CLAIMED','RUNNING','CANCEL_REQUESTED')
+                     AND (lease_expires_at IS NULL OR lease_expires_at>?)""", (stamp,)
+            ).fetchone()[0]
+            if active >= max(1, int(max_active)):
+                return None
+            row = self.journal._c.execute(
+                """SELECT * FROM research_jobs
+                   WHERE (status IN ('QUEUED','RETRY_PENDING') AND attempt_number<max_attempts AND (retry_at IS NULL OR retry_at<=?))
+                      OR (status IN ('CLAIMED','RUNNING','CANCEL_REQUESTED') AND lease_expires_at IS NOT NULL AND lease_expires_at<=?)
+                   ORDER BY requested_at ASC LIMIT 1""", (stamp, stamp)).fetchone()
+            if not row:
+                return None
+            current = dict(row)
+            old_status = current["status"]
+            if old_status in {"CLAIMED", "RUNNING", "CANCEL_REQUESTED"}:
+                self._transition_job_locked(current, "INTERRUPTED", reason="lease_expired", force=True)
+                current["status"] = "INTERRUPTED"
+                old_status = "INTERRUPTED"
+            if old_status == "INTERRUPTED":
+                self._transition_job_locked(current, "RETRY_PENDING", reason="recovered_after_lease_expiry")
+                current["status"] = "RETRY_PENDING"
+            attempt = int(current.get("attempt_number") or 0) + 1
+            token = uuid.uuid4().hex
+            attempt_id = "research-attempt:" + uuid.uuid4().hex
+            self._transition_job_locked(current, "CLAIMED", worker_id=worker_id,
+                                        reason="worker_claimed", changes={
+                                            "attempt_number": attempt, "worker_id": worker_id,
+                                            "lease_token": token, "heartbeat_at": stamp,
+                                            "lease_expires_at": expiry, "retry_at": None,
+                                            "cancel_requested_at": None,
+                                        })
+            self.journal._c.execute(
+                """INSERT INTO research_job_attempts
+                   (attempt_id,job_id,attempt_number,worker_id,lease_token,status,claimed_at,heartbeat_at,lease_expires_at)
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (attempt_id, current["job_id"], attempt, worker_id, token, "CLAIMED", stamp, stamp, expiry))
+            result = dict(current)
+            result.update(status="CLAIMED", attempt_number=attempt, worker_id=worker_id,
+                          lease_token=token, heartbeat_at=stamp, lease_expires_at=expiry)
+            return result
+
+    def transition_research_job(self, job_id: str, *, to_status: str, worker_id: str | None = None,
+                                lease_token: str | None = None, owner_id: str | None = None,
+                                reason: str | None = None, changes: dict | None = None) -> dict:
+        with self.journal.transaction():
+            clauses = ["job_id=?"]; args = [job_id]
+            if owner_id is not None:
+                clauses.append("owner_id=?"); args.append(owner_id)
+            row = self.journal._c.execute("SELECT * FROM research_jobs WHERE " + " AND ".join(clauses), args).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            current = dict(row)
+            self._transition_job_locked(current, to_status, worker_id=worker_id,
+                                        lease_token=lease_token, reason=reason, changes=changes)
+        return self.get_research_job(job_id, owner_id=owner_id)
+
+    def heartbeat_research_job(self, job_id: str, *, worker_id: str, lease_token: str,
+                               lease_seconds: int = 60) -> bool:
+        now = datetime.now(timezone.utc); stamp = self._job_stamp(now)
+        expiry = self._job_stamp(now + timedelta(seconds=max(5, int(lease_seconds))))
+        with self.journal.transaction():
+            changed = self.journal._c.execute(
+                """UPDATE research_jobs SET heartbeat_at=?,lease_expires_at=?
+                   WHERE job_id=? AND worker_id=? AND lease_token=?
+                     AND status IN ('CLAIMED','RUNNING','CANCEL_REQUESTED')""",
+                (stamp, expiry, job_id, worker_id, lease_token)).rowcount
+            if changed:
+                self.journal._c.execute(
+                    "UPDATE research_job_attempts SET heartbeat_at=?,lease_expires_at=? WHERE job_id=? AND lease_token=?",
+                    (stamp, expiry, job_id, lease_token))
+        return bool(changed)
+
+    def commit_research_result(self, job_id: str, *, worker_id: str, lease_token: str,
+                               report: dict, validation: dict) -> dict:
+        """Commit validation evidence and terminal job state under one lock.
+
+        The fencing check happens before the immutable insert, so a cancelled
+        or superseded worker cannot leave evidence that later appears as a
+        successful qualification input.
+        """
+        with self.journal.transaction():
+            row = self.journal._c.execute("SELECT * FROM research_jobs WHERE job_id=?", (job_id,)).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            current = dict(row)
+            if current.get("worker_id") != worker_id or current.get("lease_token") != lease_token:
+                raise ValueError("research job lease fencing token mismatch")
+            if current["status"] in {"CANCEL_REQUESTED", "CANCELLED", "FAILED", "INTERRUPTED", "COMPLETED"}:
+                if current["status"] == "COMPLETED" and current.get("result_json"):
+                    return self.get_research_job(job_id)
+                raise ValueError("research job is no longer commit-eligible")
+            self.record_validation_run(validation)
+            self._transition_job_locked(current, "COMPLETED", worker_id=worker_id,
+                                        lease_token=lease_token, reason="result_committed",
+                                        changes={"progress": 100, "result": report,
+                                                 "result_reference": validation["run_id"],
+                                                 "completed_at": _now()})
+            self.journal._c.execute("UPDATE research_job_attempts SET status='COMPLETED',completed_at=? WHERE job_id=? AND lease_token=?",
+                                    (_now(), job_id, lease_token))
+        return self.get_research_job(job_id)
+
+    def request_research_cancellation(self, job_id: str, *, owner_id: str) -> dict:
+        with self.journal.transaction():
+            row = self.journal._c.execute("SELECT * FROM research_jobs WHERE job_id=? AND owner_id=?", (job_id, owner_id)).fetchone()
+            if not row:
+                raise KeyError(job_id)
+            current = dict(row); status = current["status"]
+            stamp = _now()
+            if status in {"QUEUED", "RETRY_PENDING"}:
+                self._transition_job_locked(current, "CANCELLED", reason="cancelled_by_user",
+                                            changes={"cancel_requested_at": stamp, "completed_at": stamp})
+            elif status in {"CLAIMED", "RUNNING"}:
+                self._transition_job_locked(current, "CANCEL_REQUESTED", worker_id=current.get("worker_id"),
+                                            lease_token=current.get("lease_token"), reason="cancel_requested",
+                                            changes={"cancel_requested_at": stamp})
+            elif status == "CANCEL_REQUESTED":
+                pass
+        return self.get_research_job(job_id, owner_id=owner_id)
+
+    def recover_expired_research_jobs(self, *, max_attempts: int = 3) -> int:
+        stamp = _now(); count = 0
+        with self.journal.transaction():
+            rows = self.journal._c.execute(
+                "SELECT * FROM research_jobs WHERE status IN ('CLAIMED','RUNNING','CANCEL_REQUESTED') AND lease_expires_at IS NOT NULL AND lease_expires_at<=?", (stamp,)).fetchall()
+            for row in rows:
+                current = dict(row)
+                self._transition_job_locked(current, "INTERRUPTED", reason="lease_expired", force=True)
+                current["status"] = "INTERRUPTED"
+                self.journal._c.execute("UPDATE research_job_attempts SET status='INTERRUPTED',completed_at=? WHERE job_id=? AND lease_token=?", (stamp, current["job_id"], current.get("lease_token")))
+                if int(current.get("attempt_number") or 0) < max_attempts:
+                    self._transition_job_locked(current, "RETRY_PENDING", reason="recovery_retry")
+                    self.journal._c.execute("UPDATE research_jobs SET retry_at=? WHERE job_id=?", (stamp, current["job_id"]))
+                else:
+                    self._transition_job_locked(current, "FAILED", reason="retry_exhausted", changes={"error_class": "WORKER_INTERRUPTED", "completed_at": stamp})
+                count += 1
+        return count
+
+    # ------------------------------------------------- Sprint 5 comparisons
+    def create_research_candidate(self, candidate: dict) -> dict:
+        frozen = dict(candidate)
+        for field in ("candidate_id", "owner_id", "strategy_id", "dataset_identity", "execution_mode"):
+            self._required_text(frozen, field)
+        frozen.setdefault("frozen_config", {})
+        frozen.setdefault("validation_run_ids", [])
+        frozen.setdefault("scope", {})
+        frozen.setdefault("evidence_quality", "UNKNOWN")
+        frozen.setdefault("created_at", _now())
+        encoded = evidence_json(frozen)
+        with self.journal.transaction():
+            row = self.journal._c.execute("SELECT payload_json FROM strategy_research_candidates WHERE candidate_id=?", (frozen["candidate_id"],)).fetchone()
+            if row:
+                if row[0] != encoded:
+                    raise ValueError("immutable research candidate conflict")
+                return json.loads(row[0])
+            self.journal._c.execute("""INSERT INTO strategy_research_candidates
+              (candidate_id,owner_id,strategy_id,strategy_version,config_fingerprint,frozen_config_json,
+               dataset_identity,data_revision,symbol,asset_portfolio_json,venue,market_type,timeframe,
+               execution_mode,cost_model_version,classifier_version,software_revision,policy_version,
+               validation_run_ids_json,evidence_quality,scope_json,created_at,payload_json)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (frozen["candidate_id"], frozen["owner_id"], frozen["strategy_id"], frozen.get("strategy_version"),
+               frozen.get("config_fingerprint"), evidence_json(frozen["frozen_config"]), frozen["dataset_identity"],
+               frozen.get("data_revision"), frozen.get("symbol"), evidence_json(frozen.get("asset_portfolio")) if frozen.get("asset_portfolio") is not None else None,
+               frozen.get("venue"), frozen.get("market_type"), frozen.get("timeframe"), frozen["execution_mode"],
+               frozen.get("cost_model_version"), frozen.get("classifier_version"), frozen.get("software_revision"),
+               frozen.get("policy_version"), evidence_json(frozen["validation_run_ids"]), frozen["evidence_quality"],
+               evidence_json(frozen["scope"]), frozen["created_at"], encoded))
+        return frozen
+
+    def get_research_candidate(self, candidate_id: str, *, owner_id: str | None = None) -> dict | None:
+        clauses, args = ["candidate_id=?"], [candidate_id]
+        if owner_id is not None:
+            clauses.append("owner_id=?"); args.append(owner_id)
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT * FROM strategy_research_candidates WHERE " + " AND ".join(clauses), args).fetchone()
+            if not row:
+                return None
+            result = dict(row)
+            result["frozen_config"] = json.loads(result.pop("frozen_config_json"))
+            result["validation_run_ids"] = json.loads(result.pop("validation_run_ids_json"))
+            result["scope"] = json.loads(result.pop("scope_json"))
+            if result.get("asset_portfolio_json"):
+                result["asset_portfolio"] = json.loads(result.pop("asset_portfolio_json"))
+            else:
+                result.pop("asset_portfolio_json", None); result["asset_portfolio"] = None
+            if "_payload" in result["scope"]:
+                result["scope"].pop("_payload", None)
+            return result
+
+    def research_candidates(self, *, owner_id: str, limit: int = 100) -> list[dict]:
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT candidate_id FROM strategy_research_candidates WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                                           (owner_id, _positive_limit(limit, 1000))).fetchall()
+        return [self.get_research_candidate(row[0], owner_id=owner_id) for row in rows]
+
+    def designate_research_champion(self, designation: dict) -> dict:
+        frozen = dict(designation)
+        for field in ("designation_id", "owner_id", "scope_key", "candidate_id", "selection_policy_version", "reviewer_id", "reason"):
+            self._required_text(frozen, field)
+        frozen.setdefault("review_status", "PENDING")
+        frozen.setdefault("selected_at", _now())
+        frozen.setdefault("evidence_reference", None)
+        with self.journal.transaction():
+            if not self.journal._c.execute("SELECT 1 FROM strategy_research_candidates WHERE candidate_id=? AND owner_id=?",
+                                           (frozen["candidate_id"], frozen["owner_id"])).fetchone():
+                raise ValueError("candidate is not owned by the reviewer")
+            self.journal._c.execute("""INSERT INTO research_champion_registry
+              (designation_id,owner_id,scope_key,candidate_id,selection_policy_version,reviewer_id,
+               review_status,reason,evidence_reference,selected_at,payload_json)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+              (frozen["designation_id"], frozen["owner_id"], frozen["scope_key"], frozen["candidate_id"],
+               frozen["selection_policy_version"], frozen["reviewer_id"], frozen["review_status"], frozen["reason"],
+               frozen.get("evidence_reference"), frozen["selected_at"], evidence_json(frozen)))
+        return frozen
+
+    def research_champion(self, *, owner_id: str, scope_key: str) -> dict | None:
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT payload_json FROM research_champion_registry WHERE owner_id=? AND scope_key=? ORDER BY selected_at DESC LIMIT 1",
+                                          (owner_id, scope_key)).fetchone()
+            return json.loads(row[0]) if row else None
+
+    def record_strategy_comparison(self, comparison: dict) -> dict:
+        frozen = dict(comparison)
+        for field in ("comparison_id", "idempotency_key", "owner_id", "champion_candidate_id", "challenger_candidate_id", "policy_version", "status", "recommendation"):
+            self._required_text(frozen, field)
+        frozen.setdefault("scope", {}); frozen.setdefault("statistical_method", "UNKNOWN")
+        frozen.setdefault("blocking_reasons", []); frozen.setdefault("validation_run_ids", [])
+        frozen.setdefault("report", {}); frozen.setdefault("created_at", _now()); frozen.setdefault("completed_at", frozen["created_at"])
+        encoded = evidence_json(frozen)
+        with self.journal.transaction():
+            existing = self.journal._c.execute("SELECT payload_json FROM strategy_comparisons WHERE owner_id=? AND idempotency_key=?",
+                                               (frozen["owner_id"], frozen["idempotency_key"])).fetchone()
+            if existing:
+                prior = json.loads(existing[0])
+                def stable(value):
+                    value = dict(value)
+                    for key in ("comparison_id", "created_at", "completed_at"):
+                        value.pop(key, None)
+                    report = dict(value.get("report") or {})
+                    report.pop("calculated_at", None)
+                    value["report"] = report
+                    return evidence_json(value)
+                if stable(prior) != stable(frozen):
+                    raise ValueError("comparison idempotency conflict")
+                return prior
+            self.journal._c.execute("""INSERT INTO strategy_comparisons
+              (comparison_id,idempotency_key,owner_id,champion_candidate_id,challenger_candidate_id,scope_json,
+               policy_version,statistical_method,random_seed,status,recommendation,blocking_reasons_json,report_json,
+               validation_run_ids_json,created_at,completed_at,payload_json)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (frozen["comparison_id"], frozen["idempotency_key"], frozen["owner_id"], frozen["champion_candidate_id"],
+               frozen["challenger_candidate_id"], evidence_json(frozen["scope"]), frozen["policy_version"],
+               frozen["statistical_method"], frozen.get("random_seed"), frozen["status"], frozen["recommendation"],
+               evidence_json(frozen["blocking_reasons"]), evidence_json(frozen["report"]), evidence_json(frozen["validation_run_ids"]),
+               frozen["created_at"], frozen.get("completed_at"), encoded))
+        return frozen
+
+    def get_strategy_comparison(self, comparison_id: str, *, owner_id: str | None = None) -> dict | None:
+        clauses, args = ["comparison_id=?"], [comparison_id]
+        if owner_id is not None:
+            clauses.append("owner_id=?"); args.append(owner_id)
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT * FROM strategy_comparisons WHERE " + " AND ".join(clauses), args).fetchone()
+            if not row: return None
+            result = dict(row)
+            for column, key in (("scope_json", "scope"), ("blocking_reasons_json", "blocking_reasons"), ("report_json", "report"), ("validation_run_ids_json", "validation_run_ids")):
+                result[key] = json.loads(result.pop(column))
+            return result
+
+    def strategy_comparisons(self, *, owner_id: str, limit: int = 100) -> list[dict]:
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT comparison_id FROM strategy_comparisons WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                                           (owner_id, _positive_limit(limit, 1000))).fetchall()
+        return [self.get_strategy_comparison(row[0], owner_id=owner_id) for row in rows]
+
+    # ------------------------------------------ Sprint 5.5 matched research
+    EXPERIMENT_TRANSITIONS = {
+        "DRAFT": {"VALIDATING", "QUEUED", "BLOCKED", "CANCEL_REQUESTED"},
+        "VALIDATING": {"QUEUED", "BLOCKED", "FAILED", "CANCEL_REQUESTED"},
+        "QUEUED": {"RUNNING", "CANCEL_REQUESTED", "BLOCKED", "FAILED"},
+        "RUNNING": {"PARTIALLY_COMPLETED", "COMPLETED", "FAILED", "CANCEL_REQUESTED"},
+        "PARTIALLY_COMPLETED": {"RUNNING", "COMPLETED", "FAILED", "CANCEL_REQUESTED"},
+        "CANCEL_REQUESTED": {"CANCELLED", "PARTIALLY_COMPLETED", "FAILED"},
+        "COMPLETED": set(), "FAILED": set(), "CANCELLED": set(), "BLOCKED": set(),
+    }
+
+    def create_research_campaign(self, campaign: dict) -> dict:
+        frozen = dict(campaign)
+        for field in ("campaign_id", "idempotency_key", "owner_id", "status"):
+            self._required_text(frozen, field)
+        frozen.setdefault("selection_criteria", {}); frozen.setdefault("policy_versions", {})
+        frozen.setdefault("created_at", _now()); frozen.setdefault("candidate_count", 0)
+        encoded = evidence_json(frozen)
+        with self.journal.transaction():
+            existing = self.journal._c.execute("SELECT payload_json FROM research_campaigns WHERE owner_id=? AND idempotency_key=?",
+                                               (frozen["owner_id"], frozen["idempotency_key"])).fetchone()
+            if existing:
+                prior = json.loads(existing[0])
+                if evidence_json({k: v for k, v in prior.items() if k not in {"campaign_id", "created_at", "completed_at"}}) != evidence_json({k: v for k, v in frozen.items() if k not in {"campaign_id", "created_at", "completed_at"}}):
+                    raise ValueError("campaign idempotency conflict")
+                return prior
+            self.journal._c.execute("""INSERT INTO research_campaigns
+              (campaign_id,idempotency_key,owner_id,strategy_family,selection_criteria_json,policy_versions_json,
+               status,candidate_count,comparison_attempts,payload_json,created_at)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+              (frozen["campaign_id"], frozen["idempotency_key"], frozen["owner_id"], frozen.get("strategy_family"),
+               evidence_json(frozen["selection_criteria"]), evidence_json(frozen["policy_versions"]), frozen["status"],
+               int(frozen["candidate_count"]), int(frozen.get("comparison_attempts", 0)), encoded, frozen["created_at"]))
+        return frozen
+
+    def get_research_campaign(self, campaign_id: str, *, owner_id: str | None = None) -> dict | None:
+        clauses, args = ["campaign_id=?"], [campaign_id]
+        if owner_id is not None: clauses.append("owner_id=?"); args.append(owner_id)
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT * FROM research_campaigns WHERE " + " AND ".join(clauses), args).fetchone()
+            if not row: return None
+            result = dict(row); payload = json.loads(result.pop("payload_json"))
+            result["selection_criteria"] = json.loads(result.pop("selection_criteria_json"))
+            result["policy_versions"] = json.loads(result.pop("policy_versions_json"))
+            result.update({key: value for key, value in payload.items() if key not in result})
+            return result
+
+    def research_campaigns(self, *, owner_id: str, limit=100) -> list[dict]:
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT campaign_id FROM research_campaigns WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                                           (owner_id, _positive_limit(limit, 1000))).fetchall()
+        return [self.get_research_campaign(row[0], owner_id=owner_id) for row in rows]
+
+    def create_matched_experiment(self, experiment: dict, candidates: list[dict]) -> dict:
+        frozen = dict(experiment)
+        for field in ("experiment_id", "idempotency_key", "owner_id", "champion_candidate_id", "status"):
+            self._required_text(frozen, field)
+        frozen.setdefault("challenger_candidate_ids", []); frozen.setdefault("scope", {})
+        frozen.setdefault("frozen_spec", {}); frozen.setdefault("candidate_job_ids", {})
+        frozen.setdefault("validation_run_ids", {}); frozen.setdefault("holdout_status", "UNKNOWN")
+        frozen.setdefault("recommendation", "INSUFFICIENT_EVIDENCE"); frozen.setdefault("warnings", [])
+        frozen.setdefault("report", {}); frozen.setdefault("created_at", _now())
+        encoded = evidence_json(frozen)
+        with self.journal.transaction():
+            existing = self.journal._c.execute("SELECT payload_json FROM matched_experiments WHERE owner_id=? AND idempotency_key=?",
+                                               (frozen["owner_id"], frozen["idempotency_key"])).fetchone()
+            if existing:
+                return json.loads(existing[0])
+            self.journal._c.execute("""INSERT INTO matched_experiments
+              (experiment_id,idempotency_key,owner_id,campaign_id,champion_candidate_id,challenger_candidate_ids_json,
+               scope_json,frozen_spec_json,candidate_job_ids_json,validation_run_ids_json,holdout_status,status,
+               recommendation,warnings_json,report_json,created_at,payload_json)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (frozen["experiment_id"], frozen["idempotency_key"], frozen["owner_id"], frozen.get("campaign_id"),
+               frozen["champion_candidate_id"], evidence_json(frozen["challenger_candidate_ids"]), evidence_json(frozen["scope"]),
+               evidence_json(frozen["frozen_spec"]), evidence_json(frozen["candidate_job_ids"]), evidence_json(frozen["validation_run_ids"]),
+               frozen["holdout_status"], frozen["status"], frozen["recommendation"], evidence_json(frozen["warnings"]),
+               evidence_json(frozen["report"]), frozen["created_at"], encoded))
+            for candidate in candidates:
+                self.journal._c.execute("""INSERT INTO matched_experiment_candidates
+                  (experiment_id,candidate_id,role,status,updated_at) VALUES (?,?,?,?,?)""",
+                  (frozen["experiment_id"], candidate["candidate_id"],
+                   "CHAMPION" if candidate["candidate_id"] == frozen["champion_candidate_id"] else "CHALLENGER",
+                   "PENDING", frozen["created_at"]))
+            self._experiment_event_locked(frozen["experiment_id"], None, frozen["status"], "created", frozen)
+        return frozen
+
+    def _experiment_event_locked(self, experiment_id, from_status, to_status, reason, payload=None):
+        self.journal._c.execute("""INSERT INTO matched_experiment_events
+          (event_id,experiment_id,from_status,to_status,reason,payload_json,created_at)
+          VALUES (?,?,?,?,?,?,?)""",
+          ("experiment-event:" + uuid.uuid4().hex, experiment_id, from_status, to_status, reason,
+           evidence_json(payload or {}), _now()))
+
+    def get_matched_experiment(self, experiment_id: str, *, owner_id: str | None = None) -> dict | None:
+        clauses, args = ["experiment_id=?"], [experiment_id]
+        if owner_id is not None: clauses.append("owner_id=?"); args.append(owner_id)
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT * FROM matched_experiments WHERE " + " AND ".join(clauses), args).fetchone()
+            if not row: return None
+            result = dict(row); payload = json.loads(result.pop("payload_json"))
+            for column, key in (("challenger_candidate_ids_json", "challenger_candidate_ids"), ("scope_json", "scope"), ("frozen_spec_json", "frozen_spec"), ("candidate_job_ids_json", "candidate_job_ids"), ("validation_run_ids_json", "validation_run_ids"), ("warnings_json", "warnings"), ("report_json", "report")):
+                result[key] = json.loads(result.pop(column))
+            result.update({key: value for key, value in payload.items() if key not in result})
+            result["candidates"] = [dict(item) for item in self.journal._c.execute("SELECT * FROM matched_experiment_candidates WHERE experiment_id=?", (experiment_id,)).fetchall()]
+            return result
+
+    def matched_experiments(self, *, owner_id: str, limit=100) -> list[dict]:
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT experiment_id FROM matched_experiments WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                                           (owner_id, _positive_limit(limit, 1000))).fetchall()
+        return [self.get_matched_experiment(row[0], owner_id=owner_id) for row in rows]
+
+    def update_matched_experiment(self, experiment_id: str, *, owner_id: str, to_status: str | None = None, reason: str = "update", **changes) -> dict:
+        with self.journal.transaction():
+            row = self.journal._c.execute("SELECT * FROM matched_experiments WHERE experiment_id=? AND owner_id=?", (experiment_id, owner_id)).fetchone()
+            if not row: raise KeyError(experiment_id)
+            current = dict(row); old = current["status"]
+            if to_status and to_status != old and to_status not in self.EXPERIMENT_TRANSITIONS.get(old, set()):
+                raise ValueError(f"invalid experiment transition {old}->{to_status}")
+            if to_status: changes["status"] = to_status
+            assignments, args = [], []
+            mapping = {"challenger_candidate_ids": "challenger_candidate_ids_json", "scope": "scope_json", "frozen_spec": "frozen_spec_json", "candidate_job_ids": "candidate_job_ids_json", "validation_run_ids": "validation_run_ids_json", "warnings": "warnings_json", "report": "report_json"}
+            for key, value in changes.items():
+                column = mapping.get(key, key); assignments.append(column + "=?"); args.append(evidence_json(value) if key in mapping else value)
+            if assignments:
+                args.append(experiment_id); self.journal._c.execute("UPDATE matched_experiments SET " + ",".join(assignments) + " WHERE experiment_id=?", args)
+            if to_status and to_status != old: self._experiment_event_locked(experiment_id, old, to_status, reason, changes)
+        return self.get_matched_experiment(experiment_id, owner_id=owner_id)
+
+    def update_experiment_candidate(self, experiment_id: str, candidate_id: str, **changes) -> None:
+        allowed = {"job_id", "status", "validation_run_id", "error_message"}
+        if set(changes) - allowed: raise ValueError("unsupported experiment candidate update")
+        columns = []; args = []
+        for key, value in changes.items(): columns.append(key + "=?"); args.append(value)
+        columns.append("updated_at=?"); args.append(_now()); args.extend((experiment_id, candidate_id))
+        with self.journal.transaction():
+            self.journal._c.execute("UPDATE matched_experiment_candidates SET " + ",".join(columns) + " WHERE experiment_id=? AND candidate_id=?", args)
+
+    def record_holdout_exposure(self, exposure: dict) -> dict:
+        frozen = dict(exposure)
+        for field in ("exposure_id", "owner_id", "experiment_id", "dataset_identity", "exposure_kind", "selection_influence"):
+            self._required_text(frozen, field)
+        frozen.setdefault("created_at", _now())
+        with self.journal.transaction():
+            prior = self.journal._c.execute(
+                "SELECT COUNT(*) FROM holdout_exposure_events WHERE owner_id=? AND dataset_identity=? "
+                "AND (period_start IS NULL OR period_end IS NULL OR ? IS NULL OR ? IS NULL OR "
+                "(period_start < ? AND period_end > ?))",
+                (frozen["owner_id"], frozen["dataset_identity"], frozen.get("period_end"), frozen.get("period_start"),
+                 frozen.get("period_end"), frozen.get("period_start"))).fetchone()[0]
+            frozen["holdout_status"] = "UNTOUCHED" if prior == 0 else "REUSED" if prior > 1 else "EXPOSED"
+            self.journal._c.execute("""INSERT INTO holdout_exposure_events
+              (exposure_id,owner_id,campaign_id,experiment_id,dataset_identity,period_start,period_end,candidate_id,
+               exposure_kind,selection_influence,created_at,payload_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (frozen["exposure_id"], frozen["owner_id"], frozen.get("campaign_id"), frozen["experiment_id"], frozen["dataset_identity"],
+               frozen.get("period_start"), frozen.get("period_end"), frozen.get("candidate_id"), frozen["exposure_kind"],
+               frozen["selection_influence"], frozen["created_at"], evidence_json(frozen)))
+        return frozen
+
+    def holdout_exposures(self, *, owner_id: str, dataset_identity: str, period_start=None, period_end=None) -> list[dict]:
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT payload_json FROM holdout_exposure_events WHERE owner_id=? AND dataset_identity=? AND period_start IS ? AND period_end IS ? ORDER BY created_at",
+                                           (owner_id, dataset_identity, period_start, period_end)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def overlapping_holdout_exposures(self, *, owner_id: str, dataset_identity: str,
+                                      period_start=None, period_end=None) -> list[dict]:
+        with self.journal._lock:
+            rows = self.journal._c.execute(
+                "SELECT payload_json FROM holdout_exposure_events WHERE owner_id=? AND dataset_identity=? "
+                "AND (period_start IS NULL OR period_end IS NULL OR ? IS NULL OR ? IS NULL OR "
+                "(period_start < ? AND period_end > ?)) ORDER BY created_at",
+                (owner_id, dataset_identity, period_end, period_start, period_end, period_start)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    # ------------------------------------------------ research-agent metadata
+    def create_agent_hypothesis(self, hypothesis: dict) -> dict:
+        frozen = dict(hypothesis)
+        for field in ("hypothesis_id", "owner_id", "strategy_id", "question", "status"):
+            self._required_text(frozen, field)
+        frozen.setdefault("created_at", _now()); frozen.setdefault("updated_at", frozen["created_at"])
+        frozen.setdefault("evidence_refs", []); frozen.setdefault("uncertainties", [])
+        frozen.setdefault("methodology", {}); frozen.setdefault("dataset_scope", {})
+        frozen.setdefault("cost_assumptions", {}); frozen.setdefault("plan", {})
+        encoded = evidence_json(frozen)
+        with self.journal.transaction():
+            row = self.journal._c.execute("SELECT payload_json FROM research_agent_hypotheses WHERE hypothesis_id=? AND owner_id=?",
+                                          (frozen["hypothesis_id"], frozen["owner_id"])).fetchone()
+            if row:
+                if row[0] != encoded: raise ValueError("immutable research hypothesis conflict")
+                return json.loads(row[0])
+            self.journal._c.execute("""INSERT INTO research_agent_hypotheses
+              (hypothesis_id,campaign_id,owner_id,strategy_id,strategy_version,baseline_fingerprint,proposed_fingerprint,
+               question,expected_effect,evidence_refs_json,uncertainties_json,methodology_json,dataset_scope_json,
+               cost_assumptions_json,agent_version,status,plan_json,created_at,updated_at,payload_json)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+              (frozen["hypothesis_id"], frozen.get("campaign_id"), frozen["owner_id"], frozen["strategy_id"],
+               frozen.get("strategy_version"), frozen.get("baseline_fingerprint"), frozen.get("proposed_fingerprint"),
+               frozen["question"], frozen.get("expected_effect"), evidence_json(frozen["evidence_refs"]),
+               evidence_json(frozen["uncertainties"]), evidence_json(frozen["methodology"]), evidence_json(frozen["dataset_scope"]),
+               evidence_json(frozen["cost_assumptions"]), frozen.get("agent_version"), frozen["status"], evidence_json(frozen["plan"]),
+               frozen["created_at"], frozen["updated_at"], encoded))
+        return frozen
+
+    def get_agent_hypothesis(self, hypothesis_id: str, *, owner_id: str) -> dict | None:
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT payload_json FROM research_agent_hypotheses WHERE hypothesis_id=? AND owner_id=?",
+                                          (hypothesis_id, owner_id)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def agent_hypotheses(self, *, owner_id: str, limit=100) -> list[dict]:
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT payload_json FROM research_agent_hypotheses WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                                           (owner_id, _positive_limit(limit, 1000))).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def update_agent_hypothesis(self, hypothesis_id: str, *, owner_id: str, **changes) -> dict:
+        allowed = {"status", "plan", "updated_at"}
+        if set(changes) - allowed: raise ValueError("unsupported hypothesis update")
+        current = self.get_agent_hypothesis(hypothesis_id, owner_id=owner_id)
+        if not current: raise KeyError(hypothesis_id)
+        current.update(changes); current["updated_at"] = _now()
+        encoded = evidence_json(current)
+        with self.journal.transaction():
+            self.journal._c.execute("UPDATE research_agent_hypotheses SET status=?,plan_json=?,updated_at=?,payload_json=? WHERE hypothesis_id=? AND owner_id=?",
+                (current["status"], evidence_json(current.get("plan", {})), current["updated_at"], encoded, hypothesis_id, owner_id))
+        return current
+
+    def create_agent_approval(self, approval: dict) -> dict:
+        frozen = dict(approval)
+        for field in ("approval_id", "hypothesis_id", "owner_id", "plan_fingerprint", "reviewer_id", "decision"):
+            self._required_text(frozen, field)
+        frozen.setdefault("approved_at", _now()); frozen.setdefault("max_jobs", 1); frozen.setdefault("resource_budget", {})
+        encoded = evidence_json(frozen)
+        with self.journal.transaction():
+            row = self.journal._c.execute("SELECT payload_json FROM research_agent_approvals WHERE owner_id=? AND hypothesis_id=? AND plan_fingerprint=?",
+                                          (frozen["owner_id"], frozen["hypothesis_id"], frozen["plan_fingerprint"])).fetchone()
+            if row:
+                if row[0] != encoded: raise ValueError("immutable research approval conflict")
+                return json.loads(row[0])
+            self.journal._c.execute("""INSERT INTO research_agent_approvals
+              (approval_id,hypothesis_id,owner_id,plan_fingerprint,reviewer_id,decision,approved_at,max_jobs,resource_budget_json,payload_json)
+              VALUES (?,?,?,?,?,?,?,?,?,?)""", (frozen["approval_id"], frozen["hypothesis_id"], frozen["owner_id"], frozen["plan_fingerprint"],
+                frozen["reviewer_id"], frozen["decision"], frozen["approved_at"], frozen["max_jobs"], evidence_json(frozen["resource_budget"]), encoded))
+        return frozen
+
+    def agent_approval(self, hypothesis_id: str, *, owner_id: str, plan_fingerprint: str | None = None) -> dict | None:
+        clauses = ["hypothesis_id=?", "owner_id=?"]; args = [hypothesis_id, owner_id]
+        if plan_fingerprint: clauses.append("plan_fingerprint=?"); args.append(plan_fingerprint)
+        with self.journal._lock:
+            row = self.journal._c.execute("SELECT payload_json FROM research_agent_approvals WHERE " + " AND ".join(clauses) + " ORDER BY approved_at DESC LIMIT 1", args).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def record_agent_event(self, event: dict) -> dict:
+        frozen = dict(event)
+        for field in ("event_id", "owner_id", "event_type", "actor_id"):
+            self._required_text(frozen, field)
+        frozen.setdefault("created_at", _now()); frozen.setdefault("payload", {})
+        with self.journal.transaction():
+            self.journal._c.execute("INSERT INTO research_agent_events(event_id,owner_id,hypothesis_id,event_type,actor_id,payload_json,created_at) VALUES (?,?,?,?,?,?,?)",
+                (frozen["event_id"], frozen["owner_id"], frozen.get("hypothesis_id"), frozen["event_type"], frozen["actor_id"], evidence_json(frozen["payload"]), frozen["created_at"]))
+        return frozen
+
+    def agent_events(self, *, owner_id: str, hypothesis_id: str | None = None, limit=200) -> list[dict]:
+        clauses = ["owner_id=?"]; args = [owner_id]
+        if hypothesis_id: clauses.append("hypothesis_id=?"); args.append(hypothesis_id)
+        with self.journal._lock:
+            rows = self.journal._c.execute("SELECT * FROM research_agent_events WHERE " + " AND ".join(clauses) + " ORDER BY created_at DESC LIMIT ?", (*args, _positive_limit(limit, 1000))).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            try: item["payload"] = json.loads(item.pop("payload_json"))
+            except (TypeError, ValueError): item["payload"] = {}
+            result.append(item)
+        return result

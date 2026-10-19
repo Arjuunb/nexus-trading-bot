@@ -1,0 +1,137 @@
+name: Release validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  backend-and-ui:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: source
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        python: ['3.11', '3.12']
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HUB_AUTO_ENGINE: '0'
+      HUB_ENABLE_EXTERNAL_LIVE: '0'
+      HUB_USE_LIVE_DATA: '0'
+      HUB_RESEARCH_AUTOSTART: '0'
+      HUB_MONITOR_AGENT: '0'
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            source/automation-hub-dashboard/package-lock.json
+            source/tradexa-landing/package-lock.json
+      - name: Install hash-locked runtime and test dependencies
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r ops/api-requirements.lock -r ops/ci-test-requirements.lock
+          .venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+          .venv/bin/python -m pip check
+      - name: Typecheck and build both real frontend bundles
+        run: |
+          npm ci --prefix automation-hub-dashboard
+          npm ci --prefix tradexa-landing
+          npm run typecheck --prefix automation-hub-dashboard
+          DASHBOARD_BASE=/app/ npm run build --prefix automation-hub-dashboard
+          VITE_APP_URL=/app npm run build --prefix tradexa-landing
+          npm run test:workspace --prefix tradexa-landing
+          mkdir -p automation-hub/webui automation-hub/landing
+          cp -a automation-hub-dashboard/dist/. automation-hub/webui/
+          cp -a tradexa-landing/dist/. automation-hub/landing/
+      - name: Run complete repository regression suite
+        run: .venv/bin/python -m pytest -q --junitxml=${{ runner.temp }}/root-tests.xml
+      - name: Real disposable PostgreSQL concurrency and recovery
+        if: matrix.python == '3.12'
+        env:
+          NEXUS_PG_WORKER_TEST: '1'
+          NEXUS_PG_TEST_TMPFS: '1'
+          NEXUS_PG_OUTBOX_TEST: '1'
+        run: |
+          docker pull postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+          docker tag postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea postgres:16-alpine
+          .venv/bin/python -m pytest -q automation-hub/tests/test_postgres_workers.py automation-hub/tests/test_sprint11_postgres.py automation-hub/tests/test_sprint13_postgres.py --junitxml=${{ runner.temp }}/postgres-tests.xml
+      - name: Install matched Playwright browser on the disposable CI runner
+        if: matrix.python == '3.12'
+        working-directory: source/automation-hub-dashboard
+        run: |
+          npx playwright install --with-deps chromium
+          printf 'PW_CHROMIUM=%s\n' "$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - name: Check out the reviewed RC3 clipboard harness separately
+        if: matrix.python == '3.12'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          ref: '24b67bf43e1712b5566fa33b457814ceac5ec30b'
+          path: validation-controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-browser
+      - name: Verify the reviewed harness and unchanged dashboard source
+        if: matrix.python == '3.12'
+        run: |
+          python - <<'PY'
+          import hashlib, os, subprocess
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          controller = workspace / 'validation-controller'
+          actual = subprocess.check_output(['git', '-C', str(controller), 'rev-parse', 'HEAD'], text=True).strip()
+          assert actual == '24b67bf43e1712b5566fa33b457814ceac5ec30b'
+          expected = {'playwright.config.cjs': '6b1cb8d1827f2301c567fe50b4a3957cf9ed2cde28aa62b7a6f0e57478e2a6da', 'clipboard.spec.cjs': '4185ce2a072662f04649a67763321b4de03cdb81dfcc55f8ae179d3d919d219e'}
+          for name, digest in expected.items():
+              assert hashlib.sha256((controller / '.github/rc3-browser' / name).read_bytes()).hexdigest() == digest
+          subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--', 'automation-hub-dashboard'], check=True)
+          PY
+      - name: Run unchanged browser regressions with the reviewed clipboard harness
+        if: matrix.python == '3.12'
+        working-directory: source/automation-hub-dashboard
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/browser-tests.xml
+        run: |
+          ../.venv/bin/python ../ops/run-release-browser-checks.py \
+            --config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs" \
+            --output "$RUNNER_TEMP/browser-acceptance"
+      - name: Require full browser evidence and unchanged original assertions
+        if: matrix.python == '3.12'
+        run: |
+          git diff --exit-code HEAD -- automation-hub-dashboard
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          cases = ET.parse(Path(os.environ['RUNNER_TEMP']) / 'browser-tests.xml').findall('.//testcase')
+          assert len(cases) >= 156
+          assert not any(case.find(tag) is not None for case in cases for tag in ('failure', 'error', 'skipped'))
+          PY
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: release-validation-${{ github.run_id }}-${{ github.run_attempt }}-py${{ matrix.python }}
+          path: |
+            ${{ runner.temp }}/*-tests.xml
+          if-no-files-found: error
+          retention-days: 7

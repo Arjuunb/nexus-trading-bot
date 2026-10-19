@@ -31,6 +31,9 @@ config = ["pyyaml>=6.0"]
 hub = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9", "pandas>=2.0"]
 live = ["ccxt>=4.3.0", "alpaca-py>=0.30.0", "oandapyV20>=0.7.2", "pyyaml>=6.0"]
 dev = ["pytest>=8.0", "pyyaml>=6.0", "fastapi>=0.110", "httpx>=0.27", "python-multipart>=0.0.9", "pandas>=2.0"]
+worker-postgres = [
+    "psycopg[binary]>=3.2,<4",
+]
 
 [project.scripts]
 bot = "bot.cli:main"

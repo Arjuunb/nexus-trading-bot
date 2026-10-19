@@ -53,3 +53,8 @@ automation-hub/logs/providers.json
 
 # Stray Playwright output (tests run from repo root by mistake)
 /test-results/
+
+# Generated research journals are retained locally; never add new history.
+strategy_v2_research_ledger.jsonl
+strategy_v2_verdict_ledger.jsonl
+strategy_v3_research_ledger.jsonl

@@ -1,0 +1,68 @@
+F
+=================================== FAILURES ===================================
+_ test_authenticated_api_reads_calculated_persisted_cache_and_real_qualification _
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-6/test_authenticated_api_reads_c0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7fde41336390>
+
+    def test_authenticated_api_reads_calculated_persisted_cache_and_real_qualification(tmp_path, monkeypatch):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from routers.strategy_intelligence import create_router
+        from services.strategy_intelligence_metrics import EvidenceCohort
+        from services.strategy_evidence_completeness import metrics_episode_watermark
+        from services.strategy_intelligence_service import StrategyIntelligenceService
+        from services.strategy_intelligence_v2 import calculate_context_performance
+        from test_historical_forward_evidence import setup_chain
+        from test_strategy_intelligence_v2 import context, episode, report
+        scope = {**SCOPE, "account_id": "instance:one:session"}
+        journal, service, filters, _ = setup_chain(tmp_path, monkeypatch, scope=scope)
+        # Use the actual public reader for both persisted context projections.
+        monkeypatch.setattr(service, "read", StrategyIntelligenceService.read.__get__(service))
+        cohort = EvidenceCohort(**{**scope, **filters, "lab_id": None})
+        now = datetime.now(timezone.utc).isoformat()
+        rows = [episode(f"forward-{i}", **{**cohort.as_dict(),
+            "opened_at": "2025-03-01T00:00:00Z", "closed_at": "2025-03-01T01:00:00Z",
+            "net_pnl": "9" if i % 3 else "-9", "gross_pnl": "10" if i % 3 else "-8"}) for i in range(40)]
+        contexts = [context(row["episode_id"], **{**cohort.as_dict(),
+            **{key: QUERY[key] for key in (*SELECTION_GROUPING, "classifier_id", "classifier_version", "parameter_hash")},
+            "entry_timestamp": row["opened_at"], "signal_timestamp": "2025-02-28T23:59:00Z"}) for row in rows]
+        completeness = {**report(rows), "cohort": cohort.as_dict(), "calculated_at": now,
+                        "metrics_evidence_watermark": metrics_episode_watermark(rows, cohort)}
+        for grouping in (("symbol",), SELECTION_GROUPING):
+            result = calculate_context_performance(rows, contexts, cohort=cohort, group_by=grouping,
+                completeness_report=completeness, source_watermark="source-one", calculation_timestamp=now)
+            result.update(run_id=str(len(grouping)), cache_key=service._cache_key(cohort, grouping),
+                input_watermark="fixture-input", calculated_at=now, scope=scope)
+            journal.context.record_intelligence_run(result)
+        monkeypatch.setattr(journal.context, "cached_cohorts", lambda **kw: [cohort.as_dict()])
+        service._ready_scopes.add(service._scope_key(scope))
+        class Manager:
+            store = SimpleNamespace(available=True)
+            def instance_for(self, iid, owner):
+                if iid != "one" or owner != "owner": raise KeyError(iid)
+                return SimpleNamespace(simulation_session_id="session")
+        app = FastAPI()
+        app.include_router(create_router(service_provider=lambda: service,
+            manager_provider=Manager, owner_resolver=lambda req: req.headers.get("x-test-owner")))
+        client = TestClient(app)
+        params = {"instance_id": "one", **{k: v for k, v in QUERY.items() if v is not None}}
+        assert client.get("/api/v2/strategy-intelligence/selection", params=params).status_code == 401
+        assert client.get("/api/v2/strategy-intelligence/selection", params=params,
+                          headers={"x-test-owner": "foreign"}).status_code == 404
+        response = client.get("/api/v2/strategy-intelligence/selection", params=params, headers={"x-test-owner": "owner"})
+        assert response.status_code == 200, response.text
+        result = response.json()
+>       assert result["status"] == "RECOMMENDED", [(c.get("qualification_status"), c.get("blocking_reasons")) for c in result.get("candidates", [])]
+E       AssertionError: [('QUALIFIED', ['CONTEXT_DRAWDOWN_UNKNOWN'])]
+E       assert 'INSUFFICIENT_EVIDENCE' == 'RECOMMENDED'
+E
+E         - RECOMMENDED
+E         + INSUFFICIENT_EVIDENCE
+
+automation-hub/tests/test_strategy_selection.py:297: AssertionError
+=========================== short test summary info ============================
+FAILED automation-hub/tests/test_strategy_selection.py::test_authenticated_api_reads_calculated_persisted_cache_and_real_qualification
+1 failed in 1.24s

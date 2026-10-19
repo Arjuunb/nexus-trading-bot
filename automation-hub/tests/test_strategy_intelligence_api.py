@@ -81,6 +81,174 @@ def query(**changes):
 BASE = "/api/v2/strategy-intelligence"
 
 
+def selection_query(**changes):
+    return {"instance_id": "mine", "symbol": "XRPUSDT", "session": "LONDON",
+            "trend_regime": "BULL", "volatility_regime": "NORMAL", "entry_timeframe": "5m", **changes}
+
+
+def edge_query(**changes):
+    return {**query(symbol="XRPUSDT"), "execution_mode": "paper", **changes}
+
+
+def test_sprint3_read_routes_use_server_scope_and_do_not_add_write_methods(api):
+    client, _, service = api
+    overview = client.get(BASE + "/overview", params=query())
+    assert overview.status_code == 200
+    assert service.calls[-1][0] == "overview"
+    service.calls.clear()
+    # Overview is the only aggregate view: instance scope is sufficient and
+    # must not force a client to invent a strategy identity.
+    aggregate = client.get(BASE + "/overview", params={"instance_id": "mine"})
+    assert aggregate.status_code == 200
+    assert service.calls[-1][0] == "overview"
+    edge = client.get(BASE + "/edge-map", params=query(x_dimension="session", y_dimension="symbol", metric="expectancy_r"))
+    assert edge.status_code == 200
+    assert service.calls[-1][0] == "edge_map"
+    comparison = client.get(BASE + "/comparison", params=query(strategy_ids="adaptive_trend_pullback,smc"))
+    assert comparison.status_code == 200
+    assert service.calls[-1][0] == "comparison"
+    episodes = client.get(BASE + "/episodes", params=query(limit=10, offset=0))
+    assert episodes.status_code == 200
+    assert service.calls[-1][0] == "episodes"
+    for endpoint in ("/overview", "/edge-map", "/comparison", "/episodes"):
+        assert client.post(BASE + endpoint, json={}).status_code == 405
+
+
+@pytest.mark.parametrize("params", [
+    {"x_dimension": "symbol", "y_dimension": "symbol"},
+    {"x_dimension": "unknown", "y_dimension": "symbol"},
+    {"x_dimension": "session", "y_dimension": "direction"},
+])
+def test_sprint3_edge_map_rejects_unsafe_or_uncached_dimension_pairs(api, params):
+    client, _, service = api
+    response = client.get(BASE + "/edge-map", params=query(**params))
+    assert response.status_code == 422
+    assert service.calls == []
+
+
+def test_sprint3_comparison_requires_two_to_four_distinct_strategies(api):
+    client, _, service = api
+    for value in ("adaptive_trend_pullback", "a,b,c,d,e", "a,a"):
+        response = client.get(BASE + "/comparison", params=query(strategy_ids=value))
+        assert response.status_code == 422
+    assert service.calls == []
+
+
+def test_sprint4_qualification_and_validation_reads_are_scoped_and_read_only(api):
+    client, _, service = api
+    for endpoint in ("/qualification", "/oos", "/walk-forward", "/robustness"):
+        response = client.get(BASE + endpoint, params=query())
+        assert response.status_code == 200
+        assert service.calls[-1][0] in {"qualification", "oos", "walk_forward", "robustness"}
+        assert client.post(BASE + endpoint, json={}).status_code == 405
+    history = client.get(BASE + "/validation-history", params={"instance_id": "mine"})
+    assert history.status_code == 200
+    assert service.calls[-1][0] == "validation_history"
+    assert client.post(BASE + "/validation-history", json={}).status_code == 405
+
+
+def test_decay_api_is_owner_scoped_and_read_only(api):
+    client, _, service = api
+    service.payload.update(status="EDGE_DEGRADING", suggested_lifecycle_state="DEGRADED")
+    response=client.get(BASE+"/decay",params=edge_query())
+    assert response.status_code==200 and response.headers["cache-control"]=="no-store"
+    assert response.json()["strategy_changes_allowed"] is False
+    assert service.calls[0][0]=="decay" and service.calls[0][1]["owner_id"]=="alice"
+    assert client.post(BASE+"/decay",json=edge_query()).status_code==405
+
+
+@pytest.mark.parametrize("changes", [{"owner_id":"bob"},{"source_kind":"shadow"},{"execution_mode":"live"},
+    {"as_of":"2030-01-01"},{"threshold":"0"},{"classifier_id":"custom"},{"monitor_policy_version":"v2"}])
+def test_decay_query_cannot_supply_authority_policy_or_evidence(api,changes):
+    client,_,service=api
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+    assert service.calls==[]
+
+
+def test_weekly_report_read_and_creation_authorize_exact_server_scope(api):
+    client,_,service=api
+    writes=[]
+    def generate(scope,filters):
+        writes.append((deepcopy(scope),deepcopy(filters)))
+        return {"review_id":"weekly-one","status":"COMPLETE","orders_allowed":False,"strategy_changes_allowed":False}
+    service.generate_weekly_review=generate
+    request={**edge_query(),"week_start":"2025-03-24"}
+    response=client.post(BASE+"/weekly-research",json=request)
+    assert response.status_code==201 and response.headers["cache-control"]=="no-store"
+    assert writes[0][0]["account_id"]=="instance:mine:current"
+    assert writes[0][1]["week_start"]=="2025-03-24"
+    response=client.get(BASE+"/weekly-research",params=request)
+    assert response.status_code==200 and service.calls[-1][0]=="weekly_research"
+    assert client.post(BASE+"/weekly-research",json={**request,"instance_id":"theirs"}).status_code==404
+    assert client.post(BASE+"/weekly-research",json={**request,"auto_apply":True}).status_code==422
+
+
+def test_edge_score_api_resolves_scope_and_exposes_no_execution_rights(api):
+    client, _, service = api
+    service.payload.update(status="SCORED", score="72.5")
+    response = client.get(BASE + "/edge-score", params=edge_query())
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+    assert response.json()["score"] == "72.5"
+    assert response.json()["orders_allowed"] is False and response.json()["recommendation_eligible"] is False
+    view, scope, filters = service.calls[0]
+    assert view == "edge_score" and scope["owner_id"] == "alice"
+    assert scope["account_id"] == "instance:mine:current"
+    assert filters["score_policy_version"] == "edge_score.v1"
+
+
+@pytest.mark.parametrize("changes", [{"owner_id": "bob"}, {"account_id": "foreign"}, {"weights": "{}"},
+    {"score": "100"}, {"score_policy_version": "edge_score.v2"}, {"source_watermark": "forged"},
+    {"execution_mode": "live"}, {"execution_mode": "backtest"}, {"source_kind": "shadow"},
+    {"classifier_id": "market_context_classifier"}, {"config_fingerprint": "bad"}])
+def test_edge_score_rejects_forged_scope_evidence_weights_and_unsupported_policies(api, changes):
+    client, _, service = api
+    assert client.get(BASE + "/edge-score", params=edge_query(**changes)).status_code == 422
+    assert service.calls == []
+
+
+def test_edge_score_authorization_unavailable_cache_and_read_only_routes(api):
+    client, _, service = api
+    assert client.get(BASE + "/edge-score", params=edge_query(instance_id="theirs")).status_code == 404
+    assert client.get(BASE + "/edge-score", params=edge_query(simulation_session_id="other")).status_code == 404
+    assert service.calls == []
+    service.fail = True
+    result = client.get(BASE + "/edge-score", params=edge_query()).json()
+    assert result["score"] is None and result["status"] == "UNSCORED"
+    assert client.post(BASE + "/edge-score", json={"weights": {}}).status_code == 405
+
+
+def test_selection_is_advisory_and_server_scoped(api):
+    client, manager, service = api
+    service.payload.update(status="RECOMMENDED", recommendation={"cohort": cohort(symbol="XRPUSDT")})
+    result = client.get(BASE + "/selection", params=selection_query())
+    assert result.status_code == 200 and result.headers["cache-control"] == "no-store"
+    assert result.json()["orders_allowed"] is False and result.json()["advisory_only"] is True
+    view, scope, filters = service.calls[0]
+    assert view == "selection" and scope["account_id"] == "instance:mine:current"
+    assert scope["owner_id"] == "alice" and filters["entry_timeframe"] == "5m"
+
+
+@pytest.mark.parametrize("changes", [{"owner_id": "bob"}, {"account_id": "foreign"},
+    {"qualification_status": "QUALIFIED"}, {"policy": "relaxed"}, {"execution_mode": "live"},
+    {"source_kind": "shadow"}, {"session": "UNKNOWN"}, {"entry_timeframe": "invalid"},
+    {"classifier_version": "1.0.0"}])
+def test_selection_rejects_forged_scope_evidence_and_partial_classifier(api, changes):
+    client, _, service = api
+    assert client.get(BASE + "/selection", params=selection_query(**changes)).status_code == 422
+    assert service.calls == []
+
+
+def test_selection_authorizes_instances_sessions_and_fails_closed_on_cache_error(api):
+    client, _, service = api
+    assert client.get(BASE + "/selection", params=selection_query(instance_id="theirs")).status_code == 404
+    assert client.get(BASE + "/selection", params=selection_query(simulation_session_id="other")).status_code == 404
+    assert service.calls == []
+    service.fail = True
+    result = client.get(BASE + "/selection", params=selection_query()).json()
+    assert result["status"] == "UNAVAILABLE" and result["recommendation"] is None
+    assert result["orders_allowed"] is False
+
+
 def test_exact_cohort_is_server_resolved_and_reads_one_cache(api):
     client, manager, service = api
     response = client.get(BASE + "/performance", params=query(group_by="symbol,session,trend_regime"))
@@ -333,7 +501,8 @@ def _persisted_service(tmp_path):
     service = StrategyIntelligenceService(journal)
     definition = classifier_definition()
     journal.context.save_classifier_version(definition)
-    now = datetime.now(timezone.utc).isoformat()
+    # Stable timestamps keep persisted fixture metadata reproducible.
+    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     cohorts = []
     for owner, instance, session, symbol, profit in (("alice", "mine", "current", "BTCUSDT", "9"),
                                                    ("bob", "theirs", "other", "ETHUSDT", "777")):
@@ -471,6 +640,19 @@ def test_registered_api_reads_persisted_groups_and_context_without_reconciliatio
         _assert_owned_api_response(result.json(), identities[0], {own_episode})
         assert result.headers["cache-control"] == "no-store"
     assert path.read_bytes() == before
+    for result in (discovery, performance, contexts):
+        # Opaque evidence hashes may legitimately contain the digits 777.
+        # Check decoded scalar evidence rather than arbitrary substrings.
+        def scalars(value):
+            if isinstance(value,dict):
+                return [v for child in value.values() for v in scalars(child)]
+            if isinstance(value,list):
+                return [v for child in value for v in scalars(child)]
+            return [value]
+        values=scalars(result.json())
+        assert all(v not in ("ETHUSDT","bob","theirs","trade-theirs","777",777) for v in values)
+    own_episode=journal.episode_for_trade("trade-mine")["episode_id"]
+    _assert_owned_persisted_result(performance.json(),identities[0],{own_episode})
 
 
 def test_old_persisted_cache_remains_visible_but_unverified_after_restart(monkeypatch, tmp_path):
@@ -486,6 +668,62 @@ def test_old_persisted_cache_remains_visible_but_unverified_after_restart(monkey
     assert response.json()["cache_status"] == "RECONCILIATION_REQUIRED"
     assert response.json()["profitability_verified"] is False
     assert all(group["profitability"]["verified"] is False for group in response.json()["groups"])
+
+
+def _assert_owned_persisted_result(payload, identity, episode_ids):
+    """Check decoded identities/values, never substrings of opaque watermarks."""
+    from decimal import Decimal, InvalidOperation
+
+    forbidden = {"bob", "theirs", "other", "instance:theirs:other", "ETHUSDT",
+                 "trade-theirs", "position-theirs", "open-theirs", "close-theirs",
+                 "run-theirs", "wrong-scope-cache-key", "observed-test-input-theirs"}
+    scope_keys = ("owner_id", "account_id", "instance_id", "simulation_session_id")
+
+    def inspect(value, key=None):
+        if isinstance(value, dict):
+            if key == "cohort":
+                for field, expected in identity.items():
+                    assert value.get(field) == expected, (field, value.get(field))
+            if key == "scope":
+                for field in scope_keys:
+                    assert value.get(field) == identity[field], field
+            for field, child in value.items():
+                if field in scope_keys:
+                    assert child == identity[field], field
+                inspect(child, field)
+        elif isinstance(value, list):
+            if key in {"episode_ids", "subgroup_episode_ids", "missing_context_episode_ids",
+                       "unreliable_context_episode_ids"}:
+                assert set(value) <= episode_ids, key
+            for child in value:
+                inspect(child, key)
+        else:
+            if isinstance(value, str):
+                assert value not in forbidden
+            # Recognize only schema-defined opaque hashes; do not parse them as money.
+            if (key in {"context_watermark", "source_watermark", "subgroup_evidence_watermark",
+                        "parameter_hash", "config_fingerprint", "group_key"}
+                    and isinstance(value, str) and len(value) == 64
+                    and all(character in "0123456789abcdef" for character in value)):
+                return
+            # A foreign financial scalar is forbidden regardless of JSON number/text encoding.
+            if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+                try:
+                    amount = Decimal(str(value))
+                except InvalidOperation:
+                    pass
+                else:
+                    assert amount != Decimal("777"), key
+            if key == "episode_id" and value is not None:
+                assert value in episode_ids
+
+    assert payload["cohort"] == identity
+    assert payload["groups"]
+    for group in payload["groups"]:
+        assert group["cohort"] == identity
+        assert group["group"]["symbol"] == "BTCUSDT"
+        assert group["metrics"]["net_pnl"] == "9"
+    inspect(payload)
 
 
 def test_corrupt_cache_key_cannot_expose_another_owners_persisted_result(tmp_path):
@@ -506,7 +744,55 @@ def test_corrupt_cache_key_cannot_expose_another_owners_persisted_result(tmp_pat
     assert result.status_code == 200
     assert result.json()["cohort"]["owner_id"] == "alice"
     assert result.json()["groups"][0]["metrics"]["net_pnl"] == "9"
-    assert "ETHUSDT" not in result.text and "777" not in result.text
+    assert "ETHUSDT" not in result.text
+    own_episode = journal.episode_for_trade("trade-mine")["episode_id"]
+    _assert_owned_persisted_result(result.json(), identities[0], {own_episode})
+
+
+@pytest.mark.parametrize("injection", [None, "numeric_hash", "owner", "account", "instance", "session",
+                                      "financial_text", "financial_number", "financial_decimal",
+                                      "foreign_group", "episode", "trade", "run", "input"])
+def test_persisted_result_isolation_guard_accepts_opaque_hash_but_rejects_foreign_evidence(tmp_path, injection):
+    _, journal, _, identities = _persisted_service(tmp_path)
+    # Exercise the same guard against real persisted reports, including opaque hash collisions.
+    import json
+    row = journal._c.execute(
+        "SELECT report_json FROM intelligence_calculation_runs WHERE owner_id='alice'"
+    ).fetchone()
+    payload = json.loads(row[0])
+    payload["context_watermark"] = "eeb30eded3292d059c3ab880a6d501477706dec52831e7c4542415161103389c"
+    own_episode = journal.episode_for_trade("trade-mine")["episode_id"]
+    if injection == "numeric_hash":
+        payload["context_watermark"] = "0" * 61 + "777"
+    elif injection == "owner":
+        payload["groups"][0]["cohort"]["owner_id"] = "bob"
+    elif injection == "account":
+        payload["scope"]["account_id"] = "instance:theirs:other"
+    elif injection == "instance":
+        payload["groups"][0]["metrics"]["cohort"]["instance_id"] = "theirs"
+    elif injection == "session":
+        payload["scope"]["simulation_session_id"] = "other"
+    elif injection in {"financial_text", "financial_number", "financial_decimal"}:
+        payload["foreign_financial_value"] = {"financial_text": "777", "financial_number": 777,
+                                              "financial_decimal": "777.00"}[injection]
+    elif injection == "foreign_group":
+        foreign = journal._c.execute(
+            "SELECT report_json FROM intelligence_calculation_runs WHERE owner_id='bob'"
+        ).fetchone()
+        payload["groups"].extend(json.loads(foreign[0])["groups"])
+    elif injection == "episode":
+        payload["groups"][0]["episode_ids"].append(journal.episode_for_trade("trade-theirs")["episode_id"])
+    elif injection == "trade":
+        payload.setdefault("rows", []).append({"trade_id": "trade-theirs"})
+    elif injection == "run":
+        payload["run_id"] = "run-theirs"
+    elif injection == "input":
+        payload["input_watermark"] = "observed-test-input-theirs"
+    if injection in {None, "numeric_hash"}:
+        _assert_owned_persisted_result(payload, identities[0], {own_episode})
+    else:
+        with pytest.raises(AssertionError):
+            _assert_owned_persisted_result(payload, identities[0], {own_episode})
 
 
 @pytest.mark.parametrize("changed", ["strategy_version", "config_fingerprint", "execution_mode", "simulation_session_id"])

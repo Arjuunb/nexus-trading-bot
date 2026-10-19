@@ -40,6 +40,8 @@ class PriceActionPublicStream:
         self.stale_after_seconds = stale_after_seconds
         self.event_sink = event_sink
         self.bar_sink = bar_sink
+        self.candle_observation_sink = None
+        self.observation_notice_failures = 0
         self.quote_sink = quote_sink
         self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.quote_mismatch_bps = float(quote_mismatch_bps)
@@ -111,9 +113,16 @@ class PriceActionPublicStream:
                 "timeframe": self.timeframe,
             })
 
-    def _deliver_closed_bar(self, bar: Bar) -> bool:
+    def _observe_closed_bar(self,bar,origin):
+        if self.candle_observation_sink:
+            try:self.candle_observation_sink({'bar':bar,'origin':origin,'finalized':True,
+                'symbol':self.symbol,'timeframe':self.timeframe,'delivery_observed_at':self.clock().isoformat()})
+            except Exception:self.observation_notice_failures+=1
+
+    def _deliver_closed_bar(self, bar: Bar, *, origin='UNKNOWN') -> bool:
         """Deliver a candle without translating journal contention to a feed outage."""
         if not self.bar_sink:
+            self._observe_closed_bar(bar,origin)
             return True
         try:
             self.bar_sink(bar)
@@ -132,6 +141,7 @@ class PriceActionPublicStream:
                     "timeframe": self.timeframe,
                 })
             return False
+        finally:self._observe_closed_bar(bar,origin)
 
     def _deliver_quote(self, event: str, received_at: datetime, *,
                        event_timestamp: datetime | None = None,
@@ -405,7 +415,7 @@ class PriceActionPublicStream:
                 if not known:
                     if self._merge_closed(row):
                         count += 1
-                        self._deliver_closed_bar(row)
+                        self._deliver_closed_bar(row,origin='REST_REPAIR')
             self.reconciled_candles += count
             with self._lock:
                 self.reconciliation_complete = self._unresolved_gaps() == 0
@@ -485,7 +495,7 @@ class PriceActionPublicStream:
             if bool(kline["x"]):
                 accepted = self._merge_closed(bar)
                 self._forming = None
-                persisted = self._deliver_closed_bar(bar) if accepted else True
+                persisted = self._deliver_closed_bar(bar,origin='LIVE_WEBSOCKET') if accepted else True
                 return {"accepted": accepted, "closed": True, "bar": bar,
                         "sink_persisted": persisted,
                         "persistence_state": (
@@ -512,6 +522,10 @@ class PriceActionPublicStream:
             event_at = datetime.fromtimestamp(int(data.get("E") or
                                                    int(now.timestamp() * 1000)) / 1000,
                                               tz=timezone.utc)
+            with self._lock:
+                # Mark provenance is separate from a later bookTicker clock.
+                # Missing exchange E stays unknown for equity observations.
+                self._quote['mark_event_timestamp'] = event_at.isoformat() if data.get('E') else None
             persisted = self._deliver_quote(
                 "markPriceUpdate", now, event_timestamp=event_at,
                 sequence=int(data.get("E") or 0) or None,

@@ -86,13 +86,16 @@ class SMCPaperConfig:
 class SMCPaperAccount:
     """SMC-only account, session, ownership and audit ledger."""
 
-    def __init__(self, path: str | Path, *, starting_balance: float = 10_000.0):
+    def __init__(self, path: str | Path, *, starting_balance: float = 10_000.0,
+                 evidence_owner: str | None = None):
         self.path = str(path)
+        self.evidence_owner = evidence_owner
         self.starting_balance = float(starting_balance)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.broker = PaperBrokerV2(
             self.path, starting_balance=self.starting_balance,
             account_type="SMC_LAB", execution_engine="SMC_LAB",
+            evidence_owner=evidence_owner,
         )
         self._lock = threading.RLock()
         self._db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
@@ -164,6 +167,9 @@ class SMCPaperAccount:
               CREATE INDEX IF NOT EXISTS smc_evaluations_session_candle
                 ON smc_evaluations(session_id, candle_time DESC);
             """)
+            from services.active_evidence_capture import install_active_evidence, reconcile_active_evidence
+            install_active_evidence(self._db, "smc")
+            reconcile_active_evidence(self._db, "smc")
             self._db.execute("INSERT OR IGNORE INTO smc_settings(id,leverage) VALUES (1,1)")
             active_session = self._db.execute(
                 "SELECT 1 FROM smc_sessions WHERE status='active' LIMIT 1").fetchone()
@@ -270,7 +276,7 @@ class SMCPaperAccount:
         }
 
     def record_evaluation(self, evaluation: dict, *, candle_time: str,
-                          feed_status: dict | None = None) -> dict:
+                          feed_status: dict | None = None, evidence_session=None) -> dict:
         """Persist one source-strategy decision for one confirmed closed candle."""
         current = self.session()
         if not current:
@@ -306,6 +312,16 @@ class SMCPaperAccount:
             },
         }
         now = _iso()
+        from services.active_evidence_capture import lab_capture
+        used_session = evidence_session or current
+        payload["active_evidence"] = lab_capture(
+            evaluation.get("active_evidence_input"), report=evaluation, feed_status=feed_status or {},
+            configuration_consistent=all(used_session.get(k)==current.get(k) for k in ("id","symbol","timeframe","operating_mode","model_id","risk_pct")),
+            owner=self.evidence_owner, session=current, strategy_id=STRATEGY_ID,
+            version=STRATEGY_VERSION,
+            execution_config=asdict(SMCPaperConfig(operating_mode=used_session["operating_mode"], model_id=used_session["model_id"], risk_pct=used_session["risk_pct"])),
+            missing=missing, reasons=[str(reason)],
+            decision_id=corr, recorded_at=now)
         self._db.execute(
             "INSERT INTO smc_evaluations VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (corr, current["id"], idempotency, candle_time, current["symbol"],
@@ -596,6 +612,12 @@ class SMCPaperAccount:
                       if target_1 is not None and risk_distance else None)
         target_2_r = (abs(float(target_2) - entry) / risk_distance
                       if target_2 is not None and risk_distance else None)
+        from services.native_paper_evidence import original_lab_context
+        evidence_context = original_lab_context(self._db, 'smc', correlation_id=correlation_id,
+            owner=self.evidence_owner, session=current,
+            execution_config=asdict(SMCPaperConfig(operating_mode=current['operating_mode'],
+                model_id=current['model_id'], risk_pct=current['risk_pct'])),
+            strategy=STRATEGY_ID, version=STRATEGY_VERSION)
         order = self.broker.submit(symbol=symbol, side=side, order_type=order_type,
                                    quantity=quantity, limit_price=limit_price,
                                    stop_price=trigger_price if order_type in {"stop", "stop_limit"} else None,
@@ -611,7 +633,7 @@ class SMCPaperAccount:
                                    strategy_version=STRATEGY_VERSION,
                                    timeframe=current.get("timeframe") or "",
                                    market_data_source="Binance USD-M public WebSocket",
-                                   candle_id=idempotency_key)
+                                   candle_id=idempotency_key, evidence_context=evidence_context)
         now = _iso()
         config = {"reference_price": entry, "stop_loss": protective_stop,
                   "target_1": target_1, "target_2": target_2,
@@ -1134,7 +1156,7 @@ class SMCPaperAccount:
             (proposal or {}).get("signal_timestamp") or "")
         self._cancel_stale_staged_entries(candle_time, feed_reliable=feed_reliable)
         decision = self.record_evaluation(
-            evaluation, candle_time=candle_time,
+            evaluation, candle_time=candle_time, evidence_session=current,
             feed_status=feed_status or {
                 "state": "SYNCHRONIZED" if feed_reliable else "DATA_PAUSED",
                 "health_reason": "caller supplied only the reliability boundary",
@@ -1263,9 +1285,11 @@ class SMCPaperAccount:
         if existing:
             return {"applied": False, "reason": "funding event already processed",
                     "originally_applied": bool(existing["applied"]), "funding": existing["amount"]}
-        result = self.broker.apply_funding(key[1], float(rate), float(mark_price))
+        result = self.broker.apply_funding(key[1], float(rate), float(mark_price),funding_reference={
+            'lab':'smc','session_id':session_id,'provider_timestamp':funding_time,
+            'source':'BINANCE_USDM_PUBLIC_FUNDING_HISTORY'})
         self._db.execute(
-            "INSERT INTO smc_funding_events(session_id,symbol,funding_time,rate,mark_price,amount,applied) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO smc_funding_events(session_id,symbol,funding_time,rate,mark_price,amount,applied) VALUES (?,?,?,?,?,?,?) ON CONFLICT(session_id,symbol,funding_time) DO NOTHING",
             (*key, float(rate), float(mark_price), float(result.get("funding") or 0),
              int(bool(result.get("applied")))))
         self._audit("paper_funding_processed", object_id=funding_time,
@@ -1588,6 +1612,8 @@ class SMCStrategyLabRuntime:
                 current = self.account.session()
                 if current and current.get("mode") == "LIVE_PAPER":
                     self.tick()
+                    from services.active_evidence_capture import reconcile_active_evidence
+                    reconcile_active_evidence(self.account._db, "smc")
             except Exception as exc:
                 self.last_market_health = {
                     **self.last_market_health, "state": "ERROR", "transport_state": "ERROR",

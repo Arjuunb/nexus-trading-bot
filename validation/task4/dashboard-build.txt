@@ -1,0 +1,72 @@
+npm warn Unknown env config "http-proxy". This will stop working in the next major version of npm.
+
+> automation-hub-dashboard@0.1.0 build:check
+> tsc --noEmit && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 2691 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                                       1.69 kB │ gzip:   0.67 kB
+dist/assets/StrategyIntelligenceHub-DrtZLBgI.css      1.45 kB │ gzip:   0.57 kB
+dist/assets/StrategyCanvas-B5DZHykP.css               7.32 kB │ gzip:   1.60 kB
+dist/assets/index-CZTs6tBW.css                      140.29 kB │ gzip:  26.25 kB
+dist/assets/timeframes-DmEbaBCW.js                    0.07 kB │ gzip:   0.08 kB
+dist/assets/progress-6Y8g9784.js                      0.28 kB │ gzip:   0.20 kB
+dist/assets/ProgressBar-C0ScmEsQ.js                   0.35 kB │ gzip:   0.27 kB
+dist/assets/Card-DxTg_baR.js                          0.50 kB │ gzip:   0.27 kB
+dist/assets/OfflineBanner-Ajevw8gr.js                 0.53 kB │ gzip:   0.38 kB
+dist/assets/BarChart-DR9xP1zz.js                      0.89 kB │ gzip:   0.56 kB
+dist/assets/Doughnut-BdBotRxO.js                      0.95 kB │ gzip:   0.57 kB
+dist/assets/SectionTabs-CUTgTjLe.js                   0.99 kB │ gzip:   0.60 kB
+dist/assets/AreaLine-CnhYHgXv.js                      1.19 kB │ gzip:   0.65 kB
+dist/assets/prefs-CVgDKbNA.js                         1.33 kB │ gzip:   0.73 kB
+dist/assets/EquityCurve-B6jBFPDb.js                   1.37 kB │ gzip:   0.77 kB
+dist/assets/Alerts-eX3OpoDg.js                        1.44 kB │ gzip:   0.70 kB
+dist/assets/ui-xpDwEsPP.js                            2.35 kB │ gzip:   1.00 kB
+dist/assets/BotDetail-DMmZC3Ar.js                     3.04 kB │ gzip:   1.25 kB
+dist/assets/MarketDataManager-pg8iEmrC.js             4.12 kB │ gzip:   1.54 kB
+dist/assets/ResearchComparisonPanel-Bp4SXqYj.js       4.15 kB │ gzip:   1.54 kB
+dist/assets/EngineControlCard-Db_M71Bc.js             5.60 kB │ gzip:   2.15 kB
+dist/assets/Markets-DTMBkeAD.js                       6.80 kB │ gzip:   2.70 kB
+dist/assets/ForwardValidation-CyMAttnL.js             7.10 kB │ gzip:   2.08 kB
+dist/assets/LiveTrading-CBODrb5O.js                   7.37 kB │ gzip:   2.70 kB
+dist/assets/DecisionJournalPanel-DmCxRURR.js          7.89 kB │ gzip:   2.52 kB
+dist/assets/Optimization-DgHBL7Pz.js                  7.91 kB │ gzip:   2.70 kB
+dist/assets/SymbolExplorer-Bile6qzM.js                9.99 kB │ gzip:   3.32 kB
+dist/assets/PortfolioHub-DPeEAgox.js                 10.59 kB │ gzip:   3.69 kB
+dist/assets/SafetyCenter-BkDOTYNT.js                 10.67 kB │ gzip:   3.46 kB
+dist/assets/StrategyProof-5RpHtSWI.js                11.58 kB │ gzip:   3.51 kB
+dist/assets/ContextIntelligence-Ds4MnY-p.js          12.20 kB │ gzip:   3.44 kB
+dist/assets/AIAssistant-CLC0iYnS.js                  13.94 kB │ gzip:   4.91 kB
+dist/assets/PaperTrading-DK2YV8_w.js                 14.67 kB │ gzip:   4.65 kB
+dist/assets/CandleChart-BIvzZj1b.js                  15.36 kB │ gzip:   5.55 kB
+dist/assets/NativeSMCChartOverlay-BtLqcjuK.js        15.41 kB │ gzip:   6.00 kB
+dist/assets/Logs-CbuMGQ9K.js                         17.59 kB │ gzip:   5.38 kB
+dist/assets/Backtesting-B1ynQ5kH.js                  20.95 kB │ gzip:   6.37 kB
+dist/assets/RiskHealthHub-DfFSlhKS.js                21.06 kB │ gzip:   6.01 kB
+dist/assets/Simulation-FHKnePaM.js                   25.37 kB │ gzip:   7.45 kB
+dist/assets/Replay-D6L6gXGa.js                       25.41 kB │ gzip:   7.81 kB
+dist/assets/Evolution-CXRvH1DO.js                    31.02 kB │ gzip:   8.54 kB
+dist/assets/SMCStrategyLab-CW2iSXeR.js               31.51 kB │ gzip:   9.10 kB
+dist/assets/AnalyticsHub-Dfyj3d1Z.js                 32.50 kB │ gzip:   9.07 kB
+dist/assets/NativeSMCVisual-BcQmf-am.js              34.36 kB │ gzip:  10.75 kB
+dist/assets/Overview-CBklmngV.js                     34.46 kB │ gzip:   9.21 kB
+dist/assets/Strategies-DvC9ROGX.js                   35.39 kB │ gzip:   9.93 kB
+dist/assets/JournalHub-DOa3XNvY.js                   36.89 kB │ gzip:  10.06 kB
+dist/assets/Settings-BJOQ8mpo.js                     52.35 kB │ gzip:  13.99 kB
+dist/assets/PriceActionVisual-BaXbkFWz.js            53.18 kB │ gzip:  15.17 kB
+dist/assets/TradingInstancesHub-BwACoxqA.js          56.66 kB │ gzip:  15.12 kB
+dist/assets/BotTerminal-CHplkKV_.js                  60.53 kB │ gzip:  17.64 kB
+dist/assets/StrategyIntelligenceHub-YFCzCs_C.js      85.02 kB │ gzip:  20.22 kB
+dist/assets/StrategyStudioHub-cNjzwCAI.js            88.51 kB │ gzip:  23.05 kB
+dist/assets/StrategyCanvas-i5BWJCkB.js              154.09 kB │ gzip:  50.52 kB
+dist/assets/index-6fpS4u77.js                       242.92 kB │ gzip:  75.32 kB
+dist/assets/EChart-4_AcuW-E.js                    1,130.63 kB │ gzip: 380.51 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 6.86s

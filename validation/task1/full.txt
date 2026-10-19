@@ -1,0 +1,121 @@
+........................................................................ [  1%]
+........................................................................ [  3%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+...................ssss................................................. [  8%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 13%]
+........................................................................ [ 15%]
+...........................Fs........................................... [ 16%]
+........................................................................ [ 18%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 23%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 28%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 33%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 38%]
+........ssssssssss...................................................... [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 43%]
+..............ssssssssssssssssssssssss.................................. [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 48%]
+........................................................................ [ 50%]
+............................................sssss....sss.....sssssss.... [ 51%]
+........................................................................ [ 53%]
+........................................................................ [ 55%]
+................................ss...................................... [ 56%]
+........................................................................ [ 58%]
+........................................................................ [ 60%]
+.......ssssssssss....................................s.................. [ 61%]
+...........sss.......................Fssss..........ss.................. [ 63%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 68%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 73%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 78%]
+........................................................................ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 83%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 88%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 93%]
+........................................................................ [ 95%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+.........................................................                [100%]
+=================================== FAILURES ===================================
+____ test_real_standalone_process_writes_shutdown_health_without_execution _____
+automation-hub/tests/test_forward_operations.py:65: in test_real_standalone_process_writes_shutdown_health_without_execution
+    assert check_health(health)['ready'] is True
+E   assert False is True
+____ test_real_compose_resolution_keeps_independent_volume_names_and_ports _____
+automation-hub/tests/test_sprint13_remote_readiness.py:98: in test_real_compose_resolution_keeps_independent_volume_names_and_ports
+    r=subprocess.run(['docker','compose','--env-file',str(bindings),'-f',str(root/'ops/staging.remote.compose.yaml'),'--profile','shadow','config','--format','json'],
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/subprocess.py:1955: in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+E   FileNotFoundError: [Errno 2] No such file or directory: 'docker'
+=============================== warnings summary ===============================
+automation-hub/app.py:530
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/app.py:530: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+.venv/lib/python3.12/site-packages/fastapi/applications.py:4745
+.venv/lib/python3.12/site-packages/fastapi/applications.py:4745
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/.venv/lib/python3.12/site-packages/fastapi/applications.py:4745: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+automation-hub/app.py:616
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/app.py:616: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+automation-hub/tests/test_full_bot_reboot.py: 8 warnings
+automation-hub/tests/test_instance_isolation_and_concurrency.py: 11 warnings
+automation-hub/tests/test_instance_reconciliation_and_metrics.py: 13 warnings
+automation-hub/tests/test_instance_runtime_reliability.py: 11 warnings
+automation-hub/tests/test_phase4_ops.py: 1 warning
+automation-hub/tests/test_runtime_is_independent_of_the_browser.py: 3 warnings
+automation-hub/tests/test_strategy_registry_is_authoritative.py: 1 warning
+automation-hub/tests/test_trading_instances.py: 34 warnings
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/.venv/lib/python3.12/site-packages/aiohttp/connector.py:1002: DeprecationWarning: enable_cleanup_closed ignored because https://github.com/python/cpython/pull/118960 is fixed in Python version sys.version_info(major=3, minor=12, micro=14, releaselevel='final', serial=0)
+    super().__init__(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED automation-hub/tests/test_forward_operations.py::test_real_standalone_process_writes_shutdown_health_without_execution
+FAILED automation-hub/tests/test_sprint13_remote_readiness.py::test_real_compose_resolution_keeps_independent_volume_names_and_ports
+2 failed, 4227 passed, 76 skipped, 86 warnings in 498.31s (0:08:18)

@@ -68,6 +68,14 @@ def test_v2_preserves_v1_decimal_accounting_and_episodes_with_partial_exits():
     assert group["metrics"]["calculation_version"] == "strategy_intelligence.v1"
 
 
+def test_observation_period_compares_aware_timestamps_in_utc():
+    rows = [episode("a", opened_at="2026-09-01T10:00:00+00:00", closed_at="2026-09-01T11:00:00+00:00"),
+            episode("b", opened_at="2026-09-01T14:00:00+05:00", closed_at="2026-09-01T15:00:00+05:00")]
+    result = calculate(rows, [context("a"), context("b")])
+    assert result["groups"][0]["observation_period"] == {
+        "first_opened_at": "2026-09-01T09:00:00+00:00", "last_closed_at": "2026-09-01T11:00:00+00:00"}
+
+
 @pytest.mark.parametrize("dimension,value", [("strategy_id", "smc"), ("strategy_version", "2.0.0"),
     ("config_fingerprint", "c" * 64), ("instance_id", "another"), ("lab_id", "lab"),
     ("simulation_session_id", "session"), ("execution_mode", "replay"),

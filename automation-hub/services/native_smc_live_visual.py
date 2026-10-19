@@ -348,6 +348,8 @@ def live_visual_state(symbol: str = "BTCUSDT", timeframe: str = "5m", venue: str
                 if monotonic() - feed.last_fetch_monotonic >= _LIVE_REFRESH_SECONDS:
                     _refresh_feed(feed, symbol, timeframe, venue, observed_at, fetcher, mtf_context)
 
+    from services.active_evidence_capture import native_input, native_observation_token
+    observation_token = native_observation_token(feed.engine)
     state = feed.engine.visual_state(candle_window=min(int(visible), len(feed.engine.bars)))
     # The ladder is a read-only projection of the same closed-bar native
     # engine. It cannot create a signal, alter a snapshot, or place an order.
@@ -356,6 +358,15 @@ def live_visual_state(symbol: str = "BTCUSDT", timeframe: str = "5m", venue: str
     state["strategy_ladder"] = evaluate_ladder(feed.engine)
     state["source_strategy"] = evaluate_source_strategy(
         feed.engine, model_id, mtf_evidence=mtf_evidence)
+    # Observe only after the existing decision. No re-evaluation or mutation of
+    # the native engine; non-Binance scopes cannot gain a Binance attestation.
+    state["source_strategy"]["active_evidence_input"] = native_input(
+        feed.engine, venue=venue,
+        source="BINANCE_USDM_PUBLIC" if venue == "binance_usdm" else "UNVERIFIED")
+    if observation_token != native_observation_token(feed.engine):
+        capture = state["source_strategy"]["active_evidence_input"]
+        capture["errors"] = sorted({*capture.get("errors", []), "EVALUATOR_STATE_CHANGED_DURING_DECISION"})
+        capture.update(htf_alignment="UNKNOWN", lookback_status="UNKNOWN")
     state["mtf_evidence"] = dict(mtf_evidence or {})
     from services.mtf_policy import display_contract
     state["mtf_policy"] = display_contract(timeframe, mtf_evidence)

@@ -930,6 +930,27 @@ _execution_paths = {
 if _shadow_path in _execution_paths:
     raise RuntimeError("HUB_SHADOW_RESEARCH_DB must be physically separate from every paper/research ledger")
 shadow_research_store = ShadowResearchStore(settings.shadow_research_db)
+from services.worker_backends import shadow_store as selected_shadow_store  # noqa: E402
+from services.worker_backends import research_context as selected_research_context  # noqa: E402
+from services.shadow_observation_store import ShadowObservationStore  # noqa: E402
+from services.shadow_router import ShadowRouter  # noqa: E402
+from services.shadow_observation_worker import ShadowObservationWorker  # noqa: E402
+shadow_router = ShadowRouter(
+    selected_shadow_store(shadow_research_store),
+    candidate_reader=lambda candidate_id, owner_id: selected_research_context(strategy_intelligence.context).get_research_candidate(candidate_id, owner_id=owner_id),
+)
+shadow_observation_worker = ShadowObservationWorker(shadow_router, forward_paper_market_hub)
+from services.active_decision_evidence import ActiveDecisionSources  # noqa: E402
+from services.shadow_comparison_service import ShadowComparisonService  # noqa: E402
+from services.tenancy import OWNER_TENANT, multi_user_enabled  # noqa: E402
+shadow_router.active_sources = ActiveDecisionSources(
+    pa_path=settings.price_action_paper_db, smc_path=settings.smc_paper_db,
+    decisions_path=settings.decisions_db,
+    lab_owner=None if multi_user_enabled() else OWNER_TENANT,
+)
+shadow_router.comparison_service = ShadowComparisonService(
+    shadow_router.store, source_reader=shadow_router.active_sources.read,
+)
 research_observer = ResearchObservationRuntime(
     forward_paper_market_hub, shadow_research_store,
     symbol=settings.auto_symbols[0] if settings.auto_symbols else "BTCUSDT",
@@ -965,10 +986,12 @@ instance_supervisor = InstanceSupervisor(
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
 price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
-                                              starting_balance=10_000.0)
+                                              starting_balance=10_000.0,
+                                              evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
-smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0,
+                          evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
 smc_runtime = SMCStrategyLabRuntime(
     v2_market_data, smc_paper, market_hub=forward_paper_market_hub,
     poll_seconds=settings.smc_poll_s)

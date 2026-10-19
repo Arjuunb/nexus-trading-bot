@@ -6,6 +6,41 @@ on:
   pull_request:
 
 jobs:
+  strategy-intelligence-dashboard:
+    runs-on: ubuntu-latest
+    env:
+      HUB_AUTO_ENGINE: "0"
+      HUB_ENABLE_EXTERNAL_LIVE: "0"
+      HUB_USE_LIVE_DATA: "0"
+      HUB_RESEARCH_AUTOSTART: "0"
+      HUB_MONITOR_AGENT: "0"
+      NEXUS_RESEARCH_E2E: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: automation-hub-dashboard/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated acceptance dependencies
+        run: |
+          pip install -e ".[dev]"
+          pip install -r automation-hub/requirements.txt
+      - name: Install dashboard and Chromium
+        working-directory: automation-hub-dashboard
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Typecheck and build dashboard
+        working-directory: automation-hub-dashboard
+        run: npm run build:check
+      - name: Verify strategy intelligence dashboard and real paper API
+        working-directory: automation-hub-dashboard
+        run: npm run test:e2e -- e2e/strategy-intelligence*.spec.ts e2e/strategy-monitoring.spec.ts e2e/strategy-research-decision.spec.ts
+
   landing-build:
     runs-on: ubuntu-latest
     steps:

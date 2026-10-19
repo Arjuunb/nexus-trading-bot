@@ -1,0 +1,16 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+____ test_weekly_processing_outage_does_not_break_existing_evidence_refresh ____
+tests/test_weekly_strategy_research.py:138: in test_weekly_processing_outage_does_not_break_existing_evidence_refresh
+    result=service.refresh(ledger,scope=SCOPE)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+services/strategy_intelligence_service.py:281: in refresh
+    weekly = self.run_weekly_research(scope=scope, cohorts=[c.as_dict() for c in cohorts.values()]) if ready else {"status":"RECOVERING"}
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_weekly_strategy_research.py:136: in unavailable
+    def unavailable(**kwargs):raise OSError("metadata report store unavailable")
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   OSError: metadata report store unavailable
+=========================== short test summary info ============================
+FAILED tests/test_weekly_strategy_research.py::test_weekly_processing_outage_does_not_break_existing_evidence_refresh
+1 failed, 11 deselected in 1.02s

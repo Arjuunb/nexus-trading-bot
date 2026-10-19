@@ -27,7 +27,7 @@ _SAMPLE_MAP = {
 }
 
 
-def _from_local_store(symbol: str, n: int, timeframe: str, since_ms):
+def _from_local_store(symbol: str, n: int, timeframe: str, since_ms, end_ms=None):
     """Read REAL cached candles from the local historical store, if any.
 
     Falls back to aggregating a FINER stored timeframe when the requested one was
@@ -39,7 +39,7 @@ def _from_local_store(symbol: str, n: int, timeframe: str, since_ms):
         from config import settings
         from data.historical import HistoricalStore
         store = HistoricalStore(settings.market_db)
-        bars = store.get_bars(symbol, timeframe, n=n, start_ms=since_ms)
+        bars = store.get_bars(symbol, timeframe, n=n, start_ms=since_ms, end_ms=end_ms)
         # need a meaningful amount of real history to use it
         if len(bars) >= min(n, 200):
             return bars
@@ -53,7 +53,7 @@ def _from_local_store(symbol: str, n: int, timeframe: str, since_ms):
                            if s < want and want % s == 0),
                           key=lambda t: TF_SECONDS[t], reverse=True):
             ratio = want // TF_SECONDS[src]
-            fine = store.get_bars(symbol, src, n=n * ratio, start_ms=since_ms)
+            fine = store.get_bars(symbol, src, n=n * ratio, start_ms=since_ms, end_ms=end_ms)
             if len(fine) < min(n * ratio, 200):
                 continue
             out = resample(fine, timeframe, source_tf=src)
@@ -66,7 +66,7 @@ def _from_local_store(symbol: str, n: int, timeframe: str, since_ms):
 
 def get_bars(symbol: str, n: int = 1500, timeframe: str = "1h",
              seed: int = 1, since_ms: Optional[int] = None,
-             require_real: bool = False) -> tuple[list[Bar], str]:
+             end_ms: Optional[int] = None, require_real: bool = False) -> tuple[list[Bar], str]:
     """Return (bars, source) for a symbol, REAL data first.
 
     Order: local cache of real Binance candles -> live ccxt (if enabled) ->
@@ -103,7 +103,7 @@ def get_bars(symbol: str, n: int = 1500, timeframe: str = "1h",
         return [], "unavailable (yahoo unreachable)"
 
     # 1. local cache of real candles (populated by the /data/sync engine)
-    cached = _from_local_store(symbol, n, timeframe, since_ms)
+    cached = _from_local_store(symbol, n, timeframe, since_ms, end_ms)
     if cached:
         return cached, "local store (real)"
 
@@ -113,6 +113,8 @@ def get_bars(symbol: str, n: int = 1500, timeframe: str = "1h",
         exchange = os.environ.get("HUB_EXCHANGE", "binance")
         real = fetch_ohlcv(symbol, timeframe=timeframe, limit=n, exchange=exchange, since_ms=since_ms)
         if real:
+            if end_ms is not None:
+                real = [bar for bar in real if int(bar.timestamp.timestamp() * 1000) < int(end_ms)]
             return real, "live (ccxt)"
 
     require_real = require_real or os.environ.get("HUB_REQUIRE_REAL_DATA", "").lower() in ("1", "true", "yes")

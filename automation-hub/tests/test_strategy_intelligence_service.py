@@ -142,6 +142,50 @@ def test_symbol_filter_reads_a_precomputed_exact_asset_cohort(tmp_path):
     assert result["profitability_verified"] is False
 
 
+def test_sprint3_read_projections_reuse_exact_cohort_evidence(tmp_path):
+    """Dashboard projections remain read-only views over the v2 cached cohort."""
+    ledger, store, decisions, paper, pipeline, capture = runtime(tmp_path)
+    payload, timestamp = entry(decisions)
+    pipeline.process(payload)
+    paper.process_quote(quote(timestamp))
+    paper.close(symbol="XRPUSDT", exit_price=110, execution_id="sprint3-close")
+    service = StrategyIntelligenceService(store)
+    service.refresh(ledger, scope=SCOPE)
+    cohort = service.read("cohorts", SCOPE, {})["cohorts"][0]
+
+    overview = service.read("overview", SCOPE, {"instance_id": "one"})
+    assert overview["summary"]["total_completed_episodes"] == 1
+    assert overview["rows"]
+    edge = service.read("edge_map", SCOPE, {
+        **cohort, "x_dimension": "session", "y_dimension": "symbol",
+        "metric": "net_pnl",
+    })
+    assert edge["cells"]
+    comparison = service.read("comparison", SCOPE, {
+        "instance_id": "one", "strategy_ids": [cohort["strategy_id"], "smc"],
+    })
+    assert comparison["rows"]
+    assert comparison["comparison_status"] == "NOT_DIRECTLY_COMPARABLE"
+    episodes = service.read("episodes", SCOPE, {**cohort, "limit": 10, "offset": 0})
+    assert episodes["total"] == 1
+    assert episodes["rows"][0]["episode_id"]
+
+
+def test_sprint4_qualification_remains_advisory_when_validation_is_missing(tmp_path):
+    ledger, store, decisions, paper, pipeline, capture = runtime(tmp_path)
+    payload, timestamp = entry(decisions)
+    pipeline.process(payload)
+    paper.process_quote(quote(timestamp))
+    paper.close(symbol="XRPUSDT", exit_price=110, execution_id="qualification-close")
+    service = StrategyIntelligenceService(store)
+    service.refresh(ledger, scope=SCOPE)
+    cohort = service.read("cohorts", SCOPE, {})["cohorts"][0]
+    result = service.read("qualification", SCOPE, {**cohort})
+    assert result["qualification_status"] == "NOT_QUALIFIED"
+    assert "out_of_sample" in result["unknown_requirements"]
+    assert result["validation_history"] == []
+
+
 def test_restart_invalidates_every_nested_verification_alias(tmp_path):
     ledger, store, decisions, paper, pipeline, capture = runtime(tmp_path)
     payload, timestamp = entry(decisions)

@@ -53,7 +53,8 @@ class SupabaseAuth:
         return bool(self.url and self.anon_key)
 
     def _request(self, path: str, *, token: str, method: str = "GET",
-                 payload: dict[str, Any] | None = None, service: bool = False) -> Any:
+                 payload: dict[str, Any] | None = None, service: bool = False,
+                 prefer: str | None = None, max_response_bytes: int | None = None) -> Any:
         if not self.configured:
             raise SupabaseAuthError("Supabase Auth is not configured on this server.")
         key = self.service_role_key if service else self.anon_key
@@ -69,9 +70,13 @@ class SupabaseAuth:
                 "Accept": "application/json",
             },
         )
+        if prefer is not None:
+            req.add_header("Prefer", prefer)
         try:
             with urllib.request.urlopen(req, timeout=8) as response:  # noqa: S310 -- URL is configured by operator
-                raw = response.read()
+                raw = response.read() if max_response_bytes is None else response.read(max_response_bytes + 1)
+                if max_response_bytes is not None and len(raw) > max_response_bytes:
+                    raise SupabaseAuthError("The service returned an invalid response.")
                 return json.loads(raw.decode("utf-8")) if raw else None
         except urllib.error.HTTPError as exc:
             # Do not relay provider internals or tokens to a client.

@@ -1,0 +1,10 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+________ test_weekly_evidence_links_preserve_all_constituent_trade_ids _________
+tests/test_weekly_strategy_research.py:161: in test_weekly_evidence_links_preserve_all_constituent_trade_ids
+    assert result["trade_reference_coverage"]["status"]=="COMPLETE"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'trade_reference_coverage'
+=========================== short test summary info ============================
+FAILED tests/test_weekly_strategy_research.py::test_weekly_evidence_links_preserve_all_constituent_trade_ids
+1 failed, 13 deselected in 1.08s

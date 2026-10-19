@@ -128,7 +128,8 @@ def resolve(strategy: str, symbol: str, timeframe: str, tuning: dict,
 
 
 def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spec: dict,
-            rows, macro: str = None, confirmation: str = None, fill_cost: float = 0.0) -> dict:
+            rows, macro: str = None, confirmation: str = None, fill_cost: float = 0.0,
+            *, capture_identity: bool = False) -> dict:
     """Run a resolved configuration over a given bar list (no fetch). Returns the
     raw results dict (with diagnosis, _mtf_gate, _spec) or {'error': ...}.
 
@@ -155,11 +156,15 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
     brain = TradeBrain()
     if desc["kind"] == "builtin":
         from services.strategy_factory import make_builtin_strategy
+        from services.strategy_identity import observed_strategy_identity
         strat = make_builtin_strategy(desc["key"], symbol)
+        observed_identity = (observed_strategy_identity(strat, strategy_id=desc["key"], timeframe=timeframe)
+                             if capture_identity else None)
         results = simulate_strategy(strat, rows, brain=brain, min_score=min_score, slippage=slippage,
                                     mtf_lookup=mtf_lookup, mtf_tfs=mtf_tfs,
                                     **_risk_kwargs(tuning))
     else:
+        observed_identity = None
         spec = desc["spec"]
         use_brain = spec.get("quality_filter", True)
         results = simulate(spec, rows, brain=brain if use_brain else None, slippage=slippage,
@@ -168,6 +173,8 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
     results["diagnosis"] = diagnose(results, results.get("blocked"))
     results["_mtf_gate"] = list(mtf_tfs) if mtf_tfs else []
     results["_spec"] = desc.get("spec")
+    if capture_identity:
+        results["_strategy_identity"] = observed_identity
     return results
 
 

@@ -4,53 +4,68 @@
 #   • the session-gated trading dashboard (automation-hub-dashboard) at "/app"
 # Build context is the repo ROOT.
 
-# --- Stage 1: build the trading dashboard (served under /app) ---
-FROM node:20-slim AS ui
-WORKDIR /ui
-COPY automation-hub-dashboard/package*.json ./
-RUN npm ci
-COPY automation-hub-dashboard/ ./
-# base "/app/" so the dashboard's assets resolve while the landing owns "/assets"
-ENV DASHBOARD_BASE=/app/
-RUN npm run build          # -> /ui/dist
+# Empty default; an operator can supply retained public package artifacts as a
+# named BuildKit context. It never supplies runtime credentials or app state.
+FROM scratch AS build_inputs
+COPY ops/build-inputs.md /NOTICE
 
-# --- Stage 2: build the landing / auth / settings site (served at /) ---
-FROM node:20-slim AS landing
-WORKDIR /landing
-COPY tradexa-landing/package*.json ./
-RUN npm ci
-COPY tradexa-landing/ ./
-# "Launch Bot" and post-login point at the dashboard on the same origin
-ENV VITE_APP_URL=/app
-RUN npm run build          # -> /landing/dist
+# Pinned, previously verified Node 20 base. Read-only BuildKit mounts keep
+# temporary npm trees out of intermediate layers, including on VFS storage.
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS frontend
+RUN --mount=type=bind,target=/source \
+    --mount=type=secret,id=build_ca \
+    --mount=from=build_inputs,target=/build-inputs \
+    set -eu; \
+    if [ -f /run/secrets/build_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/build_ca; fi; \
+    node --version; npm --version; \
+    mkdir -p /tmp/frontend /out/dashboard /out/landing; \
+    cp -a /source/automation-hub-dashboard /tmp/frontend/dashboard; \
+    cp -a /source/tradexa-landing /tmp/frontend/landing; \
+    if [ -d /build-inputs/npm-cache ]; then cp -a /build-inputs/npm-cache /tmp/npm-cache; fi; \
+    for project in dashboard landing; do \
+      cd /tmp/frontend/$project; \
+      if [ -d /tmp/npm-cache ]; then npm ci --offline --cache /tmp/npm-cache; else npm ci; fi; \
+      if [ "$project" = dashboard ]; then DASHBOARD_BASE=/app/ npm run build; else VITE_APP_URL=/app npm run build; fi; \
+      cp -a dist/. /out/$project/; \
+      cd /; rm -rf /tmp/frontend/$project; \
+    done; \
+    rm -rf /tmp/frontend /tmp/npm-cache /root/.npm
 
 # --- Stage 3: Python backend (serves both builds) ---
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
 ARG GIT_COMMIT=""
 ARG GIT_BRANCH=""
 ARG DEPLOYED_AT=""
+ARG NEXUS_SOURCE_SHA256=""
 ENV GIT_COMMIT=${GIT_COMMIT}
 ENV GIT_BRANCH=${GIT_BRANCH}
 ENV DEPLOYED_AT=${DEPLOYED_AT}
-WORKDIR /app
-RUN addgroup --system tradexa && adduser --system --ingroup tradexa --home /nonexistent tradexa
-COPY --chown=tradexa:tradexa . .
-
+LABEL org.opencontainers.image.revision=${GIT_COMMIT} nexus.source.sha256=${NEXUS_SOURCE_SHA256}
+WORKDIR /app/automation-hub
 # Install the stdlib trading engine (root package) + the hub web dependencies.
-RUN pip install --no-cache-dir -e . \
- && pip install --no-cache-dir -r automation-hub/requirements.txt
-
-# Bundle both React builds so the backend serves them on one origin.
-COPY --from=ui /ui/dist /app/automation-hub/webui
-COPY --from=landing /landing/dist /app/automation-hub/landing
-
-RUN mkdir -p /var/lib/tradexa && chown -R tradexa:tradexa /var/lib/tradexa /app
+RUN --mount=type=bind,target=/source \
+    --mount=type=secret,id=build_ca \
+    --mount=from=build_inputs,target=/build-inputs \
+    --mount=from=frontend,source=/out,target=/frontend \
+    set -eu; \
+    addgroup --system tradexa; adduser --system --ingroup tradexa --home /nonexistent tradexa; \
+    cp -a /source/. /app/; cd /app; \
+    if [ -f /run/secrets/build_ca ]; then export PIP_CERT=/run/secrets/build_ca; fi; \
+    if [ -d /build-inputs/python ]; then export PIP_NO_INDEX=1 PIP_FIND_LINKS=/build-inputs/python; fi; \
+    pip install --no-cache-dir --require-hashes -r ops/api-requirements.lock; \
+    pip install --no-cache-dir --no-deps --no-build-isolation -e ".[worker-postgres]"; \
+    python -c "import psycopg; assert psycopg.pq.__impl__ == 'binary'"; \
+    pip check; \
+    mkdir -p /app/automation-hub/webui /app/automation-hub/landing /var/lib/tradexa; \
+    cp -a /frontend/dashboard/. /app/automation-hub/webui/; \
+    cp -a /frontend/landing/. /app/automation-hub/landing/; \
+    chmod -R a+rX /app; \
+    chown -R tradexa:tradexa /var/lib/tradexa /app
 
 # Trading Instances are the authoritative paper runtime. Keep the retired
 # deployment-wide engine fail-safe OFF unless an operator explicitly opts in.
 ENV HUB_AUTO_ENGINE=0
 ENV HUB_DATA_DIR=/var/lib/tradexa
-WORKDIR /app/automation-hub
 EXPOSE 8000
 USER tradexa
 

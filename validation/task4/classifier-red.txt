@@ -1,0 +1,10 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_ test_monitor_rejects_incomplete_or_mismatched_financial_evidence[wrong_classifier] _
+tests/test_strategy_decay.py:93: in test_monitor_rejects_incomplete_or_mismatched_financial_evidence
+    with pytest.raises(ValueError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+=========================== short test summary info ============================
+FAILED tests/test_strategy_decay.py::test_monitor_rejects_incomplete_or_mismatched_financial_evidence[wrong_classifier]
+1 failed, 29 deselected in 1.05s
