@@ -120,6 +120,89 @@ def test_approval_fail_closed(release, kind):
             source_sha=SOURCE, run_id='123', run_attempt=attempt)
 
 
+def owner_policy():
+    value = policy()
+    value['protection_rules'][0].update(prevent_self_review=False,
+        reviewers=[{'type': 'User', 'reviewer': {'id': 190428336, 'login': 'Arjuunb'}}])
+    value['deployment_branch_policy'] = {'protected_branches': False, 'custom_branch_policies': True}
+    return value
+
+
+def owner_history():
+    value = history(user=190428336)
+    value[0]['user']['login'] = 'Arjuunb'
+    return value
+
+
+def test_staging_owner_exception_requires_explicit_policy_and_actual_owner_approval(release):
+    with pytest.raises(ValueError):
+        release.validate_publication_approval(owner_policy(), owner_history(),
+            initiator_ids={190428336}, commit=HEAD, source_sha=SOURCE, run_id='123', run_attempt='1')
+    result = release.validate_publication_approval(owner_policy(), owner_history(),
+        initiator_ids={190428336}, commit=HEAD, source_sha=SOURCE, run_id='123', run_attempt='1',
+        approval_policy='staging-owner.v1')
+    assert result['reviewer_id'] == 190428336
+    assert result['approval_policy'] == 'staging-owner.v1'
+    assert result['independent_review'] is False
+    assert result['verification'] == 'CONFIGURED_REVIEWER_APPROVED_THIS_RUN'
+    assert result['reviewed_commit'] == HEAD and result['source_sha256'] == SOURCE
+    assert result['deployment_authorization'] is False
+
+
+@pytest.mark.parametrize('kind', ['no_approval', 'bypassed', 'rejected', 'wrong_user',
+    'wrong_login', 'other_initiator', 'extra_initiator', 'wrong_environment', 'wrong_review_environment',
+    'no_rules', 'team_only', 'wrong_configured_owner', 'wrong_configured_login',
+    'no_branch_policy', 'self_review_prevented', 'rerun', 'unknown_policy'])
+def test_staging_owner_exception_fails_closed(release, kind):
+    p = owner_policy(); h = owner_history(); initiators = {190428336}; attempt = '1'
+    selected = 'staging-owner.v1'
+    if kind == 'no_approval': h = []
+    if kind == 'bypassed': h[0]['state'] = 'bypassed'
+    if kind == 'rejected': h[0]['state'] = 'rejected'
+    if kind == 'wrong_user': h[0]['user']['id'] = 22
+    if kind == 'wrong_login': h[0]['user']['login'] = 'other-user'
+    if kind == 'other_initiator': initiators = {22}
+    if kind == 'extra_initiator': initiators.add(22)
+    if kind == 'wrong_environment': p['name'] = 'production'
+    if kind == 'wrong_review_environment': h[0]['environments'][0]['id'] = 99
+    if kind == 'no_rules': p['protection_rules'] = []
+    if kind == 'team_only': p['protection_rules'][0]['reviewers'][0]['type'] = 'Team'
+    if kind == 'wrong_configured_owner': p['protection_rules'][0]['reviewers'][0]['reviewer']['id'] = 22
+    if kind == 'wrong_configured_login': p['protection_rules'][0]['reviewers'][0]['reviewer']['login'] = 'other-user'
+    if kind == 'no_branch_policy': p['deployment_branch_policy'] = None
+    if kind == 'self_review_prevented': p['protection_rules'][0]['prevent_self_review'] = True
+    if kind == 'rerun': attempt = '2'
+    if kind == 'unknown_policy': selected = 'owner-trust-me'
+    with pytest.raises(ValueError):
+        release.validate_publication_approval(p, h, initiator_ids=initiators, commit=HEAD,
+            source_sha=SOURCE, run_id='123', run_attempt=attempt, approval_policy=selected)
+
+
+def test_publication_workflow_owner_policy_is_opt_in_without_skipping_gates():
+    value = yaml.load((ROOT / '.github/workflows/staging-release.yml').read_text(), Loader=yaml.BaseLoader)
+    selected = value['on']['workflow_dispatch']['inputs']['approval_policy']
+    assert selected['default'] == 'independent-review.v1'
+    assert set(selected['options']) == {'independent-review.v1', 'staging-owner.v1'}
+    publish = value['jobs']['publish']
+    assert publish['needs'] == '[checks, build]' or set(publish['needs']) == {'checks', 'build'}
+    assert publish['environment'] == 'ghcr-staging-release'
+    assert publish['env']['APPROVAL_POLICY'] == '${{ inputs.approval_policy }}'
+    approval = next(step for step in publish['steps'] if 'check-approval' in step.get('run', ''))
+    assert '--approval-policy "$APPROVAL_POLICY"' in approval['run']
+
+
+def test_owner_publication_receipt_discloses_non_independent_review(release):
+    approval = release.validate_publication_approval(owner_policy(), owner_history(),
+        initiator_ids={190428336}, commit=HEAD, source_sha=SOURCE, run_id='123', run_attempt='1',
+        approval_policy='staging-owner.v1')
+    receipt = release.publication_manifest({'head': HEAD, 'source_sha256': SOURCE, 'files': []},
+        approval, api_ref=API, worker_ref=WORKER, api_config_id='sha256:'+'3'*64,
+        worker_config_id='sha256:'+'4'*64, api_uid=101, api_version='3.11.17', worker_version='3.12.14')
+    assert receipt['approval']['approval_policy'] == 'staging-owner.v1'
+    assert receipt['approval']['independent_review'] is False
+    assert receipt['deployment_authorization'] is False
+
+
 @pytest.mark.parametrize('ref', ['refs/heads/main', 'refs/pull/1/merge', 'refs/heads/release/x;echo nope'])
 def test_only_reviewed_release_refs(release, ref):
     with pytest.raises(ValueError):

@@ -13,6 +13,14 @@ on:
         description: Accepted source fingerprint from ops/github-release.py freeze
         required: true
         type: string
+      approval_policy:
+        description: Staging-only approval policy; owner exception still requires actual GitHub approval
+        required: true
+        type: choice
+        default: independent-review.v1
+        options:
+          - independent-review.v1
+          - staging-owner.v1
 
 permissions:
   contents: read
@@ -172,6 +180,7 @@ jobs:
     env:
       REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
       EXPECTED_SOURCE: ${{ inputs.expected_source_sha256 }}
+      APPROVAL_POLICY: ${{ inputs.approval_policy }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -189,7 +198,8 @@ jobs:
         run: |
           mkdir -m 700 "$PUBLICATION_DIR"
           python ops/github-release.py check-approval --reviewed-commit "$REVIEWED_COMMIT" \
-            --source-sha "$EXPECTED_SOURCE" --output "$PUBLICATION_DIR/approval.json"
+            --source-sha "$EXPECTED_SOURCE" --approval-policy "$APPROVAL_POLICY" \
+            --output "$PUBLICATION_DIR/approval.json"
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           artifact-ids: ${{ needs.build.outputs.artifact_id }}

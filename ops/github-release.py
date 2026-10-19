@@ -24,6 +24,10 @@ from services.remote_staging import sha256_file
 
 REPOSITORY = 'arjuunb/nexus-trading-bot'
 ENVIRONMENT = 'ghcr-staging-release'
+INDEPENDENT_APPROVAL = 'independent-review.v1'
+STAGING_OWNER_APPROVAL = 'staging-owner.v1'
+STAGING_OWNER_ID = 190428336
+STAGING_OWNER_LOGIN = 'arjuunb'
 HEX40 = re.compile(r'[0-9a-f]{40}')
 HEX64 = re.compile(r'[0-9a-f]{64}')
 CONFIG_ID = re.compile(r'sha256:[0-9a-f]{64}')
@@ -100,28 +104,51 @@ def validate_release_request(*, repository, commit, actual_commit, source_sha, r
     return {'repository': REPOSITORY, 'commit': commit, 'source_sha256': source_sha, 'ref': ref}
 
 
-def validate_publication_approval(environment, reviews, *, initiator_ids, commit, source_sha, run_id, run_attempt):
+def validate_publication_approval(environment, reviews, *, initiator_ids, commit, source_sha, run_id, run_attempt,
+                                  approval_policy=INDEPENDENT_APPROVAL):
     if not HEX40.fullmatch(commit) or not HEX64.fullmatch(source_sha) or not str(run_id).isdigit() or run_attempt != '1':
         raise ValueError('FRESH_RELEASE_RUN_REQUIRED')
     if environment.get('name') != ENVIRONMENT or not isinstance(environment.get('id'), int):
         raise ValueError('APPROVED_ENVIRONMENT_REQUIRED')
     rules = [r for r in environment.get('protection_rules', []) if r.get('type') == 'required_reviewers']
-    reviewers = {x['reviewer']['id'] for r in rules if r.get('prevent_self_review') is True
-                 for x in r.get('reviewers', []) if x.get('type') == 'User'
-                 and isinstance(x.get('reviewer', {}).get('id'), int)}
+    if approval_policy == INDEPENDENT_APPROVAL:
+        reviewers = {x['reviewer']['id'] for r in rules if r.get('prevent_self_review') is True
+                     for x in r.get('reviewers', []) if x.get('type') == 'User'
+                     and isinstance(x.get('reviewer', {}).get('id'), int)}
+        eligible_reviewers = reviewers - set(initiator_ids)
+    elif approval_policy == STAGING_OWNER_APPROVAL:
+        # Explicit staging exception; it is never independent review. A real
+        # GitHub environment approval is still required after the build/scans.
+        if set(initiator_ids) != {STAGING_OWNER_ID}:
+            raise ValueError('STAGING_OWNER_INITIATOR_REQUIRED')
+        reviewers = {x['reviewer']['id'] for r in rules if r.get('prevent_self_review') is False
+                     for x in r.get('reviewers', []) if x.get('type') == 'User'
+                     and x.get('reviewer', {}).get('id') == STAGING_OWNER_ID
+                     and str(x['reviewer'].get('login', '')).lower() == STAGING_OWNER_LOGIN}
+        eligible_reviewers = reviewers
+    else:
+        raise ValueError('UNSUPPORTED_STAGING_APPROVAL_POLICY')
     branch_policy = environment.get('deployment_branch_policy') or {}
     if not reviewers or not any(branch_policy.get(k) is True for k in ('protected_branches', 'custom_branch_policies')):
-        raise ValueError('PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED')
+        raise ValueError('PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED'
+                         if approval_policy == INDEPENDENT_APPROVAL else
+                         'PROTECTED_STAGING_ENVIRONMENT_WITH_OWNER_REVIEWER_REQUIRED')
     accepted = [r for r in reviews if r.get('state') == 'approved'
-                and r.get('user', {}).get('id') in reviewers - set(initiator_ids)
+                and r.get('user', {}).get('id') in eligible_reviewers
+                and (approval_policy != STAGING_OWNER_APPROVAL
+                     or str(r.get('user', {}).get('login', '')).lower() == STAGING_OWNER_LOGIN)
                 and any(e.get('id') == environment['id'] and e.get('name') == ENVIRONMENT
                         for e in r.get('environments', []))]
     if not accepted:
-        raise ValueError('ACTUAL_APPROVAL_BY_CONFIGURED_DISTINCT_REVIEWER_REQUIRED')
+        raise ValueError('ACTUAL_APPROVAL_BY_CONFIGURED_DISTINCT_REVIEWER_REQUIRED'
+                         if approval_policy == INDEPENDENT_APPROVAL else
+                         'ACTUAL_APPROVAL_BY_CONFIGURED_STAGING_OWNER_REQUIRED')
     return {'verification': 'CONFIGURED_REVIEWER_APPROVED_THIS_RUN', 'environment': ENVIRONMENT,
             'environment_id': environment['id'], 'reviewer_id': accepted[-1]['user']['id'],
             'reviewed_commit': commit, 'source_sha256': source_sha, 'run_id': str(run_id),
-            'run_attempt': run_attempt, 'deployment_authorization': False}
+            'run_attempt': run_attempt, 'approval_policy': approval_policy,
+            'independent_review': approval_policy == INDEPENDENT_APPROVAL,
+            'deployment_authorization': False}
 
 
 def registry_ref(value, role):
@@ -416,6 +443,8 @@ def main(argv=None):
     freeze.add_argument('--expected-source'); freeze.add_argument('--reviewed-commit'); freeze.add_argument('--preview', action='store_true')
     request = sub.add_parser('check-request'); request.add_argument('--reviewed-commit', required=True); request.add_argument('--source-sha', required=True)
     approval = sub.add_parser('check-approval'); approval.add_argument('--reviewed-commit', required=True); approval.add_argument('--source-sha', required=True); approval.add_argument('--output', required=True)
+    approval.add_argument('--approval-policy', choices=(INDEPENDENT_APPROVAL, STAGING_OWNER_APPROVAL),
+                          default=INDEPENDENT_APPROVAL)
     for name in ('seal', 'verify-packet'):
         p = sub.add_parser(name); p.add_argument('--directory', required=True); p.add_argument('--reviewed-commit', required=True); p.add_argument('--source-sha', required=True)
     verify = sub.add_parser('verify-images'); verify.add_argument('--source-manifest', required=True); verify.add_argument('--api-image', required=True); verify.add_argument('--worker-image', required=True); verify.add_argument('--output', required=True)
@@ -452,7 +481,7 @@ def main(argv=None):
             initiators = {workflow_run.get(k, {}).get('id') for k in ('actor', 'triggering_actor')}
             value = validate_publication_approval(environment, history, initiator_ids=initiators,
                 commit=args.reviewed_commit, source_sha=args.source_sha, run_id=rid,
-                run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT', ''))
+                run_attempt=os.environ.get('GITHUB_RUN_ATTEMPT', ''), approval_policy=args.approval_policy)
             write_new(args.output, value)
         print(json.dumps(value))
     elif args.action in ('seal', 'verify-packet'):
