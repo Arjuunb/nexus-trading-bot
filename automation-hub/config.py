@@ -102,6 +102,11 @@ class Settings:
     # usually the right trade.
     smc_poll_s: float = field(default_factory=lambda: float(os.environ.get("HUB_SMC_POLL", "5")))
     price_action_poll_s: float = field(default_factory=lambda: float(os.environ.get("HUB_PA_POLL", "5")))
+    # Isolated research staging can retain lab records without automatically
+    # resuming unrelated legacy PA/SMC paper feeds. Existing deployments retain
+    # their current autonomous behavior unless this is explicitly disabled.
+    legacy_lab_autostart: bool = field(default_factory=lambda: os.environ.get(
+        "HUB_LEGACY_LAB_AUTOSTART", "1").strip().lower() in ("1", "true", "yes", "on"))
     external_live_enabled: bool = field(default_factory=lambda: os.environ.get(
         "HUB_ENABLE_EXTERNAL_LIVE", "0").lower() in ("1", "true", "yes", "on"))
 

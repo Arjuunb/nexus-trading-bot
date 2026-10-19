@@ -34,3 +34,13 @@ memory overlay. Replace only the explicitly selected staging services after
 backup and image/source checks. Production remains outside this workflow and
 retains its independent approval requirement. No live trading or automatic
 promotion is authorized.
+
+The staging API also sets `HUB_LEGACY_LAB_AUTOSTART=0`: `HUB_AUTO_ENGINE=0`
+previously did not prevent the two unrelated legacy PA/SMC lab threads from
+starting. Their retained staging databases total approximately 22.7 GB; no
+record is deleted, reset, compacted or rewritten by this switch. The new setting
+defaults to enabled outside staging, preserving existing production behavior.
+It controls constructor autostart and does not alter strategy rules, persisted
+session settings, explicit paper actions or the separate research worker.
+When updating the existing remote project, include this setting in the final
+image/memory overlay as well as retaining the 1536 MiB API limit.
