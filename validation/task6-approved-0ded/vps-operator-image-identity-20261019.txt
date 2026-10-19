@@ -1,0 +1,11 @@
+Evidence supplied by the operator from the existing VPS terminal on 2026-10-19.
+These are existing rollback image identities, not newly built approved-release images.
+
+Image=sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397 Revision=f8778ed42039d415f3829e08a05225976fe0d0a5 Source=940df9d11aee70f2c4a8b7fc3960f23376f1537adac3d1273da10007f5f5813e Digests=["nexus-rc3-api@sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397"]
+Image=sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1 Revision=28acdbccc4f9b737c683d94e15bb16a09e50aa85 Source=3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d Digests=["ghcr.io/arjuunb/nexus-trading-bot-worker@sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1"]
+Name=/nexus-remote-stage-rc3-28acdbc-state-init-1 Status=exited Exit=0
+Name=/nexus-remote-stage-rc3-28acdbc-metadata-init-1 Status=exited Exit=0
+services:
+  api:
+    mem_limit: 1536m
+    memswap_limit: 1536m

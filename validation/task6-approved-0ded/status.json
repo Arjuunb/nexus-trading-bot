@@ -1,0 +1,274 @@
+{
+  "recorded_at": "2026-10-18T23:33:02.072994+00:00",
+  "task": 6,
+  "task_complete": false,
+  "deployment_status": "BLOCKED_NOT_ATTEMPTED",
+  "approved_source": {
+    "repository": "Arjuunb/nexus-trading-bot",
+    "branch_context": "finish/strategy-intelligence-staging",
+    "commit": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+    "tree": "9a8b1fcc22e8647452047971d950f6dda53f780a",
+    "source_sha256": "b58399c346abb3416579cade8dd2df159a7bb197cfb0e1c36ef1dad7d0045d9c",
+    "retained_files": 1461,
+    "all_retained_files_verified": true,
+    "manifest": "/workspace/scratch/734bba8326aa/task6-approved-source-0ded1cc/source-manifest.json",
+    "exact_checkout": "/workspace/scratch/734bba8326aa/nexus-task6-approved-0ded1cc",
+    "rc3_and_customer_workspace_base_ancestry_verified": true,
+    "retained_files_reverified_on_retry": 1461,
+    "retry_hash_mismatches": 0
+  },
+  "target": {
+    "provider": "OVHcloud",
+    "host": "57.129.155.230",
+    "ssh_port": 22,
+    "project": "nexus-remote-stage-rc3-28acdbc",
+    "existing_release_directory": "/home/ubuntu/nexus-rc3-staging-28acdbc/release",
+    "create_new_project": false,
+    "required_api_memory_mib": 1536,
+    "required_api_memory_bytes": 1610612736,
+    "existing_customer_workspace_and_credentials_must_be_retained": true,
+    "existing_memory_overlay_must_remain_last": true,
+    "live_configuration_verified": false
+  },
+  "ssh": {
+    "exit_code": 255,
+    "message": "ssh: connect to host 57.129.155.230 port 22: Network is unreachable",
+    "strict_host_key_checking": true,
+    "remote_command_ran": false,
+    "agent_configured": false,
+    "default_ed25519_available": false,
+    "key_path_configured": false
+  },
+  "build_environment": {
+    "tools": {
+      "docker": null,
+      "podman": null,
+      "buildctl": null,
+      "nerdctl": null,
+      "trivy": null,
+      "grype": null,
+      "gh": null,
+      "ssh": "/usr/bin/ssh"
+    },
+    "docker_socket_present": false,
+    "docker_host_configured": false
+  },
+  "approved_source_ci": {
+    "run_id": 39155905417,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39155905417",
+    "head_sha": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+    "conclusion": "success",
+    "release_image_artifacts_returned": 0,
+    "new_environment_acceptance_evidence": false
+  },
+  "api_image": {
+    "source_commit": null,
+    "config_id": null,
+    "registry_digest": null,
+    "fresh_build_verified": false,
+    "security_scan_verified": false
+  },
+  "worker_image": {
+    "source_commit": null,
+    "config_id": null,
+    "registry_digest": null,
+    "fresh_build_verified": false,
+    "security_scan_verified": false
+  },
+  "actual_target_results": {
+    "container_application_health": "OPERATOR_REPORTED_EXISTING_STACK_4_RUNNING_HEALTHY;NEW_RELEASE_APP_ACCEPTANCE_NOT_RUN",
+    "authenticated_dashboard_and_api": "NOT_RUN_ACCESS_BLOCKED",
+    "research_worker": "OPERATOR_REPORTED_EXISTING_WORKER_RUNNING_HEALTHY;SOURCE_JOB_HEARTBEAT_AND_FUNCTIONAL_ACCEPTANCE_PENDING",
+    "database_migrations_and_persistence": "EXISTING_INITIALIZERS_EXIT_0;APPROVED_MIGRATIONS_PERSISTENCE_BACKUP_RESTORE_NOT_VERIFIED",
+    "container_restart_resources_and_recovery": "OPERATOR_REPORTED_0_RESTARTS_NO_OOM_AND_1536_MIB_API;RESTART_AND_RECOVERY_TESTS_NOT_RUN",
+    "edgescore": "NOT_RUN_ACCESS_BLOCKED",
+    "champion_challenger": "NOT_RUN_ACCESS_BLOCKED",
+    "regime_selection": "NOT_RUN_ACCESS_BLOCKED",
+    "performance_decay": "NOT_RUN_ACCESS_BLOCKED",
+    "weekly_research": "NOT_RUN_ACCESS_BLOCKED",
+    "insufficient_financial_evidence_abstention": "NOT_RUN_ACCESS_BLOCKED",
+    "production_before_after_comparison": "NOT_RUN_ACCESS_BLOCKED",
+    "existing_running_source": "API_f8778ed_AND_WORKER_RC3_28acdbc;APPROVED_0ded1cc_NOT_RUNNING"
+  },
+  "remote_mutations_performed": false,
+  "production_mutations_performed": false,
+  "main_pulled_or_merged_in_this_attempt": false,
+  "approved_runtime_source_modified": false,
+  "new_paper_execution_started": false,
+  "new_feature_sprint_started": false,
+  "blockers": [
+    "SSH to the OVHcloud host is still unreachable from this workspace (exit 255: Network is unreachable)",
+    "No existing SSH key or agent is available here",
+    "No Docker/Podman/BuildKit/nerdctl engine, Docker socket or configured Docker host is available",
+    "The release workflow is now present, but connected tools expose no workflow dispatch and no authenticated GitHub CLI is available here",
+    "Live staging credentials/configuration and the existing authenticated administrator session have not been inspected",
+    "Fresh built/scanned API and worker image digests for exact approved 0ded1cc are still unavailable; current images are older source revisions"
+  ],
+  "last_rechecked_at": "2026-10-19T22:16:30.817400+00:00",
+  "publication_workflow": {
+    "present_on_default_branch": true,
+    "presence_verified_on_retry": true,
+    "dispatch_tool_available": false,
+    "dispatch_performed": false,
+    "release_ref": "refs/heads/release/strategy-intelligence-task6-0ded1cc",
+    "release_ref_created": true,
+    "release_ref_readback_commit": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+    "publication_verified": false,
+    "previous_missing_workflow_blocker_resolved": true
+  },
+  "pending_operator_commands": "next-commands.md",
+  "read_only_preflight_script": "vps-readonly-preflight.sh",
+  "release_ref_ci": {
+    "run_id": 39333631513,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39333631513",
+    "head_sha": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+    "type": "ORDINARY_CI_NOT_IMAGE_BUILD_OR_DEPLOYMENT",
+    "status_at_last_check": "in_progress",
+    "conclusion_at_last_check": null
+  },
+  "preflight_script_syntax_check": "PASS_BASH_N_ONLY_NOT_VPS_EXECUTION",
+  "operator_reported_predeployment_baseline": {
+    "received_at": "2026-10-19T22:21:53.999458+00:00",
+    "source": "USER_SUPPLIED_VPS_SSH_OUTPUT",
+    "assistant_direct_remote_access": false,
+    "receipt": "vps-operator-snapshot-20261019.txt",
+    "containers": [
+      {
+        "Name": "/nexus-remote-stage-rc3-28acdbc-research-worker-1",
+        "Image": "sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1",
+        "Status": "running",
+        "Health": "healthy",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "536870912",
+        "Swap": "1073741824"
+      },
+      {
+        "Name": "/nexus-remote-stage-rc3-28acdbc-ingress-1",
+        "Image": "sha256:959ae6b898852db82e5b29b929388e59914f42be0a8f4d44c89a4c1f53b49208",
+        "Status": "running",
+        "Health": "healthy",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "100663296",
+        "Swap": "201326592"
+      },
+      {
+        "Name": "/nexus-remote-stage-rc3-28acdbc-api-1",
+        "Image": "sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397",
+        "Status": "running",
+        "Health": "healthy",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "1610612736",
+        "Swap": "1610612736"
+      },
+      {
+        "Name": "/nexus-remote-stage-rc3-28acdbc-metadata-init-1",
+        "Image": "sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1",
+        "Status": "exited",
+        "Health": "none",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "268435456",
+        "Swap": "536870912"
+      },
+      {
+        "Name": "/nexus-remote-stage-rc3-28acdbc-postgres-1",
+        "Image": "sha256:0c184f826eac85c55b6abd3ad520470cc5556870570e287997109e860dcce8f9",
+        "Status": "running",
+        "Health": "healthy",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "536870912",
+        "Swap": "1073741824"
+      },
+      {
+        "Name": "/nexus-remote-stage-rc3-28acdbc-state-init-1",
+        "Image": "sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1",
+        "Status": "exited",
+        "Health": "none",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "268435456",
+        "Swap": "536870912"
+      },
+      {
+        "Name": "/nexus-trading-bot-app-1",
+        "Image": "sha256:d4c51634a70e88c026f4b4d6e84c1e4bf6604603bb1307217ec2f88938bbe523",
+        "Status": "running",
+        "Health": "healthy",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "0",
+        "Swap": "0"
+      },
+      {
+        "Name": "/pa-replay-2025",
+        "Image": "sha256:6295f869fff7031199d4e9367b87cdf184ea600aa82d20c24a149b048de546fb",
+        "Status": "exited",
+        "Health": "none",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "0",
+        "Swap": "0"
+      },
+      {
+        "Name": "/nexus-trading-bot-certbot-1",
+        "Image": "sha256:ddf9e5d226a56e886986838fa0ebedc0237511c78664352e8d0f4346ee022cd8",
+        "Status": "running",
+        "Health": "none",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "0",
+        "Swap": "0"
+      },
+      {
+        "Name": "/nexus-trading-bot-nginx-1",
+        "Image": "sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10",
+        "Status": "running",
+        "Health": "healthy",
+        "Restarts": "0",
+        "OOM": "false",
+        "Memory": "0",
+        "Swap": "0"
+      }
+    ],
+    "api_memory_requirement_met_at_snapshot": true,
+    "api_memory_overlay_in_compose_ls": false,
+    "compose_effective_memory_rendered": false,
+    "existing_api_image_config_id": "sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397",
+    "existing_worker_image_config_id": "sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1",
+    "source_labels_and_registry_digests_verified": false,
+    "stage_running_healthy_services": 4,
+    "init_exit_codes_verified": true,
+    "host_memory_available_mib": 6633,
+    "root_disk_available": "32G",
+    "root_disk_used_percent": 67,
+    "host_swap_total_mib": 0,
+    "production_application_health": "OPERATOR_REPORTED_RUNNING_HEALTHY",
+    "production_isolation_comparison_verified": false,
+    "image_identity_receipt": "vps-operator-image-identity-20261019.txt",
+    "existing_api_source_commit": "f8778ed42039d415f3829e08a05225976fe0d0a5",
+    "existing_api_source_sha256": "940df9d11aee70f2c4a8b7fc3960f23376f1537adac3d1273da10007f5f5813e",
+    "existing_api_reported_repo_digests": [
+      "nexus-rc3-api@sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397"
+    ],
+    "existing_worker_source_commit": "28acdbccc4f9b737c683d94e15bb16a09e50aa85",
+    "existing_worker_source_sha256": "3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d",
+    "existing_worker_reported_repo_digests": [
+      "ghcr.io/arjuunb/nexus-trading-bot-worker@sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1"
+    ],
+    "source_labels_and_repo_digests_operator_reported": true,
+    "independent_registry_verification": false,
+    "state_init_exit_code": 0,
+    "metadata_init_exit_code": 0,
+    "approved_task5_migrations_verified": false,
+    "memory_overlay_contents_operator_reported": {
+      "api_mem_limit": "1536m",
+      "api_memswap_limit": "1536m"
+    },
+    "image_identity_received_at": "2026-10-19T22:24:03.209967+00:00"
+  },
+  "last_operator_baseline_received_at": "2026-10-19T22:21:53.999458+00:00"
+}
