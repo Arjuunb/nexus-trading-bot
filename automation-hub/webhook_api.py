@@ -994,12 +994,12 @@ smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0,
                           evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
 smc_runtime = SMCStrategyLabRuntime(
     v2_market_data, smc_paper, market_hub=forward_paper_market_hub,
-    poll_seconds=settings.smc_poll_s)
+    poll_seconds=settings.smc_poll_s, autostart=settings.legacy_lab_autostart)
 # Price Action must remain autonomous after a server restart even when no
 # browser has opened the lab page. The supervisor owns stream initialization;
 # UI requests are read-only observers of the same server-side runtime.
 price_action_runtime = PriceActionLabRuntime(
-    v2_market_data, price_action_paper, autostart=True,
+    v2_market_data, price_action_paper, autostart=settings.legacy_lab_autostart,
     market_hub=forward_paper_market_hub,
     poll_seconds=settings.price_action_poll_s)
 price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
