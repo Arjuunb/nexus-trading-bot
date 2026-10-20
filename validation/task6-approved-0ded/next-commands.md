@@ -1,14 +1,16 @@
 # Task 6 continuation — exact approved source, existing RC3 project
 
-The 2026-10-19 retry still cannot reach SSH. No deployment, live acceptance or image build/scan has run here. The following are pending operator commands, not successful results.
+**2026-10-20: do not repeat the unchanged 0ded release command below.** The correct manual run [39499761284](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39499761284) failed in the browser launcher before tests. Backend suites and disposable PostgreSQL tests passed; image build/publication were skipped. No deployment or live acceptance has run.
 
-## Build and scan the approved source through the existing workflow
+A tested replacement source, `4eceb973e98e1350dd625153753637629453c401`, is prepared but requires replacement of the user's exact-source approval. See `acceptance-report.md` and `release-run-39499761284.json`. Keep the 0ded release ref unchanged. The historical dispatch command is retained below as a receipt, not a retry instruction. Read-only VPS inventory remains useful.
+
+## Historical exact-source dispatch — completed, failed before build
 
 The publication workflow is now present on GitHub's default branch. The earlier missing-workflow blocker is resolved. The new release branch was created and independently read back at exactly `0ded1cc4cb77268cd4120224fa1f0d629589bd6b`:
 
 `release/strategy-intelligence-task6-0ded1cc`
 
-From a machine with an authenticated GitHub CLI, run:
+The operator has completed the equivalent dispatch:
 
 ```bash
 gh workflow run staging-release.yml --repo Arjuunb/nexus-trading-bot \
@@ -17,9 +19,9 @@ gh workflow run staging-release.yml --repo Arjuunb/nexus-trading-bot \
   --field expected_source_sha256=b58399c346abb3416579cade8dd2df159a7bb197cfb0e1c36ef1dad7d0045d9c
 ```
 
-Alternatively, use [the release workflow](https://github.com/Arjuunb/nexus-trading-bot/actions/workflows/staging-release.yml), select that release branch and enter the exact commit and source hash above. This build workflow has no SSH or staging-deployment job. Its checks, scans and protected publication guards must pass. Do not select main or the later development-branch head as the deployment source. Failures must be retained; do not edit the approved source or weaken guards to make the run pass.
+The original alternative was [the release workflow](https://github.com/Arjuunb/nexus-trading-bot/actions/workflows/staging-release.yml), select that release branch and enter the exact commit and source hash above. This build workflow has no SSH or staging-deployment job. Its checks, scans and protected publication guards must pass. Do not select main or the later development-branch head as the deployment source. Failures must be retained; do not edit the approved source or weaken guards to make the run pass.
 
-The connected tools cannot dispatch this workflow. Creating the exact-source release ref is complete. Ordinary CI run 39333631513 was triggered and is in progress; it is not the image-build workflow. No manual release-workflow dispatch/build/scan/publication success or image digest is claimed.
+The operator dispatched the workflow through GitHub Actions. Ordinary CI run 39333631513 also completed successfully, but neither result supplies release images. The manual run failed at the browser launcher; no image build, scan, publication or deployment success is claimed.
 
 ## Read-only target inventory (operator baseline received)
 

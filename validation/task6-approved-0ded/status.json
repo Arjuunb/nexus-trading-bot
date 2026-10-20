@@ -2,7 +2,7 @@
   "recorded_at": "2026-10-18T23:33:02.072994+00:00",
   "task": 6,
   "task_complete": false,
-  "deployment_status": "BLOCKED_NOT_ATTEMPTED",
+  "deployment_status": "BLOCKED_RELEASE_BROWSER_LAUNCHER_FAILED_NOT_DEPLOYED",
   "approved_source": {
     "repository": "Arjuunb/nexus-trading-bot",
     "branch_context": "finish/strategy-intelligence-staging",
@@ -97,34 +97,36 @@
   "new_paper_execution_started": false,
   "new_feature_sprint_started": false,
   "blockers": [
-    "SSH to the OVHcloud host is still unreachable from this workspace (exit 255: Network is unreachable)",
-    "No existing SSH key or agent is available here",
-    "No Docker/Podman/BuildKit/nerdctl engine, Docker socket or configured Docker host is available",
-    "The release workflow is now present, but connected tools expose no workflow dispatch and no authenticated GitHub CLI is available here",
-    "Live staging credentials/configuration and the existing authenticated administrator session have not been inspected",
-    "Fresh built/scanned API and worker image digests for exact approved 0ded1cc are still unavailable; current images are older source revisions"
+    "Exact approved 0ded1cc release run 39499761284 failed in the reviewed browser launcher before tests; build/publication were skipped. No fresh approved-source image or scan exists.",
+    "The concrete replacement 4eceb973e98e1350dd625153753637629453c401 passed release validation, but is not the exact source approved by the user. Approval of that replacement source is required; the 0ded release ref has not moved.",
+    "SSH to the OVHcloud host remains unreachable from this workspace (exit 255: Network is unreachable); no existing SSH key or agent is configured here.",
+    "No local Docker engine/socket or image scanner is available. GitHub can perform the build after an approved source passes release gates.",
+    "Existing staging credentials, effective configuration, mounts, rollback backups and authenticated acceptance remain unverified."
   ],
-  "last_rechecked_at": "2026-10-19T22:16:30.817400+00:00",
+  "last_rechecked_at": "2026-10-20T21:41:02.220Z",
   "publication_workflow": {
     "present_on_default_branch": true,
     "presence_verified_on_retry": true,
     "dispatch_tool_available": false,
-    "dispatch_performed": false,
+    "dispatch_performed": true,
     "release_ref": "refs/heads/release/strategy-intelligence-task6-0ded1cc",
     "release_ref_created": true,
     "release_ref_readback_commit": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
     "publication_verified": false,
-    "previous_missing_workflow_blocker_resolved": true
+    "previous_missing_workflow_blocker_resolved": true,
+    "dispatch_performed_by": "USER_IN_GITHUB_ACTIONS_UI",
+    "run_id": 39499761284,
+    "conclusion": "failure"
   },
-  "pending_operator_commands": "next-commands.md",
+  "pending_operator_commands": "next-commands.md (do not repeat the failed 0ded build)",
   "read_only_preflight_script": "vps-readonly-preflight.sh",
   "release_ref_ci": {
     "run_id": 39333631513,
     "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39333631513",
     "head_sha": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
     "type": "ORDINARY_CI_NOT_IMAGE_BUILD_OR_DEPLOYMENT",
-    "status_at_last_check": "in_progress",
-    "conclusion_at_last_check": null
+    "status_at_last_check": "completed",
+    "conclusion_at_last_check": "success"
   },
   "preflight_script_syntax_check": "PASS_BASH_N_ONLY_NOT_VPS_EXECUTION",
   "operator_reported_predeployment_baseline": {
@@ -270,5 +272,57 @@
     },
     "image_identity_received_at": "2026-10-19T22:24:03.209967+00:00"
   },
-  "last_operator_baseline_received_at": "2026-10-19T22:21:53.999458+00:00"
+  "last_operator_baseline_received_at": "2026-10-19T22:21:53.999458+00:00",
+  "release_run": {
+    "id": 39499761284,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39499761284",
+    "event": "workflow_dispatch",
+    "branch": "release/strategy-intelligence-task6-0ded1cc",
+    "attempt": 1,
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-10-20T21:22:01Z",
+    "updated_at": "2026-10-20T21:35:12Z",
+    "receipt": "release-run-39499761284.json",
+    "build": "skipped",
+    "publish": "skipped"
+  },
+  "proposed_replacement_source": {
+    "approved": false,
+    "commit": "4eceb973e98e1350dd625153753637629453c401",
+    "tree": "1af45a4993d83919c5007373ba8b9a27e9de5a71",
+    "source_sha256": "82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8",
+    "retained_files": 1468,
+    "rehashed_files": 1468,
+    "hash_mismatches": 0,
+    "release_validation": {
+      "run_id": 39173887337,
+      "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39173887337",
+      "head_sha": "4eceb973e98e1350dd625153753637629453c401",
+      "conclusion": "success",
+      "root_python311": {
+        "passed": 4553,
+        "skipped": 76,
+        "seconds": 1577.68
+      },
+      "root_python312": {
+        "passed": 4553,
+        "skipped": 76,
+        "seconds": 579.53
+      },
+      "disposable_postgresql": {
+        "passed": 31,
+        "skipped": 2,
+        "seconds": 42.03
+      },
+      "browser": {
+        "passed": 165,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    "runtime_trading_strategy_financial_service_and_migration_changes": 0,
+    "existing_rc3_target_preserved": true,
+    "api_memory_mib": 1536
+  }
 }

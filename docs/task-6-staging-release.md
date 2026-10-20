@@ -7,6 +7,22 @@ tree `9a8b1fcc22e8647452047971d950f6dda53f780a`. The only authorized
 Task 6 deployment source is this exact commit. Later development or documentation
 commits do not replace this approval.
 
+## Latest exact-source release attempt — 2026-10-20
+
+The correct manual [run 39499761284](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39499761284)
+failed in the reviewed browser launcher before tests: its single-server wrapper
+cannot consume Task 5's `webServer` array. Both Python suites passed 4448 tests;
+disposable PostgreSQL passed 31. Image build/publication were skipped. No fresh
+images, security scans, VPS deployment or authenticated acceptance exist.
+
+Do not rerun the unchanged 0ded release command. A concrete replacement source,
+`4eceb973e98e1350dd625153753637629453c401`, has successful exact-source release
+validation (4553 tests per Python version, PostgreSQL 31, browser 165), but has
+not replaced the user's pinned source approval. Review the complete proposal in
+`validation/task6-approved-0ded/acceptance-report.md`. Keep the current frozen
+release ref unchanged until that source decision. All current RC3 target and
+preservation requirements below remain binding.
+
 ## Existing target and preservation requirements
 
 - Compose project: `nexus-remote-stage-rc3-28acdbc`.
@@ -56,7 +72,7 @@ The approved source freeze verified all 1461 retained files with zero mismatches
 Release ref `release/strategy-intelligence-task6-0ded1cc` was created and
 independently read back at the exact approved commit. Keep it at that commit.
 The staging publication workflow is now present on the default branch. From an
-authenticated GitHub CLI, start the approved-source build using:
+authenticated GitHub CLI, the now-failed dispatch used:
 
 ```bash
 gh workflow run staging-release.yml --repo Arjuunb/nexus-trading-bot \

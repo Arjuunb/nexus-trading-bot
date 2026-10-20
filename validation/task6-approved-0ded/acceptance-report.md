@@ -1,6 +1,6 @@
 # Task 6 — existing RC3 staging deployment and acceptance
 
-**BLOCKED — deployment not attempted. Task 6 is NOT COMPLETE.**
+**BLOCKED — exact-source release validation failed; deployment not attempted. Task 6 is NOT COMPLETE.**
 
 Recorded: 2026-10-18T23:33:02.072994+00:00.
 
@@ -35,16 +35,15 @@ This is a source freeze, not an image build, security scan or VPS acceptance res
 | Environment-specific PostgreSQL, container, restart and resource tests | Existing Docker/resource baseline supplied by operator; PostgreSQL integration, restart, load and recovery tests NOT RUN |
 | Production isolation | Existing app and nginx operator-reported running/healthy; app restarts 0, OOM false. No production mutation performed by this attempt; full ID/start/mount before/after comparison still unverified |
 
-## Precise blockers
+## Current precise blockers — 2026-10-20
 
-1. The read-only SSH command used BatchMode and StrictHostKeyChecking and exited **255** before any remote command ran:
+1. The operator dispatched the correct exact-source release workflow. [Run 39499761284](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39499761284) failed in the browser launcher before browser tests began. Both backend regression jobs completed their Python suites, and disposable PostgreSQL tests passed. The image build and publication jobs were skipped; no fresh image digest or security scan exists.
+2. The concrete fix is already present in `4eceb973e98e1350dd625153753637629453c401`, with successful release validation. This is a proposed replacement source, not permission to deploy it. The user's exact `0ded1cc` source approval remains binding until explicitly replaced. The original release ref is unchanged.
+3. Read-only SSH remains blocked before any remote command runs: exit 255, `ssh: connect to host 57.129.155.230 port 22: Network is unreachable`. No existing SSH key or agent is configured here. No credential should be pasted into chat.
+4. This workspace has no Docker engine/socket or image scanner. GitHub's existing guarded builder can build and scan once release validation passes for the approved source.
+5. Actual staging configuration, credential bindings, mounts, migration/backup/restore state, authenticated PRD acceptance and the production before/after comparison remain pending.
 
-   `ssh: connect to host 57.129.155.230 port 22: Network is unreachable`
-
-2. No existing default SSH key, SSH agent or configured NEXUS SSH-key path is available in this workspace. The existing private key must remain on its trusted machine; do not paste or upload it.
-3. Docker, Podman, BuildKit/buildctl and nerdctl are absent. There is no Docker socket or configured Docker host. Trivy/grype and the GitHub CLI are also absent. Therefore this workspace cannot build or security-scan the required deployment images.
-4. Connected GitHub tools have no workflow-dispatch operation. On the 2026-10-19 retry the staging-release workflow is now present on the default branch, resolving the earlier 404 blocker. An exact approved-source release ref was created and verified. Dispatch remains unavailable here; use the exact command in `next-commands.md` from an authenticated GitHub CLI or the existing Actions UI. No release-workflow dispatch, build/scan, protected approval, publication or image digest is inferred from branch creation.
-5. Existing staging configuration, credentials, customer-workspace bindings, volumes and rollback artifacts cannot be verified until target access works. No credential values were read or printed.
+The former missing-workflow and manual-dispatch steps are resolved. Repeating the unchanged failed source will not correct this launcher error. No release gate was waived, no image was substituted and no VPS service was changed.
 
 ## Existing staging state to preserve when access resumes
 
@@ -99,3 +98,35 @@ The existing worker source label is RC3 `28acdbccc4f9b737c683d94e15bb16a09e50aa8
 Both existing initializers are exited with code **0**. This confirms their previous completion, not successful migrations for the still-undeployed approved source. The memory overlay was read on the VPS and contains exactly `mem_limit: 1536m` and `memswap_limit: 1536m` under the API service. Effective combined Compose configuration and persistence/credentials still need verification before updating services.
 
 Receipt: `vps-operator-image-identity-20261019.txt`. The next affected step is fresh build/security scan/publication for the exact approved source using the prepared release ref and existing protected workflow. The connected tools cannot dispatch that workflow. No service update or reboot is requested while image proof and remaining preservation checks are pending.
+
+## Actual manual release result — 2026-10-20
+
+The user dispatched run **39499761284**, attempt 1, on `release/strategy-intelligence-task6-0ded1cc`, at exactly approved commit `0ded1cc4cb77268cd4120224fa1f0d629589bd6b`. The run completed with **failure**.
+
+| Actual gate | Result |
+| --- | --- |
+| Python 3.11 root regression | **4448 passed, 76 skipped**, 516.20 seconds |
+| Python 3.12 root regression | **4448 passed, 76 skipped**, 498.81 seconds |
+| Disposable PostgreSQL integration | **31 passed, 2 skipped**, 38.10 seconds; not VPS database acceptance |
+| Frontend typechecks and builds | Passed |
+| Reviewed browser gate | Launcher failed before tests with `TypeError: The "file" argument must be of type string. Received undefined` |
+| Image build / scan / publish | Build and publication skipped; image scan not run |
+| VPS deployment / acceptance | Not attempted |
+
+The reviewed wrapper from immutable harness commit `24b67bf43e1712b5566fa33b457814ceac5ec30b` assumes `webServer` is one object. Approved Task 5 supplies an array. The wrapper spreads that array into an object without a `command`, so Playwright's process launcher receives undefined. The reviewed wrapper and clipboard assertions were not altered or bypassed.
+
+### Concrete replacement proposed for source approval
+
+- Commit: `4eceb973e98e1350dd625153753637629453c401`
+- Tree: `1af45a4993d83919c5007373ba8b9a27e9de5a71`
+- Frozen source SHA-256: `82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8`
+- **1468 files rehashed, zero mismatches**, clean detached checkout.
+- Exact-source [release validation 39173887337](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39173887337): success. Python 3.11 and 3.12 each **4553 passed, 76 skipped**; PostgreSQL **31 passed, 2 skipped**; reviewed browser suite **165 passed, zero failures/skips**.
+
+The replacement keeps a single dashboard server compatible with the immutable reviewed wrapper, manages the isolated research API fixture through the verified launcher, and includes responsive dashboard layout repairs, release-controller/test integration and documentation/evidence. The 0ded-to-4ece diff has no changes to trading, strategy/financial service or migration source. It changes 11 files; the complete comparison is reviewable on GitHub. Original harness file hashes and original browser assertions remain enforced.
+
+This candidate's older runbook proposed a separate staging namespace. Those historical target instructions are superseded by the current explicit request: **only existing `nexus-remote-stage-rc3-28acdbc`, with its customer workspace and 1536 MiB memory override preserved**. Approval of a new source would not authorize a new project or loosen any execution/production boundary.
+
+The passing replacement-source CI is not evidence that 0ded passed, that images were built/scanned or that the VPS was deployed. The replacement has not been authorized or deployed in this continuation. The development branch evidence update does not advance the frozen release ref.
+
+Machine-readable failure details and filtered primary log excerpts: `release-run-39499761284.json`. Remaining required acceptance items in the report above are unchanged. Task 6 remains incomplete.
