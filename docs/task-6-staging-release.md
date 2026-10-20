@@ -1,6 +1,6 @@
 # Task 6: existing RC3 staging deployment and acceptance
 
-**INCOMPLETE — approved images built/scanned; publication waits for a distinct reviewer; VPS deployment and acceptance remain pending.**
+**INCOMPLETE — approved images built/scanned; publication failed its protection guard; VPS deployment and acceptance remain pending.**
 
 The user approved replacing original Task 5 source `0ded1cc4cb77268cd4120224fa1f0d629589bd6b`
 with the concrete validated replacement:
@@ -22,9 +22,11 @@ The previous 0ded manual run failed in the reviewed browser launcher. Its
 immutable wrapper could not consume Task 5's server array. The approved
 replacement repairs that integration while preserving reviewed assertions.
 Fresh image build and security scans have completed successfully. Publication
-is waiting on protected review: only Arjuunb is listed, also this run's initiator.
-The approved guard requires a different configured reviewer with self-review
-prevention. Preserve this existing run and its sealed packet; do not rerun it.
+failed with `PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED`.
+GitHub records initiator Arjuunb approving the run; only that user was listed.
+The guard requires a different configured reviewer, self-review prevention and
+an enabled intended release-branch policy. Correct those settings first; then
+start a fresh manual run at this same approved source. Do not retry job attempts.
 
 ## Existing target and preservation requirements
 
@@ -74,12 +76,14 @@ built and scanned the exact approved source. All 16 sealed files and 12 stored/
 decompressed image layer hash pairs were independently verified. No registry
 publication or actual VPS deployment has occurred.
 
-Publication waits for `ghcr-staging-release` review. Only Arjuunb is currently
-listed, also the run initiator. The approved guard requires a different
-configured required reviewer, self-review prevention and an enabled intended
-release-branch policy. Full environment configuration is unavailable through
-the connected fetch endpoint. Configure that protection and have the distinct
-reviewer inspect/approve the existing packet. Do not self-approve or rerun.
+Publication failed its configured-protection guard in `ghcr-staging-release`:
+`PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED`. Registry login and
+push were skipped. History confirms initiator Arjuunb approved their own run.
+The approved guard requires a distinct configured individual reviewer,
+self-review prevention and an enabled intended deployment-branch policy.
+Full environment configuration is unavailable through the connected endpoint;
+inspect/correct those settings before starting another workflow. A new manual
+first attempt at the same approved source is required; job retries are rejected.
 
 Artifact ID 12303500964, SHA-256:
 `bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da`.

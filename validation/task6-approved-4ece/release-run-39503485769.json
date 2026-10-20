@@ -87,7 +87,7 @@
   },
   "deployment_attempted": false,
   "task6_complete": false,
-  "last_rechecked_at": "2026-10-20T22:17:02.249610+00:00",
+  "last_rechecked_at": "2026-10-20T22:22:15.055422+00:00",
   "build": {
     "job_id": 118912591216,
     "conclusion": "success",
@@ -119,7 +119,7 @@
   },
   "publication": {
     "job_id": 118914426007,
-    "status": "waiting",
+    "status": "completed",
     "environment": "ghcr-staging-release",
     "environment_id": 24412364022,
     "listed_reviewers": [
@@ -142,6 +142,28 @@
     "environment_configuration_read": "UNAVAILABLE_CONNECTED_FETCH_ENDPOINT_UNSUPPORTED",
     "approval_attempted_by_assistant": false,
     "registry_api_digest": null,
-    "registry_worker_digest": null
-  }
+    "registry_worker_digest": null,
+    "conclusion": "failure",
+    "guard_error": "PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED",
+    "guard_failed_at": "2026-10-20T22:17:11.3556268Z",
+    "actual_approval_history": [
+      {
+        "state": "approved",
+        "user": "Arjuunb",
+        "user_id": 190428336,
+        "environments": [
+          {
+            "name": "ghcr-staging-release",
+            "id": 24412364022
+          }
+        ]
+      }
+    ],
+    "registry_login_attempted": false,
+    "registry_push_attempted": false,
+    "failure_receipt": "publication-failure-39503485769.json",
+    "fresh_manual_run_required_after_protection_fix": true
+  },
+  "workflow_status": "completed",
+  "workflow_conclusion": "failure"
 }

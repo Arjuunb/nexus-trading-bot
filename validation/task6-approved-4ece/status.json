@@ -2,7 +2,7 @@
   "recorded_at": "2026-10-20T21:47:12.119867+00:00",
   "task": 6,
   "task_complete": false,
-  "deployment_status": "BLOCKED_PUBLICATION_REVIEW_AND_VPS_ACCESS_NOT_DEPLOYED",
+  "deployment_status": "BLOCKED_PUBLICATION_PROTECTION_GUARD_FAILED_AND_VPS_ACCESS_NOT_DEPLOYED",
   "source_approval": {
     "user_response": "approve",
     "scope": "Replace pinned 0ded1cc with the concrete reviewed 4eceb97 source; all existing Task 6 target and preservation boundaries remain binding",
@@ -60,7 +60,7 @@
     "worker_digest": null,
     "run_id": 39503485769,
     "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769",
-    "status": "waiting",
+    "status": "completed",
     "attempt": 1,
     "head_sha": "4eceb973e98e1350dd625153753637629453c401",
     "initiated_by": "USER_IN_GITHUB_ACTIONS_UI",
@@ -70,7 +70,9 @@
     "artifact_sha256": "bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da",
     "artifact_expires_at": "2026-10-27T22:07:45Z",
     "independently_verified_packet_files": 16,
-    "verified_layer_pairs": 12
+    "verified_layer_pairs": 12,
+    "conclusion": "failure",
+    "publication_guard_error": "PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED"
   },
   "target": {
     "project": "nexus-remote-stage-rc3-28acdbc",
@@ -105,12 +107,12 @@
   "public_feed_activated": false,
   "main_pulled_or_merged_in_this_continuation": false,
   "blockers": [
-    "Protected publication is waiting. GitHub lists only Arjuunb as required reviewer, also the run actor and triggering actor. No listed distinct reviewer can satisfy the approved guard. A trusted different configured reviewer, prevention of self-review and an approved release-branch policy are required.",
+    "Publication failed at the configured protection/actual approval guard: PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED. Only Arjuunb was listed; approval history confirms Arjuunb approved the run they initiated. Required distinct-reviewer/prevent-self-review/deployment-branch protection must be satisfied before a fresh manual attempt. This terminal run cannot be retried under the immutable first-attempt guard.",
     "VPS SSH remains unreachable from this workspace (exit 255: Network is unreachable); no configured existing SSH identity is available. Actual target work requires the trusted operator session.",
     "Effective staging overlays, customer credential bindings, mounts, backups/migration state, authenticated PRD behavior, actual PostgreSQL/restart/recovery and production before/after isolation remain unverified."
   ],
   "previous_evidence": "../task6-approved-0ded/acceptance-report.md",
-  "last_rechecked_at": "2026-10-20T22:17:02.249610+00:00",
+  "last_rechecked_at": "2026-10-20T22:22:15.055422+00:00",
   "fresh_manual_release_validation": {
     "run_id": 39503485769,
     "python_311": {
@@ -157,7 +159,7 @@
   },
   "publication_gate": {
     "job_id": 118914426007,
-    "status": "waiting",
+    "status": "completed",
     "environment": "ghcr-staging-release",
     "environment_id": 24412364022,
     "listed_reviewers": [
@@ -180,7 +182,27 @@
     "environment_configuration_read": "UNAVAILABLE_CONNECTED_FETCH_ENDPOINT_UNSUPPORTED",
     "approval_attempted_by_assistant": false,
     "registry_api_digest": null,
-    "registry_worker_digest": null
+    "registry_worker_digest": null,
+    "conclusion": "failure",
+    "guard_error": "PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED",
+    "guard_failed_at": "2026-10-20T22:17:11.3556268Z",
+    "actual_approval_history": [
+      {
+        "state": "approved",
+        "user": "Arjuunb",
+        "user_id": 190428336,
+        "environments": [
+          {
+            "name": "ghcr-staging-release",
+            "id": 24412364022
+          }
+        ]
+      }
+    ],
+    "registry_login_attempted": false,
+    "registry_push_attempted": false,
+    "failure_receipt": "publication-failure-39503485769.json",
+    "fresh_manual_run_required_after_protection_fix": true
   },
   "build_receipt": "built-images-and-scans.json",
   "release_receipt": "release-run-39503485769.json"

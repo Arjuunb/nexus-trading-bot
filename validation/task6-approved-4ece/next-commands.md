@@ -1,18 +1,22 @@
-# Current next step — protected review of the existing built images
+# Current next step — correct environment protection before a fresh run
 
-**Do not start or retry another build.** Fresh manual [run 39503485769](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769) has passed release checks, image construction, actual-image regressions and security scans. Its publish job is waiting on `ghcr-staging-release`.
+The build/tests/scans in [run 39503485769](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769) passed, but publication is now **FAILED**. The exact guard reason is `PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED` (exit 2 at 2026-10-20T22:17:11Z). Registry login and push were skipped. The sealed tested/scanned images remain retained below; nothing was deployed.
 
-## Publication blocker and concrete action
+## Exact protection blocker
 
-GitHub currently lists only **Arjuunb** as required reviewer. The run actor and triggering actor are also Arjuunb (ID 190428336). The approved `ops/github-release.py` guard requires an actual approval by a configured user whose ID differs from both initiators, with `prevent_self_review` enabled and a deployment branch policy enabled. Self-approval cannot pass this guard.
+GitHub lists only **Arjuunb** as reviewer, also actor/triggering actor (ID 190428336). Actual approval history records that same user approving the run. The approved `ops/github-release.py` guard requires:
 
-In repository **Settings → Environments → ghcr-staging-release**:
+1. A trusted **different individual GitHub user** configured as a required reviewer.
+2. **Prevent self-review** enabled.
+3. An enabled deployment branch policy permitting the intended approved release ref.
 
-1. Configure a trusted **different GitHub user** as a required reviewer and enable **Prevent self-review**.
-2. Retain an enabled deployment branch policy that permits only the intended approved release ref (`release/strategy-intelligence-task6-4eceb97`, or the existing appropriately restricted release policy).
-3. Have that configured reviewer inspect this existing run's tested/scanned packet and approve its pending environment deployment. No message or invitation has been sent by the assistant.
+The actual configuration guard failed before registry authentication. Full environment settings cannot be read through the connected fetch endpoint, so the assistant cannot identify which combination of reviewer/self-review/branch-policy settings is missing. The recorded initiator approval also cannot satisfy the distinct-reviewer history requirement.
 
-The environment's complete settings cannot be read through the connected fetch endpoint. The pending reviewers and initiators were read from the actual GitHub run and pending-deployments API. Existing reviewer protection must not be removed, bypassed or weakened. Chat source approval is recorded and does not replace the required GitHub environment review.
+## Next user action
+
+Open repository **Settings → Environments → ghcr-staging-release**. Configure the distinct required reviewer and self-review prevention. Retain a restricted deployment branch policy permitting `release/strategy-intelligence-task6-4eceb97`. Check those settings before starting another workflow; a screenshot of the protection controls is sufficient to inspect without exposing credentials. No invitation/message has been sent by the assistant.
+
+After protection is correct, start a **fresh manual** `staging-release.yml` run with the same approved ref/commit/source hash below, then have the configured distinct reviewer inspect and approve that new run. **Do not use Re-run jobs:** the approved source requires manual attempt 1. Do not remove/weaken the protection or forge review metadata. The connected GitHub tools expose no fresh workflow dispatch. The prior chat source/deployment approval remains valid; another generic approval is unnecessary.
 
 ## Concrete review packet
 
@@ -28,7 +32,7 @@ The environment's complete settings cannot be read through the connected fetch e
 - Both image reports: **zero HIGH/CRITICAL vulnerabilities**; source and both image all-severity secret scans: **zero secrets**.
 - Independent verification: artifact download hash, all **16** sealed files and both stored/compressed blob and decompressed diff hashes for **12** layers match. Source labels, config IDs and scan image IDs match.
 
-These config IDs identify built images, not published registry digests or deployed VPS images. The publication guard will verify the same sealed bytes again before any registry write. Registry references remain pending.
+These config IDs identify built images, not published registry digests or deployed VPS images. The failed publication made no registry write. A future fresh run must verify its own actual sealed bytes and approval metadata before publication. Registry references remain unavailable.
 
 ## Target work after publication
 

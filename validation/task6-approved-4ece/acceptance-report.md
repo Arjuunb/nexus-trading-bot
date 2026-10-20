@@ -1,6 +1,6 @@
 # Task 6 current acceptance report — approved replacement 4eceb97
 
-**INCOMPLETE: fresh build/tests/scans PASSED; publication awaits a distinct reviewer; no VPS deployment or acceptance has occurred.**
+**INCOMPLETE: fresh build/tests/scans PASSED; publication FAILED at its protection guard; no VPS deployment or acceptance has occurred.**
 
 The user explicitly approved the prepared replacement source after reviewing the failed 0ded release and successful 4ece release validation. This replaces the source pin only. It does not alter the existing staging target, customer workspace, credentials, financial records, tenant isolation, API memory requirement or execution boundaries.
 
@@ -15,7 +15,7 @@ The user explicitly approved the prepared replacement source after reviewing the
 - Local request-guard check passed with explicit simulated workflow metadata; this is not an image build or remote run.
 - Fresh exact-source manual [release run 39503485769](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769), attempt 1: Python 3.11 **4553 passed, 76 skipped**, 523.51 s; Python 3.12 **4553 passed, 76 skipped**, 382.50 s; disposable PostgreSQL **31 passed, 2 skipped**, 36.69 s; reviewed browser suite **165 passed, zero failures/skips**, 5.5 min.
 - Actual unpublished API-image regression: **700 passed, 25 skipped**, 40.46 s, zero failures/errors. These fixtures did not start application services or access production.
-- Image build, exact-source/label proof, HIGH/CRITICAL vulnerability scans and all-severity secret scans: **PASSED**. The protected publish job is **waiting**, not successful.
+- Image build, exact-source/label proof, HIGH/CRITICAL vulnerability scans and all-severity secret scans: **PASSED**. The publish job **FAILED** before registry login/push with `PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED`.
 
 No trading, strategy/financial service or migration source differs from Task 5. The replacement repairs release/browser tooling and dashboard layout and preserves the original reviewed harness assertions. The earlier failed 0ded run and original VPS baseline remain in `../task6-approved-0ded/`; their approval state is historical, superseded by this explicit replacement approval.
 
@@ -23,7 +23,7 @@ No trading, strategy/financial service or migration source differs from Task 5. 
 
 | Required item | Actual result |
 | --- | --- |
-| Deployed approved source and image digests | **Not deployed.** Exact 4ece images are built/scanned and sealed below; registry publication/digests await protected review |
+| Deployed approved source and image digests | **Not deployed.** Exact 4ece images are built/scanned and sealed below; registry publication failed at protection validation; registry digests remain unavailable |
 | Existing API source/image config ID | Operator baseline: `f8778ed42039d415f3829e08a05225976fe0d0a5`, `sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397` |
 | Existing worker source/image config ID | Operator baseline: `28acdbccc4f9b737c683d94e15bb16a09e50aa85`, `sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1` |
 | Deployment success/failure | **Blocked before update**; no VPS mutation performed |
@@ -53,11 +53,11 @@ Machine-readable scan hashes, config/export identities and layer checks: `built-
 
 ## Precise current blockers
 
-1. **Publication reviewer conflict.** The actual pending environment API lists only **Arjuunb**, ID **190428336**, as required reviewer. The same ID is both actor and triggering actor of this run. The approved release guard requires actual approval by a configured **different** reviewer, `prevent_self_review` enabled and an enabled deployment branch policy. The eligible listed distinct-reviewer set is empty. Full environment settings cannot be read through the connected fetch endpoint. Keep this existing successfully built run; configure the required distinct reviewer and preserve/verify the protection and intended release-branch policy. Do not self-approve, weaken guards or restart the build as a workaround.
+1. **Publication protection failure.** The publish job failed at 2026-10-20T22:17:11Z with `PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED`, exit 2. Registry login, packet loading, image push and publication-artifact upload were **skipped**. Actual history records approval by **Arjuunb**, ID **190428336**, also actor and triggering actor. Before approval the pending gate listed only that same user, so no listed reviewer qualified as distinct. The approved guard requires a configured different individual reviewer, `prevent_self_review` enabled and an enabled intended deployment branch policy. Its exact configuration rejection could involve reviewer/self-review protection and/or branch policy; the assistant cannot read the full environment settings through the connected fetch endpoint. Fix and verify those settings first. The run is terminal: a **fresh manual run** at the same approved source is required afterwards; retrying jobs would violate the immutable first-attempt guard. Do not weaken the guard or substitute the chat approval.
 2. **VPS access.** SSH fails before a remote command runs: exit 255, `ssh: connect to host 57.129.155.230 port 22: Network is unreachable`. No configured existing SSH identity/agent is available here. Actual target operations require the trusted operator session until access is available.
 3. **Live acceptance and preservation.** Existing overlays, credential bindings, mounts, migration state, restorable backups, authenticated PRD/abstention behavior, environment-specific PostgreSQL/restart/resource/recovery and production before/after isolation still require actual target evidence.
 
-Source approval, fresh dispatch, release tests, image construction and security-scan steps are resolved. Another generic source/deployment approval is unnecessary. No publication review has been performed by the assistant, no image published or VPS service changed. No other person was messaged. `next-commands.md` gives the concrete existing-run review action and remaining target gates.
+Source approval, fresh dispatch, release tests, image construction and security-scan steps are resolved. Another generic source/deployment approval is unnecessary. The assistant performed no environment approval. GitHub records the initiator's approval, which does not satisfy the approved separation requirement. No image was published and no VPS service was changed. No other person was messaged. `next-commands.md` gives the concrete existing-run review action and remaining target gates.
 
 ## Binding target and remaining execution
 
