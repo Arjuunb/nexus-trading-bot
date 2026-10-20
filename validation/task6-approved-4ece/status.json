@@ -2,7 +2,7 @@
   "recorded_at": "2026-10-20T21:47:12.119867+00:00",
   "task": 6,
   "task_complete": false,
-  "deployment_status": "BLOCKED_PUBLICATION_PROTECTION_GUARD_FAILED_AND_VPS_ACCESS_NOT_DEPLOYED",
+  "deployment_status": "DIRECT_ARCHIVE_ROUTE_PREPARED_BLOCKED_ON_VPS_PRESERVATION_ACCESS",
   "source_approval": {
     "user_response": "approve",
     "scope": "Replace pinned 0ded1cc with the concrete reviewed 4eceb97 source; all existing Task 6 target and preservation boundaries remain binding",
@@ -107,12 +107,12 @@
   "public_feed_activated": false,
   "main_pulled_or_merged_in_this_continuation": false,
   "blockers": [
-    "Publication failed at the configured protection/actual approval guard: PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED. Only Arjuunb was listed; approval history confirms Arjuunb approved the run they initiated. Required distinct-reviewer/prevent-self-review/deployment-branch protection must be satisfied before a fresh manual attempt. This terminal run cannot be retried under the immutable first-attempt guard.",
-    "VPS SSH remains unreachable from this workspace (exit 255: Network is unreachable); no configured existing SSH identity is available. Actual target work requires the trusted operator session.",
-    "Effective staging overlays, customer credential bindings, mounts, backups/migration state, authenticated PRD behavior, actual PostgreSQL/restart/recovery and production before/after isolation remain unverified."
+    "VPS SSH remains unreachable from this workspace and no configured SSH identity is available. Use the existing trusted operator terminal for read-only inventory.",
+    "Existing Compose environment-file inputs, customer workspace/credentials, effective overlays, mounts, current memory settings, migrations and restorable backups must be verified before any staging update.",
+    "Actual authenticated PRD/research-worker, financial-evidence abstention, PostgreSQL/persistence/resource/restart/recovery and production-isolation acceptance are still pending."
   ],
   "previous_evidence": "../task6-approved-0ded/acceptance-report.md",
-  "last_rechecked_at": "2026-10-20T22:22:15.055422+00:00",
+  "last_rechecked_at": "2026-10-20T22:36:31.118479+00:00",
   "fresh_manual_release_validation": {
     "run_id": 39503485769,
     "python_311": {
@@ -202,8 +202,31 @@
     "registry_login_attempted": false,
     "registry_push_attempted": false,
     "failure_receipt": "publication-failure-39503485769.json",
-    "fresh_manual_run_required_after_protection_fix": true
+    "fresh_manual_run_required_after_protection_fix": true,
+    "operator_screenshot_20261020": {
+      "required_reviewers": [
+        "Arjuunb"
+      ],
+      "prevent_self_review": false,
+      "deployment_branch_policy": "SELECTED_BRANCHES_AND_TAGS",
+      "allowed_branch_pattern": "release/*",
+      "administrator_bypass": false,
+      "source": "USER_SUPPLIED_ENVIRONMENT_SETTINGS_SCREENSHOT",
+      "used_to_change_any_setting": false
+    }
   },
   "build_receipt": "built-images-and-scans.json",
-  "release_receipt": "release-run-39503485769.json"
+  "release_receipt": "release-run-39503485769.json",
+  "selected_staging_delivery": {
+    "method": "DIRECT_VERIFIED_ARCHIVE_TRANSFER_AND_LOCAL_IMMUTABLE_IMAGE_IDS",
+    "plan": "direct-archive/plan.json",
+    "source_or_built_image_changed": false,
+    "new_build_required": false,
+    "registry_publication_required_for_this_route": false,
+    "registry_publication_protection_changed": false,
+    "failed_publication_claimed_as_deployment_approval": false,
+    "authorization": "Original bounded Task 6 staging deployment request plus explicit 4eceb97 source approval",
+    "actual_vps_transfer_or_load_or_update_performed": false
+  },
+  "optional_registry_publication_blocker": "GHCR publication remains failed under its existing distinct-reviewer guard. No other reviewer is available. This registry-write operation is not part of the selected direct-archive staging route."
 }

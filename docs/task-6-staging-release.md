@@ -1,6 +1,6 @@
 # Task 6: existing RC3 staging deployment and acceptance
 
-**INCOMPLETE — approved images built/scanned; publication failed its protection guard; VPS deployment and acceptance remain pending.**
+**INCOMPLETE — approved images built/scanned; direct verified-archive staging preparation ready; VPS deployment and acceptance remain pending. Registry publication remains failed.**
 
 The user approved replacing original Task 5 source `0ded1cc4cb77268cd4120224fa1f0d629589bd6b`
 with the concrete validated replacement:
@@ -25,8 +25,25 @@ Fresh image build and security scans have completed successfully. Publication
 failed with `PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED`.
 GitHub records initiator Arjuunb approving the run; only that user was listed.
 The guard requires a different configured reviewer, self-review prevention and
-an enabled intended release-branch policy. Correct those settings first; then
-start a fresh manual run at this same approved source. Do not retry job attempts.
+an enabled intended release-branch policy. Those settings require correction and a fresh manual run if registry publication
+is pursued. The selected direct-archive staging route performs no registry write.
+
+## Selected delivery route: existing verified image archives
+
+No second reviewer is available. The original task authorizes staging deployment
+separately from registry publication; the publication workflow explicitly makes
+that separation, and the project supports immutable local image config IDs.
+Use the already tested/scanned exact 4ece image archives for the existing RC3
+project. Keep registry publication failed/protected; do not forge an approval,
+change the guard or claim registry publication. This route changes no source or
+image bytes and needs no new build. The existing explicit staging/source
+approval applies; current target preservation and acceptance gates remain.
+
+The prepared image-only overlay, zip/export checksums, exact exported manifest
+chains and ordered steps are in `validation/task6-approved-4ece/direct-archive/`.
+Offline checks passed; actual VPS Compose rendering/loading/deployment have not
+run. `next-commands.md` now starts with read-only discovery of the existing
+Compose environment-file bindings. No new credentials or project are created.
 
 ## Existing target and preservation requirements
 
@@ -82,8 +99,9 @@ push were skipped. History confirms initiator Arjuunb approved their own run.
 The approved guard requires a distinct configured individual reviewer,
 self-review prevention and an enabled intended deployment-branch policy.
 Full environment configuration is unavailable through the connected endpoint;
-inspect/correct those settings before starting another workflow. A new manual
-first attempt at the same approved source is required; job retries are rejected.
+If publication is pursued later, inspect/correct those settings before a fresh
+manual first attempt; job retries are rejected. Direct archive staging uses the
+separate existing deployment authorization and keeps this protection unchanged.
 
 Artifact ID 12303500964, SHA-256:
 `bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da`.
