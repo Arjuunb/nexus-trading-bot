@@ -1,6 +1,6 @@
 # Task 6: existing RC3 staging deployment and acceptance
 
-**INCOMPLETE — approved Task 5 images have not been deployed or accepted.**
+**INCOMPLETE — approved images built/scanned; publication waits for a distinct reviewer; VPS deployment and acceptance remain pending.**
 
 The user approved replacing original Task 5 source `0ded1cc4cb77268cd4120224fa1f0d629589bd6b`
 with the concrete validated replacement:
@@ -11,16 +11,20 @@ with the concrete validated replacement:
 - Verified release ref: `release/strategy-intelligence-task6-4eceb97`
 
 All 1468 frozen files rehashed with zero mismatches. Exact-source release
-validation passed 4553 tests on each Python version, 31 PostgreSQL tests and
-165 browser tests. These are CI results, not image scans or VPS acceptance.
+validation in fresh manual run 39503485769 passed 4553 tests on each Python
+version, 31 PostgreSQL tests and 165 browser tests. Actual API-image tests passed
+700 tests with 25 skips. Both image vulnerability/secret scan gates also passed.
+These are CI/build results; actual VPS acceptance remains pending.
 The source approval is resolved. All existing target/preservation boundaries
 below remain binding; later documentation commits are not deployment sources.
 
 The previous 0ded manual run failed in the reviewed browser launcher. Its
 immutable wrapper could not consume Task 5's server array. The approved
 replacement repairs that integration while preserving reviewed assertions.
-No fresh image build/publication has completed. A new manual first attempt is
-required; retrying the previous cancelled workflow would violate source guards.
+Fresh image build and security scans have completed successfully. Publication
+is waiting on protected review: only Arjuunb is listed, also this run's initiator.
+The approved guard requires a different configured reviewer with self-review
+prevention. Preserve this existing run and its sealed packet; do not rerun it.
 
 ## Existing target and preservation requirements
 
@@ -65,25 +69,30 @@ comparison remains pending; health alone does not prove production isolation.
 ## Exact-source build and security scan
 
 The approved source freeze verified all 1468 retained files with zero mismatches.
-The new release ref was created and independently verified at exactly 4eceb97.
-Start a fresh manual build using the GitHub Actions UI or an authenticated CLI:
+Fresh manual [run 39503485769](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769)
+built and scanned the exact approved source. All 16 sealed files and 12 stored/
+decompressed image layer hash pairs were independently verified. No registry
+publication or actual VPS deployment has occurred.
 
-```bash
-gh workflow run staging-release.yml --repo Arjuunb/nexus-trading-bot \
-  --ref release/strategy-intelligence-task6-4eceb97 \
-  --field reviewed_commit=4eceb973e98e1350dd625153753637629453c401 \
-  --field expected_source_sha256=82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8
-```
+Publication waits for `ghcr-staging-release` review. Only Arjuunb is currently
+listed, also the run initiator. The approved guard requires a different
+configured required reviewer, self-review prevention and an enabled intended
+release-branch policy. Full environment configuration is unavailable through
+the connected fetch endpoint. Configure that protection and have the distinct
+reviewer inspect/approve the existing packet. Do not self-approve or rerun.
 
-Connected tools cannot dispatch a fresh run. Do not use Re-run jobs, main or
-the development head. Source guards require manual attempt 1 on a release ref.
+Artifact ID 12303500964, SHA-256:
+`bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da`.
+It expires 2026-10-27T22:07:45Z. Built config/export IDs, scan hashes, actual
+fresh test counts and exact review state are recorded in
+`validation/task6-approved-4ece/`. Built config IDs are not registry digests.
 
 The workflow performs release checks, source/image scans and guarded publication;
 it has no SSH deployment job. Its protected environment/reviewer checks must
 remain enforced. Retain any actual failure and stop the affected step. Do not
 change the frozen approved source, select a later commit or weaken checks to
-obtain a successful result. No fresh API/worker images or scans have been
-verified yet. Ordinary CI success does not establish image publication.
+obtain a successful result. Fresh API/worker images and scans have been verified. Registry publication
+and approved-image VPS deployment remain pending.
 
 ## Remaining target and acceptance gates
 

@@ -1,0 +1,164 @@
+{
+  "commit": "4eceb973e98e1350dd625153753637629453c401",
+  "source_sha256": "82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8",
+  "packet_sha256": "bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da",
+  "packet_files_verified": 16,
+  "images": {
+    "api": {
+      "config_id": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+      "python": "3.11.17",
+      "uid": 100,
+      "generated_journals_absent": true
+    },
+    "worker": {
+      "config_id": "sha256:b16074411ac65ed2cc8c0d6981b0608eb25bebdf8445abdad1a04aa8913cda41",
+      "python": "3.12.15",
+      "uid": 1000,
+      "generated_journals_absent": true
+    }
+  },
+  "scans": {
+    "source-security.json": {
+      "sha256": "33eeb86da024c3ee8bb8b627cbec0ee5197924c42502e6c32ca35c47fc87d643",
+      "image_id": null,
+      "high_critical_vulnerabilities": 0,
+      "secrets": 0,
+      "reported_vulnerability_counts": {}
+    },
+    "api-security.json": {
+      "sha256": "9cf81145444d9e9d441f15c1041738cd29d50fbfe67c23465461880205eaffee",
+      "image_id": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+      "high_critical_vulnerabilities": 0,
+      "secrets": 0,
+      "reported_vulnerability_counts": {}
+    },
+    "worker-security.json": {
+      "sha256": "089cdf5081bf6236ce05011838a320a0fe15c1e132818e631c5f27b6076c3d4a",
+      "image_id": "sha256:b16074411ac65ed2cc8c0d6981b0608eb25bebdf8445abdad1a04aa8913cda41",
+      "high_critical_vulnerabilities": 0,
+      "secrets": 0,
+      "reported_vulnerability_counts": {}
+    },
+    "api-all-secrets.json": {
+      "sha256": "0069275a767988c171ce46593926c46bd2b6828cf92474081cb2e6bd0c43d42a",
+      "image_id": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+      "high_critical_vulnerabilities": 0,
+      "secrets": 0,
+      "reported_vulnerability_counts": {}
+    },
+    "worker-all-secrets.json": {
+      "sha256": "dc118a05381cc4fab57f40f836a0fcdd8342723ff4cdaf61a439d9761bc6163c",
+      "image_id": "sha256:b16074411ac65ed2cc8c0d6981b0608eb25bebdf8445abdad1a04aa8913cda41",
+      "high_critical_vulnerabilities": 0,
+      "secrets": 0,
+      "reported_vulnerability_counts": {}
+    }
+  },
+  "native_tests": {
+    "tests": 725,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 25,
+    "image": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+    "exit_code": 0,
+    "scope": "NATIVE_DISPOSABLE_TEST_FIXTURES",
+    "services_started": false,
+    "production_access": false,
+    "passed": 700
+  },
+  "exports": {
+    "api": {
+      "compressed_archive_sha256": "150450e714afbd9bdda913b038a519cd7f95474639b0136247ce181c4552fa66",
+      "compressed_archive_bytes": 144000070,
+      "verified_layers": 6,
+      "layers": [
+        {
+          "stored_blob_sha256": "sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5",
+          "uncompressed_diff_id": "sha256:74d97c428c51a828f9051a7a40a53ff1fc99e54fc30323ce36760701b0b7f711",
+          "gzip": true,
+          "uncompressed_bytes": 8704000
+        },
+        {
+          "stored_blob_sha256": "sha256:2c95de37c4a66e94a2fd637591d5c573eb939469cf19c8eb0615051cd9219617",
+          "uncompressed_diff_id": "sha256:4171c9d20f04f74a901913b3d0d334e6792181a585b620e4459eade4b8b00c0e",
+          "gzip": true,
+          "uncompressed_bytes": 1555456
+        },
+        {
+          "stored_blob_sha256": "sha256:f1244e1e87fef06de2b01420033ab5ad634d1ee6e53c94f0311a3608786494cf",
+          "uncompressed_diff_id": "sha256:742c6e0d10bd9771a317ddda10442e552ff650ee687deb8158a392c605a63f0e",
+          "gzip": true,
+          "uncompressed_bytes": 53344256
+        },
+        {
+          "stored_blob_sha256": "sha256:82ceee3231d4eac86c0ddc609b706fd9155e8cf76395fcfa9fc419a3eeb7c45c",
+          "uncompressed_diff_id": "sha256:b2d7fd49226614d6556552eb74c24ebf6688138a55e1a28689057e495c29846b",
+          "gzip": true,
+          "uncompressed_bytes": 5120
+        },
+        {
+          "stored_blob_sha256": "sha256:00093a59ed5365f981b20d42a4e6b763b0ceb45b04b6e0d2680acc5c2ccafcde",
+          "uncompressed_diff_id": "sha256:abb31dbc9769b8ad88f8baba66dd186fb1d2226d77e37148c6d5763a758800df",
+          "gzip": true,
+          "uncompressed_bytes": 2048
+        },
+        {
+          "stored_blob_sha256": "sha256:c4662351c831740591f49c511f8981aa5492cb90b070d3d5e6f4e9ce1c2e81bb",
+          "uncompressed_diff_id": "sha256:f9ba1270f7955bbb96c79a9e07bf3706bf59b5baec79b59c05a3ba1157f7a123",
+          "gzip": true,
+          "uncompressed_bytes": 401361920
+        }
+      ]
+    },
+    "worker": {
+      "compressed_archive_sha256": "b9d529cb248617ff402ec16edf1f9b4026774d211adca791aa3a37eed34e49de",
+      "compressed_archive_bytes": 31165745,
+      "verified_layers": 6,
+      "layers": [
+        {
+          "stored_blob_sha256": "sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5",
+          "uncompressed_diff_id": "sha256:74d97c428c51a828f9051a7a40a53ff1fc99e54fc30323ce36760701b0b7f711",
+          "gzip": true,
+          "uncompressed_bytes": 8704000
+        },
+        {
+          "stored_blob_sha256": "sha256:bce3d672089f7ccc5125c3f8f95542fa3971138f323fb7f77e338a14396c85aa",
+          "uncompressed_diff_id": "sha256:41366f7f48797df937c15865e4a91a5de2822c369ca5155709f2d0ae3690be9b",
+          "gzip": true,
+          "uncompressed_bytes": 1555456
+        },
+        {
+          "stored_blob_sha256": "sha256:283ac05c32e67060aa59f8a841b02df4cc0bd7fbf8d880f67d9b622e1cbd1935",
+          "uncompressed_diff_id": "sha256:7e9021171c2796d59b4f3190e9d4f4c8f702f2ebedaac6aa38e197237e68b3e8",
+          "gzip": true,
+          "uncompressed_bytes": 47181824
+        },
+        {
+          "stored_blob_sha256": "sha256:e203d50c86bd38d307585d33fd69e7e7fd91e7535b65af46aa1d663cfb80c0fa",
+          "uncompressed_diff_id": "sha256:4d211c3f1c45c08a83c284d1a2482ebf01c961dba549e9a3f7f877bb88d5fd60",
+          "gzip": true,
+          "uncompressed_bytes": 5120
+        },
+        {
+          "stored_blob_sha256": "sha256:be6a743effb3545e37982e39768d793c60e038caaede98d30084f31b6ad1a06a",
+          "uncompressed_diff_id": "sha256:52803cb7bc3b376cd492dd7749e5f516397b3d7abba52e6d897d0816395796cc",
+          "gzip": true,
+          "uncompressed_bytes": 2048
+        },
+        {
+          "stored_blob_sha256": "sha256:362cbc297cf2c7878c3316462754e7132b2399d27778f2fc254dbec1c6fc239f",
+          "uncompressed_diff_id": "sha256:3831027bf641ca7f80d7c2cb7473aa8ddc63b5a826b12dd66828fc62cbdc8985",
+          "gzip": true,
+          "uncompressed_bytes": 38220800
+        }
+      ]
+    }
+  },
+  "legacy_archive_verifier": {
+    "result": "INCOMPATIBLE_WITH_THIS_BUILDX_GZIP_LAYER_LAYOUT",
+    "observed_error": "LAYER_HASH_MISMATCH",
+    "root_cause": "The legacy helper hashes compressed stored blobs against uncompressed config diff IDs. This independent check verifies stored blob names AND decompressed layer diff IDs. Both identities match for all 12 layers.",
+    "approved_source_modified": false,
+    "release_or_security_gate_waived": false
+  }
+}

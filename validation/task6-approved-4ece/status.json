@@ -2,7 +2,7 @@
   "recorded_at": "2026-10-20T21:47:12.119867+00:00",
   "task": 6,
   "task_complete": false,
-  "deployment_status": "BLOCKED_FRESH_MANUAL_BUILD_AND_TARGET_ACCESS_REQUIRED",
+  "deployment_status": "BLOCKED_PUBLICATION_REVIEW_AND_VPS_ACCESS_NOT_DEPLOYED",
   "source_approval": {
     "user_response": "approve",
     "scope": "Replace pinned 0ded1cc with the concrete reviewed 4eceb97 source; all existing Task 6 target and preservation boundaries remain binding",
@@ -47,17 +47,30 @@
   "manual_image_workflow": {
     "name": "staging-release.yml",
     "dispatch_available_in_connected_tools": false,
-    "fresh_dispatch_performed": false,
+    "fresh_dispatch_performed": true,
     "previous_same_source_run": 39331267323,
     "previous_same_source_conclusion": "cancelled",
     "previous_run_has_image_artifacts": false,
     "retry_allowed_by_source_guard": false,
     "fresh_manual_first_attempt_required": true,
-    "images_built": false,
-    "images_scanned": false,
+    "images_built": true,
+    "images_scanned": true,
     "images_published": false,
     "api_digest": null,
-    "worker_digest": null
+    "worker_digest": null,
+    "run_id": 39503485769,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769",
+    "status": "waiting",
+    "attempt": 1,
+    "head_sha": "4eceb973e98e1350dd625153753637629453c401",
+    "initiated_by": "USER_IN_GITHUB_ACTIONS_UI",
+    "api_config_id": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+    "worker_config_id": "sha256:b16074411ac65ed2cc8c0d6981b0608eb25bebdf8445abdad1a04aa8913cda41",
+    "artifact_id": 12303500964,
+    "artifact_sha256": "bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da",
+    "artifact_expires_at": "2026-10-27T22:07:45Z",
+    "independently_verified_packet_files": 16,
+    "verified_layer_pairs": 12
   },
   "target": {
     "project": "nexus-remote-stage-rc3-28acdbc",
@@ -92,10 +105,83 @@
   "public_feed_activated": false,
   "main_pulled_or_merged_in_this_continuation": false,
   "blockers": [
-    "Fresh manual staging-release.yml dispatch is required; connected GitHub tools do not expose workflow_dispatch. Retrying the cancelled run would violate the immutable first-attempt guard.",
-    "VPS SSH is unreachable from this workspace; no configured existing SSH identity. Remaining target work needs the trusted operator session.",
-    "No fresh approved-source built/scanned/published image packet or digest exists.",
-    "Live configuration, credentials, volumes, migrations/backups and authenticated PRD/recovery/production-isolation checks remain pending."
+    "Protected publication is waiting. GitHub lists only Arjuunb as required reviewer, also the run actor and triggering actor. No listed distinct reviewer can satisfy the approved guard. A trusted different configured reviewer, prevention of self-review and an approved release-branch policy are required.",
+    "VPS SSH remains unreachable from this workspace (exit 255: Network is unreachable); no configured existing SSH identity is available. Actual target work requires the trusted operator session.",
+    "Effective staging overlays, customer credential bindings, mounts, backups/migration state, authenticated PRD behavior, actual PostgreSQL/restart/recovery and production before/after isolation remain unverified."
   ],
-  "previous_evidence": "../task6-approved-0ded/acceptance-report.md"
+  "previous_evidence": "../task6-approved-0ded/acceptance-report.md",
+  "last_rechecked_at": "2026-10-20T22:17:02.249610+00:00",
+  "fresh_manual_release_validation": {
+    "run_id": 39503485769,
+    "python_311": {
+      "passed": 4553,
+      "skipped": 76,
+      "warnings": 4,
+      "seconds": 523.51,
+      "conclusion": "success",
+      "job_id": 118906533591
+    },
+    "python_312": {
+      "passed": 4553,
+      "skipped": 76,
+      "warnings": 83,
+      "seconds": 382.5,
+      "conclusion": "success",
+      "job_id": 118906533151
+    },
+    "postgresql": {
+      "passed": 31,
+      "skipped": 2,
+      "seconds": 36.69,
+      "vps_acceptance": false
+    },
+    "browser": {
+      "passed": 165,
+      "failed": 0,
+      "skipped": 0,
+      "minutes": 5.5,
+      "original_reviewed_harness_and_assertion_guard": "success"
+    },
+    "actual_api_image": {
+      "tests": 725,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 25,
+      "image": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+      "exit_code": 0,
+      "scope": "NATIVE_DISPOSABLE_TEST_FIXTURES",
+      "services_started": false,
+      "production_access": false,
+      "passed": 700
+    }
+  },
+  "publication_gate": {
+    "job_id": 118914426007,
+    "status": "waiting",
+    "environment": "ghcr-staging-release",
+    "environment_id": 24412364022,
+    "listed_reviewers": [
+      {
+        "login": "Arjuunb",
+        "id": 190428336
+      }
+    ],
+    "run_actor": {
+      "login": "Arjuunb",
+      "id": 190428336
+    },
+    "triggering_actor": {
+      "login": "Arjuunb",
+      "id": 190428336
+    },
+    "eligible_listed_distinct_reviewers": [],
+    "approved_source_guard_requires_distinct_configured_reviewer": true,
+    "approved_source_guard_requires_prevent_self_review": true,
+    "environment_configuration_read": "UNAVAILABLE_CONNECTED_FETCH_ENDPOINT_UNSUPPORTED",
+    "approval_attempted_by_assistant": false,
+    "registry_api_digest": null,
+    "registry_worker_digest": null
+  },
+  "build_receipt": "built-images-and-scans.json",
+  "release_receipt": "release-run-39503485769.json"
 }
