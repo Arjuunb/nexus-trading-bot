@@ -1,0 +1,101 @@
+{
+  "recorded_at": "2026-10-20T21:47:12.119867+00:00",
+  "task": 6,
+  "task_complete": false,
+  "deployment_status": "BLOCKED_FRESH_MANUAL_BUILD_AND_TARGET_ACCESS_REQUIRED",
+  "source_approval": {
+    "user_response": "approve",
+    "scope": "Replace pinned 0ded1cc with the concrete reviewed 4eceb97 source; all existing Task 6 target and preservation boundaries remain binding",
+    "approved": true,
+    "repository": "Arjuunb/nexus-trading-bot",
+    "commit": "4eceb973e98e1350dd625153753637629453c401",
+    "tree": "1af45a4993d83919c5007373ba8b9a27e9de5a71",
+    "source_sha256": "82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8",
+    "superseded_commit": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+    "approval_is_github_environment_review": false
+  },
+  "source_verification": {
+    "retained_files": 1468,
+    "files_rehashed": 1468,
+    "mismatches": 0,
+    "clean_detached_checkout": true,
+    "checkout": "/workspace/scratch/734bba8326aa/nexus-task6-candidate-4eceb97",
+    "manifest": "/workspace/scratch/734bba8326aa/task6-release-source-4eceb97/source-manifest.json",
+    "runtime_strategy_financial_service_or_migration_source_changed_from_task5": false
+  },
+  "release_ref": {
+    "name": "refs/heads/release/strategy-intelligence-task6-4eceb97",
+    "created": true,
+    "independent_readback_commit": "4eceb973e98e1350dd625153753637629453c401",
+    "local_request_guard_check": "PASS_WITH_EXPLICIT_SIMULATED_WORKFLOW_CONTEXT_NOT_AN_ACTUAL_BUILD"
+  },
+  "exact_source_release_validation": {
+    "run_id": 39173887337,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39173887337",
+    "head_sha": "4eceb973e98e1350dd625153753637629453c401",
+    "conclusion": "success",
+    "python_311_passed": 4553,
+    "python_312_passed": 4553,
+    "python_skipped_each": 76,
+    "postgres_passed": 31,
+    "postgres_skipped": 2,
+    "browser_passed": 165,
+    "browser_failed": 0,
+    "browser_skipped": 0,
+    "vps_acceptance": false
+  },
+  "manual_image_workflow": {
+    "name": "staging-release.yml",
+    "dispatch_available_in_connected_tools": false,
+    "fresh_dispatch_performed": false,
+    "previous_same_source_run": 39331267323,
+    "previous_same_source_conclusion": "cancelled",
+    "previous_run_has_image_artifacts": false,
+    "retry_allowed_by_source_guard": false,
+    "fresh_manual_first_attempt_required": true,
+    "images_built": false,
+    "images_scanned": false,
+    "images_published": false,
+    "api_digest": null,
+    "worker_digest": null
+  },
+  "target": {
+    "project": "nexus-remote-stage-rc3-28acdbc",
+    "release_directory": "/home/ubuntu/nexus-rc3-staging-28acdbc/release",
+    "api_memory_mib": 1536,
+    "api_memory_bytes": 1610612736,
+    "api_memory_plus_swap_bytes": 1610612736,
+    "memory_overlay_last": "intelligence-recovery-20261018/compose.memory.yaml",
+    "preserve_customer_workspace_credentials_mounts_volumes_and_existing_data": true,
+    "create_new_project": false
+  },
+  "ssh_probe": {
+    "exit_code": 255,
+    "message": "ssh: connect to host 57.129.155.230 port 22: Network is unreachable",
+    "strict_host_key_checking": true,
+    "remote_command_ran": false
+  },
+  "actual_vps_acceptance": {
+    "container_health": "EXISTING_STACK_HEALTHY_IN_OPERATOR_BASELINE_2026_10_19;NEW_RELEASE_NOT_RUN",
+    "authenticated_dashboard_api": "NOT_RUN",
+    "research_worker": "EXISTING_28acdbc_WORKER_HEALTHY_IN_OPERATOR_BASELINE;NEW_RELEASE_JOB_ACCEPTANCE_NOT_RUN",
+    "database_migrations_persistence_recovery": "NOT_RUN_FOR_APPROVED_RELEASE",
+    "full_prd": "NOT_RUN",
+    "insufficient_financial_evidence_abstention": "NOT_RUN_ON_VPS",
+    "restart_resource_recovery": "NOT_RUN_FOR_APPROVED_RELEASE",
+    "production_isolation_before_after": "NOT_RUN"
+  },
+  "remote_mutations_performed": false,
+  "production_mutations_performed": false,
+  "new_paper_execution_started": false,
+  "automatic_promotion_enabled": false,
+  "public_feed_activated": false,
+  "main_pulled_or_merged_in_this_continuation": false,
+  "blockers": [
+    "Fresh manual staging-release.yml dispatch is required; connected GitHub tools do not expose workflow_dispatch. Retrying the cancelled run would violate the immutable first-attempt guard.",
+    "VPS SSH is unreachable from this workspace; no configured existing SSH identity. Remaining target work needs the trusted operator session.",
+    "No fresh approved-source built/scanned/published image packet or digest exists.",
+    "Live configuration, credentials, volumes, migrations/backups and authenticated PRD/recovery/production-isolation checks remain pending."
+  ],
+  "previous_evidence": "../task6-approved-0ded/acceptance-report.md"
+}

@@ -2,26 +2,25 @@
 
 **INCOMPLETE — approved Task 5 images have not been deployed or accepted.**
 
-Task 5 passed for commit `0ded1cc4cb77268cd4120224fa1f0d629589bd6b`,
-tree `9a8b1fcc22e8647452047971d950f6dda53f780a`. The only authorized
-Task 6 deployment source is this exact commit. Later development or documentation
-commits do not replace this approval.
+The user approved replacing original Task 5 source `0ded1cc4cb77268cd4120224fa1f0d629589bd6b`
+with the concrete validated replacement:
 
-## Latest exact-source release attempt — 2026-10-20
+- Commit: `4eceb973e98e1350dd625153753637629453c401`
+- Tree: `1af45a4993d83919c5007373ba8b9a27e9de5a71`
+- Source SHA-256: `82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8`
+- Verified release ref: `release/strategy-intelligence-task6-4eceb97`
 
-The correct manual [run 39499761284](https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39499761284)
-failed in the reviewed browser launcher before tests: its single-server wrapper
-cannot consume Task 5's `webServer` array. Both Python suites passed 4448 tests;
-disposable PostgreSQL passed 31. Image build/publication were skipped. No fresh
-images, security scans, VPS deployment or authenticated acceptance exist.
+All 1468 frozen files rehashed with zero mismatches. Exact-source release
+validation passed 4553 tests on each Python version, 31 PostgreSQL tests and
+165 browser tests. These are CI results, not image scans or VPS acceptance.
+The source approval is resolved. All existing target/preservation boundaries
+below remain binding; later documentation commits are not deployment sources.
 
-Do not rerun the unchanged 0ded release command. A concrete replacement source,
-`4eceb973e98e1350dd625153753637629453c401`, has successful exact-source release
-validation (4553 tests per Python version, PostgreSQL 31, browser 165), but has
-not replaced the user's pinned source approval. Review the complete proposal in
-`validation/task6-approved-0ded/acceptance-report.md`. Keep the current frozen
-release ref unchanged until that source decision. All current RC3 target and
-preservation requirements below remain binding.
+The previous 0ded manual run failed in the reviewed browser launcher. Its
+immutable wrapper could not consume Task 5's server array. The approved
+replacement repairs that integration while preserving reviewed assertions.
+No fresh image build/publication has completed. A new manual first attempt is
+required; retrying the previous cancelled workflow would violate source guards.
 
 ## Existing target and preservation requirements
 
@@ -65,21 +64,19 @@ comparison remains pending; health alone does not prove production isolation.
 
 ## Exact-source build and security scan
 
-The approved source freeze verified all 1461 retained files with zero mismatches:
-
-`b58399c346abb3416579cade8dd2df159a7bb197cfb0e1c36ef1dad7d0045d9c`
-
-Release ref `release/strategy-intelligence-task6-0ded1cc` was created and
-independently read back at the exact approved commit. Keep it at that commit.
-The staging publication workflow is now present on the default branch. From an
-authenticated GitHub CLI, the now-failed dispatch used:
+The approved source freeze verified all 1468 retained files with zero mismatches.
+The new release ref was created and independently verified at exactly 4eceb97.
+Start a fresh manual build using the GitHub Actions UI or an authenticated CLI:
 
 ```bash
 gh workflow run staging-release.yml --repo Arjuunb/nexus-trading-bot \
-  --ref release/strategy-intelligence-task6-0ded1cc \
-  --field reviewed_commit=0ded1cc4cb77268cd4120224fa1f0d629589bd6b \
-  --field expected_source_sha256=b58399c346abb3416579cade8dd2df159a7bb197cfb0e1c36ef1dad7d0045d9c
+  --ref release/strategy-intelligence-task6-4eceb97 \
+  --field reviewed_commit=4eceb973e98e1350dd625153753637629453c401 \
+  --field expected_source_sha256=82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8
 ```
+
+Connected tools cannot dispatch a fresh run. Do not use Re-run jobs, main or
+the development head. Source guards require manual attempt 1 on a release ref.
 
 The workflow performs release checks, source/image scans and guarded publication;
 it has no SSH deployment job. Its protected environment/reviewer checks must
@@ -110,10 +107,11 @@ limit; never downgrade/reset financial data or run volume removal/pruning.
 
 ## Evidence and blockers
 
-Current receipts are in `validation/task6-approved-0ded/`, including the acceptance
-report, machine-readable status, operator VPS/image snapshots and read-only
-preflight commands. Historical receipts under `validation/task6/` concern later
-preparation work and do not authorize a different deployment source or target.
+Current approval, source proof, status and ready-to-run inputs are in
+`validation/task6-approved-4ece/`. The previous failed 0ded attempt and real
+operator VPS/image baseline are retained in `validation/task6-approved-0ded/`.
+Their prior source approval is historical. Neither historical candidate
+runbooks nor documentation changes authorize a new target or another source.
 
 The assistant workspace cannot reach VPS SSH and lacks the existing SSH identity,
 Docker/scanner and workflow-dispatch capability. Operator-supplied evidence has
