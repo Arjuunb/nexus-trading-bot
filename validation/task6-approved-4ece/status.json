@@ -82,7 +82,21 @@
     "api_memory_plus_swap_bytes": 1610612736,
     "memory_overlay_last": "intelligence-recovery-20261018/compose.memory.yaml",
     "preserve_customer_workspace_credentials_mounts_volumes_and_existing_data": true,
-    "create_new_project": false
+    "create_new_project": false,
+    "operator_observed_compose_bindings": {
+      "evidence": "vps-operator-bindings-20261020.txt",
+      "working_directory": "/home/ubuntu/nexus-rc3-staging-28acdbc/release/ops",
+      "config_files": [
+        "/home/ubuntu/nexus-rc3-staging-28acdbc/release/ops/staging.alpine.compose.yaml",
+        "/home/ubuntu/nexus-rc3-staging-28acdbc/release/customer-workspace/compose.customer-workspace.yaml"
+      ],
+      "environment_file": "/home/ubuntu/nexus-rc3-staging-28acdbc/private/compose.env",
+      "environment_values_read": false,
+      "effective_configuration_verified": false,
+      "memory_overlay_listed_in_labels": false
+    },
+    "current_research_worker_user": "100:100",
+    "current_api_user": "tradexa"
   },
   "ssh_probe": {
     "exit_code": 255,
@@ -91,14 +105,15 @@
     "remote_command_ran": false
   },
   "actual_vps_acceptance": {
-    "container_health": "EXISTING_STACK_HEALTHY_IN_OPERATOR_BASELINE_2026_10_19;NEW_RELEASE_NOT_RUN",
+    "container_health": "EXISTING_STAGE_API_INGRESS_POSTGRES_RESEARCH_HEALTHY_OPERATOR_2026_10_20T22_44_53Z;NEW_RELEASE_NOT_RUN",
     "authenticated_dashboard_api": "NOT_RUN",
     "research_worker": "EXISTING_28acdbc_WORKER_HEALTHY_IN_OPERATOR_BASELINE;NEW_RELEASE_JOB_ACCEPTANCE_NOT_RUN",
     "database_migrations_persistence_recovery": "NOT_RUN_FOR_APPROVED_RELEASE",
     "full_prd": "NOT_RUN",
     "insufficient_financial_evidence_abstention": "NOT_RUN_ON_VPS",
     "restart_resource_recovery": "NOT_RUN_FOR_APPROVED_RELEASE",
-    "production_isolation_before_after": "NOT_RUN"
+    "production_isolation_before_after": "NOT_RUN",
+    "partial_baseline": "vps-operator-baseline-20261020.json"
   },
   "remote_mutations_performed": false,
   "production_mutations_performed": false,
@@ -108,7 +123,7 @@
   "main_pulled_or_merged_in_this_continuation": false,
   "blockers": [
     "VPS SSH remains unreachable from this workspace and no configured SSH identity is available. Use the existing trusted operator terminal for read-only inventory.",
-    "Existing Compose environment-file inputs, customer workspace/credentials, effective overlays, mounts, current memory settings, migrations and restorable backups must be verified before any staging update.",
+    "Binding paths and a partial current container/resource/mount baseline are recorded. Complete inventory for containers without health checks, sanitized effective-config comparison, migrations and restorable backups remain required.",
     "Actual authenticated PRD/research-worker, financial-evidence abstention, PostgreSQL/persistence/resource/restart/recovery and production-isolation acceptance are still pending."
   ],
   "previous_evidence": "../task6-approved-0ded/acceptance-report.md",
