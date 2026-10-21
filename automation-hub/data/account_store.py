@@ -20,6 +20,7 @@ store persists initial_capital and a snapshot so the numbers survive restart
 from __future__ import annotations
 
 import sqlite3
+from services.acceptance_policy import acceptance_read_only, existing_financial_connection, require_financial_columns
 import threading
 from datetime import datetime, timezone
 from typing import Optional
@@ -33,6 +34,13 @@ class AccountStore:
     def __init__(self, path: str) -> None:
         self._path = path
         self._lock = threading.Lock()
+        if acceptance_read_only():
+            self._c = existing_financial_connection(path)
+            require_financial_columns(self._c, {'account_state': (
+                'id','initial_capital','current_equity','available_balance','realized_pnl','unrealized_pnl','last_updated')})
+            if self._row() is None:
+                raise RuntimeError('EXISTING_FINANCIAL_ACCOUNT_REQUIRED')
+            return
         self._c = sqlite3.connect(path, check_same_thread=False)
         self._c.row_factory = sqlite3.Row
         self._c.execute(

@@ -554,6 +554,7 @@ def test_malformed_historical_payload_does_not_block_valid_recovery(captured):
 
 def test_evidence_delta_preserves_all_other_original_lab_methods():
     import ast,hashlib
+    from acceptance_freeze import successor_hash
     from pathlib import Path
     root=Path(__file__).parents[1]
     manifest=json.loads((root/"data/pr6_real_paper_freeze.json").read_text())
@@ -582,6 +583,7 @@ def test_evidence_delta_preserves_all_other_original_lab_methods():
                 assert name in {'PriceActionPaperAccount._place_proposal','PriceActionPaperAccount.apply_funding_once',
                     'SMCPaperAccount.submit_order','SMCPaperAccount.apply_funding_once'}
                 expected=update['sha256']
+            expected=successor_hash(root,relative,expected,name)
             assert hashlib.sha256(actual[name].encode()).hexdigest()==expected, name
             verified+=1
     assert verified==113

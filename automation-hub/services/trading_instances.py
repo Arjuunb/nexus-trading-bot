@@ -493,6 +493,16 @@ class InstanceStore:
         self.remote = not isinstance(ledger, SqliteLedger)
         self.available = True
         self.error = ""
+        from services.acceptance_policy import acceptance_read_only, require_financial_columns
+        if acceptance_read_only():
+            if not self.remote:
+                requirements = dict(self._REMOTE_SCHEMA)
+                requirements['trading_instances'] += ('owner_id', 'config_revision')
+                require_financial_columns(ledger._c, requirements)
+            else:
+                self.assert_runtime_schema()
+                self._table('trading_instances').select('owner_id,config_revision').limit(1).execute()
+            return
         if not self.remote:
             with ledger._lock:
                 ledger._c.executescript(_LOCAL_SCHEMA)
@@ -1260,8 +1270,10 @@ class TradingInstanceManager:
             "default_fill_model": str(configured.get("default_fill_model") or "RealisticFill"),
         }
         self._instances: dict[str, TradingInstance] = {i.id: i for i in self.store.list()}
-        for instance in self._instances.values():
-            self.store.ensure_simulation_session(instance)
+        from services.acceptance_policy import acceptance_read_only
+        if not acceptance_read_only():
+            for instance in self._instances.values():
+                self.store.ensure_simulation_session(instance)
         self._runtime: dict[str, tuple[AutoStrategyEngine, PaperExecutionEngine, SignalPipeline, TradingControl]] = {}
         self._metric_fingerprints: dict[str, tuple] = {}
         self._reboots: dict[str, dict] = {}

@@ -31,6 +31,7 @@ from fastapi.responses import (  # noqa: E402
 )
 
 from config import settings, validate_credential_separation  # noqa: E402
+from services.acceptance_policy import acceptance_read_only, AcceptanceReadOnlyMiddleware
 from bots.manager import BotManager  # noqa: E402
 from bots.registry import EXCHANGES, STRATEGIES, exchange_label, strategy_label  # noqa: E402
 from dashboard import widgets as w  # noqa: E402
@@ -63,6 +64,7 @@ app = FastAPI(
     docs_url=f"/api/{API_VERSION}/docs",
     redoc_url=f"/api/{API_VERSION}/redoc",
 )
+app.add_middleware(AcceptanceReadOnlyMiddleware, enabled=acceptance_read_only())
 # SQLite keeps bot configuration and is retained for the emergency-only legacy
 # mode. Customer identity is Supabase Auth; do not seed an env-password user in
 # that mode because it would silently create a second login authority.
@@ -532,6 +534,12 @@ def _start_auto_engine() -> None:
     """Start the autonomous strategy engine when the server boots (real signals
     -> paper execution -> ledger). Disabled under pytest and via HUB_AUTO_ENGINE=0."""
     import os
+    if acceptance_read_only():
+        from data.ledger import SUPABASE_STATUS
+        if SUPABASE_STATUS.get('configured') and not SUPABASE_STATUS.get('connected'):
+            raise RuntimeError('ACCEPTANCE_PRIMARY_LEDGER_UNAVAILABLE')
+        print('[startup] acceptance read-only mode: execution disabled; saved intent retained', flush=True)
+        return
     _restore_shadow_observations()
     backend = type(webhook_api.ledger).__name__
     print(f"[startup] ledger backend = {backend} "
@@ -603,7 +611,7 @@ def _start_auto_engine() -> None:
 
 def _restore_shadow_observations() -> None:
     """Restore ONLY explicitly authorized durable observation intent."""
-    if "PYTEST_CURRENT_TEST" in _sec_os.environ:
+    if acceptance_read_only() or "PYTEST_CURRENT_TEST" in _sec_os.environ:
         return
     try:
         if webhook_api.shadow_router.store.registrations(active_only=True, limit=1):
@@ -616,6 +624,11 @@ def _restore_shadow_observations() -> None:
 @app.on_event("shutdown")
 def _shutdown_all_runtimes() -> None:
     """One process-wide shutdown boundary for every execution authority."""
+    if acceptance_read_only():
+        research_worker = getattr(webhook_api.strategy_intelligence.context, '_research_worker', None)
+        if research_worker is not None:
+            research_worker.stop()
+        return
     errors = []
 
     def run(name, operation):
@@ -2509,6 +2522,7 @@ def _persistence_info() -> dict:
 def health():
     from services.tenancy import multi_user_enabled
     return {"status": "ok", "app": settings.app_name, **_deploy_info(),
+            "acceptance_read_only": acceptance_read_only(),
             "persistence": _persistence_info(),
             "tenancy": {"multi_user": multi_user_enabled(), "mode": "multi" if multi_user_enabled() else "single-owner"}}
 

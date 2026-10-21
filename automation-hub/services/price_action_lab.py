@@ -22,6 +22,7 @@ from services.native_price_action import (
     PriceActionConfig,
 )
 from data.sqlite_runtime import is_sqlite_busy, runtime_connection
+from services.acceptance_policy import acceptance_read_only, existing_financial_connection, require_financial_columns
 from services.price_action_governance import PersistenceBlocked, PriceActionJournalStore
 from services.price_action_stream import PriceActionPublicStream
 from services.lab_lifecycle import (
@@ -108,6 +109,20 @@ class PriceActionPaperAccount:
             evidence_owner=evidence_owner,
         )
         self._lock = threading.RLock()
+        if acceptance_read_only():
+            self._db = existing_financial_connection(self.path, autocommit=True)
+            self._persistence_blocker = None
+            require_financial_columns(self._db, {
+                'pa_sessions': ('id','status','mode','symbol','timeframe','state_json','metrics_json','updated_at'),
+                'pa_settings': ('id','leverage'),
+                'pa_funding_events': ('session_id','amount'),
+            })
+            setting = self._db.execute('SELECT leverage FROM pa_settings WHERE id=1').fetchone()
+            if setting is None:
+                raise RuntimeError('EXISTING_FINANCIAL_SETTINGS_REQUIRED')
+            self.broker.leverage = float(setting[0])
+            self.journal = PriceActionJournalStore(self.path)
+            return
         # Metadata and the broker share one SQLite file but use separate
         # connections. Autocommit prevents a metadata write lock from being
         # held while the broker performs its own atomic ledger transaction.
@@ -1784,12 +1799,14 @@ class PriceActionLabRuntime:
         fetch = (self.stream.make_fetcher() if market_hub is not None else
                  lambda sym, tf, limit: market.public_usdm_window(sym, tf, limit=limit))
         self.native_loader = NativeContextLoader(fetch)
-        if autostart:
+        if autostart and not acceptance_read_only():
             self._supervisor_thread = threading.Thread(
                 target=self._run_supervisor, name="price-action-paper-runtime", daemon=True)
             self._supervisor_thread.start()
 
     def ensure(self, symbol: str, timeframe: str) -> None:
+        if acceptance_read_only():
+            raise RuntimeError("ACCEPTANCE_READ_ONLY")
         identity = (normalize_symbol(symbol), timeframe)
         config = self._engine_config(*identity)
         signature = json.dumps(asdict(config), sort_keys=True)

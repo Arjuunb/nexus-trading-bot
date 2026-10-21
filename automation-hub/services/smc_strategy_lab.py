@@ -91,13 +91,25 @@ class SMCPaperAccount:
         self.path = str(path)
         self.evidence_owner = evidence_owner
         self.starting_balance = float(starting_balance)
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.broker = PaperBrokerV2(
             self.path, starting_balance=self.starting_balance,
             account_type="SMC_LAB", execution_engine="SMC_LAB",
             evidence_owner=evidence_owner,
         )
         self._lock = threading.RLock()
+        from services.acceptance_policy import acceptance_read_only, existing_financial_connection, require_financial_columns
+        if acceptance_read_only():
+            self._db = existing_financial_connection(self.path, autocommit=True)
+            require_financial_columns(self._db, {
+                'smc_sessions': ('id','status','mode','symbol','timeframe','state_json','metrics_json','updated_at'),
+                'smc_settings': ('id','leverage'),
+                'smc_funding_events': ('session_id','amount'),
+            })
+            setting = self._db.execute('SELECT leverage FROM smc_settings WHERE id=1').fetchone()
+            if setting is None:
+                raise RuntimeError('EXISTING_FINANCIAL_SETTINGS_REQUIRED')
+            self.broker.leverage = float(setting[0])
+            return
         self._db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self._db.row_factory = sqlite3.Row
         with self._db:
@@ -1466,7 +1478,8 @@ class SMCStrategyLabRuntime:
         fetch = (self.stream.make_fetcher() if market_hub is not None else
                  lambda sym, tf, limit: market.public_usdm_window(sym, tf, limit=limit))
         self.native_loader = NativeContextLoader(fetch)
-        if autostart:
+        from services.acceptance_policy import acceptance_read_only
+        if autostart and not acceptance_read_only():
             self._thread = threading.Thread(target=self._run, name="smc-paper-runtime", daemon=True)
             self._thread.start()
 

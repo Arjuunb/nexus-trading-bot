@@ -86,8 +86,12 @@ class PriceActionJournalStore:
 
     def __init__(self, path: str | Path, *, busy_timeout_ms: int = 10_000):
         self.path = str(path)
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        from services.acceptance_policy import acceptance_read_only, existing_financial_connection, require_financial_columns
+        if acceptance_read_only():
+            self._db = existing_financial_connection(self.path, autocommit=True)
+            require_financial_columns(self._db, {'pa_journal_entries': ('id','session_id','strategy_version','base_json')})
+            return
         try:
             self._db = runtime_connection(
                 self.path, autocommit=True, busy_timeout_ms=busy_timeout_ms)

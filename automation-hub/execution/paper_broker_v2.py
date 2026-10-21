@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from data.sqlite_runtime import runtime_connection
+from services.acceptance_policy import acceptance_read_only, existing_financial_connection, require_financial_columns
 from services import native_paper_evidence as source_evidence
 
 
@@ -54,7 +55,6 @@ class PaperBrokerV2:
                  account_type: str = "PAPER",
                  execution_engine: str = "PAPER", evidence_owner: str | None = None):
         self.path = str(path)
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.leverage = max(1.0, float(leverage))
         self.fee_rate = max(0.0, float(fee_rate))
         self.spread_bps = max(0.0, float(spread_bps))
@@ -65,6 +65,22 @@ class PaperBrokerV2:
         self.execution_engine = str(execution_engine or "PAPER").strip().upper()
         self.evidence_owner = evidence_owner
         self._lock = threading.RLock()
+        self.read_only = acceptance_read_only()
+        if self.read_only:
+            self._c = existing_financial_connection(self.path)
+            require_financial_columns(self._c, {
+                'v2_account': ('id','account_id','account_type','created_at','starting_balance','balance',
+                    'peak_equity','max_drawdown','realized_pnl','fees_paid','funding_paid','updated_at'),
+                'v2_positions': ('symbol','side','size','entry_price','position_id'),
+                'v2_orders': ('id','status','account_id','order_key'),
+                'v2_fills': ('id','order_id','quantity','fee','realized_pnl','fill_key'),
+                'v2_source_evidence': ('event_id','account_id','tenant_id','evidence_hash','payload_json'),
+            })
+            source_evidence.verify_owner(self._c, evidence_owner)
+            row = self._account_row()
+            if row is None or not row['account_id'] or (self.requested_account_id and row['account_id'] != self.requested_account_id):
+                raise RuntimeError('EXISTING_FINANCIAL_ACCOUNT_IDENTITY_REQUIRED')
+            return
         self._c = runtime_connection(self.path)
         source_evidence.verify_owner(self._c, evidence_owner)
         new_account = not self._c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_account'").fetchone()
@@ -253,7 +269,7 @@ class PaperBrokerV2:
         equity = a["balance"] + unrealized
         peak = max(float(a["peak_equity"]), equity)
         drawdown = max(float(a["max_drawdown"]), peak - equity)
-        if persist_metrics:
+        if persist_metrics and not self.read_only:
             with self._lock:
                 self._c.execute("UPDATE v2_account SET peak_equity=?,max_drawdown=? WHERE id=1", (peak, drawdown))
                 self._c.commit()

@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from data.tenant_scope import ensure_column, ensure_tenant_column
+from services.acceptance_policy import (acceptance_read_only, existing_financial_connection,
+    require_financial_columns, ReadOnlyPrimaryClient)
 from data.paper_evidence_outbox import (SQLITE_SCHEMA as _OUTBOX_SCHEMA, append_outbox,
                                         decode_row as _decode_outbox, watermark as _evidence_watermark)
 
@@ -148,6 +150,19 @@ class SqliteLedger:
 
     def __init__(self, path: str | Path = ":memory:"):
         self.path = str(path)
+        if acceptance_read_only():
+            self._c = existing_financial_connection(self.path)
+            self._lock = threading.RLock()
+            require_financial_columns(self._c, {
+                'positions': ('id','symbol','side','size','entry','status','instance_id','tenant_id'),
+                'paper_trades': ('id','symbol','size','entry','pnl','status','instance_id','tenant_id'),
+                'paper_executions': ('execution_id','position_id','trade_id','instance_id'),
+                'webhook_events': ('id','alert_id','symbol','status','instance_id','tenant_id'),
+                'bot_logs': ('id','ts','level','message'),
+                'alerts': ('id','ts','severity','category'),
+            })
+            self.duplicate_order_constraint = {'status': 'READ_ONLY_EXECUTION_DISABLED'}
+            return
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._c = sqlite3.connect(self.path, check_same_thread=False)
@@ -856,6 +871,8 @@ class SupabaseLedger:
     def __init__(self, url: str, key: str):  # pragma: no cover - needs network + creds
         from supabase import create_client
         self._db = create_client(url, key)
+        if acceptance_read_only():
+            self._db = ReadOnlyPrimaryClient(self._db)
 
     @property
     def supports_evidence_outbox(self):
@@ -1325,5 +1342,7 @@ def get_ledger(sqlite_path: str = ":memory:") -> Ledger:
         except Exception as e:  # noqa: BLE001 — configured primary must fail closed
             SUPABASE_STATUS["error"] = f"{type(e).__name__}: {e}"
             SUPABASE_STATUS["mode"] = "read_only_degraded"
+            if acceptance_read_only():
+                raise RuntimeError("ACCEPTANCE_PRIMARY_LEDGER_UNAVAILABLE") from e
             return ReadOnlyDegradedLedger(SUPABASE_STATUS["error"])
     return SqliteLedger(sqlite_path)

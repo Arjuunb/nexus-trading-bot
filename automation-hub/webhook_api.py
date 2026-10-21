@@ -16,6 +16,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from config import settings
+from services.acceptance_policy import acceptance_read_only
 from data.ledger import get_ledger
 from execution.paper_engine import PaperExecutionEngine
 from services.auto_engine import AutoStrategyEngine
@@ -131,12 +132,14 @@ decision_store = DecisionStore(settings.decisions_db)
 # starting cash; the SAVED value wins over the default on every restart.
 from data.account_store import AccountStore  # noqa: E402
 account_store = AccountStore(settings.account_db)
-account_store.seed_if_empty(settings.starting_cash)
+if not acceptance_read_only():
+    account_store.seed_if_empty(settings.starting_cash)
 # the persisted initial capital drives the paper account (not the env default)
 paper.starting_balance = account_store.initial_capital()
 paper.account_store = account_store
 # reconcile the snapshot from the ledger's real closed trades on boot
-paper._persist_account_snapshot()
+if not acceptance_read_only():
+    paper._persist_account_snapshot()
 
 # Persistent market prefs: favorites / pins / watchlists survive logout + restart.
 from data.watchlist_store import WatchlistStore  # noqa: E402
@@ -166,7 +169,8 @@ pipeline.journal_context = {
     "instrument_type": "spot",
 }
 # import already-closed journal trades so the memory isn't empty on first boot
-trade_memory.backfill()
+if not acceptance_read_only():
+    trade_memory.backfill()
 
 # Broker layer (#14) — one interface, paper executable, live locked.
 from services.broker import BrokerRegistry  # noqa: E402
@@ -210,7 +214,7 @@ def _make_instance_strategy(key: str, symbol: str):
 from data.ws_feed import WebSocketFeed  # noqa: E402
 from services.auto_engine import _default_fetcher  # noqa: E402
 ws_feed = WebSocketFeed(list(settings.auto_symbols), timeframe=settings.auto_timeframe)
-if settings.use_live_data:
+if settings.use_live_data and not acceptance_read_only():
     ws_feed.start()
 
 engine = AutoStrategyEngine(
@@ -281,7 +285,8 @@ engine.approvals = approvals
 # dies, or the stream degrades to REST. Heartbeat shown at /ops/watchdog.
 from services.watchdog import Watchdog  # noqa: E402
 watchdog = Watchdog(engine, ledger, notifier.dispatch, ws_feed=ws_feed)
-watchdog.start()
+if not acceptance_read_only():
+    watchdog.start()
 
 # AI Monitoring Agent, on a timer: compares the DEPLOYED strategy's live
 # behaviour against a backtest of that same spec and alerts on deviation. Reads
@@ -292,7 +297,7 @@ monitor_runner = MonitorRunner(engine, paper, ledger, exec_quality=exec_quality,
 # Opt-out for multi-worker deployments: each worker would otherwise run its own
 # loop and alert the same deviation N times. The endpoints keep working either
 # way — only the timer stops.
-if _os.environ.get("HUB_MONITOR_AGENT", "1").strip().lower() not in ("0", "false", "no", "off"):
+if not acceptance_read_only() and _os.environ.get("HUB_MONITOR_AGENT", "1").strip().lower() not in ("0", "false", "no", "off"):
     monitor_runner.start()
 
 # Daily report + nightly backup: one honest digest to Telegram per UTC day
@@ -391,7 +396,8 @@ daily_tasks = DailyTasks(
            _auto_retune_check,
            _memory_review,
            _retention_prune])
-daily_tasks.start()
+if not acceptance_read_only():
+    daily_tasks.start()
 
 # Apply persisted runtime overrides on top of env defaults.
 from services.runtime_settings import load_overrides, save_overrides  # noqa: E402
@@ -485,7 +491,7 @@ def _settings_snapshot() -> dict:
     }
 
 
-for _k, _v in load_overrides(settings.settings_path).items():
+for _k, _v in ({} if acceptance_read_only() else load_overrides(settings.settings_path)).items():
     _apply_setting(_k, _v)
 
 # Legacy installations only have engine_symbols. New installs preserve the
@@ -964,7 +970,7 @@ research_observer = ResearchObservationRuntime(
 # primary HTF and secondary HTF) on every deployment, even when no research
 # session is being used. Keep it opt-in so the production worker does not spend
 # CPU on an unused workload; operators can enable it explicitly when needed.
-if ("PYTEST_CURRENT_TEST" not in _os.environ and
+if (not acceptance_read_only() and "PYTEST_CURRENT_TEST" not in _os.environ and
         _os.environ.get("HUB_RESEARCH_AUTOSTART", "0").strip().lower()
         in ("1", "true", "yes", "on")):
     research_observer.start()
@@ -994,12 +1000,12 @@ smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0,
                           evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
 smc_runtime = SMCStrategyLabRuntime(
     v2_market_data, smc_paper, market_hub=forward_paper_market_hub,
-    poll_seconds=settings.smc_poll_s)
+    poll_seconds=settings.smc_poll_s, autostart=not acceptance_read_only())
 # Price Action must remain autonomous after a server restart even when no
 # browser has opened the lab page. The supervisor owns stream initialization;
 # UI requests are read-only observers of the same server-side runtime.
 price_action_runtime = PriceActionLabRuntime(
-    v2_market_data, price_action_paper, autostart=True,
+    v2_market_data, price_action_paper, autostart=not acceptance_read_only(),
     market_hub=forward_paper_market_hub,
     poll_seconds=settings.price_action_poll_s)
 price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
@@ -1347,7 +1353,7 @@ def grid_status() -> dict:
 # resume a persisted grid on boot (survives restart / redeploy)
 try:
     from data import grid_store as _grid_store  # noqa: E402
-    _grid_snap = _grid_store.load()
+    _grid_snap = None if acceptance_read_only() else _grid_store.load()
     if _grid_snap and _grid_snap.get("running"):
         from services.grid_engine import GridRunner as _GR  # noqa: E402
         grid_runner = _GR.from_snapshot(_grid_snap, _grid_fetcher, ledger, interval=30.0, persist=_grid_store.save)
