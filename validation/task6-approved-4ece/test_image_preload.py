@@ -40,7 +40,8 @@ class PacketFixture:
         for role in ('api', 'worker'):
             config = {'architecture': 'amd64', 'os': 'linux', 'config': {'Labels': {
                 'org.opencontainers.image.revision': self.policy['commit'],
-                'nexus.source.sha256': self.policy['source_sha256'], 'synthetic.role': role}}}
+                'nexus.source.sha256': self.policy['source_sha256'], 'synthetic.role': role}},
+                'rootfs': {'type': 'layers', 'diff_ids': []}}
             raw_config = encoded(config)
             config_id = hashlib.sha256(raw_config).hexdigest()
             oci = encoded({'schemaVersion': 2, 'config': {'digest': 'sha256:'+config_id}, 'layers': []})
@@ -49,6 +50,7 @@ class PacketFixture:
             self.policy['images'][role]['oci_manifest_digest'] = 'sha256:' + oci_id
             self.policy['images'][role]['source_files'] = 3 if role == 'api' else 2
             index = encoded({'manifests': [{'digest': 'sha256:'+oci_id, 'platform': {'os': 'linux', 'architecture': 'amd64'}}]})
+            self.policy['images'][role]['synthetic_index_digest'] = 'sha256:'+hashlib.sha256(index).hexdigest()
             output = io.BytesIO()
             with tarfile.open(fileobj=output, mode='w:gz') as archive:
                 entries = {'index.json': index, 'blobs/sha256/'+oci_id: oci,
@@ -154,6 +156,12 @@ class FakeDocker:
         self.changed = False
         self.fail_worker_load = False
         self.bad_probe = False
+        self.identity_mode = 'config'
+        self.bad_rootfs = False
+        self.bad_descriptor = False
+        self.bad_image_id = False
+        self.images_missing = False
+        self.probe_refs = []
         self.api = {'Id': 'synthetic-stage', 'Name': '/' + P.STAGE + '-api-1', 'Image': 'sha256:old-stage',
             'RestartCount': 0, 'State': {'Status': 'running', 'Health': {'Status': 'healthy'}, 'OOMKilled': False, 'StartedAt': 'synthetic-start'},
             'HostConfig': {'Memory': P.API_MEMORY, 'MemorySwap': P.API_MEMORY},
@@ -178,12 +186,27 @@ class FakeDocker:
                 raise P.Blocked('DOCKER_OPERATION_FAILED:image')
             return 'Loaded image'
         if args[:2] == ['image', 'inspect']:
-            role = 'api' if args[2] == self.policy['images']['api']['config_id'] else 'worker'
-            return json.dumps([{'Id': args[2], 'Os': 'linux', 'Architecture': 'amd64', 'RepoDigests': [],
+            role = next((role for role, row in self.policy['images'].items()
+                         if args[2] in (row['config_id'], row['oci_manifest_digest'], row['synthetic_index_digest'])), None)
+            if role is None or self.images_missing:
+                raise P.Blocked('DOCKER_OPERATION_FAILED:image:exit=1', detail='No such image: '+args[2])
+            expected = self.policy['images'][role]
+            actual_id = expected[{'config': 'config_id', 'manifest': 'oci_manifest_digest', 'index': 'synthetic_index_digest'}[self.identity_mode]]
+            if args[2] != actual_id:
+                raise P.Blocked('DOCKER_OPERATION_FAILED:image:exit=1', detail='No such image: '+args[2])
+            result = {'Id': 'sha256:'+'f'*64 if self.bad_image_id else actual_id,
+                'Os': 'linux', 'Architecture': 'amd64', 'RepoDigests': [],
+                'RootFS': {'Type': 'layers', 'Layers': ['sha256:'+'e'*64] if self.bad_rootfs else []},
                 'Config': {'Labels': {'org.opencontainers.image.revision': self.policy['commit'],
-                    'nexus.source.sha256': self.policy['source_sha256']}}}])
+                    'nexus.source.sha256': self.policy['source_sha256']}}}
+            if self.identity_mode != 'config' or self.bad_descriptor:
+                result['Descriptor'] = {'digest': 'sha256:'+'e'*64 if self.bad_descriptor else actual_id}
+            return json.dumps([result])
         if args[0] == 'run':
-            role = 'api' if self.policy['images']['api']['config_id'] in args else 'worker'
+            self.probe_refs.append(args[args.index('--entrypoint')+2])
+            role = 'api' if any(ref in args for ref in
+                (self.policy['images']['api']['config_id'], self.policy['images']['api']['oci_manifest_digest'],
+                 self.policy['images']['api']['synthetic_index_digest'])) else 'worker'
             return json.dumps({'source_files': len(json.loads(input_text)), 'mismatches': 1 if self.bad_probe else 0,
                 'python': '3.11.17' if role == 'api' else '3.12.15', 'pq': 'binary', 'uid': 100,
                 'boundary_ok': True})
@@ -191,6 +214,58 @@ class FakeDocker:
 
 
 class LoadingBoundaryTests(PacketFixture, unittest.TestCase):
+    def test_containerd_manifest_identity_is_distinct_from_frozen_config_identity(self):
+        fake = FakeDocker(self.policy)
+        fake.identity_mode = 'manifest'
+        report = P.preload(self.packet, self.root, self.policy, fake)
+        self.assertEqual(report['status'], 'APPROVED_IMAGES_LOADED_AND_VERIFIED_NO_SERVICES_UPDATED')
+        for role in ('api', 'worker'):
+            image = report['images'][role]
+            self.assertEqual(image['config_id'], self.policy['images'][role]['config_id'])
+            self.assertEqual(image['docker_image_id'], self.policy['images'][role]['oci_manifest_digest'])
+            self.assertIn(image['docker_image_id'], fake.probe_refs)
+            self.assertNotEqual(image['config_id'], image['docker_image_id'])
+
+    def test_wrong_runtime_digest_layers_or_descriptor_fail_with_matching_labels(self):
+        for flag in ('bad_rootfs', 'bad_descriptor', 'bad_image_id'):
+            with self.subTest(flag=flag):
+                fake = FakeDocker(self.policy)
+                fake.identity_mode = 'manifest'
+                setattr(fake, flag, True)
+                with self.assertRaises(P.Blocked):
+                    P.preload(self.packet, self.root, self.policy, fake)
+                self.assertEqual(fake.probe_refs, [])
+
+    def test_containerd_index_identity_is_bound_to_the_verified_index_bytes(self):
+        fake = FakeDocker(self.policy)
+        fake.identity_mode = 'index'
+        report = P.preload(self.packet, self.root, self.policy, fake)
+        for role in ('api', 'worker'):
+            self.assertEqual(report['images'][role]['docker_image_id'], self.policy['images'][role]['synthetic_index_digest'])
+            self.assertEqual(report['images'][role]['docker_image_id_kind'], 'OCI_INDEX')
+
+    def test_missing_import_is_blocked_and_retains_loader_output_and_receipt(self):
+        fake = FakeDocker(self.policy)
+        fake.images_missing = True
+        with self.assertRaisesRegex(P.Blocked, 'APPROVED_IMAGE_NOT_FOUND_AFTER_LOAD') as failure:
+            P.preload(self.packet, self.root, self.policy, fake)
+        report = json.loads((Path(failure.exception.receipt_directory) / 'status.json').read_text())
+        self.assertEqual(report['status'], 'BLOCKED')
+        self.assertEqual(report['last_load_output'], 'Loaded image')
+        self.assertTrue(report['production_container_identities_unchanged'])
+        self.assertFalse(report['application_started'])
+        self.assertEqual(fake.probe_refs, [])
+
+    def test_permission_failure_is_not_masked_as_a_digest_lookup_failure(self):
+        export = P.verify_packet(self.packet, self.policy)['exports']['api']
+        calls = []
+        def denied(args):
+            calls.append(args)
+            raise P.Blocked('DOCKER_PERMISSION_DENIED', detail='permission denied')
+        with self.assertRaisesRegex(P.Blocked, 'DOCKER_PERMISSION_DENIED'):
+            P.inspect_loaded(export, self.policy, denied)
+        self.assertEqual(len(calls), 1)
+
     def test_loading_and_isolated_probes_never_update_services_or_mount_customer_data(self):
         fake = FakeDocker(self.policy)
         report = P.preload(self.packet, self.root, self.policy, fake)

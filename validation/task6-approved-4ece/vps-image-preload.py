@@ -85,7 +85,8 @@ def verify_export(stream, expected, policy):
         def data(name):
             require(archive.getmember(name).size <= 4*1024**2, 'EXPORT_JSON_SIZE_LIMIT')
             return archive.extractfile(name).read()
-        index = json.loads(data('index.json'))
+        raw_index = data('index.json')
+        index = json.loads(raw_index)
         require(len(index.get('manifests', [])) == 1, 'ONE_EXPORTED_IMAGE_REQUIRED')
         descriptor = index['manifests'][0]
         require(descriptor.get('digest') == expected['oci_manifest_digest'], 'EXPORT_OCI_MANIFEST_IDENTITY_MISMATCH')
@@ -104,9 +105,15 @@ def verify_export(stream, expected, policy):
                 and labels.get('nexus.source.sha256') == policy['source_sha256'], 'EXPORT_SOURCE_OR_PLATFORM_MISMATCH')
         legacy = json.loads(data('manifest.json'))
         require(len(legacy) == 1 and legacy[0].get('Config') == config_path, 'EXPORT_DOCKER_CONFIG_ID_MISMATCH')
+        rootfs = config.get('rootfs', {})
+        diff_ids = rootfs.get('diff_ids')
+        require(rootfs.get('type') == 'layers' and isinstance(diff_ids, list)
+                and len(diff_ids) == len(manifest.get('layers', [])) == len(legacy[0].get('Layers', [])),
+                'EXPORT_LAYER_INVENTORY_MISMATCH')
         # The entire ZIP is SHA-pinned, including all layer bytes. Docker's loader
         # handles those layers; do not confuse compressed OCI hashes with diff_ids.
-        return {'config_id': expected['config_id'], 'export_oci_manifest_digest': expected['oci_manifest_digest']}
+        return {'config_id': expected['config_id'], 'export_oci_manifest_digest': expected['oci_manifest_digest'],
+            'export_oci_index_digest': 'sha256:'+hashlib.sha256(raw_index).hexdigest(), 'rootfs_diff_ids': diff_ids}
 
 
 def verify_packet(path, policy=POLICY):
@@ -222,6 +229,40 @@ def expected_files(source, role):
     return {r['path']: r['sha256'] for r in rows}
 
 
+def inspect_loaded(export, policy, command):
+    """Support both stores without accepting a tag or an unverified digest.
+
+    The classic store resolves the config digest; containerd resolves a target
+    descriptor (manifest/index). All candidates are bound to the SHA-pinned
+    archive, with the full manifest -> config -> rootfs chain checked above.
+    """
+    allowed = {export['config_id']: 'CONFIG', export['export_oci_manifest_digest']: 'OCI_MANIFEST',
+               export['export_oci_index_digest']: 'OCI_INDEX'}
+    candidates = (export['export_oci_manifest_digest'], export['config_id'], export['export_oci_index_digest'])
+    missing = []
+    for reference in candidates:
+        try:
+            metadata = json.loads(command(['image', 'inspect', reference]))
+        except Blocked as error:
+            if 'no such image' in (error.detail or '').lower():
+                missing.append(reference)
+                continue
+            raise
+        require(len(metadata) == 1, 'ONE_LOADED_IMAGE_REQUIRED')
+        image = metadata[0]
+        labels = image.get('Config', {}).get('Labels', {})
+        require(image.get('Id') in allowed and image.get('Os') == 'linux' and image.get('Architecture') == 'amd64'
+                and labels.get('org.opencontainers.image.revision') == policy['commit']
+                and labels.get('nexus.source.sha256') == policy['source_sha256'], 'LOADED_IMAGE_IDENTITY_MISMATCH')
+        descriptor = image.get('Descriptor')
+        require(descriptor is None or descriptor.get('digest') in allowed, 'LOADED_DESCRIPTOR_IDENTITY_MISMATCH')
+        rootfs = image.get('RootFS', {})
+        require(rootfs.get('Type') == 'layers' and (rootfs.get('Layers') or []) == export['rootfs_diff_ids'],
+                'LOADED_ROOTFS_IDENTITY_MISMATCH')
+        return image, allowed[image['Id']]
+    raise Blocked('APPROVED_IMAGE_NOT_FOUND_AFTER_LOAD', detail='Unresolved approved digests: '+', '.join(missing))
+
+
 def write_report(directory, report):
     path = directory / 'status.json'
     temporary = directory / 'status.tmp'
@@ -259,27 +300,24 @@ def preload(packet, base=BASE, policy=POLICY, command=docker):
                 target.chmod(0o600)
                 require(target.stat().st_size == row['bytes'] and file_hash(target) == row['sha256'], 'IMAGE_EXPORT_EXTRACTION_MISMATCH')
                 print(json.dumps({'phase': 'LOAD_APPROVED_IMAGE_CACHE_ONLY', 'role': role}), flush=True)
-                command(['image', 'load', '--input', str(target)], timeout=300)
-                metadata = json.loads(command(['image', 'inspect', expected['config_id']]))
-                require(len(metadata) == 1, 'ONE_LOADED_IMAGE_REQUIRED')
-                image = metadata[0]
-                labels = image.get('Config', {}).get('Labels', {})
-                require(image.get('Id') == expected['config_id'] and image.get('Os') == 'linux' and image.get('Architecture') == 'amd64'
-                        and labels.get('org.opencontainers.image.revision') == policy['commit']
-                        and labels.get('nexus.source.sha256') == policy['source_sha256'], 'LOADED_IMAGE_IDENTITY_MISMATCH')
+                load_output = command(['image', 'load', '--input', str(target)], timeout=300)
+                report['last_load_output'] = load_output[-1500:]
+                write_report(directory, report)
+                image, identity_kind = inspect_loaded(verified['exports'][role], policy, command)
                 inventory = expected_files(verified['source'], role)
                 require(len(inventory) == expected['source_files'], 'FROZEN_IMAGE_INVENTORY_COUNT_MISMATCH')
                 print(json.dumps({'phase': 'ISOLATED_READ_ONLY_SOURCE_PROBE', 'role': role}), flush=True)
                 probe = json.loads(command(['run', '--rm', '-i', '--pull=never', '--network', 'none', '--read-only',
                     '--cpus', '0.5', '--memory', '512m', '--memory-swap', '512m', '--pids-limit', '64', '--cap-drop', 'ALL',
                     '--security-opt', 'no-new-privileges:true', '--env', 'NEXUS_TASK6_PROBE_ROLE='+role,
-                    '--entrypoint', 'python', expected['config_id'], '-B', '-c', PROBE],
+                    '--entrypoint', 'python', image['Id'], '-B', '-c', PROBE],
                     input_text=json.dumps(inventory), timeout=180))
                 require(probe.get('source_files') == expected['source_files'] and probe.get('mismatches') == 0
                         and probe.get('boundary_ok') is True and probe.get('pq') == 'binary'
                         and isinstance(probe.get('uid'), int) and probe['uid'] > 0
                         and probe.get('python', '').startswith('3.11.' if role == 'api' else '3.12.'), 'ISOLATED_IMAGE_PROBE_FAILED')
                 report['images'][role] = {**verified['exports'][role], 'repo_digests': image.get('RepoDigests', []),
+                    'docker_image_id': image['Id'], 'docker_image_id_kind': identity_kind,
                     'archive_sha256': row['sha256'], 'probe': probe}
                 write_report(directory, report)
         after = preflight(command)
@@ -301,6 +339,8 @@ def preload(packet, base=BASE, policy=POLICY, command=docker):
         except Exception:
             report['container_postcheck'] = 'UNVERIFIED'
         write_report(directory, report)
+        if isinstance(error, Blocked):
+            error.receipt_directory = str(directory)
         raise
 
 
@@ -327,5 +367,6 @@ if __name__ == '__main__':
         print(json.dumps({'status': 'BLOCKED', 'error_type': type(error).__name__,
             'reason': str(error) if isinstance(error, Blocked) else None,
             'detail': getattr(error, 'detail', None),
+            'receipt_directory': getattr(error, 'receipt_directory', None),
             'services_updated': False, 'deployment_performed': False, 'task6_complete': False}), flush=True)
         raise SystemExit(1)
