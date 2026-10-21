@@ -1,5 +1,10 @@
 # Proposed Task 6 API acceptance boundary
 
+Update: the user approved this proposal by replying **continue**. Current source
+freeze handling and validation results are in
+[`../task6-readonly-approved/README.md`](../task6-readonly-approved/README.md).
+The original proposal and pre-approval results below are retained as history.
+
 Status: **REQUIRES SOURCE REVIEW. NOT DEPLOYED. RELEASE FREEZE CHECK STILL FAILS.**
 
 The existing research-worker rollout completed on the VPS with restart and

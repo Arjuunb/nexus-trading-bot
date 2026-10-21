@@ -1,0 +1,57 @@
+{
+  "status": "APPROVED_APPLICATION_DELTA_LOCAL_CHECKS_COMPLETE_CI_REQUIRED",
+  "approved_proposal_commit": "b5ccdd418eedd0e151c72ac2f8093e7be8c48fcf",
+  "application_files_changed_after_user_approval": false,
+  "focused_source_and_financial_checks": {
+    "passed": 107,
+    "failed": 0
+  },
+  "full_local_suite": {
+    "tests": 4655,
+    "passed": 4572,
+    "skipped": 76,
+    "failures": [
+      "automation-hub.tests.test_forward_operations::test_health_file_is_atomic_bounded_and_checks_freshness",
+      "automation-hub.tests.test_forward_operations::test_real_standalone_process_writes_shutdown_health_without_execution",
+      "automation-hub.tests.test_sprint11_operations::test_shadow_health_separates_verified_database_from_legacy_process_probe",
+      "automation-hub.tests.test_sprint13_remote_readiness::test_real_compose_resolution_keeps_independent_volume_names_and_ports",
+      "tests.test_dashboard::test_health_and_state_routes",
+      "tests.test_dashboard::test_index_route_returns_html",
+      "tests.test_dashboard::test_404_for_unknown_route"
+    ]
+  },
+  "approved_baseline_failure_reproduction": {
+    "tests": 57,
+    "passed": 49,
+    "skipped": 1,
+    "failures": [
+      "automation-hub.tests.test_forward_operations::test_health_file_is_atomic_bounded_and_checks_freshness",
+      "automation-hub.tests.test_forward_operations::test_real_standalone_process_writes_shutdown_health_without_execution",
+      "automation-hub.tests.test_sprint11_operations::test_shadow_health_separates_verified_database_from_legacy_process_probe",
+      "automation-hub.tests.test_sprint13_remote_readiness::test_real_compose_resolution_keeps_independent_volume_names_and_ports",
+      "tests.test_dashboard::test_health_and_state_routes",
+      "tests.test_dashboard::test_index_route_returns_html",
+      "tests.test_dashboard::test_404_for_unknown_route"
+    ]
+  },
+  "environment_failure_sets_identical": true,
+  "environment_limits": [
+    "Linux /proc process generation unavailable",
+    "Docker CLI unavailable",
+    "Loopback bind blocked by local sandbox"
+  ],
+  "legacy_operator_helpers": {
+    "passed": 122,
+    "failed": 31,
+    "reason": "Original unchanged Linux resource-limit helpers cannot set their Linux limits on this Mac; Linux CI still required."
+  },
+  "vps_financial_recovery_proven": false,
+  "new_images_built_or_scanned": false,
+  "api_replaced": false,
+  "task6_complete": false,
+  "final_acceptance_delta_and_inventory_suite": {
+    "passed": 28,
+    "failed": 0
+  },
+  "direct_ssh_inventory_attempt": "Blocked by local sandbox before connection; no VPS command executed"
+}

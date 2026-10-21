@@ -23,6 +23,7 @@ FILES = (
     'test_smc_pro_parity_audit.py', 'test_smc_pro_parity_export.py', 'test_strategy_qualification.py',
     'test_historical_integrity.py', 'test_research_jobs.py', 'test_research_agent.py', 'test_shadow_router.py',
     'test_operational_spool.py', 'test_staging_prerequisites.py',
+    'test_acceptance_read_only.py', 'test_reviewed_acceptance_delta.py',
 )
 CORE_FILES = ('test_indicators.py', 'test_risk_sizing.py', 'test_risk_limits.py',
               'test_portfolio_engine.py', 'test_backtester.py')
