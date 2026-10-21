@@ -65,8 +65,14 @@ class PaperBrokerV2:
         self.execution_engine = str(execution_engine or "PAPER").strip().upper()
         self.evidence_owner = evidence_owner
         self._lock = threading.RLock()
-        self._c = runtime_connection(self.path)
+        self._c = runtime_connection(self.path, financial=True)
         source_evidence.verify_owner(self._c, evidence_owner)
+        from services.acceptance_mode import enabled, require_row
+        if enabled():
+            identity = require_row(self._c, "SELECT account_id,account_type FROM v2_account WHERE id=1")
+            if not identity["account_id"] or (self.requested_account_id and self.requested_account_id != identity["account_id"]):
+                raise RuntimeError("paper account_id does not match the durable ledger identity")
+            return
         new_account = not self._c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_account'").fetchone()
         self._schema(starting_balance)
         source_evidence.install(self, new_account=new_account)

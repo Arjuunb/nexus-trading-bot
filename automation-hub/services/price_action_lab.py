@@ -111,8 +111,14 @@ class PriceActionPaperAccount:
         # Metadata and the broker share one SQLite file but use separate
         # connections. Autocommit prevents a metadata write lock from being
         # held while the broker performs its own atomic ledger transaction.
-        self._db = runtime_connection(self.path, autocommit=True)
+        self._db = runtime_connection(self.path, autocommit=True, financial=True)
         self._persistence_blocker: dict | None = None
+        from services.acceptance_mode import enabled, require_row
+        if enabled():
+            self.broker.leverage = float(require_row(self._db, "SELECT leverage FROM pa_settings WHERE id=1")[0])
+            self._db.execute("SELECT id FROM pa_sessions LIMIT 1")
+            self.journal = PriceActionJournalStore(self.path)
+            return
         with self._db:
             self._db.executescript("""
               CREATE TABLE IF NOT EXISTS pa_sessions(
@@ -1784,7 +1790,8 @@ class PriceActionLabRuntime:
         fetch = (self.stream.make_fetcher() if market_hub is not None else
                  lambda sym, tf, limit: market.public_usdm_window(sym, tf, limit=limit))
         self.native_loader = NativeContextLoader(fetch)
-        if autostart:
+        from services.acceptance_mode import enabled
+        if autostart and not enabled():
             self._supervisor_thread = threading.Thread(
                 target=self._run_supervisor, name="price-action-paper-runtime", daemon=True)
             self._supervisor_thread.start()

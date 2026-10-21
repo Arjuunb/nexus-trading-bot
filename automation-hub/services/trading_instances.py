@@ -493,7 +493,8 @@ class InstanceStore:
         self.remote = not isinstance(ledger, SqliteLedger)
         self.available = True
         self.error = ""
-        if not self.remote:
+        from services.acceptance_mode import enabled
+        if not self.remote and not enabled():
             with ledger._lock:
                 ledger._c.executescript(_LOCAL_SCHEMA)
                 ensure_column(ledger._c, "trading_instance_platform_settings",
@@ -1260,8 +1261,10 @@ class TradingInstanceManager:
             "default_fill_model": str(configured.get("default_fill_model") or "RealisticFill"),
         }
         self._instances: dict[str, TradingInstance] = {i.id: i for i in self.store.list()}
-        for instance in self._instances.values():
-            self.store.ensure_simulation_session(instance)
+        from services.acceptance_mode import enabled
+        if not enabled():
+            for instance in self._instances.values():
+                self.store.ensure_simulation_session(instance)
         self._runtime: dict[str, tuple[AutoStrategyEngine, PaperExecutionEngine, SignalPipeline, TradingControl]] = {}
         self._metric_fingerprints: dict[str, tuple] = {}
         self._reboots: dict[str, dict] = {}

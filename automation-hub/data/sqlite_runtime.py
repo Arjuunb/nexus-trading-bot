@@ -9,9 +9,12 @@ SQLITE_BUSY_TIMEOUT_MS = 10_000
 
 
 def runtime_connection(
-        path: str | Path, *, autocommit: bool = False,
+        path: str | Path, *, autocommit: bool = False, financial: bool = False,
         busy_timeout_ms: int = SQLITE_BUSY_TIMEOUT_MS) -> sqlite3.Connection:
     """Open a WAL connection with a consistent bounded lock wait."""
+    from services.acceptance_mode import enabled, existing_connection
+    if financial and enabled():
+        return existing_connection(path, autocommit=autocommit)
     value = max(1, int(busy_timeout_ms))
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(

@@ -357,12 +357,14 @@ def test_strategy_versions_hashes_blockers_and_defaults_are_explicit():
 
 
 def test_pr6_real_paper_sources_match_the_declared_native_mtf_delta():
+    from reviewed_acceptance_delta import reviewed_hash
     root = Path(__file__).parents[1]
     manifest = json.loads((root / "data/pr6_real_paper_freeze.json").read_text())
     assert manifest["baseline_commit"] == "5b351e9"
     assert manifest["approved_delta"] == (
         "Replace synthesized HTF clocks with services/mtf_policy.py native-candle evidence only.")
     for relative, expected in manifest["sha256"].items():
+        expected = reviewed_hash(root, relative, expected)
         assert hashlib.sha256((root / relative).read_bytes()).hexdigest() == expected
 
 

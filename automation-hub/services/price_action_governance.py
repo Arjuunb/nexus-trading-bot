@@ -90,8 +90,12 @@ class PriceActionJournalStore:
         self._lock = threading.RLock()
         try:
             self._db = runtime_connection(
-                self.path, autocommit=True, busy_timeout_ms=busy_timeout_ms)
-            self._schema()
+                self.path, autocommit=True, busy_timeout_ms=busy_timeout_ms, financial=True)
+            from services.acceptance_mode import enabled
+            if not enabled():
+                self._schema()
+            else:
+                self._db.execute("SELECT id FROM pa_journal_entries LIMIT 1")
         except sqlite3.OperationalError as exc:
             if is_sqlite_busy(exc):
                 raise PersistenceBlocked("startup", exc) from exc

@@ -1,0 +1,54 @@
+{
+  "delta_id": "task6-readonly-acceptance.v1",
+  "status": "USER_APPROVED",
+  "approved_proposal_commit": "b5ccdd418eedd0e151c72ac2f8093e7be8c48fcf",
+  "approval_basis": "The user replied continue after the exact PR #43 source proposal was presented for approval. This records conversation authorization, not a GitHub reviewer approval or registry/environment approval.",
+  "original_application_source": "4eceb973e98e1350dd625153753637629453c401",
+  "historical_freeze_sha256": "4edb229abe5c458a80e83708e86bd914f822b3e8852c6040b054354b0b9ef5ce",
+  "alpha_rules_changed": false,
+  "fill_timing_changed": false,
+  "execution_enabled": false,
+  "deployment_authorized_by_this_record": false,
+  "file_updates": {
+    "services/price_action_lab.py": {
+      "prior_sha256": "3230d90565cb2486d10d7f59d464b15d39c6359d2d7f60d5c89b10d41cad3128",
+      "sha256": "936c62012543ee9cc8f9f5e0781b7dff7995db816000a693ecd783f0b05d01dc"
+    },
+    "services/smc_strategy_lab.py": {
+      "prior_sha256": "90b3e18177e6c607be5b494ac466f6d3f32b82ac8e05ab73e3995cfb0675d0b1",
+      "sha256": "d241f27c79cf9912edc97b16617f2ba0917edd2cf20998215e89b0ed18c1c78d"
+    },
+    "execution/paper_broker_v2.py": {
+      "prior_sha256": "3382c9b61b86cadd1424c4571a01c11cae9b061c2795cadb676b460f059e38cb",
+      "sha256": "68cc996131536094814a5b1aedf82e016ae271f96fe294923d0a2ae61e5280c5"
+    }
+  },
+  "method_updates": {
+    "services/price_action_lab.py": {
+      "PriceActionLabRuntime.__init__": {
+        "prior_sha256": "6e677b2d9e33190d2611376335e430b65adc1304a9a0a71cb3e8f4c1d3eae5b1",
+        "sha256": "660a54704a41332ad2e8544145df5641eddab946ef6901c2f74cead5079833b6"
+      },
+      "PriceActionPaperAccount.__init__": {
+        "prior_sha256": "40f6042f951820d90ff08c48935c2946141f57fc3f0bc98ccd5e1cc6cab6887e",
+        "sha256": "86dd0a48b4ef6f4cbb6eff82820a6daf15c6d85e6ed784a499e8c744f64daa6e"
+      }
+    },
+    "services/smc_strategy_lab.py": {
+      "SMCPaperAccount.__init__": {
+        "prior_sha256": "31b082dbe0f5a0a93bd25ee145391347984af88a559258b1a7266e2386afe595",
+        "sha256": "f04d25744869f57b4948c88ee77d56517a3d97469071075b521e9d34a47d1937"
+      },
+      "SMCStrategyLabRuntime.__init__": {
+        "prior_sha256": "041ddb633b9c4eea4e0c9f16fbd71c28c4372ada249860721f962e29bea0f9f8",
+        "sha256": "d9811e533a508b1ff86f8af4c4c31db027b20d6c145e7fbef19867e4a27fdc15"
+      }
+    },
+    "execution/paper_broker_v2.py": {
+      "PaperBrokerV2.__init__": {
+        "prior_sha256": "a567aec4370640d63ef6dccd88e232416558f6d2e558ceafbf757c64fd28c9ad",
+        "sha256": "a4aa23bd22163bb6b4ee8f0b62b243dd2f220bd772311095da1ed2dc94f5b2b2"
+      }
+    }
+  }
+}

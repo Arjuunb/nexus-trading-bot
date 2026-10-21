@@ -150,6 +150,13 @@ class SqliteLedger:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        from services.acceptance_mode import enabled, existing_connection
+        if enabled():
+            self._c = existing_connection(self.path)
+            self._lock = threading.RLock()
+            self.duplicate_order_constraint = {"status": "NOT_CHECKED_ACCEPTANCE_READ_ONLY"}
+            self._c.execute("SELECT id FROM paper_trades LIMIT 1")
+            return
         self._c = sqlite3.connect(self.path, check_same_thread=False)
         self._c.row_factory = sqlite3.Row
         self._lock = threading.RLock()

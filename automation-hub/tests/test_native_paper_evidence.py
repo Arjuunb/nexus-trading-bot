@@ -214,6 +214,7 @@ def test_contemporaneous_lab_capture_only_and_smc_model_alias_preserved(tmp_path
 def test_authorized_source_delta_pins_all_unchanged_methods_and_native_strategy_rules():
     import ast,hashlib
     from pathlib import Path
+    from reviewed_acceptance_delta import reviewed_hash
     root=Path(__file__).parents[1];manifest=json.loads((root/'data/pr6_real_paper_freeze.json').read_text())
     delta=next(r for r in manifest['subsequent_approved_deltas'] if r.get('delta_id')=='sprint11-native-financial-evidence.v1')
     assert delta['alpha_rules_changed'] is False and delta['fill_timing_changed'] is False
@@ -230,8 +231,8 @@ def test_authorized_source_delta_pins_all_unchanged_methods_and_native_strategy_
             elif isinstance(parent,(ast.FunctionDef,ast.AsyncFunctionDef)):
                 actual[parent.name]=hashlib.sha256(ast.get_source_segment(text,parent).encode()).hexdigest()
         assert set(actual)==set(unchanged)|set(delta['method_updates'][relative])
-        assert all(actual[name]==expected for name,expected in unchanged.items())
-        assert all(actual[name]==update['sha256'] for name,update in delta['method_updates'][relative].items())
+        assert all(actual[name]==reviewed_hash(root,relative,expected,method=name) for name,expected in unchanged.items())
+        assert all(actual[name]==reviewed_hash(root,relative,update['sha256'],method=name) for name,update in delta['method_updates'][relative].items())
         verified+=len(unchanged)
     assert verified==166
 

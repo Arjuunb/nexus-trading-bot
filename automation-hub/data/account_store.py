@@ -33,6 +33,11 @@ class AccountStore:
     def __init__(self, path: str) -> None:
         self._path = path
         self._lock = threading.Lock()
+        from services.acceptance_mode import enabled, existing_connection, require_row
+        if enabled():
+            self._c = existing_connection(path)
+            require_row(self._c, "SELECT * FROM account_state WHERE id=1")
+            return
         self._c = sqlite3.connect(path, check_same_thread=False)
         self._c.row_factory = sqlite3.Row
         self._c.execute(
@@ -60,6 +65,9 @@ class AccountStore:
         Never overwrites an existing (persisted) account — that is the whole
         point: the saved value wins over the default on restart."""
         with self._lock:
+            from services.acceptance_mode import enabled
+            if self._row() is None and enabled():
+                raise RuntimeError("Existing financial account required for acceptance")
             if self._row() is None:
                 self._c.execute(
                     "INSERT INTO account_state (id, initial_capital, current_equity, "
