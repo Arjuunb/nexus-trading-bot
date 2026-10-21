@@ -42,6 +42,14 @@ class JournalStore:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        from services.acceptance_mode import enabled, existing_connection
+        if enabled():
+            self._c = existing_connection(self.path)
+            self._lock = threading.RLock()
+            self._transaction_depth = 0
+            self._c.execute("SELECT trade_id FROM trade_decision_journal LIMIT 1")
+            self.context = JournalContextStore(self)
+            return
         self._c = sqlite3.connect(self.path, check_same_thread=False)
         self._c.row_factory = sqlite3.Row
         self._c.execute("PRAGMA foreign_keys=ON")

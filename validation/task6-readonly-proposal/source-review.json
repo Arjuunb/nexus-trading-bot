@@ -1,0 +1,195 @@
+{
+  "status": "PROPOSED_SOURCE_CHANGE_REQUIRES_REVIEW",
+  "approved": false,
+  "approved_application_source": "4eceb973e98e1350dd625153753637629453c401",
+  "evidence_parent": "ea9b419cc52bf8428e27ef7728fff1a095ee0e1a",
+  "deployment_performed": false,
+  "images_built_or_scanned": false,
+  "financial_recovery_on_vps_proven": false,
+  "authenticated_target_acceptance_performed": false,
+  "test_result": {
+    "passed": 215,
+    "failed": 1,
+    "skipped": 4,
+    "failure": "existing approved-source freeze pins deliberate constructor changes"
+  },
+  "protected_files_unchanged": [
+    "automation-hub/services/native_price_action.py",
+    "automation-hub/services/native_smc.py",
+    "automation-hub/services/mtf_policy.py",
+    "automation-hub/data/pr6_real_paper_freeze.json",
+    "automation-hub/data/native_smc_engine_freeze_manifest.json"
+  ],
+  "migrations_and_strategy_files_unchanged": true,
+  "files": [
+    {
+      "path": "automation-hub/app.py",
+      "approved_file_sha256": "bdde696f135df4613f4ce7c589e2ee9a6ba5fb97a0d1757d1402a01a03c83ddd",
+      "proposed_file_sha256": "d2e7f2cef6b4baab87c5970e03a5725d63625ab9cd709cd678b49d508ac76c54",
+      "changed_callables": {
+        "_require_auth": {
+          "approved_sha256": "bb9b39cea636f4bc208aafdf3f3b01f73a3fc12f06834386515fe700b4a3eab2",
+          "proposed_sha256": "512c02a7b3969d8ad32984cbeaee4961b24d68413bac84806d2587a9dc25eeef"
+        },
+        "_restore_shadow_observations": {
+          "approved_sha256": "67214999dcc4ec7ad1ccf00518ed0d75d8c4721c689fc52c2b0c6d269a9837f7",
+          "proposed_sha256": "e1acc9ae4a395c504eda000b4ed287ac655942f6f7922d9d393d28521069f2cc"
+        },
+        "_shutdown_all_runtimes": {
+          "approved_sha256": "fd8fcd322c4f9c19a087790f299de67e1d9bacc5b50139a80aad555a68093a26",
+          "proposed_sha256": "9f9279cbf7df97bb8cfa13f9122e6cd6f1f53f66aa947476eaade544f71339cb"
+        },
+        "_start_auto_engine": {
+          "approved_sha256": "ffad16e5e5de3569e422dd75b07d24e01802390a3c41bde4141ca51dd0c3d64a",
+          "proposed_sha256": "5f8f61a753cfe05a81febbd640285460e2b7dd617f6724c66b4e9f5efb1e5b69"
+        },
+        "health": {
+          "approved_sha256": "1b3eada689f4f0a7957532336726982ddbb63b114f38b804d5761fc003ac760b",
+          "proposed_sha256": "ca9da493d3945a7a3a9831aa85940087f2253b6aca7871bdcb939f20a3ba193e"
+        }
+      },
+      "unchanged_callable_count": 103
+    },
+    {
+      "path": "automation-hub/data/account_store.py",
+      "approved_file_sha256": "8c73e0aac8abb82beffbf59a753df5e8e8ae06dc746f19fe612b262504ccc3f0",
+      "proposed_file_sha256": "5683c30c2df106d3372b9560de0a66c8dde3a2c8ab954b5170894259627cdd51",
+      "changed_callables": {
+        "AccountStore.__init__": {
+          "approved_sha256": "2e2816676d70d2016a932144043fb38df2535d8385eb16c7ad6ef533e5eccbf4",
+          "proposed_sha256": "3d026b02bf56a0212df8d8c69fae2fcfb97a6f0fdc04c11960d90f28bc058f38"
+        },
+        "AccountStore.seed_if_empty": {
+          "approved_sha256": "56612fa5540fe21f69b0d60f72f95ee27f2d900949b72ba35476cffa927d99b9",
+          "proposed_sha256": "a7884c162f5fa32feb4e3f7a3e67297ae547a03e43e735f3f75ae420e37b3d22"
+        }
+      },
+      "unchanged_callable_count": 6
+    },
+    {
+      "path": "automation-hub/data/journal_store.py",
+      "approved_file_sha256": "2a9f9a6be0de3774970ae5577ecf7a5cee54ec6df2a63245dd0f95799b11e824",
+      "proposed_file_sha256": "48aa76963641a5820170218c8063bfa1f098903bd7fbc60db727a6ebcd516f89",
+      "changed_callables": {
+        "JournalStore.__init__": {
+          "approved_sha256": "3036b436863203445aaaaac5064666608d7bd7876161d80bbffcd9ec5a5e3e41",
+          "proposed_sha256": "bb520b42f066721c706140d1f762dbdd14622bfbf5951816b11a877b895b3fd6"
+        }
+      },
+      "unchanged_callable_count": 28
+    },
+    {
+      "path": "automation-hub/data/ledger.py",
+      "approved_file_sha256": "52e0733aa03f9ecb122c59d6c8cb470c734365f0941f174d70d481cb2c9e4bff",
+      "proposed_file_sha256": "86eb8328a5078b5d13adc5e25479a6616fd73e8ecfa307882904d603ce316bc3",
+      "changed_callables": {
+        "SqliteLedger.__init__": {
+          "approved_sha256": "79b403ec0b9cf765aaecbe39aae7c4b9190344bfebd83f1fbe5b2a5c7a1a0ab4",
+          "proposed_sha256": "32bd3800b7e6b2005dfdd0efde17d85ffbf84d8efa3c1ca293b35754b6f5ce69"
+        }
+      },
+      "unchanged_callable_count": 96
+    },
+    {
+      "path": "automation-hub/data/sqlite_runtime.py",
+      "approved_file_sha256": "e282a4324d019d99bb19cd4e5e372736ec0b34700f11b249c5fe59bebf1d1241",
+      "proposed_file_sha256": "5ad5826accc23b913fa6ea2340b61810ea92747636c3c90c8e8ae55d0b2df6f9",
+      "changed_callables": {
+        "runtime_connection": {
+          "approved_sha256": "9fde652dce3a533570f6fdec786bc4826230b23d7e28ac9d86712d9a88a852eb",
+          "proposed_sha256": "909c6f451b8bc38b6a47c2a71eda1bbeda2c06981c99a418b354d9183648b389"
+        }
+      },
+      "unchanged_callable_count": 1
+    },
+    {
+      "path": "automation-hub/execution/paper_broker_v2.py",
+      "approved_file_sha256": "3382c9b61b86cadd1424c4571a01c11cae9b061c2795cadb676b460f059e38cb",
+      "proposed_file_sha256": "68cc996131536094814a5b1aedf82e016ae271f96fe294923d0a2ae61e5280c5",
+      "changed_callables": {
+        "PaperBrokerV2.__init__": {
+          "approved_sha256": "a567aec4370640d63ef6dccd88e232416558f6d2e558ceafbf757c64fd28c9ad",
+          "proposed_sha256": "a4aa23bd22163bb6b4ee8f0b62b243dd2f220bd772311095da1ed2dc94f5b2b2"
+        }
+      },
+      "unchanged_callable_count": 32
+    },
+    {
+      "path": "automation-hub/services/price_action_governance.py",
+      "approved_file_sha256": "d58a37a712adcd956164c757b9b567073867b17272705cb9985756b4e0cc4c0c",
+      "proposed_file_sha256": "34554bd3c3127f7d183e71966a14fb2462372ba6fdd6f36e23ba8d5807fda9d9",
+      "changed_callables": {
+        "PriceActionJournalStore.__init__": {
+          "approved_sha256": "db2a8777e9c9f642cf8ee2628c6f752d81ef6412b220342eec2981ead800334a",
+          "proposed_sha256": "6d8dc0e2d850d16b1b63f6e3a740a507be359b8022e8f060bb191c5c23b2f715"
+        }
+      },
+      "unchanged_callable_count": 27
+    },
+    {
+      "path": "automation-hub/services/price_action_lab.py",
+      "approved_file_sha256": "3230d90565cb2486d10d7f59d464b15d39c6359d2d7f60d5c89b10d41cad3128",
+      "proposed_file_sha256": "936c62012543ee9cc8f9f5e0781b7dff7995db816000a693ecd783f0b05d01dc",
+      "changed_callables": {
+        "PriceActionLabRuntime.__init__": {
+          "approved_sha256": "6e677b2d9e33190d2611376335e430b65adc1304a9a0a71cb3e8f4c1d3eae5b1",
+          "proposed_sha256": "660a54704a41332ad2e8544145df5641eddab946ef6901c2f74cead5079833b6"
+        },
+        "PriceActionPaperAccount.__init__": {
+          "approved_sha256": "40f6042f951820d90ff08c48935c2946141f57fc3f0bc98ccd5e1cc6cab6887e",
+          "proposed_sha256": "86dd0a48b4ef6f4cbb6eff82820a6daf15c6d85e6ed784a499e8c744f64daa6e"
+        }
+      },
+      "unchanged_callable_count": 65
+    },
+    {
+      "path": "automation-hub/services/smc_strategy_lab.py",
+      "approved_file_sha256": "90b3e18177e6c607be5b494ac466f6d3f32b82ac8e05ab73e3995cfb0675d0b1",
+      "proposed_file_sha256": "d241f27c79cf9912edc97b16617f2ba0917edd2cf20998215e89b0ed18c1c78d",
+      "changed_callables": {
+        "SMCPaperAccount.__init__": {
+          "approved_sha256": "31b082dbe0f5a0a93bd25ee145391347984af88a559258b1a7266e2386afe595",
+          "proposed_sha256": "f04d25744869f57b4948c88ee77d56517a3d97469071075b521e9d34a47d1937"
+        },
+        "SMCStrategyLabRuntime.__init__": {
+          "approved_sha256": "041ddb633b9c4eea4e0c9f16fbd71c28c4372ada249860721f962e29bea0f9f8",
+          "proposed_sha256": "d9811e533a508b1ff86f8af4c4c31db027b20d6c145e7fbef19867e4a27fdc15"
+        }
+      },
+      "unchanged_callable_count": 53
+    },
+    {
+      "path": "automation-hub/services/trading_instances.py",
+      "approved_file_sha256": "7f6545d04cb292b03dd105abcee66678b94e961ecf6181b6235ca9a0df783a10",
+      "proposed_file_sha256": "94b626463c066af516afb3a9ce7451b7fa4232f40c85f8eee6562188cd921061",
+      "changed_callables": {
+        "InstanceStore.__init__": {
+          "approved_sha256": "ba53ea5779f84387e75a92ac25d08bc44cd958a8f9094e66176e1a8616d15dff",
+          "proposed_sha256": "81eb53511d5b9b08bd881020ed403124cdd0d8ded2170f8cad00dab10f065625"
+        },
+        "TradingInstanceManager.__init__": {
+          "approved_sha256": "6eb8fbcb62f961fb9b8875ae9467313efab84346b83fb12dcc910c78851542dc",
+          "proposed_sha256": "0da1362ad190829ce04fb7ac10c2c2aa8f0778ac54d530e49dceece49ed5e438"
+        }
+      },
+      "unchanged_callable_count": 101
+    },
+    {
+      "path": "automation-hub/webhook_api.py",
+      "approved_file_sha256": "be9fe4ef1f262d1cecbcf4556869a84cccd2babfff19cea60f136e501afffb63",
+      "proposed_file_sha256": "b597bed574c66450d7f95e6ed745f416b8abf0867bb8bc76bdd24d35c304ed6a",
+      "changed_callables": {},
+      "unchanged_callable_count": 24
+    }
+  ],
+  "new_files": [
+    {
+      "path": "automation-hub/services/acceptance_mode.py",
+      "sha256": "1e82338dbda9ce66c7e6d78f3592e2001f429e3a8a7258da62fec91e341c1e97"
+    },
+    {
+      "path": "automation-hub/tests/test_acceptance_read_only.py",
+      "sha256": "3e29ec9ad8b6100df27be813f060d0a5bd36776dee15844cb60f806f6ca11370"
+    }
+  ]
+}

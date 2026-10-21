@@ -1,0 +1,12 @@
+{
+  "tests": 220,
+  "failures": 1,
+  "errors": 0,
+  "skipped": 4,
+  "passed": 215,
+  "scope": "Local Python 3.12: 17 targeted acceptance, finance, native lab, instance, grid, authentication, and runtime test modules. Not full repository or VPS acceptance.",
+  "failing_tests": [
+    "automation-hub.tests.test_native_paper_evidence::test_authorized_source_delta_pins_all_unchanged_methods_and_native_strategy_rules"
+  ],
+  "approval_gate": "Original approved-source freeze assertion remains unchanged and failing for deliberate proposed constructor deltas."
+}

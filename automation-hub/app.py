@@ -259,6 +259,10 @@ def _client_ip(request: Request) -> str:
 @app.middleware("http")
 async def _require_auth(request: Request, call_next):
     path = request.url.path
+    from services.acceptance_mode import request_allowed
+    if webhook_api._ACCEPTANCE_READ_ONLY and not request_allowed(request.method, path):
+        from fastapi.responses import JSONResponse
+        return JSONResponse({"error": "Acceptance mode: execution and mutations are disabled"}, status_code=409)
     factory_reset_service = getattr(webhook_api, "factory_reset_service", None)
     if (factory_reset_service is not None and factory_reset_service.in_progress
             and request.method not in {"GET", "HEAD", "OPTIONS"}
@@ -532,6 +536,9 @@ def _start_auto_engine() -> None:
     """Start the autonomous strategy engine when the server boots (real signals
     -> paper execution -> ledger). Disabled under pytest and via HUB_AUTO_ENGINE=0."""
     import os
+    if webhook_api._ACCEPTANCE_READ_ONLY:
+        print("[startup] acceptance read-only mode; saved execution intent retained without restoration", flush=True)
+        return
     _restore_shadow_observations()
     backend = type(webhook_api.ledger).__name__
     print(f"[startup] ledger backend = {backend} "
@@ -603,7 +610,7 @@ def _start_auto_engine() -> None:
 
 def _restore_shadow_observations() -> None:
     """Restore ONLY explicitly authorized durable observation intent."""
-    if "PYTEST_CURRENT_TEST" in _sec_os.environ:
+    if webhook_api._ACCEPTANCE_READ_ONLY or "PYTEST_CURRENT_TEST" in _sec_os.environ:
         return
     try:
         if webhook_api.shadow_router.store.registrations(active_only=True, limit=1):
@@ -616,6 +623,10 @@ def _restore_shadow_observations() -> None:
 @app.on_event("shutdown")
 def _shutdown_all_runtimes() -> None:
     """One process-wide shutdown boundary for every execution authority."""
+    if webhook_api._ACCEPTANCE_READ_ONLY:
+        # No execution runtime is started in this mode. Calling normal stop
+        # methods would checkpoint financial state and overwrite saved intent.
+        return
     errors = []
 
     def run(name, operation):
@@ -2509,6 +2520,7 @@ def _persistence_info() -> dict:
 def health():
     from services.tenancy import multi_user_enabled
     return {"status": "ok", "app": settings.app_name, **_deploy_info(),
+            "acceptance_read_only": webhook_api._ACCEPTANCE_READ_ONLY,
             "persistence": _persistence_info(),
             "tenancy": {"multi_user": multi_user_enabled(), "mode": "multi" if multi_user_enabled() else "single-owner"}}
 

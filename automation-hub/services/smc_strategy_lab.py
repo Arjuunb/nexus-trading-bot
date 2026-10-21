@@ -98,6 +98,12 @@ class SMCPaperAccount:
             evidence_owner=evidence_owner,
         )
         self._lock = threading.RLock()
+        from services.acceptance_mode import enabled, existing_connection, require_row
+        if enabled():
+            self._db = existing_connection(self.path, autocommit=True)
+            self.broker.leverage = float(require_row(self._db, "SELECT leverage FROM smc_settings WHERE id=1")[0])
+            self._db.execute("SELECT id FROM smc_sessions LIMIT 1")
+            return
         self._db = sqlite3.connect(self.path, check_same_thread=False, isolation_level=None)
         self._db.row_factory = sqlite3.Row
         with self._db:
@@ -1466,7 +1472,8 @@ class SMCStrategyLabRuntime:
         fetch = (self.stream.make_fetcher() if market_hub is not None else
                  lambda sym, tf, limit: market.public_usdm_window(sym, tf, limit=limit))
         self.native_loader = NativeContextLoader(fetch)
-        if autostart:
+        from services.acceptance_mode import enabled
+        if autostart and not enabled():
             self._thread = threading.Thread(target=self._run, name="smc-paper-runtime", daemon=True)
             self._thread.start()
 
