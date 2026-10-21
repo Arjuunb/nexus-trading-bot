@@ -119,10 +119,19 @@ def compose_args(overlay=None):
 def up_args(prefix):return prefix+['up','-d','--no-deps','--no-build','--pull','never','research-worker']
 
 
+def compose_bytes(value):
+    # compose-go UnitBytes.MarshalJSON emits a quoted decimal byte count.
+    # Docker inspect emits integers. Accept those two encodings only.
+    if type(value) is int:return value
+    if isinstance(value,str) and re.fullmatch(r'[0-9]{1,20}',value):return int(value)
+    return None
+
+
 def validate_render(before,after,image):
     require(before.get('name')==after.get('name')==STAGE,'EXISTING_PROJECT_ONLY')
     api=after['services']['api']
-    require(api.get('mem_limit')==api.get('memswap_limit')==1610612736,'API_1536_OVERRIDE_LAST_REQUIRED')
+    require(compose_bytes(api.get('mem_limit'))==compose_bytes(api.get('memswap_limit'))==1610612736,
+      'API_1536_OVERRIDE_LAST_REQUIRED')
     expected=json.loads(json.dumps(before))
     expected['services']['research-worker'].update(image=image,pull_policy='never')
     require(after==expected,'ONLY_WORKER_IMAGE_AND_PULL_POLICY_MAY_CHANGE')

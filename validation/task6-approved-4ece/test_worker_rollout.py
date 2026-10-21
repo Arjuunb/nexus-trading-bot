@@ -68,6 +68,35 @@ class Safety(unittest.TestCase):
             bad=deepcopy(after);mutation(bad)
             with self.assertRaises(W.Blocked):W.validate_render(before,bad,'new')
 
+    def test_compose_json_byte_counts_are_decimal_strings(self):
+        # compose-go UnitBytes.MarshalJSON emits quoted decimal byte counts.
+        # Docker inspect separately emits integer HostConfig.Memory values.
+        for memory,swap in [('1610612736','1610612736'),('1610612736',1610612736),
+                            (1610612736,'1610612736')]:
+            with self.subTest(memory=memory,swap=swap):
+                before={'name':W.STAGE,'services':{'api':{'mem_limit':memory,'memswap_limit':swap},
+                  'research-worker':{'image':'old'}}}
+                after=deepcopy(before);after['services']['research-worker'].update(image='new',pull_policy='never')
+                W.validate_render(before,after,'new')
+
+    def test_normalizing_compose_bytes_cannot_accept_weaker_or_unlimited_memory(self):
+        for value in ('805306368','0','-1','1536m','1.5g','1610612736.0',1610612736.0,True,None):
+            for key in ('mem_limit','memswap_limit'):
+                with self.subTest(value=value,key=key):
+                    before={'name':W.STAGE,'services':{'api':{'mem_limit':'1610612736','memswap_limit':'1610612736'},
+                      'research-worker':{'image':'old'}}}
+                    before['services']['api'][key]=value
+                    after=deepcopy(before);after['services']['research-worker'].update(image='new',pull_policy='never')
+                    with self.assertRaises(W.Blocked):W.validate_render(before,after,'new')
+
+    def test_normalizing_limits_does_not_hide_changes_to_rendered_api(self):
+        before={'name':W.STAGE,'services':{'api':{'mem_limit':'1610612736','memswap_limit':'1610612736'},
+          'research-worker':{'image':'old'}}}
+        after=deepcopy(before);after['services']['research-worker'].update(image='new',pull_policy='never')
+        after['services']['api']['mem_limit']=1610612736
+        with self.assertRaisesRegex(W.Blocked,'ONLY_WORKER_IMAGE'):
+            W.validate_render(before,after,'new')
+
     def test_targeted_commands_cannot_recreate_dependencies_or_pull(self):
         args=W.up_args(['compose','--project-name',W.STAGE])
         self.assertEqual(args[-1],'research-worker')
@@ -228,7 +257,7 @@ class Orchestration(unittest.TestCase):
         if args[0]=='compose':
             if '--hash' in args:return 'research-worker '+('b' if self.drift else 'a')*64
             if 'config' in args:
-                model={'name':W.STAGE,'services':{'api':{'mem_limit':1610612736,'memswap_limit':1610612736},
+                model={'name':W.STAGE,'services':{'api':{'mem_limit':'1610612736','memswap_limit':'1610612736'},
                   'research-worker':{'image':'old-reference','user':'100:100'}}}
                 overlays=[Path(args[i+1]) for i,v in enumerate(args[:-1]) if v=='-f' and args[i+1] not in {str(p) for p in [*self.paths,self.memory]}]
                 for overlay in overlays:model['services']['research-worker'].update(json.loads(overlay.read_text())['services']['research-worker'])
