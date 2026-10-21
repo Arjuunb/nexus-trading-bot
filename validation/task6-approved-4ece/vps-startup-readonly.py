@@ -163,9 +163,17 @@ def project(project_name):
     return rows
 
 
-def selected(rows,service):
-    found=[r for r in rows if r['Config'].get('Labels',{}).get('com.docker.compose.service')==service]
-    if len(found)!=1:raise Blocked('ONE_EXISTING_'+service.upper()+'_REQUIRED')
+def selected(rows,service,project_name):
+    candidates=[r for r in rows
+        if r['Config'].get('Labels',{}).get('com.docker.compose.project')==project_name
+        and r['Config'].get('Labels',{}).get('com.docker.compose.service')==service]
+    running=[r for r in candidates if r['State']['Status']=='running']
+    expected='/'+project_name+'-'+service+'-1'
+    found=[r for r in running if r.get('Name')==expected]
+    # A stopped replay may carry the same Compose service label. It stays in
+    # storage and before/after identity checks, but is not the running app.
+    if len(running)!=1 or len(found)!=1:
+        raise Blocked('ONE_RUNNING_CANONICAL_'+service.upper()+'_REQUIRED')
     return found[0]
 
 
@@ -180,7 +188,7 @@ def snapshot(rows):
 def main():
     if sys.argv[1:]:raise Blocked('NO_SERVICE_OR_TARGET_OVERRIDES_ACCEPTED')
     before=project(STAGE);production_before=project(PROD)
-    api=selected(before,'api');production_api=selected(production_before,'app')
+    api=selected(before,'api',STAGE);production_api=selected(production_before,'app',PROD)
     if api['State']['Status']!='running' or api['State'].get('Health',{}).get('Status')!='healthy':
         raise Blocked('HEALTHY_EXISTING_STAGING_API_REQUIRED')
     if api['HostConfig']['Memory']!=1610612736 or api['HostConfig']['MemorySwap']!=1610612736:
@@ -200,7 +208,13 @@ def main():
     report={'status':'READ_ONLY_EVIDENCE_ONLY_DEPLOYMENT_NOT_AUTHORIZED_BY_THIS_REPORT',
             'approved_application_source':APPROVED_SOURCE,'provider':provider_identity(env,environment(production_api)),
             'disabled_controls_verified':disabled,'local_startup_intent':local,
-            'api_health_after':selected(after,'api')['State'].get('Health',{}).get('Status'),
+            'api_health_after':selected(after,'api',STAGE)['State'].get('Health',{}).get('Status'),
+            'production_app_selection':{
+                'canonical_running_app_selected':True,
+                'stopped_app_containers_ignored':sum(
+                    r['Config'].get('Labels',{}).get('com.docker.compose.service')=='app'
+                    and r['State']['Status']!='running' for r in production_before),
+                'all_containers_retained_in_identity_snapshot':True},
             'production_container_identities_unchanged':True,'shared_storage_detected':False,
             'services_updated':False,'new_paper_execution':False,'task6_complete':False,
             'remaining_checks':['effective primary trading-instance intent','remote grid fallback if applicable',

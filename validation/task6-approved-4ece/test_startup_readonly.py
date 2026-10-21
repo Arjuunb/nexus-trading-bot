@@ -156,7 +156,8 @@ class LocalEvidenceTests(unittest.TestCase):
 
 class HostBoundaryTests(unittest.TestCase):
     def row(self,project,service,source):
-        return {'Id':project+'-'+service,'Image':'synthetic-image','RestartCount':0,
+        return {'Id':project+'-'+service,'Name':'/'+project+'-'+service+'-1',
+                'Image':'synthetic-image','RestartCount':0,
                 'Config':{'Labels':{'com.docker.compose.project':project,'com.docker.compose.service':service},
                           'Env':[k+'=0' for k in ('HUB_AUTO_ENGINE','HUB_ENABLE_EXTERNAL_LIVE','HUB_USE_LIVE_DATA','HUB_RESEARCH_AUTOSTART','NEXUS_SHADOW_SUPERVISED')]},
                 'HostConfig':{'Memory':1610612736,'MemorySwap':1610612736},
@@ -186,6 +187,49 @@ class HostBoundaryTests(unittest.TestCase):
         report=json.loads(output.getvalue());self.assertFalse(report['task6_complete'])
         self.assertFalse(report['services_updated']);self.assertTrue(report['production_container_identities_unchanged'])
         self.assertTrue(report['remaining_checks'])
+
+    def test_stopped_replay_does_not_replace_or_ambiguate_running_production_app(self):
+        stage=self.row(AUDIT.STAGE,'api','staging-source');prod=self.row(AUDIT.PROD,'app','production-source')
+        replay=self.row(AUDIT.PROD,'app','production-source')
+        replay.update(Id='synthetic-stopped-replay',Name='/synthetic-stopped-replay')
+        replay['State']['Status']='exited'
+        with patch.object(sys,'argv',['audit.py']), \
+             patch.object(AUDIT,'project',side_effect=[[stage],[replay,prod],[stage],[replay,prod]]), \
+             patch.object(AUDIT,'docker',return_value='{"status":"synthetic-local-evidence"}') as call, \
+             redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(AUDIT.main(),0)
+        self.assertEqual(call.call_args.args[0][2],stage['Id'])
+        report=json.loads(output.getvalue())
+        self.assertEqual(report['production_app_selection']['stopped_app_containers_ignored'],1)
+        self.assertTrue(report['production_app_selection']['all_containers_retained_in_identity_snapshot'])
+
+    def test_unexpected_running_app_does_not_substitute_for_canonical_production_app(self):
+        stage=self.row(AUDIT.STAGE,'api','staging-source');alias=self.row(AUDIT.PROD,'app','production-source')
+        alias['Name']='/synthetic-replay-running'
+        with patch.object(sys,'argv',['audit.py']), \
+             patch.object(AUDIT,'project',side_effect=[[stage],[alias]]),patch.object(AUDIT,'docker') as call:
+            self.assertRaisesRegex(AUDIT.Blocked,'CANONICAL',AUDIT.main)
+            call.assert_not_called()
+
+    def test_second_running_app_remains_ambiguous_and_blocks_before_exec(self):
+        stage=self.row(AUDIT.STAGE,'api','staging-source');prod=self.row(AUDIT.PROD,'app','production-source')
+        extra=self.row(AUDIT.PROD,'app','other-production-source')
+        extra.update(Id='synthetic-second-running-app',Name='/synthetic-second-running-app')
+        with patch.object(sys,'argv',['audit.py']), \
+             patch.object(AUDIT,'project',side_effect=[[stage],[prod,extra]]),patch.object(AUDIT,'docker') as call:
+            self.assertRaises(AUDIT.Blocked,AUDIT.main)
+            call.assert_not_called()
+
+    def test_stopped_replay_is_still_included_in_change_detection(self):
+        stage=self.row(AUDIT.STAGE,'api','staging-source');prod=self.row(AUDIT.PROD,'app','production-source')
+        replay=self.row(AUDIT.PROD,'app','production-source')
+        replay.update(Id='synthetic-replay',Name='/synthetic-stopped-replay');replay['State']['Status']='exited'
+        changed=dict(replay,Image='changed-replay-image')
+        with patch.object(sys,'argv',['audit.py']), \
+             patch.object(AUDIT,'project',side_effect=[[stage],[prod,replay],[stage],[prod,changed]]), \
+             patch.object(AUDIT,'docker',return_value='{"status":"synthetic-local-evidence"}') as call:
+            self.assertRaisesRegex(AUDIT.Blocked,'CHANGED_DURING',AUDIT.main)
+            self.assertEqual(call.call_count,1)
 
 
 if __name__=='__main__':unittest.main()
