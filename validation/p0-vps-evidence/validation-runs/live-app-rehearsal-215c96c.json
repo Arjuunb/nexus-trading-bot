@@ -1,0 +1,88 @@
+{
+ "db_files_inspected": 24,
+ "inspection_errors": {},
+ "db_stage_seconds": 1.02,
+ "resource_stage_seconds": 30.0,
+ "app_healthy_after": "ok",
+ "files_created_during_inspection": [],
+ "owner_changes": [],
+ "app_reads_found": {
+  "adaptive_lab.db": [
+   "trading_instances",
+   "latest_row_time"
+  ],
+  "ledger.db": [
+   "trading_instances",
+   "latest_row_time"
+  ],
+  "status.db": [
+   "latest_row_time",
+   "status_current"
+  ]
+ },
+ "guardian_meta": null,
+ "journal_recorder": null,
+ "resources_keys": [
+  "containers",
+  "disk_io",
+  "host_cpu_percent",
+  "host_mem_available_mib",
+  "host_swap_total_mib",
+  "loadavg_last",
+  "main_app_threads",
+  "nproc",
+  "psi_last",
+  "samples",
+  "window_s"
+ ],
+ "container_cpu": {},
+ "host_cpu": {
+  "busy": {
+   "avg": 0.59,
+   "p50": 0.6,
+   "p95": 1.05,
+   "max": 1.05
+  },
+  "iowait": {
+   "avg": 0.02,
+   "p50": 0.0,
+   "p95": 0.05,
+   "max": 0.05
+  },
+  "steal": {
+   "avg": 0.07,
+   "p50": 0.1,
+   "p95": 0.1,
+   "max": 0.1
+  }
+ },
+ "backups": {
+  "nexus-trading-bot-app-1": {
+   "path": "<sandbox-tmp>/data-htdth3gn/backups",
+   "exists": false
+  }
+ },
+ "walk_files": 40,
+ "schedules": {
+  "cron_entries": [
+   {
+    "source": "/etc/cron.d/e2scrub_all",
+    "schedule": "30 3 * * 0",
+    "keywords": []
+   },
+   {
+    "source": "/etc/cron.d/e2scrub_all",
+    "schedule": "10 3 * * *",
+    "keywords": []
+   },
+   {
+    "source": "/etc/cron.d/php",
+    "schedule": "09,39 * * * *",
+    "keywords": []
+   }
+  ],
+  "systemd_timers": [],
+  "off_host_tool_detected": false
+ },
+ "df_lines": 5
+}

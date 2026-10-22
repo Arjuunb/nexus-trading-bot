@@ -1,0 +1,6 @@
+mode=ro&immutable=1          -> no such table: meta | changed: [] | new: []
+mode=ro&readonly_shm=1       -> [('42',)] | changed: ['g.db-shm'] | new: []
+mode=ro                      -> [('42',)] | changed: [] | new: []
+no sidecars | mode=ro                    -> [(1,)] | created: ['g.db-shm', 'g.db-wal']
+no sidecars | mode=ro&readonly_shm=1     -> unable to open database file | created: ['g.db-wal']
+no sidecars | mode=ro&immutable=1        -> [(1,)] | created: []
