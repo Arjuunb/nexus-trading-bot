@@ -148,6 +148,46 @@ jobs:
           format: json
           output: ${{ runner.temp }}/release-packet/worker-all-secrets.json
           exit-code: '1'
+      - name: Preserve safe diagnostics when an image security gate fails
+        if: ${{ failure() }}
+        run: |
+          python - <<'PYSCAN'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['PACKET_DIR'])
+          summary = {'deployment_authorized': False, 'reports': []}
+          for name in ('source-security.json', 'api-security.json', 'worker-security.json',
+                       'api-all-secrets.json', 'worker-all-secrets.json'):
+              path = root / name
+              if not path.exists():
+                  summary['reports'].append({'report': name, 'status': 'NOT_PRODUCED'})
+                  continue
+              try:
+                  report = json.loads(path.read_text())
+                  rows = []
+                  secret_count = 0
+                  for result in report.get('Results', []):
+                      secret_count += len(result.get('Secrets') or [])
+                      for item in result.get('Vulnerabilities') or []:
+                          rows.append({key: item.get(key) for key in (
+                              'VulnerabilityID', 'PkgName', 'InstalledVersion',
+                              'FixedVersion', 'Severity', 'Status')})
+                  summary['reports'].append({'report': name, 'status': 'PARSED',
+                      'vulnerabilities': rows, 'secret_count': secret_count})
+              except (ValueError, TypeError, AttributeError):
+                  summary['reports'].append({'report': name, 'status': 'UNREADABLE'})
+          destination = Path(os.environ['RUNNER_TEMP']) / 'security-failure-summary.json'
+          destination.write_text(json.dumps(summary, indent=2) + '\n')
+          print(destination.read_text())
+          PYSCAN
+      - name: Retain failure diagnostics separately from accepted image packets
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: security-failure-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/security-failure-summary.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Seal tested bytes for reviewer and publisher
         run: python ops/github-release.py seal --directory "$PACKET_DIR" --reviewed-commit "$REVIEWED_COMMIT" --source-sha "$EXPECTED_SOURCE"
       - id: upload

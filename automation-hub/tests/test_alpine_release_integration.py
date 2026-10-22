@@ -215,3 +215,40 @@ def test_separate_evaluation_manifests_cannot_be_recorded_as_a_single_publicatio
                      '--worker-ref', 'ghcr.io/arjuunb/nexus-trading-bot-worker@sha256:' + '2' * 64,
                      '--output', str(out)])
     assert not out.exists()
+
+
+@pytest.mark.parametrize('broken', [False, True])
+def test_failed_scan_diagnostics_preserve_findings_without_secret_material(tmp_path, monkeypatch, capsys, broken):
+    import os
+    workflow = yaml.load((ROOT / '.github/workflows/staging-release.yml').read_text(), Loader=yaml.BaseLoader)
+    steps = workflow['jobs']['build']['steps']
+    diagnostic = next(s for s in steps if s.get('name', '').startswith('Preserve safe diagnostics'))
+    upload = next(s for s in steps if s.get('name', '').startswith('Retain failure diagnostics'))
+    assert diagnostic['if'] == upload['if'] == '${{ failure() }}'
+    assert upload['with']['path'] == '${{ runner.temp }}/security-failure-summary.json'
+    assert not any('continue-on-error' in s for s in steps)
+    gates = [s for s in steps if 'trivy-action@' in s.get('uses', '')]
+    assert all(s['with']['exit-code'] == '1' for s in gates)
+    assert all(s['with']['ignore-unfixed'] is False or s['with']['ignore-unfixed'] == 'false'
+               for s in gates if 'vuln' in s['with'].get('scanners', ''))
+    packet = tmp_path / 'packet'; packet.mkdir()
+    payload = {'Results': [{'Vulnerabilities': [{'VulnerabilityID': 'CVE-FIXTURE',
+        'PkgName': 'fixture', 'InstalledVersion': '1', 'FixedVersion': '2',
+        'Severity': 'HIGH', 'Status': 'fixed', 'Description': 'PRIVATE-DESCRIPTION'}],
+        'Secrets': [{'Match': 'PRIVATE-SECRET', 'Code': {'Lines': ['PRIVATE-CODE']}}]}]}
+    (packet / 'api-security.json').write_text('invalid' if broken else json.dumps(payload))
+    monkeypatch.setenv('PACKET_DIR', str(packet)); monkeypatch.setenv('RUNNER_TEMP', str(tmp_path))
+    script = diagnostic['run'].split("python - <<'PYSCAN'\n", 1)[1].rsplit('PYSCAN', 1)[0]
+    exec(compile(script, '<workflow diagnostic>', 'exec'), {})
+    output = (tmp_path / 'security-failure-summary.json').read_text()
+    assert not any(value in output + capsys.readouterr().out for value in
+                   ('PRIVATE-SECRET', 'PRIVATE-CODE', 'PRIVATE-DESCRIPTION'))
+    result = json.loads(output)
+    assert result['deployment_authorized'] is False
+    api = next(r for r in result['reports'] if r['report'] == 'api-security.json')
+    assert api['status'] == ('UNREADABLE' if broken else 'PARSED')
+    if not broken:
+        assert api['secret_count'] == 1
+        assert api['vulnerabilities'][0]['VulnerabilityID'] == 'CVE-FIXTURE'
+        assert api['vulnerabilities'][0]['FixedVersion'] == '2'
+    assert next(r for r in result['reports'] if r['report'] == 'worker-security.json')['status'] == 'NOT_PRODUCED'
