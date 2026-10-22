@@ -53,6 +53,37 @@ def test_ambiguous_or_stopped_api_cannot_be_selected():
         M.select_api([row], *M.PROJECTS['staging'])
 
 
+def test_stopped_replay_is_retained_in_inventory_but_never_selected_or_executed():
+    rows = [container(*item) for item in M.PROJECTS.values()]
+    replay = deepcopy(rows[1])
+    replay.update(Id='stopped-replay-synthetic', Name='/pa-replay-2025')
+    replay['State'].update(Status='exited', StartedAt='synthetic-old-start')
+    rows.append(replay)
+    calls = []
+
+    def command(args):
+        calls.append(args)
+        if args[0] == 'ps': return 'one two three'
+        if args[0] == 'inspect': return json.dumps(rows)
+        if args[0] == 'exec': return json.dumps({'databases': []})
+        if args[0] == 'stats': return json.dumps({'CPUPerc': '0.00%'})
+        raise AssertionError('Unexpected operation')
+
+    assert M.select_api(rows, *M.PROJECTS['production']) is rows[1]
+    report = M.collect(command)
+    production = next(r for r in report['environments'] if r['scope'] == 'production')
+    assert production['container_id'] == rows[1]['Id']
+    assert '/pa-replay-2025' in production['containers_mounting_same_state']
+    assert production['matching_api_containers'] == [
+        {'container': r['Name'], 'container_id': r['Id'], 'image': r['Image'],
+         'status': r['State']['Status']} for r in (rows[1], replay)]
+    assert all(replay['Id'] not in args for args in calls if args[0] in ('exec', 'stats'))
+    assert report['container_identities_and_mounts_unchanged'] is True
+    assert report['services_changed'] is False
+    assert report['files_deleted'] is False
+    assert 'must-never-be-printed' not in json.dumps(report)
+
+
 def test_real_child_reads_schema_ownership_and_sizes_without_financial_values(tmp_path):
     paper = tmp_path/'price_action_paper.db'
     with sqlite3.connect(paper) as db:

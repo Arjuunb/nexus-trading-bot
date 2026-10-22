@@ -89,10 +89,15 @@ def docker(args, timeout=35):
     return result.stdout
 
 
+def matching_apis(rows, project, service):
+    return [r for r in rows if r['Config'].get('Labels', {}).get('com.docker.compose.project') == project
+            and r['Config']['Labels'].get('com.docker.compose.service') == service]
+
+
 def select_api(rows, project, service):
-    candidates = [r for r in rows if r['Config'].get('Labels', {}).get('com.docker.compose.project') == project
-                  and r['Config']['Labels'].get('com.docker.compose.service') == service]
-    if len(candidates) != 1 or candidates[0]['State']['Status'] != 'running':
+    candidates = [r for r in matching_apis(rows, project, service)
+                  if r['State']['Status'] == 'running']
+    if len(candidates) != 1:
         raise RuntimeError('ONE_RUNNING_EXISTING_API_REQUIRED:' + project)
     return candidates[0]
 
@@ -122,6 +127,9 @@ def collect(command=docker):
             'stats', '--no-stream', '--format', '{{json .}}', api['Id']]).splitlines() if line.strip()]
         reports.append({'scope': scope, 'container': api['Name'], 'container_id': api['Id'],
             'image': api['Image'], 'state_volume': mount.get('Name'),
+            'matching_api_containers': [
+                {'container': r['Name'], 'container_id': r['Id'], 'image': r['Image'],
+                 'status': r['State']['Status']} for r in matching_apis(rows, project, service)],
             'containers_mounting_same_state': consumers, 'metadata': details,
             'resource_sample': [{k: v for k, v in row.items() if k in
                 ('CPUPerc', 'MemUsage', 'MemPerc', 'BlockIO', 'PIDs')} for row in samples],
