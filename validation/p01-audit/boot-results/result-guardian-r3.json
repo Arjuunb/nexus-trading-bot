@@ -1,0 +1,168 @@
+{
+ "label": "guardian-r3",
+ "ready_s": 8.318952798843384,
+ "alive": true,
+ "rss_mb_after_boot": 164.4,
+ "rss_mb_end": 164.6,
+ "rss_mb_max": 164.6,
+ "threads": 26,
+ "idle_cpu_pct_one_core": 0.38,
+ "idle_window_s": 45,
+ "thread_names": {
+  "python": 25,
+  "iou-sqp-2321": 1
+ },
+ "open_data_files": [
+  "account.db",
+  "adaptive_lab.db",
+  "adaptive_lab_decisions.db",
+  "adaptive_lab_journal.db",
+  "cycles.db",
+  "decisions.db",
+  "guardian.db",
+  "guardian.db-shm",
+  "guardian.db-wal",
+  "hub.db",
+  "journal.db",
+  "key_vault.db",
+  "ledger.db",
+  "paper_broker_v2.db",
+  "paper_broker_v2.db-shm",
+  "paper_broker_v2.db-wal",
+  "price_action_paper.db",
+  "price_action_paper.db-shm",
+  "price_action_paper.db-wal",
+  "price_action_research.db",
+  "price_action_research.db-shm",
+  "price_action_research.db-wal",
+  "shadow_research.db",
+  "shadow_research.db-shm",
+  "shadow_research.db-wal",
+  "skipped.db",
+  "smc_agent_journal.db",
+  "smc_agent_journal.db-shm",
+  "smc_agent_journal.db-wal",
+  "smc_strategy_paper.db",
+  "smc_strategy_paper.db-shm",
+  "smc_strategy_paper.db-wal",
+  "status.db",
+  "trade_memory.db",
+  "trade_records.db",
+  "trade_records.db-shm",
+  "trade_records.db-wal",
+  "watchlists.db",
+  "webhooks.db"
+ ],
+ "login_status": 303,
+ "endpoint_latency_empty_db": {
+  "/instances": {
+   "status": 200,
+   "median_ms": 5.9,
+   "bytes": 1448
+  },
+  "/research/price-action/bot-status": {
+   "status": 200,
+   "median_ms": 9.8,
+   "bytes": 3901
+  },
+  "/research/smc/bot-status": {
+   "status": 200,
+   "median_ms": 9.1,
+   "bytes": 4519
+  },
+  "/research/smc/agent": {
+   "status": 200,
+   "median_ms": 8.2,
+   "bytes": 986
+  },
+  "/research/adaptive-lab/status": {
+   "status": 200,
+   "median_ms": 7.9,
+   "bytes": 17356
+  },
+  "/guardian/status": {
+   "status": 200,
+   "median_ms": 7.6,
+   "bytes": 6810
+  },
+  "/strategy/performance": {
+   "status": 200,
+   "median_ms": 3.7,
+   "bytes": 578
+  },
+  "/paper/account": {
+   "status": 200,
+   "median_ms": 3.9,
+   "bytes": 298
+  },
+  "/risk/summary": {
+   "status": 200,
+   "median_ms": 5.6,
+   "bytes": 305
+  },
+  "/system/status": {
+   "status": 200,
+   "median_ms": 4.3,
+   "bytes": 493
+  },
+  "/calendar/options": {
+   "status": 200,
+   "median_ms": 5.9,
+   "bytes": 772
+  },
+  "/journal/records?limit=50": {
+   "status": 200,
+   "median_ms": 4.7,
+   "bytes": 413
+  },
+  "/research/instance-visual/instances": {
+   "status": 200,
+   "median_ms": 5.6,
+   "bytes": 47
+  }
+ },
+ "data_files_created": [
+  "account.db",
+  "adaptive_lab.db",
+  "adaptive_lab_decisions.db",
+  "adaptive_lab_journal.db",
+  "audit.db",
+  "cycles.db",
+  "decisions.db",
+  "guardian.db",
+  "guardian.db-shm",
+  "guardian.db-wal",
+  "hub.db",
+  "journal.db",
+  "key_vault.db",
+  "ledger.db",
+  "market_data",
+  "market_data.db",
+  "paper_broker_v2.db",
+  "paper_broker_v2.db-shm",
+  "paper_broker_v2.db-wal",
+  "price_action_paper.db",
+  "price_action_paper.db-shm",
+  "price_action_paper.db-wal",
+  "price_action_research.db",
+  "price_action_research.db-shm",
+  "price_action_research.db-wal",
+  "shadow_research.db",
+  "shadow_research.db-shm",
+  "shadow_research.db-wal",
+  "skipped.db",
+  "smc_agent_journal.db",
+  "smc_agent_journal.db-shm",
+  "smc_agent_journal.db-wal",
+  "smc_strategy_paper.db",
+  "smc_strategy_paper.db-shm",
+  "smc_strategy_paper.db-wal",
+  "status.db",
+  "trade_memory.db",
+  "trade_records.db",
+  "trade_records.db-shm",
+  "trade_records.db-wal",
+  "watchlists.db",
+  "webhooks.db"
+ ]
+}

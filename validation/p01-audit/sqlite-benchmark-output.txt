@@ -1,0 +1,10 @@
+# python3 -I pa_eval_bench.py <215c96c>/automation-hub/services/price_action_lab.py 10000,50000,100000 3000
+# Host: sandbox, 4 vCPU Intel Xeon @ 2.80GHz, Python 3.13 stdlib sqlite3, warm OS cache, synthetic rows only.
+payload_bytes~3000
+rows=  10000 db=   42.3MB | guardian_reader=    13.2ms plan=[SCAN pa_evaluations | USE TEMP B-TREE FOR ORDER BY] | with_index=  1.76ms plan=[SCAN pa_evaluations USING INDEX ix_tmp] | journal_full_pass=   175.8ms
+rows=  50000 db=  211.8MB | guardian_reader=    80.4ms plan=[SCAN pa_evaluations | USE TEMP B-TREE FOR ORDER BY] | with_index=  5.19ms plan=[SCAN pa_evaluations USING INDEX ix_tmp] | journal_full_pass=   932.1ms
+rows= 100000 db=  423.7MB | guardian_reader=   134.6ms plan=[SCAN pa_evaluations | USE TEMP B-TREE FOR ORDER BY] | with_index= 11.40ms plan=[SCAN pa_evaluations USING INDEX ix_tmp] | journal_full_pass=  2031.5ms
+
+# python3 -I rowvalue.py <215c96c>/automation-hub/services/price_action_lab.py   (100,000 synthetic rows)
+SEARCH pa_evaluations USING INDEX ix (updated_at>?)
+row-value seek @100k rows: 0.029 ms

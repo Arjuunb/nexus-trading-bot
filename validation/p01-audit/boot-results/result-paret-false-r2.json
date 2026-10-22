@@ -1,0 +1,125 @@
+{
+ "label": "paret-pa-false-r2",
+ "ready_s": 3.167085886001587,
+ "alive": true,
+ "rss_mb_after_boot": 136.5,
+ "rss_mb_end": 136.6,
+ "rss_mb_max": 136.6,
+ "threads": 14,
+ "idle_cpu_pct_one_core": 0.24,
+ "idle_window_s": 45,
+ "thread_names": {
+  "python": 13,
+  "iou-sqp-2255": 1
+ },
+ "open_data_files": [
+  "account.db",
+  "cycles.db",
+  "decisions.db",
+  "hub.db",
+  "journal.db",
+  "ledger.db",
+  "paper_broker_v2.db",
+  "paper_broker_v2.db-shm",
+  "paper_broker_v2.db-wal",
+  "shadow_research.db",
+  "shadow_research.db-shm",
+  "shadow_research.db-wal",
+  "skipped.db",
+  "smc_strategy_paper.db",
+  "smc_strategy_paper.db-shm",
+  "smc_strategy_paper.db-wal",
+  "trade_memory.db",
+  "watchlists.db"
+ ],
+ "login_status": 303,
+ "endpoint_latency_empty_db": {
+  "/instances": {
+   "status": 200,
+   "median_ms": 5.3,
+   "bytes": 1448
+  },
+  "/research/price-action/bot-status": {
+   "status": 410,
+   "median_ms": 5.9,
+   "bytes": 110
+  },
+  "/research/smc/bot-status": {
+   "status": 200,
+   "median_ms": 7.4,
+   "bytes": 3765
+  },
+  "/research/smc/agent": {
+   "status": 404,
+   "median_ms": 10.5,
+   "bytes": 22
+  },
+  "/research/adaptive-lab/status": {
+   "status": 404,
+   "median_ms": 10.1,
+   "bytes": 22
+  },
+  "/guardian/status": {
+   "status": 404,
+   "median_ms": 10.2,
+   "bytes": 22
+  },
+  "/strategy/performance": {
+   "status": 200,
+   "median_ms": 5.1,
+   "bytes": 578
+  },
+  "/paper/account": {
+   "status": 200,
+   "median_ms": 4.6,
+   "bytes": 298
+  },
+  "/risk/summary": {
+   "status": 200,
+   "median_ms": 4.4,
+   "bytes": 305
+  },
+  "/system/status": {
+   "status": 200,
+   "median_ms": 3.9,
+   "bytes": 493
+  },
+  "/calendar/options": {
+   "status": 404,
+   "median_ms": 8.9,
+   "bytes": 22
+  },
+  "/journal/records?limit=50": {
+   "status": 404,
+   "median_ms": 3.7,
+   "bytes": 41
+  },
+  "/research/instance-visual/instances": {
+   "status": 404,
+   "median_ms": 5.3,
+   "bytes": 22
+  }
+ },
+ "data_files_created": [
+  "account.db",
+  "cycles.db",
+  "decisions.db",
+  "hub.db",
+  "journal.db",
+  "ledger.db",
+  "market_data",
+  "paper_broker_v2.db",
+  "paper_broker_v2.db-shm",
+  "paper_broker_v2.db-wal",
+  "shadow_research.db",
+  "shadow_research.db-shm",
+  "shadow_research.db-wal",
+  "shadow_research.operational-spool.db",
+  "skipped.db",
+  "smc_strategy_paper.db",
+  "smc_strategy_paper.db-shm",
+  "smc_strategy_paper.db-wal",
+  "trade_memory.db",
+  "watchlists.db"
+ ]
+}
