@@ -27,65 +27,37 @@ test("top bar icons navigate", async ({ page }) => {
   await expect(page).toHaveURL(/#\/settings$/);
 });
 
-test("Price Action Visual Lab — public stream truth and protected paper modes", async ({ page }) => {
+test("retired Price Action Lab has no navigation or dashboard card", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/price-action-lab");
-  await expect(page.getByRole("heading", { name: "Price Action Visual Lab" })).toBeVisible();
-  await expect(page.getByText("SIGNALS_ONLY", { exact: true })).toBeVisible();
-  await expect(page.getByText("LIVE ROUTING DISABLED", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Binance · SYNCHRONIZED/)).toBeVisible();
-  await expect(page.getByText(/PAPER · NO LIVE EXECUTION PATH/)).toBeVisible();
-  const ticker = page.locator(".smc-live-price-ticker");
-  await expect(ticker).toBeVisible();
-  await expect(ticker).not.toHaveClass(/stale/);
-  await expect(ticker).toHaveAttribute(
-    "aria-label", /Live price .* candle closes in \d{2}:\d{2}/);
-
-  await page.getByLabel("Paper operating mode").selectOption("automatic");
-  const [request] = await Promise.all([
-    page.waitForRequest((row) => row.url().includes("/research/price-action/sessions/current/configuration") && row.method() === "POST"),
-    page.getByRole("button", { name: "Apply paper configuration" }).click(),
-  ]);
-  expect(request.postDataJSON().operating_mode).toBe("automatic");
-  await expect(page.locator(".toast.success")).toBeVisible();
-  await expect(page.getByText("ISOLATED_FORWARD_PAPER", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: /connection/i }).click();
-  await expect(page.getByText("CLOSED BARS ONLY")).toBeVisible();
-  await expect(page.getByText("DISABLED", { exact: true })).toBeVisible();
+  await page.goto("/#/dashboard");
+  await expect(page.locator("aside.sidebar").getByRole("button", { name: "Price Action Lab", exact: true })).toHaveCount(0);
+  await expect(page.getByTestId("dashboard-price-action-lab")).toHaveCount(0);
+  await expect(page.getByTestId("dashboard-smc-strategy-lab")).toBeVisible();
 });
 
-test("Price Action Visual Lab — rapid market switches settle on one session identity", async ({ page }) => {
+test("retired Price Action bookmark redirects without mounting its page", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/price-action-lab");
-  const symbol = page.getByLabel("Price Action session symbol");
-  await expect(symbol).toHaveValue("BTCUSDT");
-  await symbol.selectOption("ETHUSDT");
-  await expect(symbol).toHaveValue("ETHUSDT");
-  await expect(page.locator(".pa-chart-head")).toContainText("ETHUSDT · 5m");
-
-  await page.getByRole("button", { name: "15m", exact: true }).click();
-  await expect(page.locator(".pa-chart-head")).toContainText("ETHUSDT · 15m");
-  await expect(page.locator(".pa-stream-truth")).toContainText("SYNCHRONIZED");
+  const requests: string[] = [];
+  page.on("request", request => { if (request.url().includes("/research/price-action")) requests.push(request.url()); });
+  await page.goto("/#/price-action-lab?tab=session");
+  await expect(page).toHaveURL(/#\/dashboard$/);
+  await expect(page.locator(".pa-lab")).toHaveCount(0);
+  expect(requests).toEqual([]);
 });
 
-test("Price Action Visual Lab — chart presets and setup focus remain audit-safe", async ({ page }, testInfo) => {
+test("dashboard keeps SMC polling while retired PA never polls", async ({ page }) => {
   await mockApi(page);
-  await page.goto("/#/price-action-lab");
-  const preset = page.getByLabel("Chart layer preset");
-  await expect(preset).toHaveValue("clean");
-  await preset.selectOption("debug");
-  await expect(page.getByText(/All zones, setups, orders and trades remain/)).toBeVisible();
-  await page.getByRole("button", { name: "orders", exact: false }).click();
-  await expect(page.getByText("Pending paper audit")).toBeVisible();
-  await expect(page.getByText("Research-engine orders · not paper broker orders")).toBeVisible();
-  await page.getByRole("button", { name: "Reconcile strategy orders" }).click();
-  await expect(page.getByText("Pending paper orders are already reconciled")).toBeVisible();
-  await preset.selectOption("clean");
-  await page.locator(".pa-chart-shell").scrollIntoViewIfNeeded();
-  await page.screenshot({ path: testInfo.outputPath("price-action-desktop.png"), fullPage: true });
-  await page.setViewportSize({ width: 768, height: 900 });
-  await page.screenshot({ path: testInfo.outputPath("price-action-responsive.png"), fullPage: true });
+  const pa: string[] = [], smc: string[] = [];
+  page.on("request", request => {
+    if (request.url().includes("/research/price-action")) pa.push(request.url());
+    if (request.url().includes("/research/smc/bot-status")) smc.push(request.url());
+  });
+  await page.goto("/#/dashboard");
+  await expect(page.getByTestId("dashboard-smc-strategy-lab")).toBeVisible();
+  // Observe beyond the removed four-second PA poll interval.
+  await page.waitForTimeout(4500);
+  expect(pa).toEqual([]);
+  expect(smc.length).toBeGreaterThan(1);
 });
 
 test("Settings > Save Settings shows a success toast", async ({ page }) => {

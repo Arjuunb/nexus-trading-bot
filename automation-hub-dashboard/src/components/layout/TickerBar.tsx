@@ -33,7 +33,6 @@ export default function TickerBar({ surface }: { surface: string }) {
   const app = useApp();
   const instanceState = useLive<Snapshot>("/instances", 4000);
   const { data } = instanceState;
-  const pa = useLive<LabBotStatus>("/research/price-action/bot-status", 4000);
   const smc = useLive<LabBotStatus>("/research/smc/bot-status", 4000);
   const [, setClock] = useState(0);
   useEffect(() => {
@@ -50,10 +49,10 @@ export default function TickerBar({ surface }: { surface: string }) {
   const activeSeconds = Number.isFinite(parsedStart)
     ? Math.max(0, (Date.now() - parsedStart) / 1000)
     : selected?.engine?.uptime_s ?? undefined;
-  const labRequest = surface === "Price Action Lab" ? pa : surface === "SMC Strategy Lab" ? smc : null;
+  const labRequest = surface === "SMC Strategy Lab" ? smc : null;
   const lab = labRequest?.data ?? null;
   const labItems: [string, string][] | null = lab ? [
-    ["Surface", lab.lab === "PRICE_ACTION" ? "PRICE ACTION LAB" : "SMC STRATEGY LAB"],
+    ["Surface", "SMC STRATEGY LAB"],
     ["Mode", !lab.session_id || !lab.mode ? "LOADING SESSION" : lab.mode === "signals_only" ? "SIGNALS_ONLY" : "ISOLATED_FORWARD_PAPER"],
     ["Data", `Binance USD-M · ${labRequest?.error ? "STALE" : lab.feed?.state ?? "DISCONNECTED"}`],
     ["Market", `${lab.symbol ?? "—"} · ${lab.timeframe ?? "—"}`],
@@ -74,7 +73,7 @@ export default function TickerBar({ surface }: { surface: string }) {
     ["Active", selected ? `${selected.symbol} · ${selected.strategy_label} · ${selected.timeframe}` : instances],
   ] : [["System", footerConnectionState(instanceState.error, instanceState.loading)]];
   const unavailableLabItems: [string, string][] | null = labRequest && !lab ? [
-    ["Surface", surface === "Price Action Lab" ? "PRICE ACTION LAB" : "SMC STRATEGY LAB"],
+    ["Surface", "SMC STRATEGY LAB"],
     ["State", footerConnectionState(labRequest.error, labRequest.loading)],
   ] : null;
   const items = labItems ?? unavailableLabItems ?? researchItems ?? instanceItems;

@@ -32,7 +32,7 @@ export const useApp = () => useContext(AppContext);
 export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
   { title: null, items: ["Dashboard"] },
   { title: "Trading", items: ["Trading Instances", "Strategy Studio", "Paper Trading", "Live Trading"] },
-  { title: "Research", items: ["Price Action Lab", "SMC Visual Lab", "SMC Strategy Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
+  { title: "Research", items: ["SMC Visual Lab", "SMC Strategy Lab", "Replay", "Backtesting", "Optimization Lab", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },
   { title: "Strategy Intelligence", items: ["Strategy Intelligence"] },
   { title: "Records", items: ["Journal"] },
@@ -87,6 +87,9 @@ export interface Route {
 export const parseHash = (): Route => {
   const raw = window.location.hash.replace(/^#\/?/, "").trim();
   const [h, query = ""] = raw.split("?", 2);
+  if (h === "price-action-lab") {
+    return { page: "Dashboard", botId: "", redirectHash: "/dashboard" };
+  }
   const tab = new URLSearchParams(query).get("tab") ?? undefined;
   const bot = h.match(/^bot\/(.+)$/);
   if (bot) return { page: "BotDetail", botId: bot[1] };

@@ -58,6 +58,7 @@ services:
     environment:
       HUB_ENV: production
       HUB_DATA_DIR: /var/lib/tradexa
+      PRICE_ACTION_LAB_ENABLED: "false"
       HUB_AUTO_ENGINE: "0"
       HUB_ENABLE_EXTERNAL_LIVE: "0"
       HUB_USE_LIVE_DATA: "0"
