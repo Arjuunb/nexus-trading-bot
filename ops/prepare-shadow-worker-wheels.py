@@ -13,7 +13,7 @@ from urllib.request import urlopen
 
 PACKAGES={'setuptools':'80.10.2','wheel':'0.46.2','packaging':'25.0','websockets':'15.0.1',
     'psycopg':'3.3.6','psycopg-binary':'3.3.6','typing-extensions':'4.16.0',
-    'requests':'2.34.2','certifi':'2026.6.17','charset-normalizer':'3.4.7','idna':'3.18','urllib3':'2.8.0'}
+    'requests':'2.34.2','certifi':'2026.10.19','charset-normalizer':'3.4.7','idna':'3.18','urllib3':'2.8.0'}
 
 
 def prepare(directory, *, platform='manylinux'):
