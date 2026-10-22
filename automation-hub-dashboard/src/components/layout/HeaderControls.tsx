@@ -139,7 +139,7 @@ export default function HeaderControls() {
   const engineState = !selected ? "BLOCKED" : riskBlocked || dataDegraded ? "BLOCKED" : selected.ui_status ?? "BLOCKED";
   const stateDot = engineState === "RUNNING_ARMED" ? "online" : engineState === "ERROR" ? "offline" : "warn";
   const modeLabel = selected?.mode === "research" ? "RESEARCH" : "PAPER";
-  const independentLabPage = /#\/(price-action-lab|smc-strategy-lab)(?:\?|$)/.test(window.location.hash);
+  const independentLabPage = /#\/smc-strategy-lab(?:\?|$)/.test(window.location.hash);
   const strategyVersion = selected ? `${selected.strategy_label} ${selected.strategy_version}` : "Strategy";
   const maxQuickRisk = (options.data?.execution_defaults?.max_quick_risk_pct ?? 0.01) * 100;
 

@@ -210,14 +210,15 @@ class FactoryResetService:
         # paper broker, so the global Factory Reset must clear it explicitly.
         # Its reset creates a fresh 10,000 USDT research session while keeping
         # the account incapable of reaching any live execution path.
-        if hasattr(r, "price_action_runtime"):
+        if getattr(r, "price_action_runtime", None) is not None:
             r.price_action_runtime.stop()
-        r.price_action_paper.factory_reset()
+        if getattr(r, "price_action_paper", None) is not None:
+            r.price_action_paper.factory_reset()
         if hasattr(r, "smc_runtime"):
             r.smc_runtime.stop()
         if hasattr(r, "smc_paper"):
             r.smc_paper.factory_reset()
-        if hasattr(r, "price_action_experiments"):
+        if getattr(r, "price_action_experiments", None) is not None:
             r.price_action_experiments.clear()
         r.account_store.set_initial_capital(r.settings.starting_cash, reset_account=True)
         r.paper.starting_balance = r.settings.starting_cash

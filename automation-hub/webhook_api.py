@@ -17,6 +17,9 @@ from pydantic import BaseModel, Field
 
 from config import settings
 from services.acceptance_policy import acceptance_read_only
+from services.feature_flags import price_action_lab_enabled
+
+PRICE_ACTION_LAB_ENABLED = price_action_lab_enabled()
 from data.ledger import get_ledger
 from execution.paper_engine import PaperExecutionEngine
 from services.auto_engine import AutoStrategyEngine
@@ -918,12 +921,10 @@ backfill_job = BackfillJob(market_store)
 # remains the compatibility path until callers opt into /paper-v2.
 from data.market_data_v2 import MarketDataService, MarketDataUpdateJob  # noqa: E402
 from execution.paper_broker_v2 import PaperBrokerV2  # noqa: E402
-from services.price_action_lab import PriceActionLabRuntime, PriceActionPaperAccount  # noqa: E402
 from services.smc_strategy_lab import SMCPaperAccount, SMCStrategyLabRuntime  # noqa: E402
 from services.forward_paper_hub import ForwardPaperMarketDataHub  # noqa: E402
 from services.research_observer import ResearchObservationRuntime  # noqa: E402
 from services.shadow_research import ShadowResearchStore  # noqa: E402
-from services.price_action_research import PriceActionExperimentRunner, PriceActionExperimentStore  # noqa: E402
 v2_market_data = MarketDataService(settings.market_data_v2_dir)
 forward_paper_market_hub = ForwardPaperMarketDataHub(v2_market_data.public_usdm_window)
 _shadow_path = _os.path.abspath(settings.shadow_research_db)
@@ -950,7 +951,8 @@ from services.active_decision_evidence import ActiveDecisionSources  # noqa: E40
 from services.shadow_comparison_service import ShadowComparisonService  # noqa: E402
 from services.tenancy import OWNER_TENANT, multi_user_enabled  # noqa: E402
 shadow_router.active_sources = ActiveDecisionSources(
-    pa_path=settings.price_action_paper_db, smc_path=settings.smc_paper_db,
+    pa_path=settings.price_action_paper_db if PRICE_ACTION_LAB_ENABLED else None,
+    smc_path=settings.smc_paper_db,
     decisions_path=settings.decisions_db,
     lab_owner=None if multi_user_enabled() else OWNER_TENANT,
 )
@@ -991,9 +993,6 @@ instance_supervisor = InstanceSupervisor(
     interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
-price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
-                                              starting_balance=10_000.0,
-                                              evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
 smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0,
@@ -1001,15 +1000,23 @@ smc_paper = SMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0,
 smc_runtime = SMCStrategyLabRuntime(
     v2_market_data, smc_paper, market_hub=forward_paper_market_hub,
     poll_seconds=settings.smc_poll_s, autostart=not acceptance_read_only())
-# Price Action must remain autonomous after a server restart even when no
-# browser has opened the lab page. The supervisor owns stream initialization;
-# UI requests are read-only observers of the same server-side runtime.
-price_action_runtime = PriceActionLabRuntime(
-    v2_market_data, price_action_paper, autostart=not acceptance_read_only(),
-    market_hub=forward_paper_market_hub,
-    poll_seconds=settings.price_action_poll_s)
-price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
-price_action_research = PriceActionExperimentRunner(price_action_experiments)
+# When explicitly enabled, the process owns PA runtime initialization.
+# Retirement skips the entire lab instead of merely hiding its page.
+# Disabled means no PA account/broker/journal/experiment SQLite connections,
+# supervisor thread or market-data subscription. Shared PA strategy definitions
+# remain available to Trading Instances and backtesting.
+price_action_paper = price_action_runtime = None
+price_action_experiments = price_action_research = None
+if PRICE_ACTION_LAB_ENABLED:
+    from services.price_action_lab import PriceActionLabRuntime, PriceActionPaperAccount
+    from services.price_action_research import PriceActionExperimentRunner, PriceActionExperimentStore
+    price_action_paper = PriceActionPaperAccount(settings.price_action_paper_db,
+        starting_balance=10_000.0, evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
+    price_action_runtime = PriceActionLabRuntime(
+        v2_market_data, price_action_paper, autostart=not acceptance_read_only(),
+        market_hub=forward_paper_market_hub, poll_seconds=settings.price_action_poll_s)
+    price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
+    price_action_research = PriceActionExperimentRunner(price_action_experiments)
 v2_market_update_job = MarketDataUpdateJob(v2_market_data)
 
 # ------------------------------------------------- market-context providers
@@ -1269,7 +1276,10 @@ import routers.market_data  # noqa: E402
 import routers.instances  # noqa: E402
 import routers.forward_validation  # noqa: E402
 import routers.native_smc  # noqa: E402
-import routers.price_action  # noqa: E402
+if PRICE_ACTION_LAB_ENABLED:
+    from routers.price_action import router as price_action_router
+else:
+    from routers.disabled_price_action import router as price_action_router
 import routers.research_observatory  # noqa: E402
 import routers.factory_reset  # noqa: E402
 router.include_router(routers.analytics.router)
@@ -1288,7 +1298,7 @@ router.include_router(routers.market_data.router)
 router.include_router(routers.instances.router)
 router.include_router(routers.forward_validation.router)
 router.include_router(routers.native_smc.router)
-router.include_router(routers.price_action.router)
+router.include_router(price_action_router)
 router.include_router(routers.research_observatory.router)
 router.include_router(routers.factory_reset.router)
 

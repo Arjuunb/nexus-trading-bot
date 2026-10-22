@@ -654,7 +654,8 @@ def _shutdown_all_runtimes() -> None:
     research_worker = getattr(webhook_api.strategy_intelligence.context, "_research_worker", None)
     if research_worker is not None:
         run("research_worker", research_worker.stop)
-    run("price_action_lab", webhook_api.price_action_runtime.stop)
+    if webhook_api.price_action_runtime is not None:
+        run("price_action_lab", webhook_api.price_action_runtime.stop)
     run("smc_lab", webhook_api.smc_runtime.stop)
     if errors:
         print("[shutdown] completed with degraded acknowledgements: " + " | ".join(errors),
@@ -2523,6 +2524,7 @@ def health():
     from services.tenancy import multi_user_enabled
     return {"status": "ok", "app": settings.app_name, **_deploy_info(),
             "acceptance_read_only": acceptance_read_only(),
+            "features": {"price_action_lab_enabled": webhook_api.PRICE_ACTION_LAB_ENABLED},
             "persistence": _persistence_info(),
             "tenancy": {"multi_user": multi_user_enabled(), "mode": "multi" if multi_user_enabled() else "single-owner"}}
 

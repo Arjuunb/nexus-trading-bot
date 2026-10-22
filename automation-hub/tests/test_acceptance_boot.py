@@ -20,7 +20,7 @@ def child_python():
     return [str(executable)]
 
 
-def probe(directory):
+def probe(directory, *, pa_enabled=True):
     from contextlib import ExitStack
     import hashlib
     import socket
@@ -37,6 +37,7 @@ def probe(directory):
         HUB_AUTO_ENGINE='1', HUB_USE_LIVE_DATA='1', HUB_ENABLE_EXTERNAL_LIVE='1',
         HUB_RESEARCH_AUTOSTART='1', NEXUS_SHADOW_SUPERVISED='1',
         HUB_MONITOR_AGENT='1', HUB_DAILY_REPORT_HOUR='8', NEXUS_ACCEPTANCE_READ_ONLY='0')
+    os.environ['PRICE_ACTION_LAB_ENABLED'] = 'true' if pa_enabled else 'false'
     from config import settings
     from data.account_store import AccountStore
     from data.ledger import SqliteLedger
@@ -59,14 +60,17 @@ def probe(directory):
     account._c.close()
     broker = PaperBrokerV2(settings.paper_broker_v2_db, starting_balance=2345)
     broker._c.close()
-    pa = PriceActionPaperAccount(settings.price_action_paper_db, starting_balance=3456, evidence_owner=OWNER_TENANT)
-    for db in (pa._db, pa.broker._c, pa.journal._db):
-        db.close()
+    if pa_enabled:
+        pa = PriceActionPaperAccount(settings.price_action_paper_db, starting_balance=3456, evidence_owner=OWNER_TENANT)
+        for db in (pa._db, pa.broker._c, pa.journal._db):
+            db.close()
     smc = SMCPaperAccount(settings.smc_paper_db, starting_balance=4567, evidence_owner=OWNER_TENANT)
     for db in (smc._db, smc.broker._c):
         db.close()
     financial = [settings.ledger_path, settings.account_db, settings.paper_broker_v2_db,
-        settings.price_action_paper_db, settings.smc_paper_db]
+        settings.smc_paper_db]
+    if pa_enabled:
+        financial.append(settings.price_action_paper_db)
 
     def fingerprints():
         result = []
@@ -87,6 +91,13 @@ def probe(directory):
     with ExitStack() as guards:
         guards.enter_context(patch.object(socket.socket, 'connect', forbidden))
         guards.enter_context(patch.object(socket, 'create_connection', forbidden))
+        original_connect = sqlite3.connect
+        def guarded_connect(database, *args, **kwargs):
+            if not pa_enabled and any(Path(path).name in str(database) for path in
+                    (settings.price_action_paper_db, settings.price_action_research_db)):
+                raise AssertionError('Disabled PA database was opened')
+            return original_connect(database, *args, **kwargs)
+        guards.enter_context(patch.object(sqlite3, 'connect', guarded_connect))
         with patch.object(threading.Thread, 'start', forbidden):
             import app
         from fastapi.testclient import TestClient
@@ -94,6 +105,7 @@ def probe(directory):
             health = client.get('/health')
             assert health.status_code == 200, health.text
             assert health.json()['acceptance_read_only'] is True
+            assert health.json()['features']['price_action_lab_enabled'] is pa_enabled
             assert client.get('/api/v2/strategy-intelligence/cohorts').status_code == 401
             login = client.post('/auth/login', data={'username': 'acceptance-owner', 'password': 'synthetic-acceptance-password'})
             assert login.status_code == 200, login.text
@@ -108,9 +120,23 @@ def probe(directory):
                 '/paper-v2/orders', '/api/v2/strategy-intelligence/shadow/registrations'):
                 response = client.post(path, json={})
                 assert response.status_code == 423, (path, response.status_code, response.text)
-            assert not app.webhook_api.price_action_runtime.stream.running
+            if pa_enabled:
+                assert not app.webhook_api.price_action_runtime.stream.running
+                assert app.webhook_api.price_action_runtime._supervisor_thread is None
+            else:
+                for name in ('price_action_runtime', 'price_action_paper',
+                             'price_action_experiments', 'price_action_research'):
+                    assert getattr(app.webhook_api, name) is None, name
+                assert app.webhook_api.shadow_router.active_sources.paths['pa-lab'] is None
+                for prefix in ('', '/api/v1'):
+                    for path in ('', '/manifest', '/bot-status', '/paper', '/experiments'):
+                        retired = client.get(prefix + '/research/price-action' + path)
+                        # Acceptance request policy can reject a retired URL before routing.
+                        assert retired.status_code == 423, (retired.status_code, retired.text)
+                        assert retired.json()['detail'] == 'ACCEPTANCE_READ_ONLY'
+                assert not Path(settings.price_action_paper_db).exists()
+                assert not Path(settings.price_action_research_db).exists()
             assert app.webhook_api.smc_runtime._thread is None
-            assert app.webhook_api.price_action_runtime._supervisor_thread is None
             assert not app.webhook_api.engine.status().get('running')
         assert fingerprints() == before, 'Boot/HTTP/shutdown changed financial rows or saved rules'
     print(json.dumps({'status': 'LOCAL_ACCEPTANCE_BOOT_HTTP_SHUTDOWN_PASSED',
@@ -119,6 +145,16 @@ def probe(directory):
 
 
 class FullAcceptanceBoot(unittest.TestCase):
+    def test_real_boot_without_price_action_databases_never_opens_or_creates_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = dict(os.environ)
+            environment['PYTHONPATH'] = os.pathsep.join([str(ROOT), str(ROOT.parent), environment.get('PYTHONPATH', '')])
+            result = subprocess.run([*child_python(), str(Path(__file__).resolve()), '--disabled-pa-probe', directory],
+                env=environment, text=True, capture_output=True, timeout=90)
+            self.assertEqual(result.returncode, 0, result.stdout+'\n'+result.stderr)
+            proof = json.loads(result.stdout.splitlines()[-1])
+            self.assertEqual(proof['financial_files_unchanged'], 4)
+
     def test_real_boot_preserves_saved_intent_and_finances_with_autostart_flags_enabled(self):
         with tempfile.TemporaryDirectory() as directory:
             environment = dict(os.environ)
@@ -133,5 +169,7 @@ class FullAcceptanceBoot(unittest.TestCase):
 if __name__ == '__main__':
     if len(sys.argv) == 3 and sys.argv[1] == '--boot-probe':
         probe(Path(sys.argv[2]))
+    elif len(sys.argv) == 3 and sys.argv[1] == '--disabled-pa-probe':
+        probe(Path(sys.argv[2]), pa_enabled=False)
     else:
         unittest.main()
