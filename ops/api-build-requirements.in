@@ -1,3 +1,7 @@
-# Existing packaging tooling, pinned for the Python 3.11 production build.
+# Packaging tooling and dependency security floors for the production build.
 setuptools==80.10.2
 wheel==0.46.2
+# CCXT 4.5.85 pins a Certifi release affected by GHSA-6q48-6c7w-9gw2.
+# 4.5.87 accepts the patched CA bundle without overriding package metadata.
+ccxt>=4.5.87
+certifi>=2026.10.19
