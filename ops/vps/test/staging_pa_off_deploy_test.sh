@@ -194,6 +194,22 @@ hasnt "apply prints no secrets" "$out" "SUPERSECRET"
 [ "$(docker exec $P-api-1 sh -c 'echo $HUB_SECRET')" = SUPERSECRETapp333 ] && ok "API keeps its env file values" || bad "API env values"
 [ "$(docker inspect -f '{{.State.Health.Status}}' $P-ingress-1)" = healthy ] && ok "web proxy reaches the new API" || bad "web proxy health"
 
+# --- post-deploy check (short window), while the SMC database keeps being written
+K=$(pwd)/ops/vps/operations/staging-pa-off-check.sh
+( j=0; while [ $j -lt 40 ]; do python3 -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('insert into t values(1)'); c.commit()" "$SV/smc_strategy_paper.db"; sleep 0.5; j=$((j + 1)); done ) & smcw=$!
+out=$(PA_OFF_TEST_SECONDS=12 PA_OFF_TEST_STEP=3 sh "$K" measure); echo "$out" | sed 's/^/      | /'
+wait $smcw 2>/dev/null
+has "check says GO" "$out" "^GO: Price Action Lab is off on staging"
+has "check reads API resources" "$out" "staging API   CPU avg"
+has "check reads production resources" "$out" "production    CPU avg"
+has "check sees no PA file open" "$out" "PASS  no API process holds a price_action file open"
+hasnt "check prints no secrets" "$out" "SUPERSECRET"
+touch "$SV/price_action_paper.db"
+out=$(PA_OFF_TEST_SECONDS=3 PA_OFF_TEST_STEP=1 sh "$K" measure)
+has "check says NO-GO when the PA database comes back" "$out" "NO-GO: .*price_action_paper.db not re-created"
+rm -f "$SV/price_action_paper.db"
+out=$(sh "$K" watch); has "check rejects unknown argument" "$out" "usage:"
+
 # --- rollback
 out=$(sh "$D" rollback); has "rollback restores old image, stopped" "$out" "ROLLED BACK"
 [ "$(docker inspect -f '{{.State.Running}} {{.Image}} {{.HostConfig.Memory}}' $P-api-1)" = "false $OLD 1610612736" ] && ok "API back on old image, stopped, 1536 MiB" || bad "API state after rollback"
