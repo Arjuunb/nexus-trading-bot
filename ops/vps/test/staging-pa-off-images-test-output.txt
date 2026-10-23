@@ -1,0 +1,19 @@
+PASS  refuses a package with the wrong SHA-256
+PASS  refuses a missing package
+PASS  loads a good package
+PASS  reports GitHub digest match
+PASS  reports sealed list
+PASS  reports scans
+PASS  reports PA default off
+PASS  recorded image ID is the loaded image
+PASS  no container left from the probe
+PASS  second load is fine (idempotent)
+PASS  refuses a file changed after sealing
+PASS  refuses an unsealed extra file
+PASS  refuses HIGH/CRITICAL findings
+PASS  refuses an image with PA on by default
+PASS  refuses a dashboard still calling the PA lab
+PASS  refuses an image running as root
+PASS  refuses a package sealed for another commit
+PASS  rejects unknown argument
+staging_pa_off_images_test: 0 failed

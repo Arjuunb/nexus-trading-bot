@@ -1,0 +1,46 @@
+PASS  refuses while the staging API runs
+PASS  refuses while another container uses the volume
+PASS  refuses while a process holds a file open
+PASS  refuses a symlink in the volume
+PASS  refuses while staging Postgres is down
+PASS  refuses without enough free disk
+PASS  no manifest after refusals
+PASS  starts
+PASS  start names the largest file
+PASS  start reports the skipped Task 6 folder
+      | 2026-10-23T17:31:08Z start: 8 files, 0.02 GB from /var/lib/docker/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data (largest: smc_strategy_paper.db 0.02 GB, smc_strategy_paper.db-wal 0.00 GB, smc_strategy_paper.db-shm 0.00 GB); skipped Task 6 recovery folder 0.00 GB; Postgres postgres:16-alpine; free 30.43 GB; compressor zstd
+      | 2026-10-23T17:31:08Z source: SHA-256 of 8 files recorded (smc_strategy_paper.db 84ce42d3393f8e24)
+      | 2026-10-23T17:31:09Z archive api-state.tar.zst 0.00 GB sha256 51b13f68f94005ab
+      | 2026-10-23T17:31:09Z postgres: dumped roles and 2 databases (nexus_staging_metadata, postgres), 0.00 GB; 2 tables, 503 rows counted just after the dump
+      | 2026-10-23T17:31:09Z restore: all 8 files byte-identical to the originals
+      | 2026-10-23T17:31:09Z restore: 5 SQLite databases pass integrity_check; smc_strategy_paper.db: 16 WAL frames applied, 3 tables, 21310 rows, 0 foreign key violations
+      | 2026-10-23T17:31:13Z restore: Postgres dump loaded into a throwaway container (no network): all 2 tables back, 503 rows; 0 tables differ from the count taken just after the dump (the research worker keeps writing)
+      | 2026-10-23T17:31:13Z finished: OK; temporary restored copies deleted; free 30.43 GB
+      | RESULT: OK
+      | verified backup: /tmp/tmp.fK9hQwiI7V/staging-backup/api-state.tar.zst (0.00 GB), sha256 51b13f68f94005ab, plus Postgres dumps (0.00 GB); restore test at 2026-10-23T17:31:13Z passed
+      | Nothing was changed by this status check.
+PASS  result OK
+PASS  source hashes recorded
+PASS  restored files byte-identical
+PASS  SQLite integrity ok
+PASS  WAL frames applied in the restored copy
+PASS  Postgres dumped
+PASS  Postgres restored with every table
+PASS  temporary copies deleted
+PASS  no Postgres password in output
+PASS  no Postgres password in progress log
+PASS  originals unchanged (size, mtime, inode, sha256 incl. -wal/-shm)
+PASS  original WAL still there (not checkpointed)
+PASS  restore folders removed
+PASS  throwaway Postgres removed
+PASS  role dump readable by root only
+PASS  Task 6 folder not in the archive
+PASS  sub-folder files in the archive
+PASS  restored SMC database has all 20300 rows incl. WAL-only commits
+PASS  dump restores independently
+PASS  restored research.jobs has 500 rows
+PASS  table owner role restored
+PASS  second start keeps the verified backup
+PASS  status shows the verified backup
+PASS  rejects unknown argument
+staging_backup_test: 0 failed

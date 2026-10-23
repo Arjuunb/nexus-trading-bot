@@ -1,0 +1,81 @@
+PASS  setup: API stopped with 1536 MiB set directly
+PASS  plan refuses before the image is loaded
+PASS  plan refuses before the backup
+PASS  backup OK
+PASS  plan refuses an image recorded for another commit
+PASS  plan refuses a changed Compose file
+PASS  plan refuses when API data changed after the backup
+PASS  plan refuses while the API runs
+PASS  apply refuses without a plan
+PASS  plan ready
+PASS  plan shows image change
+PASS  plan keeps memory
+PASS  plan lists untouched services
+PASS  plan prints no secrets
+PASS  apply refuses a plan older than 2 hours
+PASS  apply refuses when something changed since the plan
+PASS  nothing changed by refusals
+      | recorded the current API for rollback: nexus-rc3-api:fake-old (sha256:395ed9fa5521)
+      | nexus-remote-stage-rc3-28acdbc-api-1 recreated with the PA-off image; waiting for it to be healthy (up to 8 minutes)
+      | container check: image, 1536 MiB memory, volumes, networks, user and all 6 Compose environment values as planned
+      | /health: {"status": "ok", "pa": false}; PA lab routes in the API's route list: {"operations": 3, "not_retired": []}
+      | staging web proxy reloaded: healthy
+      | production: unchanged (same containers, start times, restart counts)
+      | DEPLOYED: staging API runs the PA-off image (Price Action Lab OFF). Next: staging-pa-off-check measure.
+PASS  apply deploys
+PASS  container check passes
+PASS  health says PA off
+PASS  PA routes all retired
+PASS  web proxy reloaded and healthy
+PASS  production unchanged
+PASS  apply prints no secrets
+PASS  API running new image with 1536 MiB
+PASS  research worker untouched
+PASS  Postgres untouched
+PASS  API keeps its env file values
+PASS  web proxy reaches the new API
+      | == 1. Identity
+      | PASS  API runs the verified PA-off image: sha256:8752fc7ed40b
+      | PASS  API healthy
+      | PASS  no restarts, not OOM-killed: restarts 0
+      | PASS  memory limit 1536 MiB / 1536 MiB
+      |       started 2026-10-23T18:11:07 (0 minutes ago)
+      | == 2. Price Action Lab is gone at runtime
+      | PASS  /health: status ok, price_action_lab_enabled false: {"status": "ok", "pa": false, "tenancy": null}
+      | PASS  every PA lab route is the retired handler (HTTP 410): 3 operations
+      | PASS  PRICE_ACTION_LAB_ENABLED not on: unset
+      | PASS  price_action_paper.db not re-created
+      | PASS  leftover price_action_research.db not touched since the deploy: unchanged
+      | PASS  no API process holds a price_action file open: 2 processes, 2 threads checked
+      | PASS  no PA runtime or subscription lines in the API log: 0 lines mention price action
+      | == 3. Shared features
+      | PASS  research-worker-1 running and healthy: running
+      | PASS  ingress-1 running and healthy: running
+      | == 4. Resources for 0 minutes (sample every 3 s)
+      |       staging API   CPU avg 30.6% / p95 30.5% of one core   app memory avg 0.02 / peak 0.02 GiB (with file cache peak 0.02)   disk read 0.00 MiB/s, write 0.00 MiB/s
+      |       P0 (PA on)    CPU avg 95.5% / p95 100.1% (capped)     container memory 1.50 GiB (at limit), app 1.07 GiB   disk read 220.5 MiB/s, write 0.36 MiB/s
+      | PASS  API app memory stays well below its limit: peak 0.02 of 1.50 GiB
+      |       production    CPU avg 0.0% / p95 0.0%   memory avg 0.00 / peak 0.00 GiB   (P0: 107.5% CPU, 4.77 GiB avg)
+      |       host          CPU busy avg 13.6% / p95 13.8% (6 cores)   memory available min 15.0 GiB   disk read 0.00 MiB/s, write 0.16 MiB/s   (P0: 39% busy, 5.2 GiB available, 220.6 MiB/s read)
+      | PASS  SMC database is being written (shared market data and SMC lab work): db +0.0 MB, wal -
+      | == 5. Production and disk
+      | PASS  production unchanged since the deploy plan: app-1 running
+      |       free disk 30.25 GB; staging API data 0.00 GB; disk use during the window +0.03 GB/day (all of the host)
+      |       API log since start: 0 lines, 0 error lines
+      | GO: Price Action Lab is off on staging and staging is healthy.
+      | Nothing was changed.
+PASS  check says GO
+PASS  check reads API resources
+PASS  check reads production resources
+PASS  check sees no PA file open
+PASS  check prints no secrets
+PASS  check says NO-GO when the PA database comes back
+PASS  check rejects unknown argument
+PASS  rollback restores old image, stopped
+PASS  API back on old image, stopped, 1536 MiB
+PASS  research worker untouched by rollback
+PASS  unhealthy new API is stopped again
+PASS  API stopped after failed deploy
+PASS  rollback after a failed deploy
+PASS  rejects unknown argument
+staging_pa_off_deploy_test: 0 failed

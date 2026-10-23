@@ -26,6 +26,94 @@ never secrets, balances or detailed evidence.
 | `hello` | — | Read-only: host, disk, memory, container status, last runs |
 | `ops-log` | GitHub run id | Read-only: end of an earlier run's log, including one whose connection dropped |
 | `p1b-stop-staging` | `check`, `stop` or `verify` | The reviewed P1-B script (`validation/p1b-stop-staging/`) |
+| `backup` | `run`, `status`, `check` or `restore-test` | Encrypted off-server backups to Backblaze B2 (`backup/README.md`). Not set up: the owner chose to skip backups on 2026-10-23 |
+| `staging-pa-delete` | `check`, then `delete` | Safety and recovery check for the stopped staging PA lab database (`price_action_paper.db` and its `-wal` and `-shm`); ends with SAFE FOR SEPARATE DELETION APPROVAL or BLOCKED. `delete` (owner-approved 2026-10-23) deletes only those 3 files, and only if every gate passes again, the last `check` is SAFE, under 24 h old and for identical files. It keeps the verified backup and writes a receipt |
+| `pa-backup` | `start`, then `status` | Verified backup of the stopped staging PA database. It packs the `.db`, `-wal` and `-shm` into one compressed archive in `/var/lib/nexus-ops/pa-backup`, then restore-tests it in a temporary folder: byte-identical files, WAL frames applied, full integrity_check, row counts. It writes `manifest.json` only on success and runs in the background; originals are only read |
+| `staging-inventory` | `show` | Read-only: how the staging project is set up before the Price Action Lab retirement deploy (containers, images, limits, mounts, Compose files rendered with values hidden, volumes and SQLite files, the uploaded image package, production identity, free disk) |
+| `staging-config-check` | `show` | Read-only: which Compose files, env file and config hash each staging container was created with; staging YAML files (memory/image overlays shown in full when secret-free); env variable names; what Compose would create with and without each memory overlay; local nexus images |
+| `staging-backup` | `start`, then `status` | Verified backup of what the PA retirement deploy could change: the stopped staging API's data volume (all files except the Task 6 recovery folder, which is already a compressed copy) and the staging Postgres metadata (pg_dumpall roles + pg_dump per database). Restore-tested: byte-identical files, WAL applied, integrity_check on every SQLite database, and the Postgres dump loaded into a throwaway container with no network. Writes `manifest.json` only on success; runs in the background; originals are only read |
+| `staging-pa-off-images` | `load` | Checks the uploaded PA-retirement image package (`~ubuntu/nexus-pa-retirement/…zip`) against the SHA-256 GitHub recorded, verifies its sealed file list, security reports (0 HIGH/CRITICAL, 0 secrets) and the API image archive, loads the API image only, probes it without starting the app (PA lab default off, no dashboard PA calls, non-root) and records the image ID for the deploy step. Starts or changes no container |
+| `staging-pa-off-deploy` | `plan`, then `apply`; `rollback` if needed | PA retirement on the STAGING API only. `plan` (read-only) requires the verified staging backup with unchanged API data, the verified PA-off image, and the exact reviewed Compose files, and proves the API would change only its image while keeping 1536 MiB, volumes, networks, user and environment. `apply` (needs a plan under 2 h old with nothing changed) recreates only the API, waits for healthy, checks `/health` (PA off) and that every PA route is the retired one, reloads the staging web proxy and confirms production did not change; an unhealthy API is stopped again. `rollback` puts the previous image back, stopped |
+| `staging-pa-off-check` | `measure` | Read-only, 10 minutes, after the deploy: identity (verified image, healthy, no restarts/OOM, 1536 MiB); PA gone at runtime (`/health` off, all PA routes retired, PA database not re-created, leftover PA file untouched, no PA file open, no PA runtime log lines); shared features (SMC database written, research worker and web proxy healthy); API/production/host CPU, memory and disk from cgroup counters vs the P0 baseline; production unchanged. Ends with GO or NO-GO |
+| `staging-pa-off-stop` | `check`, `stop` or `verify` | The P1-B stop logic for the PA-off staging API (build `f9ebd32`): confirms the target and that production has its own volume and Supabase project, then stops only the staging API and keeps it stopped after a reboot. The original P1-B script stays pinned to the earlier build |
+| `prod-inventory` | `show` | Read-only: how PRODUCTION is set up before the Strategy Intelligence deploy (app container, image, Compose files and their SHA-256, data volume and its largest files, sign-in mode, open PA positions and orders, other containers, free disk and memory). Secrets are named only |
+| `prod-backup` | `start`, then `status` | Verified backup of production's data volume while the app runs: SQLite online backup of every database (no side files created), integrity check, compressed archive, restore test, and a rollback record of the running app. Kept in `/var/lib/nexus-ops/prod-backup` |
+| `prod-si-images` | `load` | Checks the uploaded Strategy Intelligence image package (`~ubuntu/nexus-si-production/…zip`) against the SHA-256 GitHub recorded, its sealed file list, security scans, PA off by default, the Strategy Intelligence page and production's user (100:101), then loads it |
+| `prod-si-deploy` | `plan`, then `apply`; `rollback` if needed | Strategy Intelligence on the PRODUCTION app only. `plan` (read-only) needs a verified backup under 6 h old of this same app, the verified image and production's exact Compose files; it proves only the image changes, with production's own start command and the full environment predicted (deploy labels, Python base image values and code defaults only; the AI Monitoring Agent stays on). `apply` (plan under 2 h old, nothing changed) recreates only the app, rolls back at once if it crashes or is not healthy in 8 minutes, checks environment, `/health` (PA off), retired PA routes and SI routes, reloads nginx and checks `/health` through it. `rollback` puts the exact previous app back |
+| `prod-si-check` | `measure` | Read-only, 10 minutes, after the deploy: identity (verified image, production's start command, healthy, no restarts/OOM); SI routes served, PA off and its kept files unwritten; `/health` through nginx; equity snapshots within the 1-per-minute limit; SMC database written; app and host CPU, memory, disk; nginx and certbot unchanged; free disk; app log errors. Ends with GO or NO-GO |
+| `trust-checks` | `apply` or `show` | Owner-approved list of the exact read-only check scripts (SHA-256) the check key may run, written to `/etc/nexus-ops/trusted-checks`. Generated by `make-trust-checks.sh`; never runs without approval |
+| `docker-cleanup` | `plan`, then `apply` | P1-C: remove unused old production app images, keeping the two most recent and every image a container uses, plus the build cache. `apply` removes exactly the list from the last `plan` and refuses if anything changed |
+
+## Read-only checks without approval (environment `vps-check`)
+
+The checks listed in `check-operations.txt` (status, inventory, health and measurement checks that
+change nothing) can run **without** a per-run approval. That happens only when all of these hold:
+
+1. the run is started from `main`, and the operation and argument are on that list
+2. `check-env-guard.py` confirms the GitHub environment `vps-check` may be used **only from `main`**
+3. the run uses the separate **check key**, and the VPS runner then works in check mode: it refuses
+   anything that is not on its own built-in copy of the list (changing that copy means installing a
+   new runner on the server)
+4. the exact script (its SHA-256) is listed for that check in `/etc/nexus-ops/trusted-checks` on the
+   server. Only the operation `trust-checks apply` writes that file, and it always needs the owner's
+   approval; its approval page shows every fingerprint it trusts. So the check key can only run code
+   the owner has approved once. When a check script changes, that check is refused until the owner
+   approves `trust-checks apply` again (regenerate it first with `sh ops/vps/make-trust-checks.sh`).
+
+Everything else (deploy, stop, start, delete, backup start, cleanup), and any run from another
+branch, still uses environment `vps` and waits for the owner's approval. The workflow summary says
+which of the two applies.
+
+### One-time setup of the check key
+
+On the VPS (one command per box). Connect: `ssh -o ServerAliveInterval=30 ubuntu@<vps-address>`
+
+**1. Download the new runner**
+
+```bash
+sudo curl -fsSL -o /root/nexus-ops-setup/nexus-ops-runner https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/a5ec2469229bfb122ef7e04b8050412edf41c5c3/ops/vps/nexus-ops-runner
+```
+
+**2. Download the new setup script**
+
+```bash
+sudo curl -fsSL -o /root/nexus-ops-setup/setup-vps-ops.sh https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/a5ec2469229bfb122ef7e04b8050412edf41c5c3/ops/vps/setup-vps-ops.sh
+```
+
+**3. Check the runner.** It must say `OK`.
+
+```bash
+echo "1cc53c52286f1e85dd09815b8fb7bf4caa26220eeda4bf4e478ea4927d8137b5  /root/nexus-ops-setup/nexus-ops-runner" | sudo sha256sum -c -
+```
+
+**4. Check the setup script.** It must say `OK`.
+
+```bash
+echo "e964602a320a73638063094e88ac9ae1a198061cfff105b5bdc73e89408ea002  /root/nexus-ops-setup/setup-vps-ops.sh" | sudo sha256sum -c -
+```
+
+**5. Install the runner and add the check key.** The main key keeps working.
+
+```bash
+sudo sh /root/nexus-ops-setup/setup-vps-ops.sh --add-check-key /root/nexus-ops-setup/nexus-ops-runner
+```
+
+It must show `ok: check mode refuses a change and any script the owner has not trusted`, then
+prints a private key. That key goes **only into GitHub, never into a chat**.
+
+In GitHub: **Settings → Environments → New environment**, name `vps-check`, **Configure environment**.
+
+1. Leave **Required reviewers** unticked.
+2. **Deployment branches and tags** → **Selected branches and tags** → **Add deployment branch or
+   tag rule** → `main`. Add nothing else (not `claude/*`).
+3. **Environment secrets**: `VPS_SSH_KEY` = the private key from step 5 (with the BEGIN and END
+   lines); `VPS_HOST` = the same address as in `vps`.
+4. **Environment variables**: `VPS_HOST_KEY` = the `ssh-ed25519 …` line from step 5;
+   `VPS_SSH_PORT` = `22`.
+
+Finally, once this is on `main`: start **VPS operations** from `main` with operation `trust-checks`,
+argument `apply`, and approve it after checking the fingerprints on its summary page. Until then the
+check key runs nothing.
 
 **Off switch** (blocks every run at once): `sudo touch /etc/nexus-ops/disabled`. To switch it back
 on: `sudo rm /etc/nexus-ops/disabled`. **Remove everything** except the logs:
@@ -102,10 +190,19 @@ merged, the first run should be `hello`, to prove the connection works.
 ## Testing
 
 `test/pipeline_test.sh` drives the real path: workflow script → SSH → forced command → sudo →
-runner, against a local OpenSSH server and the P1-B replica containers. Result: 32 passed,
-0 failed (`test/test-output.txt`). The tests cover:
+runner, against a local OpenSSH server and the P1-B replica containers. Result with both keys:
+54 passed, 0 failed (`test/test-output.txt`). `test/check_mode_test.sh` covers the read-only list,
+the runner's built-in copy, trusted fingerprints, check-mode refusals and the environment guard:
+77 passed. The tests cover:
 
 - P1-B through the pipeline
 - tampered scripts, shell characters, arbitrary commands, plain login and port forwarding (all refused)
 - the off switch, one-at-a-time locking, a dropped connection, the time limit and the audit trail
 - removing and re-installing (the old key stops working)
+- the check key: nothing runs until the owner trusts it; a replacement script under an allowed name
+  is refused and never runs; read-only checks run; stop, deploy, delete, cleanup, backup start and
+  trust-checks are refused; re-installing the main key keeps the check key
+- a request that never finishes sending its script is cut off after 120 s and cannot block other
+  operations (the runner receives and verifies the script before it takes the one-at-a-time lock)
+- check-key runs keep their records under `/var/log/nexus-ops/check/`, so they can never use up the
+  run id of an owner-approved run

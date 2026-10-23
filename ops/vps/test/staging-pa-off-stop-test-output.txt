@@ -1,0 +1,14 @@
+PASS  refuses the old build
+PASS  old-build container left running
+PASS  refuses when staging shares production's Supabase project
+PASS  never prints the Supabase address
+PASS  check GO
+PASS  check names the PA-off build
+PASS  check prints no secrets
+PASS  stop DONE
+PASS  staging API exited cleanly
+PASS  production still running
+PASS  verify: still stopped
+PASS  verify: files unchanged
+PASS  second stop does nothing
+staging_pa_off_stop_test: 0 failed

@@ -1,0 +1,85 @@
+== the list and check-mode.sh
+PASS  check: hello -
+PASS  check: ops-log 40007923856
+PASS  check: staging-inventory show
+PASS  check: staging-backup status
+PASS  check: staging-pa-off-check measure
+PASS  check: staging-pa-off-stop verify
+PASS  needs approval: staging-pa-off-stop stop
+PASS  needs approval: p1b-stop-staging stop
+PASS  needs approval: staging-pa-off-deploy apply
+PASS  needs approval: staging-pa-off-deploy rollback
+PASS  needs approval: staging-pa-off-deploy plan
+PASS  needs approval: staging-backup start
+PASS  needs approval: pa-backup start
+PASS  needs approval: staging-pa-delete delete
+PASS  needs approval: docker-cleanup apply
+PASS  needs approval: staging-pa-off-images load
+PASS  needs approval: hello x
+PASS  needs approval: ops-log abc
+PASS  needs approval: ops-log -
+PASS  needs approval: hello;id -
+PASS  needs approval:  -
+== the runner's built-in list is identical to check-operations.txt
+PASS  runner and file list the same 11 checks
+PASS  listed check exists: hello
+PASS  listed check exists: ops-log
+PASS  listed check exists: p1b-stop-staging
+PASS  listed check exists: pa-backup
+PASS  listed check exists: staging-backup
+PASS  listed check exists: staging-config-check
+PASS  listed check exists: staging-inventory
+PASS  listed check exists: staging-pa-off-check
+PASS  listed check exists: staging-pa-off-stop
+== the runner in check mode: read-only list AND owner-trusted script fingerprints
+PASS  runner requires a root-owned, not group/world-writable trust file
+PASS  nothing runs before the owner trusts it
+PASS  trusted hello runs in check mode
+PASS  check mode recorded in runs.log
+PASS  a replacement script under an allowed name is refused and never runs (Codex P1)
+PASS  a fingerprint trusted for another check does not count
+PASS  a group-writable trust file is ignored
+PASS  a symlinked trust file is ignored
+PASS  check mode refuses even when trusted: staging-pa-off-deploy apply
+PASS  check mode refuses even when trusted: p1b-stop-staging stop
+PASS  check mode refuses even when trusted: staging-pa-delete delete
+PASS  check mode refuses even when trusted: trust-checks apply
+PASS  check mode refuses even when trusted: hello x
+PASS  check mode refuses even when trusted: ops-log abc
+PASS  check mode refuses even when trusted: selftest -
+PASS  refused requests never start a run
+PASS  check mode needs a request
+PASS  main key path still runs anything approved (no trust file needed)
+== check-key runs cannot use up an approved run's id (Codex P2)
+PASS  check-key staging-backup status ran as run 301
+PASS  the approved staging-backup start with run 301 still runs
+PASS  check and approved records are kept apart
+PASS  a check-key run id still cannot be replayed
+PASS  an approved run id still cannot be replayed
+== a request that never finishes sending cannot block other operations (Codex P2)
+PASS  real runner limits uploads to 120 s
+PASS  an approved operation runs while a check-key upload hangs
+PASS  the hanging upload is cut off at the limit
+PASS  the runner gave up after the limit, not when the sender did
+PASS  approved-mode uploads are limited too
+PASS  hung uploads never start a run
+PASS  no temporary upload files left behind
+== trust-checks: generated list is current, and apply/show work
+PASS  trust-checks.sh matches the current check scripts
+PASS  one fingerprint per listed check (9)
+PASS  trust-checks always needs the owner's approval
+PASS  show before apply
+PASS  apply writes 9 entries, mode 644
+PASS  applied list holds the current hello fingerprint
+PASS  after apply, the check key runs hello
+PASS  trust-checks rejects unknown argument
+== check-env-guard.py against a fake GitHub API
+PASS  guard passes when vps-check is limited to main
+PASS  guard refuses main + claude/*
+PASS  guard refuses a tag named main
+PASS  guard refuses an empty branch list
+PASS  guard refuses 'all branches'
+PASS  guard refuses 'protected branches'
+PASS  guard refuses when vps-check does not exist
+PASS  guard refuses when GitHub cannot be reached
+check_mode_test: 0 failed

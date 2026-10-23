@@ -5,14 +5,16 @@ set -u
 run_id=${1:-}
 case "$run_id" in ''|*[!0-9]*) echo "give the GitHub run id as the argument"; exit 2 ;; esac
 found=0
-for log in /var/log/nexus-ops/"$run_id"-*.log; do
+for log in /var/log/nexus-ops/"$run_id"-*.log /var/log/nexus-ops/check/"$run_id"-*.log; do
     [ -f "$log" ] || continue
     found=1
     rc="${log%.log}.rc"
+    name=$(basename "$log")
+    case "$log" in */check/*) name="check/$name" ;; esac
     if [ -s "$rc" ]; then
-        echo "== $(basename "$log"): finished, exit code $(cat "$rc")"
+        echo "== $name: finished, exit code $(cat "$rc")"
     else
-        echo "== $(basename "$log"): still running"
+        echo "== $name: still running"
     fi
     tail -n 80 "$log"
 done

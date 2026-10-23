@@ -1,0 +1,45 @@
+# ops/vps/test/docker_cleanup_test.sh output, 2026-10-23, Docker Engine 29.9.1 (containerd image store, like the VPS's 29.8.1)
+PASS  apply refuses without a plan
+      disk /: 30.7 GB free of 270.6 GB
+      production app images to KEEP:
+        2026-10-23  nexus-trading-bot-app:release-6  (recent-rollback)
+        2026-10-23  nexus-trading-bot-app:release-5  (recent-rollback)
+        2026-10-23  nexus-trading-bot-app:release-4  (used-by-a-container)
+        2026-10-23  nexus-trading-bot-app:release-1  (used-by-a-container)
+      production app images to REMOVE: 3
+        2026-10-23  nexus-trading-bot-app:release-3
+        2026-10-23  nexus-trading-bot-app:dev
+        2026-10-23  nexus-trading-bot-app:release-2
+      space from those images: at least 12 MB (layers shared only among them are freed too)
+      build cache to REMOVE: 110.2MB
+      not touched: containers, volumes, data, and images of any other repository (staging, CI, base images)
+      Nothing was changed. Run 'apply' to remove exactly this list.
+PASS  plan keeps the newest unused (rollback)
+PASS  plan keeps the second newest unused (rollback)
+PASS  plan keeps the running container's image
+PASS  plan keeps the stopped container's image
+PASS  plan removes 3 references (release-3, release-2 and its dev tag)
+PASS  plan estimates the space (2 distinct images x ~6 MB)
+PASS  plan changed nothing
+PASS  apply refuses when images changed since the plan
+      before: 30.7 GB free of 270.6 GB
+      images removed: 3, not removed: 0
+      build cache: Total:	110.2MB
+      after:  30.7 GB free of 270.6 GB
+      production containers:
+      nexus-trading-bot-app-1: Up 3 seconds
+      DONE
+PASS  apply removed the 3 references
+PASS  kept release-1
+PASS  kept release-4
+PASS  kept release-5
+PASS  kept release-6
+PASS  removed release-2
+PASS  removed release-3
+PASS  removed dev
+PASS  other repository untouched
+PASS  running container still running
+PASS  stopped container still there
+PASS  build cache removed
+PASS  plan is used only once
+failures: 0

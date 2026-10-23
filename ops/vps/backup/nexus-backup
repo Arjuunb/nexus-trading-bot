@@ -1,0 +1,368 @@
+#!/bin/sh
+# nexus-backup: encrypted off-server backups of Nexus production data (restic -> Backblaze B2).
+#
+#   nexus-backup run           back up now, then keep 7 daily, 4 weekly and 6 monthly backups
+#   nexus-backup status        read-only: last run, backups stored, storage used, next scheduled run
+#   nexus-backup check         read-only: check the stored backups, reading 10% of the data back
+#   nexus-backup restore-test  restore the latest backup into a temporary folder, integrity-check
+#                              every database and the settings file, then delete the folder
+#
+# What a backup holds:
+#   - every SQLite database in the production data volume, copied consistently while the app runs:
+#       WAL databases through SQLite's backup API (never blocks the app's writers);
+#       other databases without taking any lock, kept only if the file provably did not change
+#       during the copy (no journal, same change counter, size and timestamp), else retried
+#   - the rest of that volume, /opt/nexus-trading-bot/.env (HUB_MASTER_KEY etc.), the compose and
+#     nginx files, and the TLS certificate volume
+# Everything is encrypted on this server before upload. Settings: /etc/nexus-backup (root only),
+# written by setup-backup.sh. Output stays short and never shows keys or the storage address,
+# because it can appear in public GitHub logs.
+set -u
+umask 077
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+LC_ALL=C
+export LC_ALL
+
+CONF=${NEXUS_BACKUP_TEST_CONF:-/etc/nexus-backup/restic.env}
+WORK=${NEXUS_BACKUP_TEST_WORK:-/var/lib/nexus-backup}
+APP=${NEXUS_BACKUP_TEST_APP:-/opt/nexus-trading-bot}
+RETRIES=${NEXUS_BACKUP_TEST_RETRIES:-12}
+PROD=nexus-trading-bot-app-1
+CERTS=nexus-migration-letsencrypt
+HOST_TAG=nexus-vps
+TAG=production
+STATE="$WORK/last-run.txt"
+
+say() { printf '%s\n' "$*"; }
+die() { say "nexus-backup: $*"; exit 1; }
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+[ "$(id -u)" = 0 ] || die "run as root"
+[ -r "$CONF" ] || die "backup storage is not set up yet ($CONF is missing; run setup-backup.sh)"
+command -v restic >/dev/null 2>&1 || die "restic is not installed (run setup-backup.sh)"
+command -v python3 >/dev/null 2>&1 || die "python3 is not installed"
+set -a
+# shellcheck disable=SC1090
+. "$CONF"
+set +a
+RESTIC_CACHE_DIR=${RESTIC_CACHE_DIR:-/var/cache/restic}
+export RESTIC_CACHE_DIR
+mkdir -p "$WORK" "$RESTIC_CACHE_DIR"
+chmod 700 "$WORK"
+
+exec 8>"$WORK/.lock"
+flock -n 8 || die "another backup task is already running"
+
+# Run restic; hide the storage address, bucket, endpoint and key id in anything it prints.
+r() {
+    out=$(mktemp "$WORK/restic-out.XXXXXX")
+    nice -n 10 restic "$@" > "$out" 2>&1
+    rc=$?
+    MASK1=${RESTIC_REPOSITORY:-} MASK2=${NEXUS_BACKUP_BUCKET:-} MASK3=${NEXUS_BACKUP_ENDPOINT:-} \
+    MASK4=${AWS_ACCESS_KEY_ID:-} awk '
+        BEGIN { n = split(ENVIRON["MASK1"] "\n" ENVIRON["MASK2"] "\n" ENVIRON["MASK3"] "\n" ENVIRON["MASK4"], m, "\n") }
+        { for (k = 1; k <= n; k++) if (m[k] != "") while ((i = index($0, m[k])) > 0)
+              $0 = substr($0, 1, i - 1) "<hidden>" substr($0, i + length(m[k]))
+          print }' "$out"
+    rm -f "$out"
+    return $rc
+}
+
+prod_dir() {
+    docker inspect -f '{{range .Mounts}}{{if eq .Destination "/var/lib/tradexa"}}{{.Source}}{{end}}{{end}}' "$PROD" 2>/dev/null
+}
+
+free_bytes() { df -P -B1 "$1" | awk 'NR == 2 {print $4}'; }
+
+cmd_run() {
+    started=$(date +%s)
+    src=$(prod_dir)
+    [ -n "$src" ] && [ -d "$src" ] || die "cannot find the production data volume of $PROD"
+    snap="$WORK/snapshot"
+    rm -rf "$snap"
+    mkdir -p "$snap/databases"
+    need=$(python3 -I - "$src" <<'PY'
+import os, sys
+total = 0
+for root, dirs, files in os.walk(sys.argv[1]):
+    for name in files:
+        p = os.path.join(root, name)
+        try:
+            if not os.path.islink(p) and os.path.isfile(p):
+                with open(p, "rb") as f:
+                    if f.read(16) == b"SQLite format 3\x00":
+                        total += os.path.getsize(p)
+        except OSError:
+            pass
+print(total)
+PY
+)
+    avail=$(free_bytes "$WORK")
+    if [ "$avail" -lt $((need + 2147483648)) ]; then
+        die "not enough free disk for the temporary database copies (need $((need / 1048576 + 2048)) MiB, have $((avail / 1048576)) MiB)"
+    fi
+    say "$(now) backup started"
+
+    nice -n 19 ionice -c 2 -n 7 python3 -I - "$src" "$snap/databases" "$snap/excludes" "$RETRIES" <<'PY'
+import os, sqlite3, sys, time, shutil, urllib.parse
+src, dst_root, excl_path, retries = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
+
+def header(p):
+    with open(p, "rb") as f:
+        return f.read(100)
+
+def stable_state(p, side):
+    st = os.stat(p)
+    return (header(p)[24:28], st.st_size, st.st_mtime_ns, os.path.exists(p + side))
+
+def copy_unlocked(p, out, side):
+    # No lock is taken. Pages of a rollback-journal database only change while its -journal
+    # exists, and every commit bumps the change counter and the file timestamp; a WAL-format
+    # file without a -wal is only static if no -wal appears. Keep the copy only if nothing moved.
+    for attempt in range(retries):
+        before = stable_state(p, side)
+        if before[3]:
+            time.sleep(5)
+            continue
+        shutil.copyfile(p, out)
+        after = stable_state(p, side)
+        if before == after:
+            return "verified copy", attempt + 1
+        time.sleep(5)
+    return None, retries
+
+def copy_wal(p, out):
+    uri = "file:" + urllib.parse.quote(p) + "?mode=ro"
+    s = sqlite3.connect(uri, uri=True, timeout=30)
+    d = sqlite3.connect(out)
+    s.backup(d)  # one step inside a read transaction: WAL readers never block writers
+    d.close()
+    s.close()
+    return "sqlite backup", 1
+
+def quick_check(out):
+    c = sqlite3.connect(out)
+    try:
+        return c.execute("PRAGMA quick_check").fetchone()[0]
+    finally:
+        c.close()
+
+t0 = time.time()
+done, failed, total = [], [], 0
+with open(excl_path, "w") as ex:
+    for root, dirs, files in os.walk(src):
+        dirs.sort()
+        for name in sorted(files):
+            p = os.path.join(root, name)
+            if os.path.islink(p) or not os.path.isfile(p):
+                continue
+            try:
+                h = header(p)
+            except OSError:
+                continue
+            if h[:16] != b"SQLite format 3\x00":
+                continue
+            # Never let the upload read a live database file directly, even if the copy fails.
+            for side in ("", "-wal", "-shm", "-journal"):
+                ex.write(p + side + "\n")
+            rel = os.path.relpath(p, src)
+            out = os.path.join(dst_root, rel)
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            wal_format = h[18] == 2
+            live_wal = wal_format and (os.path.exists(p + "-wal") or os.path.exists(p + "-shm"))
+            try:
+                if live_wal:
+                    how, tries = copy_wal(p, out)
+                else:
+                    how, tries = copy_unlocked(p, out, "-wal" if wal_format else "-journal")
+                if how is None:
+                    failed.append("%s (kept changing during %d attempts)" % (rel, tries))
+                    if os.path.exists(out):
+                        os.remove(out)
+                    continue
+                result = quick_check(out)
+                for side in ("-wal", "-shm"):
+                    if os.path.exists(out + side):
+                        os.remove(out + side)
+                if result != "ok":
+                    failed.append("%s (quick_check: %s)" % (rel, str(result)[:80]))
+                    continue
+            except Exception as e:
+                failed.append("%s (%s)" % (rel, type(e).__name__))
+                continue
+            done.append(how)
+            total += os.path.getsize(out)
+
+print("databases: %d copied (%d WAL via SQLite backup, %d verified copies), %.2f GiB, %ds"
+      % (len(done), done.count("sqlite backup"), done.count("verified copy"), total / 2**30, time.time() - t0))
+for f in failed:
+    print("database NOT backed up this time: " + f)
+sys.exit(3 if failed else 0)
+PY
+    db_rc=$?
+    [ "$db_rc" = 0 ] || [ "$db_rc" = 3 ] || { rm -rf "$snap"; die "database copy step failed (exit $db_rc)"; }
+
+    set -- "$snap/databases" "$src"
+    for f in "$APP/.env" "$APP/compose.yaml" "$APP/compose.override.yaml" "$APP/nginx"; do
+        [ -e "$f" ] && set -- "$@" "$f"
+    done
+    certs=$(docker volume inspect -f '{{.Mountpoint}}' "$CERTS" 2>/dev/null || true)
+    [ -n "$certs" ] && [ -d "$certs" ] && set -- "$@" "$certs"
+
+    json="$WORK/backup.json"
+    r backup --json --host "$HOST_TAG" --tag "$TAG" --exclude-file "$snap/excludes" "$@" > "$json"
+    b_rc=$?
+    python3 -I - "$json" <<'PY'
+import json, sys
+summary, errors = None, []
+for line in open(sys.argv[1], errors="replace"):
+    line = line.strip()
+    if not line.startswith("{"):
+        if line:
+            errors.append(line[:200])
+        continue
+    try:
+        m = json.loads(line)
+    except ValueError:
+        continue
+    if m.get("message_type") == "summary":
+        summary = m
+    elif m.get("message_type") == "error":
+        errors.append(str(m.get("error", {}).get("message", m))[:200])
+if summary:
+    print("uploaded: snapshot %s, %d files (%d new, %d changed), %.1f MiB new data after compression, %ds"
+          % (summary.get("snapshot_id", "?")[:8], summary.get("total_files_processed", 0),
+             summary.get("files_new", 0), summary.get("files_changed", 0),
+             summary.get("data_added_packed", summary.get("data_added", 0)) / 2**20,
+             summary.get("total_duration", 0)))
+for e in errors[:10]:
+    print("restic: " + e)
+PY
+    rm -f "$json"
+    rm -rf "$snap"
+    if [ "$b_rc" != 0 ] && [ "$b_rc" != 3 ]; then
+        say "$(now) run=FAILED (upload exit $b_rc)" > "$STATE"
+        die "upload failed (restic exit $b_rc)"
+    fi
+
+    if r forget --host "$HOST_TAG" --tag "$TAG" --keep-daily 7 --keep-weekly 4 --keep-monthly 6 --prune --quiet; then
+        say "retention: keeping 7 daily, 4 weekly, 6 monthly"
+    else
+        say "WARNING: retention step failed; the new backup is stored"
+    fi
+
+    secs=$(( $(date +%s) - started ))
+    if [ "$db_rc" = 0 ] && [ "$b_rc" = 0 ]; then
+        say "$(now) run=OK seconds=$secs" > "$STATE"
+        say "DONE: backup stored off-server in ${secs}s"
+    else
+        say "$(now) run=PARTIAL seconds=$secs" > "$STATE"
+        say "DONE WITH PROBLEMS: stored, but see the lines above"
+        exit 3
+    fi
+}
+
+cmd_status() {
+    [ -f "$STATE" ] && say "last run: $(cat "$STATE")" || say "last run: none yet"
+    snaps="$WORK/snapshots.json"
+    if r snapshots --json --host "$HOST_TAG" --tag "$TAG" > "$snaps"; then
+        python3 -I - "$snaps" <<'PY'
+import json, sys
+try:
+    s = json.load(open(sys.argv[1]))
+except ValueError:
+    s = []
+s.sort(key=lambda x: x.get("time", ""))
+print("backups stored: %d%s" % (len(s), "" if not s else ", oldest %s, newest %s" % (s[0]["time"][:16], s[-1]["time"][:16])))
+PY
+    else
+        cat "$snaps"
+    fi
+    rm -f "$snaps"
+    stats="$WORK/stats.json"
+    if r stats --json --mode raw-data > "$stats"; then
+        python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); print("storage used: %.2f GiB (after compression and de-duplication)" % (d.get("total_size", 0) / 2**30))' "$stats" 2>/dev/null
+    fi
+    rm -f "$stats"
+    if command -v systemctl >/dev/null 2>&1; then
+        next=$(systemctl show nexus-backup.timer -p NextElapseUSecRealtime --value 2>/dev/null)
+        [ -n "$next" ] && say "next scheduled run: $next"
+    fi
+    say "Nothing was changed."
+}
+
+cmd_check() {
+    if r check --read-data-subset=10%; then
+        say "ok: stored backups are complete and readable (10% of the data was read back)"
+    else
+        say "PROBLEM: restic check reported errors (see above)"
+        exit 3
+    fi
+}
+
+cmd_restore_test() {
+    target="$WORK/restore-test"
+    rm -rf "$target"
+    avail=$(free_bytes "$WORK")
+    [ "$avail" -gt 8589934592 ] || die "need at least 8 GiB free for the restore test (have $((avail / 1048576)) MiB)"
+    mkdir -p "$target"
+    started=$(date +%s)
+    if ! r restore latest --host "$HOST_TAG" --tag "$TAG" --target "$target" \
+            --include "$WORK/snapshot/databases" --include "$APP/.env" --quiet; then
+        rm -rf "$target"
+        die "restore failed"
+    fi
+    nice -n 19 ionice -c 2 -n 7 python3 -I - "$target" "$WORK/snapshot/databases" "$APP/.env" <<'PY'
+import os, sqlite3, sys
+target, dbs, env = sys.argv[1], sys.argv[2], sys.argv[3]
+root = target + dbs
+ok, bad, size = 0, [], 0
+for d, _, files in os.walk(root):
+    for name in sorted(files):
+        p = os.path.join(d, name)
+        with open(p, "rb") as f:
+            if f.read(16) != b"SQLite format 3\x00":
+                continue
+        c = sqlite3.connect(p)
+        try:
+            res = c.execute("PRAGMA integrity_check").fetchone()[0]
+        except Exception as e:
+            res = type(e).__name__
+        finally:
+            c.close()
+        size += os.path.getsize(p)
+        if res == "ok":
+            ok += 1
+        else:
+            bad.append("%s: %s" % (os.path.relpath(p, root), str(res)[:80]))
+print("restored databases: %d passed integrity_check, %d failed, %.2f GiB" % (ok, len(bad), size / 2**30))
+for b in bad:
+    print("FAILED " + b)
+e = target + env
+keys = []
+if os.path.isfile(e):
+    for line in open(e, errors="replace"):
+        k = line.split("=", 1)[0].strip()
+        if k in ("HUB_MASTER_KEY", "HUB_MASTER_KEY_PREVIOUS", "SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_SERVICE_ROLE_KEY"):
+            keys.append(k)
+print("settings file (.env): %s; contains %s" % ("restored" if os.path.isfile(e) else "MISSING", ", ".join(sorted(set(keys))) or "none of the expected keys"))
+sys.exit(1 if bad or ok == 0 or not os.path.isfile(e) else 0)
+PY
+    rc=$?
+    rm -rf "$target"
+    if [ "$rc" = 0 ]; then
+        say "ok: restore test passed in $(( $(date +%s) - started ))s (temporary copy deleted)"
+    else
+        say "PROBLEM: restore test failed (temporary copy deleted)"
+        exit 3
+    fi
+}
+
+case "${1:-}" in
+    run) cmd_run ;;
+    status) cmd_status ;;
+    check) cmd_check ;;
+    restore-test) cmd_restore_test ;;
+    *) say "usage: nexus-backup run|status|check|restore-test"; exit 64 ;;
+esac
