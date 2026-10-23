@@ -1,0 +1,86 @@
+name: VPS operations
+
+# Runs ONE script from ops/vps/operations on the VPS, and only after the repository owner
+# approves the run (required reviewer on the "vps" environment). Never runs on push.
+# How it works and how to set it up: ops/vps/README.md
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation (a file name in ops/vps/operations, without .sh)
+        required: true
+        type: string
+        default: hello
+      argument:
+        description: Optional argument (lower-case letters, digits and dashes)
+        required: false
+        type: string
+        default: ''
+
+run-name: "VPS: ${{ inputs.operation }} ${{ inputs.argument }} (${{ github.ref_name }})"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vps-operations
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: What will run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha256: ${{ steps.resolve.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - id: resolve
+        name: Show the exact script
+        env:
+          OPERATION: ${{ inputs.operation }}
+          ARGUMENT: ${{ inputs.argument }}
+        run: |
+          out=$(sh ops/vps/resolve-operation.sh "$OPERATION" "$ARGUMENT")
+          script=${out% *}
+          sum=${out##* }
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Approve only if this is what you expect to run on the VPS"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Operation | \`$OPERATION\` |"
+            echo "| Argument | \`${ARGUMENT:-none}\` |"
+            echo "| Branch and commit | \`$GITHUB_REF_NAME\` \`$GITHUB_SHA\` |"
+            echo "| Script | \`$script\` |"
+            echo "| SHA-256 | \`$sum\` |"
+            echo ""
+            echo '```sh'
+            cat "$script"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "operation=$OPERATION argument=${ARGUMENT:-none} script=$script sha256=$sum"
+
+  run:
+    name: Run on the VPS (after approval)
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: vps
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Send the approved script to the VPS runner
+        env:
+          OPERATION: ${{ inputs.operation }}
+          ARGUMENT: ${{ inputs.argument }}
+          EXPECTED_SHA256: ${{ needs.plan.outputs.sha256 }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST_KEY: ${{ vars.VPS_HOST_KEY }}
+          VPS_SSH_PORT: ${{ vars.VPS_SSH_PORT }}
+        run: sh ops/vps/send-operation.sh
