@@ -66,19 +66,19 @@ On the VPS (one command per box). Connect: `ssh -o ServerAliveInterval=30 ubuntu
 **1. Download the new runner**
 
 ```bash
-sudo curl -fsSL -o /root/nexus-ops-setup/nexus-ops-runner https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/d3de824b1142beacfe52e4c667933600e233ba36/ops/vps/nexus-ops-runner
+sudo curl -fsSL -o /root/nexus-ops-setup/nexus-ops-runner https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/a5ec2469229bfb122ef7e04b8050412edf41c5c3/ops/vps/nexus-ops-runner
 ```
 
 **2. Download the new setup script**
 
 ```bash
-sudo curl -fsSL -o /root/nexus-ops-setup/setup-vps-ops.sh https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/d3de824b1142beacfe52e4c667933600e233ba36/ops/vps/setup-vps-ops.sh
+sudo curl -fsSL -o /root/nexus-ops-setup/setup-vps-ops.sh https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/a5ec2469229bfb122ef7e04b8050412edf41c5c3/ops/vps/setup-vps-ops.sh
 ```
 
 **3. Check the runner.** It must say `OK`.
 
 ```bash
-echo "3bfcfb424d52dd366b6e6b843a68c7c68dde6b65017d81eda43138d48b512096  /root/nexus-ops-setup/nexus-ops-runner" | sudo sha256sum -c -
+echo "1cc53c52286f1e85dd09815b8fb7bf4caa26220eeda4bf4e478ea4927d8137b5  /root/nexus-ops-setup/nexus-ops-runner" | sudo sha256sum -c -
 ```
 
 **4. Check the setup script.** It must say `OK`.
@@ -188,7 +188,7 @@ merged, the first run should be `hello`, to prove the connection works.
 runner, against a local OpenSSH server and the P1-B replica containers. Result with both keys:
 54 passed, 0 failed (`test/test-output.txt`). `test/check_mode_test.sh` covers the read-only list,
 the runner's built-in copy, trusted fingerprints, check-mode refusals and the environment guard:
-72 passed. The tests cover:
+77 passed. The tests cover:
 
 - P1-B through the pipeline
 - tampered scripts, shell characters, arbitrary commands, plain login and port forwarding (all refused)
@@ -199,3 +199,5 @@ the runner's built-in copy, trusted fingerprints, check-mode refusals and the en
   trust-checks are refused; re-installing the main key keeps the check key
 - a request that never finishes sending its script is cut off after 120 s and cannot block other
   operations (the runner receives and verifies the script before it takes the one-at-a-time lock)
+- check-key runs keep their records under `/var/log/nexus-ops/check/`, so they can never use up the
+  run id of an owner-approved run
