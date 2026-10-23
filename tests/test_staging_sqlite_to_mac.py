@@ -203,6 +203,10 @@ def test_changed_container_configuration_cannot_be_accepted(monkeypatch):
     rows[0]['HostConfig']['Memory'] += 1
     with pytest.raises(M.Blocked, match='CONTAINER_STATE_OR_CONFIGURATION_CHANGED'):
         M.unchanged(plan)
+    rows[0]['HostConfig']['Memory'] -= 1
+    rows[0]['State']['StartedAt'] = 'synthetic-new-start'
+    with pytest.raises(M.Blocked, match='CONTAINER_STATE_OR_CONFIGURATION_CHANGED'):
+        M.unchanged(plan)
 
 
 @pytest.mark.skipif(platform.system() != 'Linux', reason='Linux origin resource/IO controls require native Linux')

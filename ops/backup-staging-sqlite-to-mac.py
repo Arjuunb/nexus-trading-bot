@@ -93,6 +93,7 @@ def docker(args):
 def identities(rows):
     return {r['Id']: hashlib.sha256(json.dumps(
                 {'image': r['Image'], 'state': r['State']['Status'],
+                 'started_at': r['State'].get('StartedAt'), 'restart_count': r.get('RestartCount'),
                  'mounts': r.get('Mounts'), 'limits': r.get('HostConfig')},
                 sort_keys=True, separators=(',', ':')).encode()).hexdigest()
             for r in rows}
@@ -406,6 +407,7 @@ def main_mac(args):
     upload = dict(package, source=source)
     received = json.loads(run([*ssh, args.host, command], input=json.dumps(upload).encode(), timeout=60))
     require(received['script_sha256'] == hashlib.sha256(source.encode()).hexdigest(), 'REMOTE_HELPER_HASH_MISMATCH')
+    write_json(base / 'remote-helper.json', received)
     remote = received['remote_directory']
     require(re.fullmatch(r'/home/[a-zA-Z0-9_.-]+/\.nexus-staging-sqlite-[a-zA-Z0-9_-]+', remote), 'PRIVATE_REMOTE_DIRECTORY_REQUIRED')
     wrapper = base / 'ssh-for-sqlite'
@@ -444,6 +446,8 @@ def main_mac(args):
     remote_code(ssh, args.host, source, ['unchanged', remote + '/request.json'])
     receipt = {'status': 'STAGING_LOCAL_SQLITE_BACKUPS_AND_SEPARATE_RESTORES_VERIFIED',
                'directory': str(base), 'databases_verified': len(rows),
+               'remote_helper_directory': remote, 'helper_sha256': received['script_sha256'],
+               'sqlite_snapshot_tool_version': '3.54.1',
                'backup_bytes': sum(r['backup_bytes'] for r in rows), 'databases': rows,
                'missing_bindings': [r['binding'] for r in plan['files'] if not r['exists']],
                'cross_database_atomicity': False, 'external_recovery_proven': False,
