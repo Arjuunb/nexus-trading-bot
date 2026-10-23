@@ -4,7 +4,10 @@ import json
 import os
 from pathlib import Path
 import shutil
+import socket as sockets
+import ssl
 import subprocess
+import sys
 import tempfile
 import uuid
 
@@ -21,7 +24,7 @@ PG_BIN = Path(os.environ.get("NEXUS_TEST_PG17_BIN", "/Applications/Postgres.app/
 
 
 @pytest.fixture(scope="module")
-def server(tmp_path_factory):
+def server(tmp_path_factory, tls_certificates):
     if not (PG_BIN / "initdb").is_file():
         pytest.skip("Native PostgreSQL 17 binaries not available")
     directory = tmp_path_factory.mktemp("ledger-source")
@@ -29,13 +32,20 @@ def server(tmp_path_factory):
     cluster = directory / "cluster"
     helper.check_tools(PG_BIN)
     helper.command([PG_BIN / "initdb", "-D", cluster, "-U", "postgres", "--locale=C", "-E", "UTF8",
-                    "--auth-local=trust", "--auth-host=reject"], directory=directory, name="init")
-    options = "-c listen_addresses='' -c unix_socket_directories='" + str(socket) + "'"
+                    "--auth-local=trust", "--auth-host=scram-sha-256"], directory=directory, name="init")
+    with sockets.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    (tls_certificates / 'server.key').chmod(0o600)
+    options = "-c listen_addresses=127.0.0.1 -c port=" + str(port) + " -c unix_socket_directories='" + str(socket) + "'"
+    options += " -c ssl=on -c ssl_cert_file='" + str(tls_certificates / 'server.crt') + "'"
+    options += " -c ssl_key_file='" + str(tls_certificates / 'server.key') + "'"
     helper.command([PG_BIN / "pg_ctl", "-D", cluster, "-l", directory / "postgres.log", "-w", "-t", "30",
                     "-o", options, "start"], directory=directory, name="start")
-    config = {"host": str(socket), "port": 5432, "dbname": "postgres", "user": "postgres", "password": "fixture-only"}
+    config = {"host": str(socket), "port": port, "dbname": "postgres", "user": "postgres", "password": "fixture-only"}
     try:
         with psycopg.connect(**config, autocommit=True) as c:
+            c.execute("ALTER ROLE postgres PASSWORD 'fixture-only'")
             c.execute("CREATE ROLE authenticated NOLOGIN")
         yield config
     finally:
@@ -280,3 +290,148 @@ def test_failed_connection_attempt_is_not_retried_or_downgraded_and_removes_pass
     assert sockets and all(not path.exists() for path in sockets)
     assert 'fixture-secret' not in capsys.readouterr().out
     assert 'fixture-secret' not in json.dumps(helper.failure_report(caught.value))
+
+
+@pytest.fixture(scope='module')
+def tls_certificates(tmp_path_factory):
+    """Short-lived synthetic CA/server certificates; never uses provider credentials."""
+    directory = tmp_path_factory.mktemp('ledger-tls-fixture')
+    config = directory / 'cert.cnf'
+    config.write_text('''[req]
+distinguished_name=dn
+prompt=no
+[dn]
+CN=Fixture CA
+[ca]
+basicConstraints=critical,CA:TRUE
+keyUsage=critical,keyCertSign,cRLSign
+[server]
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:ledger.fixture.invalid
+''')
+    def openssl(*args):
+        subprocess.run(['openssl', *map(str, args)], check=True, capture_output=True, timeout=30)
+    template = config.read_text()
+    for name in ('ca', 'untrusted'):
+        config.write_text(template.replace('CN=Fixture CA', 'CN=Fixture ' + name))
+        openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '2',
+                '-config', config, '-subj', '/CN=Fixture ' + name, '-extensions', 'ca', '-keyout', directory / (name + '.key'),
+                '-out', directory / (name + '.crt'))
+    config.write_text(template.replace('CN=Fixture CA', 'CN=ledger.fixture.invalid'))
+    openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-config', config, '-subj', '/CN=ledger.fixture.invalid',
+            '-keyout', directory / 'server.key', '-out', directory / 'server.csr')
+    openssl('x509', '-req', '-in', directory / 'server.csr', '-days', '2',
+            '-CA', directory / 'ca.crt', '-CAkey', directory / 'ca.key', '-CAcreateserial',
+            '-extfile', config, '-extensions', 'server', '-out', directory / 'server.crt')
+    return directory
+
+
+def tls_handshake(ca_data, certificate_directory, hostname):
+    """Real TLS chain and hostname verification in memory, without a database login."""
+    client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client_context.load_verify_locations(cadata=ca_data.decode('ascii'))
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(certificate_directory / 'server.crt', certificate_directory / 'server.key')
+    client_in, client_out, server_in, server_out = (ssl.MemoryBIO() for _ in range(4))
+    client = client_context.wrap_bio(client_in, client_out, server_hostname=hostname)
+    server = server_context.wrap_bio(server_in, server_out, server_side=True)
+    for _ in range(20):
+        try:
+            client.do_handshake()
+            return client.version()
+        except ssl.SSLWantReadError:
+            pass
+        server_in.write(client_out.read())
+        try:
+            server.do_handshake()
+        except ssl.SSLWantReadError:
+            pass
+        client_in.write(server_out.read())
+    raise AssertionError('Synthetic TLS handshake did not complete')
+
+
+def test_explicit_ca_verifies_chain_but_does_not_accept_wrong_ca_or_hostname(tls_certificates):
+    ca_data = helper.load_root_certificate(tls_certificates / 'ca.crt')
+    assert tls_handshake(ca_data, tls_certificates, 'ledger.fixture.invalid').startswith('TLSv1.')
+    untrusted = helper.load_root_certificate(tls_certificates / 'untrusted.crt')
+    with pytest.raises(ssl.SSLCertVerificationError):
+        tls_handshake(untrusted, tls_certificates, 'ledger.fixture.invalid')
+    with pytest.raises(ssl.SSLCertVerificationError):
+        tls_handshake(ca_data, tls_certificates, 'other.fixture.invalid')
+
+
+def test_ca_validation_rejects_non_ca_certificates_and_private_keys(tls_certificates, tmp_path):
+    with pytest.raises(helper.Blocked, match='PROVIDER_CA_CERTIFICATE_REQUIRED'):
+        helper.load_root_certificate(tls_certificates / 'server.crt')
+    bundle = tmp_path / 'wrong-bundle.pem'
+    bundle.write_bytes((tls_certificates / 'ca.crt').read_bytes() + (tls_certificates / 'ca.key').read_bytes())
+    with pytest.raises(helper.Blocked, match='CA_CERTIFICATE_MUST_NOT_CONTAIN_A_PRIVATE_KEY'):
+        helper.load_root_certificate(bundle)
+    bundle.write_text('not a certificate')
+    with pytest.raises(helper.Blocked, match='INVALID_PROVIDER_CA_CERTIFICATE'):
+        helper.load_root_certificate(bundle)
+
+
+def test_cli_requires_ca_before_password_and_never_uses_global_pg_settings(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, 'argv', ['backup.py', '--backup', '--project', 'a' * 20,
+        '--pooler-host', 'aws-0-fixture.pooler.supabase.com', '--destination', str(tmp_path),
+        '--sslrootcert', str(tmp_path / 'missing.crt')])
+    monkeypatch.setattr(helper, 'check_tools', lambda *args: None)
+    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: pytest.fail('Password requested before CA validation'))
+    monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
+    assert helper.main() == 1
+    assert json.loads(capsys.readouterr().out)['reason'] == 'PROVIDER_CA_CERTIFICATE_FILE_REQUIRED'
+
+
+def test_cli_uses_one_fixed_ca_copy_and_verify_full_for_recovery(tls_certificates, tmp_path, monkeypatch, capsys):
+    path = tls_certificates / 'ca.crt'
+    original_ca = path.read_bytes()
+    monkeypatch.setattr(sys, 'argv', ['backup.py', '--backup', '--project', 'a' * 20,
+        '--pooler-host', 'aws-0-fixture.pooler.supabase.com', '--destination', str(tmp_path), '--sslrootcert', str(path)])
+    monkeypatch.setenv('PGSSLMODE', 'disable')
+    monkeypatch.setenv('PGSSLROOTCERT', '/untrusted/ambient.crt')
+    monkeypatch.setattr(helper, 'check_tools', lambda *args: None)
+    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: 'fixture-only')
+    monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
+    def recover(config, *, directory, bin_dir):
+        assert config['sslmode'] == 'verify-full'
+        saved_ca = Path(config['sslrootcert'])
+        assert saved_ca.parent == directory
+        assert saved_ca.read_bytes() == original_ca
+        assert saved_ca.stat().st_mode & 0o777 == 0o600
+        assert 'PGSSLMODE' not in os.environ and 'PGSSLROOTCERT' not in os.environ
+        return {'status': 'SYNTHETIC_RECOVERY_CHECK_ONLY'}
+    monkeypatch.setattr(helper, 'recover', recover)
+    assert helper.main() == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['source_tls_mode'] == 'verify-full'
+    assert report['trusted_ca_sha256'] == helper.hashlib.sha256(original_ca).hexdigest()
+    assert 'fixture-only' not in json.dumps(report)
+
+
+def test_real_pg_dump_and_financial_restore_use_explicit_ca_and_verify_full(source, tls_certificates, tmp_path):
+    directory = tmp_path / 'recovery'
+    directory.mkdir(mode=0o700)
+    ca_data = helper.load_root_certificate(tls_certificates / 'ca.crt')
+    ca_path = helper.preserve_root_certificate(directory, ca_data)
+    config = dict(source, host='ledger.fixture.invalid', hostaddr='127.0.0.1',
+                  sslmode='verify-full', sslrootcert=str(ca_path))
+    report = helper.recover(config, bin_dir=PG_BIN, directory=directory)
+    assert report['external_application_ledger_recovery_proven'] is True
+    assert report['all_selected_table_rows_match_same_exported_snapshot'] is True
+    assert ca_path.read_bytes() == ca_data
+    assert not (directory / '.pgpass').exists()
+    assert not (directory / 'detached-postgres-17/postmaster.pid').exists()
+
+
+def test_native_libpq_wrong_ca_cannot_copy_or_fall_back_to_unverified_tls(source, tls_certificates, tmp_path):
+    directory = tmp_path / 'recovery'
+    directory.mkdir(mode=0o700)
+    config = dict(source, host='ledger.fixture.invalid', hostaddr='127.0.0.1',
+                  sslmode='verify-full', sslrootcert=str(tls_certificates / 'untrusted.crt'))
+    with pytest.raises(helper.SourceConnectionBlocked, match='TLS_CERTIFICATE_VERIFICATION_FAILED'):
+        helper.recover(config, bin_dir=PG_BIN, directory=directory)
+    assert not (directory / 'application-ledger.dump').exists()
+    assert not (directory / '.pgpass').exists()

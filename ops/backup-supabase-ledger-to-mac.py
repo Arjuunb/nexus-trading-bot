@@ -16,6 +16,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import ssl
 import subprocess
 import tempfile
 import time
@@ -117,6 +118,38 @@ def private_json(path, value):
     with os.fdopen(fd, "w", encoding="utf-8") as out:
         json.dump(value, out, indent=2, sort_keys=True)
         out.write("\n")
+
+
+def load_root_certificate(path):
+    """Accept an explicit provider CA, never a certificate obtained from the peer.
+
+    Supabase documents downloading this CA from Database Settings. The Mac's
+    public system trust bundle alone need not contain the provider's private CA.
+    Validate before asking for the password; actual certificate chain, validity
+    and hostname verification are still enforced by libpq's verify-full mode.
+    """
+    path = path.expanduser().resolve()
+    require(path.is_file() and 0 < path.stat().st_size <= 128 * 1024,
+            "PROVIDER_CA_CERTIFICATE_FILE_REQUIRED")
+    data = path.read_bytes()
+    require(b"PRIVATE KEY" not in data, "CA_CERTIFICATE_MUST_NOT_CONTAIN_A_PRIVATE_KEY")
+    try:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        existing_cas = context.cert_store_stats()["x509_ca"]
+        context.load_verify_locations(cadata=data.decode("ascii"))
+    except (ssl.SSLError, UnicodeError, ValueError):
+        raise Blocked("INVALID_PROVIDER_CA_CERTIFICATE") from None
+    require(context.cert_store_stats()["x509_ca"] > existing_cas, "PROVIDER_CA_CERTIFICATE_REQUIRED")
+    return data
+
+
+def preserve_root_certificate(directory, data):
+    """Use the same private, fixed CA copy in psycopg and pg_dump."""
+    path = directory / "provider-root-ca.crt"
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    with os.fdopen(fd, "wb") as out:
+        out.write(data)
+    return path
 
 
 def file_hash(path):
@@ -479,6 +512,8 @@ def main():
     parser.add_argument("--backup", action="store_true", required=True)
     parser.add_argument("--project", required=True)
     parser.add_argument("--pooler-host", required=True)
+    parser.add_argument("--sslrootcert", type=Path, required=True,
+                        help="CA certificate downloaded from Supabase Database Settings; verify-full remains mandatory")
     parser.add_argument("--pg-bin", type=Path, default=Path("/Applications/Postgres.app/Contents/Versions/17/bin"))
     parser.add_argument("--destination", type=Path, default=Path.home() / "Nexus-Backups")
     args = parser.parse_args()
@@ -496,15 +531,17 @@ def main():
         destination = args.destination.expanduser().resolve()
         require(destination.is_dir(), "EXISTING_BACKUP_DESTINATION_REQUIRED")
         require(shutil.disk_usage(destination).free >= RESERVE + WORK_BUDGET, "MAC_RECOVERY_SPACE_REQUIRED")
-        require(Path("/etc/ssl/cert.pem").is_file(), "MAC_SYSTEM_CA_BUNDLE_REQUIRED")
+        ca_data = load_root_certificate(args.sslrootcert)
         password = getpass.getpass("Staging Supabase DATABASE password (hidden): ")
         require(bool(password), "DATABASE_PASSWORD_REQUIRED")
-        config = {"host": args.pooler_host, "port": 5432, "dbname": "postgres", "user": "postgres." + args.project,
-                  "password": password, "sslmode": "verify-full", "sslrootcert": "/etc/ssl/cert.pem",
-                  "connect_timeout": 10, "application_name": "nexus_read_only_ledger_backup"}
         directory = Path(tempfile.mkdtemp(prefix="external-ledger-", dir=destination))
+        ca_path = preserve_root_certificate(directory, ca_data)
+        config = {"host": args.pooler_host, "port": 5432, "dbname": "postgres", "user": "postgres." + args.project,
+                  "password": password, "sslmode": "verify-full", "sslrootcert": str(ca_path),
+                  "connect_timeout": 10, "application_name": "nexus_read_only_ledger_backup"}
         report = recover(config, bin_dir=args.pg_bin.resolve(), directory=directory)
         report.update(project=args.project, local_restore_server_stopped=True,
+                      source_tls_mode="verify-full", trusted_ca_sha256=hashlib.sha256(ca_data).hexdigest(),
                       at_utc=dt.datetime.now(dt.timezone.utc).isoformat())
         private_json(directory / "recovery-receipt.json", report)
         print(json.dumps(report, indent=2))
