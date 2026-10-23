@@ -1,0 +1,146 @@
+PASS  setup: compose.yaml is production's exact file
+PASS  setup: production app runs the old image
+PASS  setup: pa-replay-2025 is an exited one-off
+PASS  plan refuses before the image is loaded
+PASS  plan refuses before the backup
+PASS  backup OK
+PASS  plan refuses an image recorded for another commit
+PASS  plan refuses a changed Compose file
+PASS  plan refuses when .env no longer gives the running app
+PASS  plan refuses a second non-one-off app container
+PASS  plan refuses any other environment change
+PASS  plan refuses an image running as another user
+PASS  apply refuses without a plan
+      | GATES PASSED
+      | - backup: verified 1a17e4c29b755d25 (2 files, 2 databases, restore test 2026-10-23T22:01:54Z)
+      | - image: sha256:b230cb89c66be6946d405b85bcccbfb113a745ebe8b3987d496bb254671f3a66 (commit 111111111111), verified and loaded
+      | - Compose files: compose.yaml and compose.override.yaml match production's; with production's own values they reproduce the running app exactly
+      | WHAT CHANGES (production app only)
+      | - image: nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d (sha256:6b59ac7c3b5f) -> nexus-ci-api@sha256:b230cb89c66be6946d405b85bcccbfb113a745ebe8b3987d496bb254671f3a66
+      | - DEPLOYED_AT: 2026-10-09T00:59:00Z -> 2026-10-23T22:02:00Z (deploy label)
+      | - GIT_COMMIT: 215c96cb397ba1a6132c665301c34c4a39a13a6d -> 1111111111111111111111111111111111111111 (deploy label)
+      | - HUB_ENABLE_EXTERNAL_LIVE: unset -> 0 (the code's own default, no change)
+      | - HUB_MONITOR_AGENT: unset -> 1 (kept on: the code's default; the new image would set 0)
+      | - NEXUS_SHADOW_SUPERVISED: unset -> 0 (the code's own default, no change)
+      | - PYTHONDONTWRITEBYTECODE: unset -> 1 (Python base image)
+      | - PYTHONUNBUFFERED: unset -> 1 (Python base image)
+      | - PYTHON_VERSION: 3.11.99-debian -> 3.12.15 (Python base image)
+      | - start command: production's own, kept: sh -c exec uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=* --timeout-graceful-shutdown 5 (the new image's default would be: sh -c uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips=*)
+      | - unchanged: volumes nexus-migration-tradexa-data-cutover-20260913->/var/lib/tradexa; networks nexus-trading-bot_default; user tradexa; restart policy; healthcheck; stop grace; every other environment value; PRICE_ACTION_LAB_ENABLED unset = OFF
+      | - not touched: nexus-trading-bot-certbot-1, nexus-trading-bot-nginx-1, pa-replay-2025 (nginx is only reloaded after the app is healthy)
+      | - downtime: the app restarts once (about 40-90 s); the web proxy answers 502 meanwhile
+      | PLAN READY (valid 2 hours). Nothing was changed.
+PASS  plan ready
+PASS  plan shows the image change
+PASS  plan shows the commit label
+PASS  plan keeps the monitor agent on
+PASS  plan explains same-as-default values
+PASS  plan shows base image values
+PASS  plan keeps production's start command
+PASS  plan lists untouched containers
+PASS  plan prints no secrets
+PASS  plan prints no Supabase address
+PASS  apply refuses a plan older than 2 hours
+PASS  apply refuses when something changed since the plan
+PASS  plan.json holds no secret
+PASS  nothing changed by plans and refusals
+      | recorded the current app for rollback: nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d (sha256:6b59ac7c3b5f)
+      | nexus-trading-bot-app-1 recreated with the Strategy Intelligence image; waiting for it to be healthy (up to 8 minutes)
+      | container check: image, volumes, networks, user, start command and all 26 environment values as planned
+      | /health: {"status": "ok", "pa": false}; PA routes and Strategy Intelligence routes: {"operations": 2, "not_retired": [], "strategy_intelligence_routes": 1}
+      | web proxy reloaded; https://trade-logx.com/health through the proxy: ok (port 80)
+      | other containers: unchanged (same container, image, state, start time, restart count)
+      | DEPLOYED: production runs Strategy Intelligence (111111111111); Price Action Lab OFF. Next: prod-si-check measure.
+PASS  apply deploys
+PASS  container check passes
+PASS  health says PA off
+PASS  PA routes all retired
+PASS  SI routes present
+PASS  proxy reaches the new app as a visitor would
+PASS  other containers unchanged
+PASS  apply prints no secrets
+PASS  app runs the new image
+PASS  app runs production's start command
+PASS  app keeps the monitor agent, .env values (with $), override values; commit label updated
+PASS  app keeps the external data volume
+PASS  user, directory, restart policy kept
+PASS  nginx not restarted (reloaded only)
+PASS  certbot untouched
+PASS  pa-replay-2025 untouched
+PASS  data intact
+      | == 1. Identity
+      | PASS  app runs the verified Strategy Intelligence image: sha256:b230cb89c66b
+      | PASS  app runs production's start command (graceful shutdown kept)
+      | PASS  app healthy
+      | PASS  no restarts, not OOM-killed: restarts 0
+      | PASS  deploy receipt found: /tmp/tmp.Zrzry45vmB/work/deployed-20261023T220211Z.json
+      |       started 2026-10-23T22:02:04 (0 minutes ago)
+      | PASS  data volume found: nexus-migration-tradexa-data-cutover-20260913 at /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-migration-tradexa-data-cutover-20260913/_data
+      | == 2. Strategy Intelligence live, Price Action Lab off
+      | PASS  /health: status ok, price_action_lab_enabled false: {"status": "ok", "pa": false}
+      | PASS  Strategy Intelligence routes served: 1 routes
+      | PASS  every PA lab route is the retired handler: 2 operations
+      | PASS  PRICE_ACTION_LAB_ENABLED not on: unset
+      | PASS  https://trade-logx.com/health through the web proxy: ok (port 80)
+      | == 3/4/5. Measuring for 12 s (sample every 3 s)
+      | == 3. Equity snapshot limit (1 per account per minute while nothing changes)
+      |       smc_strategy_paper.db: 1 equity rows from 1 accounts in 12 s
+      | PASS  equity snapshots within the limit: 1 rows, 1 accounts, 5.0 per account per minute; 6 MB/day at this rate
+      | == 4. Production's own work goes on
+      | PASS  SMC database written during the window
+      |       written during the window: smc_strategy_paper.db-wal
+      | PASS  no Price Action Lab file written since the deploy: kept, unchanged
+      | == 5. Resources
+      | PASS  app still healthy, no restart or OOM during the window
+      |       app    CPU avg 0.0% / p95 0.0% of one core   memory avg 0.01 / peak 0.01 GiB (with file cache peak 0.01)   disk read 0.00 MiB/s, write 0.00 MiB/s
+      |       before (P0, 2026-10-22): app CPU 107.5%, memory 4.77 GiB avg
+      |       host   CPU busy avg 0.4% / p95 0.4%   memory available min 14.97 of 15.7 GiB   disk read 0.00 MiB/s, write 0.07 MiB/s
+      | PASS  host keeps at least 1 GiB memory available: min 14.97 GiB
+      | == 6. Other containers, disk, log
+      | PASS  nginx, certbot and the rest unchanged since the deploy: certbot-1 running, nginx-1 running, pa-replay-2025 exited
+      | PASS  free disk above 10 GB: 27.5 GB free; +0.74 GB/day during the window (whole host)
+      |       app log since start: 0 lines, 0 error lines
+      |       not checked here: the Settings page in Supabase sign-in mode needs Supabase migration 0006
+      | GO: production runs Strategy Intelligence, Price Action Lab is off, and production is healthy.
+      | Nothing was changed.
+PASS  check says GO
+PASS  check counts equity snapshots
+PASS  check sees the SMC database written
+PASS  check sees PA data kept and unwritten
+PASS  check reaches the app through the proxy
+PASS  check reads app resources
+PASS  check prints no secrets
+PASS  check says NO-GO when snapshots are written on every tick
+PASS  check creates and changes no file in the data volume
+PASS  check says NO-GO when a PA database is written
+PASS  check names the PA file
+PASS  check rejects unknown argument
+      | rollback: previous image nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d back, healthy; exactly the app that ran before (same Compose config hash)
+      | web proxy reloaded; https://trade-logx.com/health through the proxy: ok (port 80)
+      | other containers: unchanged
+      | ROLLED BACK: production runs the previous image (nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d) and is healthy. Data was not touched.
+PASS  rollback restores the previous app
+PASS  rollback is exactly the app that ran before
+PASS  proxy reaches the previous app
+PASS  app back on the old image with the original config hash
+PASS  nginx not restarted by rollback
+      | recorded the current app for rollback: nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d (sha256:6b59ac7c3b5f)
+      | nexus-trading-bot-app-1 recreated with the Strategy Intelligence image; waiting for it to be healthy (up to 8 minutes)
+      | the new app was crashing (restarted 4 times, OOM False), so it was rolled back: previous image nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d back, healthy; exactly the app that ran before (same Compose config hash)
+      | web proxy reloaded; https://trade-logx.com/health through the proxy: ok (port 80)
+      | BLOCKED: the new app was crashing (restarted 4 times, OOM False); production is back on the previous image and healthy.
+PASS  crashing new app is rolled back
+PASS  production back and healthy
+PASS  crash detected without waiting the full 8 minutes (11 s)
+PASS  app back on the old image after the crash
+      | recorded the current app for rollback: nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d (sha256:6b59ac7c3b5f)
+      | nexus-trading-bot-app-1 recreated with the Strategy Intelligence image; waiting for it to be healthy (up to 0 minutes)
+      | the new app was not healthy after 40 s, so it was rolled back: previous image nexus-trading-bot-app:guardian-215c96cb397ba1a6132c665301c34c4a39a13a6d back, healthy; exactly the app that ran before (same Compose config hash)
+      | web proxy reloaded; https://trade-logx.com/health through the proxy: ok (port 80)
+      | BLOCKED: the new app was not healthy after 40 s; production is back on the previous image and healthy.
+PASS  never-healthy new app is rolled back
+PASS  app back on the old image after the timeout
+PASS  nginx never restarted
+PASS  pa-replay-2025 never touched
+PASS  rejects unknown argument
+prod_si_deploy_test: 0 failed
