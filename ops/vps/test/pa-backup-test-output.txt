@@ -1,0 +1,64 @@
+# ops/vps/test/pa_backup_test.sh output, 2026-10-23, Docker Engine 29.9.1; run 1 with the gzip fallback, run 2 with zstd
+== 1. before the backup: check is BLOCKED
+PASS  WAL gate fails
+PASS  backup gate fails
+PASS  outstanding committed WAL frames: 234
+PASS  status before any backup
+== 2. refusals
+PASS  refuses while staging API runs
+PASS  refuses while any file in the volume is open
+PASS  refuses without enough free disk
+== 3. backup, restore test and manifest
+PASS  starts in the background
+      2026-10-23T15:19:16Z start: price_action_paper.db 0.04 GB, price_action_paper.db-wal 0.00 GB, price_action_paper.db-shm 0.00 GB in /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data; free 31.05 GB; compressor gzip
+      2026-10-23T15:19:16Z source price_action_paper.db sha256 01b1389c0a0943f6
+      2026-10-23T15:19:16Z source price_action_paper.db-wal sha256 2561863e44780a94
+      2026-10-23T15:19:16Z source price_action_paper.db-shm sha256 66e95af3286d5fcb
+      2026-10-23T15:19:17Z archive price_action_paper.tar.gz 0.00 GB sha256 71c128dc4b88a05a
+      2026-10-23T15:19:17Z restore: all 3 files byte-identical to the originals
+      2026-10-23T15:19:17Z restore: SQLite applied 234 committed WAL frames to the restored copy
+      2026-10-23T15:19:17Z restore: integrity_check ok; foreign key violations 0; 3 tables, 32420 rows
+      2026-10-23T15:19:17Z finished: OK; temporary restored copy deleted; free 31.05 GB
+      RESULT: OK
+      verified backup: /tmp/tmp.xKeJj9YBdQ/pa-backup/price_action_paper.tar.gz (0.00 GB), sha256 71c128dc4b88a05a; restore test at 2026-10-23T15:19:17Z: integrity_check ok, 234 WAL frames applied, 3 tables, 32420 rows
+      Nothing was changed by this status check.
+PASS  result OK
+PASS  restored files byte-identical
+PASS  restore test applied exactly the outstanding frames
+PASS  integrity_check ok
+PASS  temporary restored copy deleted
+PASS  restore folder gone
+PASS  originals unchanged (size, ns timestamp, inode, sha256)
+PASS  restored copy has all 30,400 evidence rows, including the 400 that were only in the WAL
+== 4. check after the backup: SAFE, delete still refuses
+        [PASS] staging API stopped: nexus-remote-stage-rc3-28acdbc-api-1 is exited
+        [PASS] no running container uses the volume: none running (stopped users: nexus-remote-stage-rc3-28acdbc-api-1)
+        [PASS] no process holds any file in the volume open: 90 processes scanned, 0 unreadable; holders: none
+        [PASS] database present as a regular file: present
+        [PASS] targets are regular files with one link each (no hard links, no symlinks): 3 target files
+        [PASS] targets live in the staging volume folder: /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data
+        [PASS] schema is the Price Action paper database (pa_* tables, no SMC tables): 3 tables: 2 pa_* (e.g. pa_orders, pa_sessions), 1 v2_* PA broker tables (incl. v2_source_evidence=True), 0 SMC-named
+        [PASS] no committed WAL transactions waiting for a checkpoint, or all of them inside the verified backup: 234 committed frames exist only in the WAL; the verified backup's restore test applied exactly 234 of them
+        [PASS] production uses a different volume and a different PA file: production nexus-trading-bot-app-1 mounts nexus-migration-tradexa-data-cutover-20260913 at /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-migration-tradexa-data-cutover-20260913/_data; its price_action_paper.db is 0.00 GB (inode 689179) and is NOT a target
+        [PASS] verified, restore-tested backup of the current files: verified: archive /tmp/tmp.xKeJj9YBdQ/pa-backup/price_action_paper.tar.gz (0.00 GB), sha256 matches, restore test integrity_check ok at 2026-10-23T15:19:17Z
+      SAFE FOR SEPARATE DELETION APPROVAL
+PASS  check exits 0
+PASS  WAL gate passes because the backup holds exactly those frames
+PASS  backup gate passes
+PASS  verdict SAFE FOR SEPARATE DELETION APPROVAL
+PASS  delete still disabled
+PASS  still nothing changed
+PASS  second start does not redo a verified backup
+== 5. a backup of older files does not count
+PASS  changed WAL invalidates the backup
+PASS  and the WAL gate fails again
+== 6. files changing during the backup -> FAILED, no manifest
+PASS  backup FAILED when the source changed
+PASS  no manifest after a failed backup
+== 7. production untouched
+PASS  production PA file present
+failures: 0
+
+# run 2 (zstd): same 28 checks, 0 failures
+      2026-10-23T15:19:41Z start: price_action_paper.db 0.04 GB, price_action_paper.db-wal 0.00 GB, price_action_paper.db-shm 0.00 GB in /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data; free 31.05 GB; compressor zstd
+      2026-10-23T15:19:41Z archive price_action_paper.tar.zst 0.00 GB sha256 c8f9c9b2f56c0b45

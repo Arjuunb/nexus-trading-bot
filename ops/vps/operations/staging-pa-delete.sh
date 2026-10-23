@@ -149,14 +149,18 @@ def find_backups():
                     except OSError: pass
     return found
 
+MANIFEST = {}
+
 def verify_manifest(ident):
     m = os.path.join(BACKUP, "manifest.json")
     if not os.path.isfile(m): return False, "no verified backup manifest at %s" % m
     try: man = json.load(open(m))
     except ValueError: return False, "backup manifest unreadable"
+    MANIFEST.update(man)
     for f in (DB, DB + "-wal"):
         want, have = man.get("source", {}).get(f, {}), ident.get(f, {})
-        if f in ident and (want.get("inode") != have.get("inode") or want.get("size") != have.get("size")):
+        if (f in ident) != (f in man.get("source", {})) or (f in ident and any(
+                want.get(k) != have.get(k) for k in ("inode", "size", "mtime") if k in want)):
             return False, "backup was made from different files than the current %s" % f
     if man.get("restore_test", {}).get("integrity_check") != "ok":
         return False, "backup has no passed restore test (integrity_check)"
@@ -251,8 +255,13 @@ ws = wal_state(os.path.join(DIR, DB + "-wal"), os.path.join(DIR, DB + "-shm"))
 say("  WAL %s; valid frames %d; committed frames %d; checkpointed per SHM index %s" % (
     gb(ws["wal_bytes"]), ws["valid_frames"], ws["committed_frames"], ws["backfilled"] if ws["backfilled"] is not None else "unknown (SHM index not usable)"))
 out = ws["outstanding_frames"]
-gate("no committed WAL transactions waiting for a checkpoint", out == 0,
-     "%s committed frames (%s) exist only in the WAL; a backup must include them" % (out, gb((out or 0) * ((ws.get("page_size") or 4096) + 24))) if out else "none")
+backup_ok, backup_why = verify_manifest(ident)
+applied = MANIFEST.get("restore_test", {}).get("wal_frames_applied")
+covered = backup_ok and out and applied == ws["committed_frames"]
+gate("no committed WAL transactions waiting for a checkpoint, or all of them inside the verified backup", out == 0 or covered,
+     "none" if out == 0 else
+     "%s committed frames exist only in the WAL; the verified backup's restore test applied exactly %s of them" % (out, applied) if covered else
+     "%s committed frames (%s) exist only in the WAL and no verified backup contains them" % (out, gb((out or 0) * ((ws.get("page_size") or 4096) + 24))))
 
 say("-- production isolation (read-only)")
 prod = inspect("container", PROD)
@@ -288,8 +297,7 @@ cands = find_backups()
 for p, s in cands[:20]:
     say("  found (not verified by this check unless listed below): %s  %s" % (p, gb(s)))
 if not cands: say("  no file mentioning price_action_paper found in the staging volume backup folders, /home/ubuntu, /root, /var/backups or %s" % BACKUP)
-ok, why = verify_manifest(ident)
-gate("verified, restore-tested backup of the current files", ok, why)
+gate("verified, restore-tested backup of the current files", backup_ok, backup_why)
 ratio = compression_estimate(os.path.join(DIR, DB)) if dbi else None
 logical = (dbi or {}).get("size", 0) + ident.get(DB + "-wal", {}).get("size", 0)
 if ratio:
