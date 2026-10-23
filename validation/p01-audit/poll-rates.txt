@@ -1,0 +1,9 @@
+Shell only (any page)                        88.5 req/min  (1.48/s)  lab bot-status share: 30.0/min
+Dashboard                                   236.5 req/min  (3.94/s)  lab bot-status share: 30.0/min
+Price Action Lab (live mode)                175.0 req/min  (2.92/s)  lab bot-status share: 30.0/min
+SMC Strategy Lab (live)                     172.5 req/min  (2.88/s)  lab bot-status share: 30.0/min
+Instance Visual Lab (+candles, not counted)  122.5 req/min  (2.04/s)  lab bot-status share: 30.0/min
+
+P2 scenario (ticker lab polls only on lab pages, /instances >= 5 s):
+Shell only (any page)                        46.5 req/min  (0.78/s)  lab bot-status share:  0.0/min
+Dashboard (its own lab cards still poll)    218.5 req/min  (3.64/s)  lab bot-status share: 30.0/min

@@ -1,0 +1,43 @@
+# ops/vps/test/pipeline_test.sh output, 2026-10-23, Ubuntu 24.04, OpenSSH sshd on port 2222, Docker replicas from validation/p1b-stop-staging/replica-test
+== hello through the full path (workflow script -> ssh -> forced command -> sudo -> runner)
+PASS  hello exit 0
+PASS  hello shows disk
+PASS  hello shows containers
+PASS  runner reports exit code
+== P1-B through the pipeline (replica containers)
+PASS  P1-B check says GO
+PASS  P1-B stop exit 0
+PASS  P1-B stop says DONE
+PASS  staging replica stopped
+PASS  production replica running
+PASS  P1-B verify unchanged
+PASS  ops-log shows earlier run
+== refusals
+PASS  client refuses a script that differs from the approved one
+PASS  runner refuses content that does not match the sha256
+PASS  runner refuses shell characters
+PASS  arbitrary command is refused
+PASS  plain login is refused
+PASS  port forwarding refused (restrict)
+PASS  same run id twice is refused
+PASS  bad operation name refused before sending
+PASS  bad argument refused before sending
+== off switch
+PASS  off switch refuses
+PASS  works again after the switch is removed
+== one at a time, and a dropped connection does not stop the script
+PASS  second operation refused while one runs
+PASS  script kept running after the connection dropped
+PASS  its exit code was recorded
+PASS  operation that leaves a background process
+PASS  lock released despite the leftover background process
+== time limit (runner copy with a 3 s limit, run directly as root)
+PASS  time limit stops the script (exit 124)
+== audit trail
+PASS  start of the P1-B stop recorded with commit and sha256
+PASS  end of the P1-B stop recorded with exit code
+PASS  refused requests never start a run
+PASS  script kept by its sha256
+failures: 0
+
+# Also checked by hand: sshd log line 'refused local port forward'; setup --remove (key rejected afterwards, root sudo unaffected); re-running setup replaces the key (old key rejected) and keeps exactly one key line; actionlint v1.7.7 reports no findings for .github/workflows/vps-ops.yml

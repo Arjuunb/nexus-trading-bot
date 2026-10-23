@@ -1,0 +1,11 @@
+# vite v5.4.21 production build of automation-hub-dashboard at 215c96c (npm ci; npx vite build)
+# Initial shell (always loaded):
+assets/index-*.js            249.94 kB | gzip  77.57 kB
+assets/index-*.css           196.89 kB | gzip  37.31 kB
+# Shared chart chunk (first page with any chart, incl. Dashboard):
+assets/EChart-*.js           681.00 kB | gzip 231.74 kB   (already tree-shaken via src/lib/echarts.ts)
+# Largest lazy page chunks:
+StrategyCanvas 154.09 kB (50.52 gz) | StrategyStudioHub 88.51 (23.05) | Settings 76.52 (20.88) | JournalHub 76.29 (20.75)
+TradingInstancesHub 64.92 (17.50) | PriceActionVisual 64.03 (18.60) | BotTerminal 60.32 (17.62) | GuardianHub 43.84 (12.22)
+Calendar 38.48 (11.28) | Overview 34.52 (9.24) | NativeSMCVisual 34.36 (10.75) | SMCStrategyLab 34.17 (9.96)
+InstanceVisualLab 23.87 (7.87) | AdaptiveLab 19.00 (6.03) | SMCAgent 9.85 (3.37)
