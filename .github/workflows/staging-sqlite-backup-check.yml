@@ -24,7 +24,18 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install existing hash-locked test dependencies
-        run: python -m pip install --require-hashes -r ops/ci-test-requirements.lock
+        run: |
+          python - <<'PY'
+          import os,pathlib,re
+          lock=pathlib.Path('ops/api-requirements.lock').read_text()
+          blocks=re.split(r'\n(?=[a-zA-Z0-9])',lock)
+          packaging=[b for b in blocks if b.startswith('packaging==')]
+          assert len(packaging)==1 and '--hash=sha256:' in packaging[0]
+          target=pathlib.Path(os.environ['RUNNER_TEMP'])/'backup-test-requirements.lock'
+          target.write_text(pathlib.Path('ops/ci-test-requirements.lock').read_text()+'\n'+packaging[0]+'\n')
+          PY
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/backup-test-requirements.lock"
+          python -m pip check
       - name: Verify official native Linux tools in disposable CI storage
         run: |
           python - <<'PY'
