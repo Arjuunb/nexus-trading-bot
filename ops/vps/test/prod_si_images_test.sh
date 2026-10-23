@@ -78,7 +78,7 @@ make_packet nosi "$REAL_FLAGS" 100:101 'console.log("smc")' LOW
 out=$(sh "$OP" load); has "refuses a dashboard without Strategy Intelligence" "$out" "BLOCKED: the dashboard has no Strategy Intelligence page"
 make_packet otheruser "$REAL_FLAGS" 1000:1000 "$SI" LOW
 out=$(sh "$OP" load); has "refuses an image whose user cannot own production's files" "$out" "but production's data files belong to 100:101"
-out=$(PROD_SI_TEST_ZIP_SHA256=PENDING_RELEASE_14 sh "$OP" load); has "refuses while the expected SHA-256 is not filled in" "$out" "BLOCKED: the expected package SHA-256 is not filled in yet"
+out=$(PROD_SI_TEST_ZIP_SHA256=PENDING_RELEASE_15 sh "$OP" load); has "refuses while the expected SHA-256 is not filled in" "$out" "BLOCKED: the expected package SHA-256 is not filled in yet"
 out=$(sh "$OP" unload); has "rejects unknown argument" "$out" "usage:"
 
 docker rmi -f "nexus-ci-api:$COMMIT" >/dev/null 2>&1
