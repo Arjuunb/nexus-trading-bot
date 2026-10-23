@@ -84,15 +84,15 @@ jobs:
         run: |
           npx playwright install --with-deps chromium
           printf 'PW_CHROMIUM=%s\n' "$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
-      - name: Check out the reviewed RC3 clipboard harness separately
+      - name: Check out the reviewed production-line clipboard harness separately
         if: matrix.python == '3.12'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: Arjuunb/nexus-trading-bot
-          ref: '24b67bf43e1712b5566fa33b457814ceac5ec30b'
+          ref: '553a5584f80658ab438bb0e9addede6aaf2481ac'
           path: validation-controller
           persist-credentials: false
-          sparse-checkout: .github/rc3-browser
+          sparse-checkout: .github/production-browser
       - name: Verify the reviewed harness and unchanged dashboard source
         if: matrix.python == '3.12'
         run: |
@@ -102,10 +102,10 @@ jobs:
           workspace = Path(os.environ['GITHUB_WORKSPACE'])
           controller = workspace / 'validation-controller'
           actual = subprocess.check_output(['git', '-C', str(controller), 'rev-parse', 'HEAD'], text=True).strip()
-          assert actual == '24b67bf43e1712b5566fa33b457814ceac5ec30b'
-          expected = {'playwright.config.cjs': '6b1cb8d1827f2301c567fe50b4a3957cf9ed2cde28aa62b7a6f0e57478e2a6da', 'clipboard.spec.cjs': '4185ce2a072662f04649a67763321b4de03cdb81dfcc55f8ae179d3d919d219e'}
+          assert actual == '553a5584f80658ab438bb0e9addede6aaf2481ac'
+          expected = {'playwright.config.cjs': '8471eb93a117695112478fd84ed1d9dc3e0b345e32e4faa1d1be70a3b38094de', 'clipboard.spec.cjs': '44442aec9d596abfdb966d62b59fe306306a78a6293cb8163efe0582af4c187c'}
           for name, digest in expected.items():
-              assert hashlib.sha256((controller / '.github/rc3-browser' / name).read_bytes()).hexdigest() == digest
+              assert hashlib.sha256((controller / '.github/production-browser' / name).read_bytes()).hexdigest() == digest
           subprocess.run(['git', 'diff', '--exit-code', 'HEAD', '--', 'automation-hub-dashboard'], check=True)
           PY
       - name: Run unchanged browser regressions with the reviewed clipboard harness
@@ -115,7 +115,7 @@ jobs:
           PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/browser-tests.xml
         run: |
           ../.venv/bin/python ../ops/run-release-browser-checks.py \
-            --config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs" \
+            --config "$GITHUB_WORKSPACE/validation-controller/.github/production-browser/playwright.config.cjs" \
             --output "$RUNNER_TEMP/browser-acceptance"
       - name: Require full browser evidence and unchanged original assertions
         if: matrix.python == '3.12'
