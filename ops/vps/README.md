@@ -1,0 +1,111 @@
+# VPS operations through GitHub
+
+Runs one reviewed script on the VPS from GitHub, and **only after you approve that run**.
+Nothing runs on push.
+
+## How a run works
+
+1. A run of the **VPS operations** workflow is started, either by Claude or by you from the Actions
+   tab. It names an operation: one file in `ops/vps/operations/`.
+2. Job **What will run** shows the exact script, the commit and its SHA-256 on the run's summary
+   page. No secrets are available to this job.
+3. Job **Run on the VPS** waits for your approval in the `vps` environment. Only after you approve
+   does GitHub give it the SSH key. It then sends the script to the VPS.
+4. On the VPS, that key can only start `/usr/local/sbin/nexus-ops-runner`. The runner:
+   - checks that the script's SHA-256 matches the approved one
+   - runs one script at a time, as root, with a 30-minute limit
+   - keeps running if the connection drops
+   - keeps a copy of every script (`/var/lib/nexus-ops/state/scripts/`) and its full output
+     (`/var/log/nexus-ops/`)
+
+The workflow log is public, because this repository is public. Operations print short status only:
+never secrets, balances or detailed evidence.
+
+| Operation | Argument | What it does |
+|---|---|---|
+| `hello` | — | Read-only: host, disk, memory, container status, last runs |
+| `ops-log` | GitHub run id | Read-only: end of an earlier run's log, including one whose connection dropped |
+| `p1b-stop-staging` | `check`, `stop` or `verify` | The reviewed P1-B script (`validation/p1b-stop-staging/`) |
+
+**Off switch** (blocks every run at once): `sudo touch /etc/nexus-ops/disabled`. To switch it back
+on: `sudo rm /etc/nexus-ops/disabled`. **Remove everything** except the logs:
+`sudo sh /root/nexus-ops-setup/setup-vps-ops.sh --remove`
+
+## One-time setup
+
+### On the VPS (one command per box)
+
+Connect: `ssh -o ServerAliveInterval=30 ubuntu@<vps-address>`
+
+**1. Make a folder**
+
+```bash
+sudo install -d -m 700 /root/nexus-ops-setup
+```
+
+**2. Download the runner**
+
+```bash
+sudo curl -fsSL -o /root/nexus-ops-setup/nexus-ops-runner https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/96fab3d805d820c1315f5f996b957becc609de21/ops/vps/nexus-ops-runner
+```
+
+**3. Download the setup script**
+
+```bash
+sudo curl -fsSL -o /root/nexus-ops-setup/setup-vps-ops.sh https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/96fab3d805d820c1315f5f996b957becc609de21/ops/vps/setup-vps-ops.sh
+```
+
+**4. Check the runner.** It must say `OK`.
+
+```bash
+echo "63280e8ab99a982130b536230514068ccb2e39ca14bee73073274a1cc3d926ff  /root/nexus-ops-setup/nexus-ops-runner" | sudo sha256sum -c -
+```
+
+**5. Check the setup script.** It must say `OK`.
+
+```bash
+echo "46cdf02fa344942ccb055e8f82a929360581eade167eb35b8ba49cac3f7f9ad4  /root/nexus-ops-setup/setup-vps-ops.sh" | sudo sha256sum -c -
+```
+
+**6. Run the setup.** Keep the window open; you need what it prints for the GitHub part.
+
+```bash
+sudo sh /root/nexus-ops-setup/setup-vps-ops.sh /root/nexus-ops-setup/nexus-ops-runner
+```
+
+It ends by printing `VPS_HOST_KEY`, `VPS_SSH_PORT` and a private key (`VPS_SSH_KEY`). The private
+key goes **only into GitHub, never into a chat**. If anything above `6/6` says `WARNING` or
+`setup stopped`, send that part (not the key).
+
+### On GitHub (web browser)
+
+Open the repository, then **Settings → Environments → New environment**. Name it `vps` and click
+**Configure environment**.
+
+1. Tick **Required reviewers**, add yourself (`Arjuunb`) and click **Save protection rules**.
+   Leave **Prevent self-review** unticked: runs Claude starts appear under your name.
+2. Under **Deployment branches and tags**, choose **Selected branches and tags**. Add `main`,
+   then add `claude/*`.
+3. Under **Environment secrets**, click **Add environment secret** twice:
+   - `VPS_SSH_KEY`: the private key from step 6, including the BEGIN and END lines.
+   - `VPS_HOST`: the address you use after `ubuntu@` when you connect.
+4. Under **Environment variables**, click **Add environment variable** twice:
+   - `VPS_HOST_KEY`: the `ssh-ed25519 …` line from step 6.
+   - `VPS_SSH_PORT`: the number from step 6, usually `22`.
+
+### Switching it on
+
+GitHub only lets a workflow be started once its file is on the default branch (`main`). That
+needs a pull request that adds `.github/workflows/vps-ops.yml` and `ops/vps/` to `main`. After it is
+merged, the first run should be `hello`, to prove the connection works.
+
+## Testing
+
+`test/pipeline_test.sh` drives the real path: workflow script → SSH → forced command → sudo →
+runner, against a local OpenSSH server and the P1-B replica containers. Result: 32 passed,
+0 failed (`test/test-output.txt`). The tests cover:
+
+- P1-B through the pipeline
+- tampered scripts, shell characters, arbitrary commands, plain login and port forwarding (all refused)
+- the off switch, one-at-a-time locking, a dropped connection, the time limit and the audit trail
+- removing and re-installing (the old key stops working)
