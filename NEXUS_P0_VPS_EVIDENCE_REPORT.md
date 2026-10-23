@@ -1,13 +1,17 @@
 # Nexus Proposal 01 — P0 VPS Operational Evidence Report
 
 **Date:** 2026-10-23 · **Phase:** P0 (read-only) · **Baseline:** `NEXUS_P01_PERFORMANCE_AND_RETIREMENT_AUDIT.md`
-**Evidence:** collector run on `vps-46469a44`, 2026-10-23 09:44:18 → 09:54:57 UTC, every step succeeded.
-Collector `f9f51d9` (SHA-256 `ef243cdf…94097`); evidence file 562,564 bytes, SHA-256
-`c8d99d147644889b373f2992006d55f6e44eac1c2cd7b6dc9dc8061b3a9f0309`. The raw evidence file is **not**
-committed (public repository); this report summarizes it.
+**Evidence:** three collector runs on `vps-46469a44`, every step succeeded in each. The raw evidence files are
+**not** committed (public repository); this report summarizes them.
+
+| Run | Window (UTC) | Collector | Evidence file SHA-256 |
+|---|---|---|---|
+| 1 | 09:44:18 → 09:54:57 (10-min resource sample) | `f9f51d9` | `c8d99d14…0309` |
+| 2 | 10:12:00 → 10:22:33 (10-min resource sample) | `27bba32` | `e28a9809…9122` |
+| 3 | 11:43:13 → 11:43:41 (databases and disk only) | `2f07629` | `57304a11…1347` |
 
 **Nothing was changed on the VPS.** No deployment, restart, configuration change, deletion or database
-write. Free disk was 18 GiB before and after the run.
+write.
 
 Labels: **[MEASURED]** from the evidence file · **[CODE]** read in the running commit's source ·
 **[ESTIMATE]** derived, with method stated · **[HYPO]** needs further measurement.
@@ -20,20 +24,22 @@ Labels: **[MEASURED]** from the evidence file · **[CODE]** read in the running 
    exactly `f8778ed` (main lineage). 23 earlier production images are retained for rollback. [MEASURED]
 2. **Staging is the dominant load and the disk-growth source.** The staging API sits at its 1-CPU and
    1.5 GiB limits, reads **~220 MiB/s** from disk continuously (51.2 TB read since Oct 18), and its two lab
-   databases grew to **31 GiB in 6.5 days**. 93% of each file is one append-only table,
-   `v2_source_evidence`, which the staging code writes an `EQUITY_OBSERVED` row into **on every market
-   quote**. Production does not have that code. [MEASURED] [CODE]
+   databases grew to **31 GiB in 6.5 days** and still grow **~2.0 GiB/day**. Most of each file is one
+   append-only table, `v2_source_evidence` — **19.4 million `EQUITY_OBSERVED` rows**, which the staging code
+   writes **on every market quote**. Production does not have that code. [MEASURED] [CODE]
 3. **Production's Python process is saturated.** It uses ~1.07 CPU cores continuously (a single Python
    process cannot do much more), with 62 threads; one thread takes 41.5% of it. The **Journal Recorder's last
    pass took 341 s** (interval 30 s) and **Guardian's last cycle took 21.5 s** (interval 15 s) — both run
-   back-to-back. Two requests hit nginx's 90 s timeout (504) in the sampled hour. [MEASURED]
+   back-to-back (three runs: 341/365/367 s and 21/27/19 s). Between 10:43 and 11:43, **34 of 132 dashboard
+   requests (26%) were abandoned or timed out**. [MEASURED]
 4. **Production has no recent backup.** In-app nightly backups are disabled (`HUB_DAILY_REPORT_HOUR=-1`
    also disables retention pruning); the newest in-app snapshot is **Sept 25**, the newest manual archive
    **Oct 7**. Every copy is on the same disk; nothing is copied off the server. [MEASURED] [CODE]
 5. **Production memory is high and unbounded:** 4.16 GiB process memory, 7.88 GiB peak since Oct 17, no
    container limit, no swap, 5.2 GiB host memory available. [MEASURED]
-6. **Disk:** 17.50 GiB free (82% used). Reclaimable without touching any database: ~12.4 GiB of unused
-   Docker images plus an 11.1 GiB build cache. [MEASURED]
+6. **Disk:** 16.64 GiB free at 11:43 (83% used), shrinking ~2.0 GiB/day (all staging) — **about 8 days**
+   left, less any temporary spikes (swings of ±1 GiB seen within an hour). Reclaimable without touching any
+   database: ~12.4 GiB of unused Docker images plus an 11.1 GiB build cache. [MEASURED]
 7. **All protected assets are running:** 3 of 3 trading instances, Adaptive MTF XRPUSDT bot, SMC Agent
    (session in `manual_approval`), Guardian, Journal. [MEASURED]
 8. **Collector defects found and fixed** (§9): one query type scanned indexes (bounded to 2 s each, no
@@ -46,9 +52,9 @@ Labels: **[MEASURED]** from the evidence file · **[CODE]** read in the running 
 |---|---|---|---|
 | B1 | Production source revision | **RESOLVED: `215c96c`** | Image tag `nexus-trading-bot-app:guardian-215c96c…`; `/health` commit `215c96c`, branch `codex/guardian-vps-integration`, deployed 2026-10-09T00:59Z; 17 source-file fingerprints match exactly; `/opt/nexus-trading-bot` HEAD `215c96c`, 0 modified files |
 | B2 | Rollback images retained | **RESOLVED: retained** | 24 production app images; previous release `93f5f2d` (image `7aa91b705676`, Oct 7) and 22 older ones present |
-| B3 | Per-container CPU/RAM/I/O | **RESOLVED (one 10-min window)** | §3 |
-| B4 | 17.16 GB staging PA file by table | **RESOLVED (by subtraction)** | `v2_source_evidence` 15.48 GiB of 16.57 GiB (93%); §5 |
-| B5 | Disk-space drop | **RESOLVED** | Staging lab databases (+31 GiB since Oct 16), Task 6 artifacts, images and build cache; §4 |
+| B3 | Per-container CPU/RAM/I/O | **RESOLVED (two 10-min windows, within 1% of each other)** | §3, §11 |
+| B4 | 17.16 GB staging PA file by table | **RESOLVED (measured)** | `v2_source_evidence` 10.4 M rows, ≈13.2 GiB + 3.0 GiB indexes of 16.66 GiB; §5, §11 |
+| B5 | Disk-space drop | **RESOLVED** | Staging lab databases (+31 GiB since Oct 16, now +2.0 GiB/day), Task 6 artifacts, images and build cache; §4, §11 |
 | B6 | Lab symbols/timeframes/modes | **RESOLVED** | §8 |
 | B7 | Production ledger backend | **RESOLVED: Supabase** | `[startup] ledger backend = SupabaseLedger (Supabase active: True)` |
 | B8 | Off-host backup and restore test | **CONFIRMED GAP** | No off-host copy or schedule; newest backup Oct 7; §7 |
@@ -109,9 +115,8 @@ strongest candidate.
 | Production live databases | **≈30 MiB/day** total (Guardian ≈12, PA ≈8, SMC ≈6, Adaptive MTF ≈2, SMC Agent ≈1) |
 | Production stale stores | `decisions.db` Core V2 shadow table 1.09 GiB — no rows after Sept 18; `shadow_research.db` 0.97 GiB — no rows after Sept 10 |
 
-Free-disk readings: 32 GiB (Oct 19) → 28 (Oct 20) → ~19 (Oct 22) → 17.5 (Oct 23 09:44). At 2.5–4.8
-GiB/day the remaining space lasts roughly **4–7 days**. The login banners at 09:44, 10:00 and 10:11
-(81.7% → 81.5% → 81.5%) suggest growth may have slowed; §10 measures it.
+Free-disk readings: 32 GiB (Oct 19) → 28 (Oct 20) → ~19 (Oct 22) → 17.5 (Oct 23 09:44) → 16.6 (11:43).
+Measured steady growth is ~2.0 GiB/day (§11): **about 8 days** of space left.
 
 ## 5. Databases [MEASURED] [ESTIMATE]
 
@@ -198,9 +203,7 @@ The production app holds 21 open handles to the Price Action database files and 
 
 ## 10. Recommended next actions
 
-**Immediate (P0, read-only, ~1 minute):** run the fixed collector once with `--skip-resources` (runbook §5)
-to measure `v2_source_evidence` row count, row size, event types and its growth curve — that tells us whether
-staging is still adding GiBs per day — and fetch the 10:12 run's file.
+P0 is complete; the follow-up measurement is in §11.
 
 **P1 proposals — each needs your explicit approval; none started:**
 
@@ -216,3 +219,40 @@ anyway); make the Journal Recorder incremental; fix Guardian's scans; investigat
 process memory; decide on the stale 2.1 GiB of Core V2 and shadow-research data; remove or keep the
 `pa-replay-2025` container (it mounts production data); port PA Lab retirement to the `215c96c` line — and
 never deploy the `f8778ed` line to production until its per-quote evidence writes are bounded.
+
+## 11. Follow-up runs (10:12 and 11:43) [MEASURED]
+
+**Repeatability.** The second 10-minute window matched the first within about 1%: production 106.5% of one
+core (busiest thread, the same thread ID, 42.2%), staging 96.4% at its cap, disk reads 219 MiB/s, host busy 39%.
+
+**Disk growth over two hours (09:44 → 11:43):**
+
+| Location | Change | Rate |
+|---|---|---|
+| Staging api-state volume | +166.8 MiB | **1.97 GiB/day** (PA db 1.16, SMC db 0.86) |
+| Production data volume | +2.5 MiB | ≈30 MiB/day |
+| Images, build cache, host folders | ±0 | — |
+| `df` used | −0.20 GiB (09:44→10:12), then +1.06 GiB (10:12→11:43) | swings not explained by any walked file |
+
+The swings fit temporary files a process has deleted but still holds open (SQLite creates these for large
+sorts and they are invisible to file listings). [HYPO]
+
+**`v2_source_evidence` (staging), measured with the fixed collector:**
+
+| File | Rows | Row size | Table + indexes (est.) | Event types sampled |
+|---|---|---|---|---|
+| `price_action_paper.db` (16.66 GiB) | 10,372,543 | 1,176 B | 13.2 + 3.0 GiB | `EQUITY_OBSERVED` 255 of 256 |
+| `smc_strategy_paper.db` (14.53 GiB) | 9,026,788 | 1,176 B | 11.5 + 2.6 GiB | `EQUITY_OBSERVED` 255 of 256 |
+
+Insert rate per lab, from row timestamps: **~45 rows/s on Oct 16–17 (≈4.7 GiB/day each) falling steadily to
+~6.5 rows/s by Oct 22–23 (≈0.7 GiB/day each).** The likely reason [INFER]: every insert updates unique
+random-key indexes now ~3 GiB per file, while the staging container's 1.5 GiB memory cap leaves only a few
+hundred MiB of cache — consistent with the constant ~220 MiB/s of reads. If so, the staging labs are now
+processing only a fraction of incoming quotes, which also distorts staging's paper results for Task 6.
+
+**Application timings across the three runs:** Journal Recorder 341 / 365 / 367 s per pass (interval 30 s);
+Guardian 21.5 / 27.5 / 19.2 s per cycle (interval 15 s; 14,359 → 14,548 cycles, one every ~35–38 s).
+
+**Dashboard requests, 10:43–11:43 (nginx):** 132 requests; **30 abandoned by the browser (499)** and **4 timed
+out (504)** — 26% — across `/markets/watchlist`, `/research/price-action/bot-status`,
+`/research/smc/bot-status`, `/risk/portfolio`, `/ledger/alerts`, `/instances` and others.
