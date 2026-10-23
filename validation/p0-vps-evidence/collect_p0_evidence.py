@@ -812,18 +812,28 @@ try:
             if used + c > U - 8:
                 pages, used = pages + 1, 0
             used += c
-        return pages * U / len(cells)
+        # The last page is only partly filled by the sample; count the used part
+        # only, or small rows are overestimated several times over.
+        return ((pages - 1) + used / (U - 8)) * U / len(cells)
     attr = {}
     sample_cols = ("reason_code", "kind", "state", "status", "event_type", "decision", "outcome", "record_source")
-    time_cols = ("created_at", "updated_at", "candle_time", "at", "timestamp", "received_at", "started_at")
+    time_cols = ("created_at", "updated_at", "candle_time", "at", "timestamp", "event_timestamp",
+                 "event_timestamp_utc", "received_at", "opened_at", "started_at")
     big = set(p.get("big_tables", []))
     for name, no_rowid in tables:
         q = '"' + name.replace('"', '""') + '"'
-        cols = [r[1] for r in run(f"PRAGMA table_info({q})")]
+        info = run(f"PRAGMA table_info({q})")
+        cols = [r[1] for r in info]
+        pk_cols = [r for r in info if r[5]]
+        # An INTEGER PRIMARY KEY is the rowid itself and is not stored in the record.
+        rowid_alias = pk_cols[0][1] if len(pk_cols) == 1 and str(pk_cols[0][2]).upper() == "INTEGER" else None
         if no_rowid or not cols:
             attr[name] = {"skipped": "WITHOUT ROWID" if no_rowid else "no columns"}; continue
         try:
-            mn, mx = run(f"SELECT MIN(rowid), MAX(rowid) FROM {q}")[0]
+            # Two statements on purpose: SQLite answers MIN(rowid) or MAX(rowid) alone
+            # with one b-tree seek, but "SELECT MIN(rowid), MAX(rowid)" scans an index.
+            mn = run(f"SELECT MIN(rowid) FROM {q}")[0][0]
+            mx = run(f"SELECT MAX(rowid) FROM {q}")[0][0]
         except sqlite3.OperationalError as e:
             attr[name] = {"error": str(e)[:120]}; continue
         if mn is None:
@@ -836,19 +846,32 @@ try:
         k = p["big_sample_k"] if (name in big or p["file_size"] > 256 * 2**20) else p["sample_k"]
         span = mx - mn + 1
         ids = sorted({mn + (span - 1) * i // max(1, k - 1) for i in range(k)})
-        L = lambda c: "COALESCE(length(CAST(" + '"' + c.replace('"', '""') + '"' + " AS BLOB)),0)"
+        def L(c):
+            qc = '"' + c.replace('"', '""') + '"'
+            # Stored size, not text length: numbers occupy at most 8 bytes, NULL none.
+            return (f"(CASE typeof({qc}) WHEN 'integer' THEN 8 WHEN 'real' THEN 8 WHEN 'null' THEN 0 "
+                    f"ELSE length(CAST({qc} AS BLOB)) END)")
         cat = next((c for c in sample_cols if c in cols), None)
         tcol = next((c for c in time_cols if c in cols), None)
-        sel = ("SELECT " + " + ".join(L(c) for c in cols) + (f', "{cat}"' if cat else ", NULL") +
-               (f', "{tcol}"' if tcol else ", NULL") + "".join(", " + " + ".join(L(c) for c in ic) for _, ic in idx))
+        stored = [c for c in cols if c != rowid_alias] or cols
+        sel = ("SELECT " + " + ".join(L(c) for c in stored) + (f', "{cat}"' if cat else ", NULL") +
+               (f', "{tcol}"' if tcol else ", NULL") + "".join(", " + " + ".join(L(c) for c in ic) for _, ic in idx) +
+               ", rowid")
         hits, payload_sum, overflow_pages, cats, times, cells = 0, 0, 0, {}, [], []
         idx_sum = [0] * len(idx)
+        gaps, seen = [], set()
         try:
             for rid in ids:
-                rows = run(sel + f" FROM {q} WHERE rowid=?", (rid,))
+                # Seek to the first row at or after the target: one b-tree descent,
+                # and it lands on a real row even where rowids are sparse.
+                rows = run(sel + f" FROM {q} WHERE rowid >= ? ORDER BY rowid LIMIT 1", (rid,))
                 if not rows:
                     continue
                 r = rows[0]
+                gaps.append(r[-1] - rid)
+                if r[-1] in seen:
+                    continue
+                seen.add(r[-1])
                 hits += 1
                 rec = r[0] + len(cols) + 2          # record body + header
                 payload_sum += r[0]
@@ -861,10 +884,13 @@ try:
                 if cat:
                     cats[str(r[1])[:60]] = cats.get(str(r[1])[:60], 0) + 1
                 if tcol:
-                    times.append([rid, str(r[2])[:32]])
+                    times.append([r[-1], str(r[2])[:32]])
         except sqlite3.OperationalError as e:
             attr[name] = {"error": "sample interrupted: " + str(e)[:80]}; continue
-        rows_est = (int(span * hits / len(ids)) if len(ids) < span else hits)
+        # Mean distance from a target to the next row estimates row spacing
+        # (spacing s gives a mean gap of (s-1)/2), so sparse ids are not overcounted.
+        spacing = max(1.0, 2 * (sum(gaps) / len(gaps)) + 1) if gaps else 1.0
+        rows_est = hits if len(ids) >= span else max(hits, int(span / spacing))
         per = lambda total: total / hits if hits else 0
         attr[name] = {"min_rowid": mn, "max_rowid": mx, "sampled": len(ids), "hits": hits, "rows_est": rows_est,
                       "avg_row_payload_bytes": round(per(payload_sum), 1),

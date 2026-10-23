@@ -208,10 +208,26 @@ def section_databases(ev, md, verdicts):
                 md.append(f"- {name}: not inspected ({ins.get('error') or f.get('reason')})")
                 continue
             size = (f.get("header") or {}).get("size") or 1
+            exact = ins.get("dbstat_exact")
+            exact = exact if isinstance(exact, dict) and exact and "error" not in exact else None
+            if exact:
+                # Exact page accounting replaces the sampled estimate where the file was small enough.
+                for t, row in tables.items():
+                    if isinstance(row.get("rows_est"), int):
+                        row["est_bytes"] = exact.get(t, row.get("est_bytes") or 0)
+                        if isinstance(row.get("est_index_bytes"), dict):
+                            row["est_index_bytes"] = {n: exact.get(n, v) for n, v in row["est_index_bytes"].items()}
             idx_of = lambda t: sum((t.get("est_index_bytes") or {}).values()) if isinstance(t.get("est_index_bytes"), dict) else 0
             est_total = sum((t.get("est_bytes") or 0) + idx_of(t) for t in tables.values())
-            md.append(f"**{name}** — {fmt_bytes(size)}; estimated table payload {fmt_bytes(est_total)} "
-                      f"({100 * est_total / size:.0f}% of file), free pages {fmt_bytes((f.get('header') or {}).get('freelist_bytes'))}\n")
+            freelist = (f.get("header") or {}).get("freelist_bytes") or 0
+            failed = [t for t, r in tables.items() if r.get("error")]
+            md.append(f"**{name}** — {fmt_bytes(size)}; {'exact' if exact else 'estimated'} table+index size "
+                      f"{fmt_bytes(est_total)} ({100 * est_total / size:.0f}% of file), free pages {fmt_bytes(freelist)}\n")
+            remainder = size - freelist - est_total
+            if failed and remainder > 0.1 * size:
+                md.append(f"Not sampled ({', '.join(failed)}): the remaining **{fmt_bytes(remainder)} "
+                          f"({100 * remainder / size:.0f}% of the file)** belongs to it by subtraction "
+                          "(file size − free pages − every other table and index).\n")
             md.append("| Table | Rows (est.) | Avg row | Est. table | Est. indexes | Share of file | Sample categories |")
             md.append("|---|---|---|---|---|---|---|")
             for t, row in sorted(tables.items(), key=lambda kv: -((kv[1].get("est_bytes") or 0) + idx_of(kv[1])))[:12]:
@@ -223,9 +239,8 @@ def section_databases(ev, md, verdicts):
                 both = (row.get("est_bytes") or 0) + idx_of(row)
                 md.append(f"| {t} | {row['rows_est']:,} | {fmt_bytes(row.get('avg_row_payload_bytes'))} | "
                           f"{fmt_bytes(row.get('est_bytes'))} | {fmt_bytes(idx_of(row))} | {100 * both / size:.1f}% | {cat_text} |")
-            exact = ins.get("dbstat_exact")
-            if isinstance(exact, dict) and exact and "error" not in exact:
-                md.append(f"\nExact page accounting available for this file ({len(exact)} b-trees).")
+            if exact:
+                md.append(f"\nSizes above are exact page accounting ({len(exact)} b-trees).")
             rev = tables.get("pa_journal_revisions") or {}
             if rev.get("rowid_time_samples"):
                 md.append("\n`pa_journal_revisions` growth (rowid → created_at samples): " +
@@ -350,19 +365,21 @@ def section_dependencies(ev, md, verdicts):
                 md.append("")
             for t in ("pa_sessions", "smc_sessions"):
                 for s in app.get(t) or []:
-                    sessions.append((env, t, s))
+                    copy = any(k in name for k in ("deployment-backups/", "validation/", "backups/"))
+                    sessions.append((env, t, s, name, copy))
             if app.get("latest_row_time"):
                 md.append(f"- {env} / {name} latest checkpointed rows: `{json.dumps(app['latest_row_time'])[:400]}`")
             if app.get("trade_records_by_source"):
                 md.append(f"- {env} journal records by source/status: `{json.dumps(app['trade_records_by_source'])[:500]}`")
     if sessions:
-        md.append("\n| Env | Lab | Session | Mode | Operating mode | Symbol | TF | Status | Started |")
-        md.append("|---|---|---|---|---|---|---|---|---|")
-        for env, t, s in sessions:
+        md.append("\n| Env | Lab | Session | Mode | Operating mode | Symbol | TF | Status | Started | Source file |")
+        md.append("|---|---|---|---|---|---|---|---|---|---|")
+        for env, t, s, name, copy in sorted(sessions, key=lambda x: (x[4], x[0], x[1])):
             md.append(f"| {env} | {t[:-9].upper()} | {str(s.get('id'))[:10]} | {s.get('mode')} | {s.get('operating_mode')} | "
-                      f"{s.get('symbol')} | {s.get('timeframe')} | {s.get('status')} | {str(s.get('started_at'))[:16]} |")
+                      f"{s.get('symbol')} | {s.get('timeframe')} | {s.get('status')} | {str(s.get('started_at'))[:16]} | "
+                      f"{name}{' (copy, not live)' if copy else ''} |")
     md.append("")
-    verdicts["B6"] = "RESOLVED" if sessions else "UNRESOLVED"
+    verdicts["B6"] = "RESOLVED" if any(not x[4] for x in sessions) else "UNRESOLVED"
     backend = None
     for key, v in (ev.get("app_performance") or {}).items():
         if key.startswith("startup_log:") and isinstance(v, dict):

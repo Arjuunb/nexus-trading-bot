@@ -355,6 +355,53 @@ class DroppedSessionTests(unittest.TestCase):
             proc.stdout.close()
 
 
+class SeekOnlyTests(unittest.TestCase):
+    """Defects found in the first VPS run (2026-10-23)."""
+
+    def test_row_range_and_samples_are_index_seeks(self):
+        self.assertNotIn('run(f"SELECT MIN(rowid), MAX(rowid)', C.DB_CHILD)
+        c = sqlite3.connect(":memory:")
+        c.execute("CREATE TABLE t(id TEXT PRIMARY KEY, x)")
+        for sql in ("SELECT MIN(rowid) FROM t", "SELECT MAX(rowid) FROM t",
+                    "SELECT length(x), rowid FROM t WHERE rowid >= ? ORDER BY rowid LIMIT 1"):
+            plan = " ".join(r[3] for r in c.execute("EXPLAIN QUERY PLAN " + sql, (1,) if "?" in sql else ()))
+            self.assertTrue(plan.startswith("SEARCH"), (sql, plan))
+
+    def test_large_table_inspects_within_a_tiny_query_budget(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "big.db")
+            c = sqlite3.connect(p)
+            c.execute("CREATE TABLE v2_source_evidence(sequence INTEGER PRIMARY KEY AUTOINCREMENT, "
+                      "event_id TEXT NOT NULL UNIQUE, event_type TEXT NOT NULL, event_timestamp TEXT NOT NULL, "
+                      "payload_json TEXT NOT NULL)")
+            c.executemany("INSERT INTO v2_source_evidence(event_id,event_type,event_timestamp,payload_json) VALUES (?,?,?,?)",
+                          ((f"paper-equity:{i:09d}", "EQUITY_OBSERVED", f"2026-10-{16 + i // 50000:02d}T00:00:00Z",
+                            "x" * 900) for i in range(300_000)))
+            c.commit(); c.close()
+            info = C.inspect_db(p, opts(query_budget=0.05), big_tables=("v2_source_evidence",))
+            row = info["inspection"]["tables"]["v2_source_evidence"]
+            self.assertNotIn("error", row)
+            self.assertAlmostEqual(row["rows_est"], 300_000, delta=3_000)
+            self.assertEqual(row["time_column"], "event_timestamp")
+            self.assertIn("EQUITY_OBSERVED", row["sample_categories"])
+
+    def test_sparse_integer_keys_are_not_overcounted(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "BTCUSDT.sqlite3")
+            c = sqlite3.connect(p)
+            c.execute("CREATE TABLE funding_rates(funding_time INTEGER PRIMARY KEY, rate REAL, mark REAL)")
+            c.executemany("INSERT INTO funding_rates VALUES (?,?,?)",
+                          ((1_600_000_000_000 + i * 28_800_000, 0.0001, 60000.0) for i in range(9_000)))
+            c.commit()
+            exact = dict(c.execute("SELECT name, SUM(pgsize) FROM dbstat GROUP BY name").fetchall())
+            c.close()
+            row = C.inspect_db(p, opts())["inspection"]["tables"]["funding_rates"]
+            self.assertLess(abs(row["rows_est"] - 9_000) / 9_000, 0.30, row["rows_est"])
+            # Tiny rows carry fixed per-cell overhead the model rounds up; within 50% is
+            # enough here (the first VPS run estimated 1.8 billion rows for this shape).
+            self.assertLess(abs(row["est_bytes"] - exact["funding_rates"]) / exact["funding_rates"], 0.50)
+
+
 class AnalyzerSmokeTests(unittest.TestCase):
     def test_report_renders_from_partial_evidence(self):
         ev = {"schema": C.SCHEMA, "host": "vps", "started_at": "t0", "finished_at": "t1",
