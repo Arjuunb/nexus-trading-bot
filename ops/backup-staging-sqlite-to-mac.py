@@ -74,7 +74,15 @@ def digest(path):
 
 def run(args, input=None, timeout=30):
     result = subprocess.run(args, input=input, capture_output=True, timeout=timeout)
-    require(result.returncode == 0, 'COMMAND_FAILED:' + Path(args[0]).name)
+    if result.returncode != 0:
+        try:
+            error = json.loads(result.stdout)
+            reason = error.get('reason', '')
+            if error.get('status') == 'BLOCKED' and re.fullmatch(r'[A-Za-z0-9_:.-]{1,180}', reason):
+                raise Blocked(reason)
+        except (ValueError, AttributeError, TypeError):
+            pass
+        raise Blocked('COMMAND_FAILED:' + Path(args[0]).name)
     return result.stdout
 
 
@@ -103,7 +111,9 @@ def select_state(rows, container, project, expected_image):
     require(len(mounts) == 1 and mounts[0]['Type'] == 'volume', 'ONE_EXISTING_NAMED_STATE_VOLUME_REQUIRED')
     mount = mounts[0]
     for row in rows:
-        if any(m['Source'] == mount['Source'] for m in row.get('Mounts', [])):
+        state = PurePosixPath(mount['Source'])
+        if any(PurePosixPath(m['Source']) == state or PurePosixPath(m['Source']) in state.parents
+               or state in PurePosixPath(m['Source']).parents for m in row.get('Mounts', [])):
             require((row['Config'].get('Labels') or {}).get('com.docker.compose.project') == project,
                     'STATE_VOLUME_SHARED_WITH_ANOTHER_PROJECT')
     return api, mount
@@ -338,7 +348,8 @@ def check_snapshot(tool, db):
 
 
 def verify_and_restore(tool, snapshot, restored):
-    require(snapshot.is_file() and not snapshot.is_symlink() and not restored.exists(), 'NEW_DISTINCT_RESTORE_REQUIRED')
+    require(snapshot.is_file() and not snapshot.is_symlink() and not restored.exists()
+            and not restored.is_symlink(), 'NEW_DISTINCT_RESTORE_REQUIRED')
     before = digest(snapshot)
     fingerprint = check_snapshot(tool, snapshot)
     quoted = '"' + str(restored).replace('\\', '\\\\').replace('"', '\\"') + '"'

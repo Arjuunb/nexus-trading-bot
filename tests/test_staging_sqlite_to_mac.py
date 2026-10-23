@@ -48,6 +48,10 @@ def test_cross_project_stopped_consumer_is_rejected():
     rows.append(other)
     with pytest.raises(M.Blocked, match='SHARED_WITH_ANOTHER_PROJECT'):
         select(rows)
+    for source in ('/synthetic', '/synthetic/state/subdirectory'):
+        other['Mounts'][0]['Source'] = source
+        with pytest.raises(M.Blocked, match='SHARED_WITH_ANOTHER_PROJECT'):
+            select(rows)
 
 
 def test_source_symlinks_and_hardlinks_are_rejected(tmp_path):
@@ -106,6 +110,17 @@ def test_remote_commands_cannot_inject_a_host_or_use_an_unknown_key(tmp_path):
         with pytest.raises(M.Blocked): M.ssh_base(host, key)
     args = M.ssh_base('synthetic@example.invalid', key)
     assert 'StrictHostKeyChecking=yes' in args and 'BatchMode=yes' in args
+
+
+def test_remote_failed_gate_preserves_only_a_safe_reason(monkeypatch):
+    monkeypatch.setattr(M.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 1,
+                       stdout=b'{"status":"BLOCKED","reason":"VPS_RESERVE_NOT_AVAILABLE"}'))
+    with pytest.raises(M.Blocked, match='^VPS_RESERVE_NOT_AVAILABLE$'):
+        M.run(['ssh'])
+    monkeypatch.setattr(M.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 1,
+                       stdout=b'{"status":"BLOCKED","reason":"sensitive values should not be printed"}'))
+    with pytest.raises(M.Blocked, match='^COMMAND_FAILED:ssh$'):
+        M.run(['ssh'])
 
 
 def test_stop_process_reaps_only_its_process_group():
@@ -209,12 +224,19 @@ def test_complete_guarded_origin_protocol_without_network(native_tools, tmp_path
     bridge = tmp_path / 'local-wire'
     bridge.write_text('#!' + sys.executable + '\nimport os,sys\n'
                       'assert sys.argv[1:4]==["-e","none","synthetic@fixture.invalid"]\n'
+                      'args=sys.argv[4:]\n'
+                      'if args[0].startswith("PATH="):args=args[1:]\n'
+                      'assert args.pop(0)=="/synthetic/guard"\n'
+                      'if args[-1]=="2>/dev/null":args=args[:-1]\n'
                       'os.execv(sys.executable,[sys.executable,' + repr(str(harness)) + ','
-                      + repr(str(SPEC.origin)) + ',' + repr(str(guard_dir / 'request.json')) + ']+sys.argv[5:])\n')
+                      + repr(str(SPEC.origin)) + ',' + repr(str(guard_dir / 'request.json')) + ']+args)\n')
     bridge.chmod(0o700)
     target = tmp_path / 'replicas' / source.name; target.parent.mkdir()
-    subprocess.run([str(native_tools / 'sqlite3_rsync'), 'synthetic@fixture.invalid:' + str(source),
-                    str(target), '--ssh', str(bridge), '--exe', '/synthetic/guard'], check=True, timeout=30)
+    result = subprocess.run([str(native_tools / 'sqlite3_rsync'), 'synthetic@fixture.invalid:' + str(source),
+                             str(target), '--ssh', str(bridge), '--exe', '/synthetic/guard'],
+                            capture_output=True, text=True, timeout=30)
+    log = guard_dir / 'origin-source.db.log'
+    assert result.returncode == 0, result.stderr + result.stdout + (log.read_text() if log.exists() else '')
     done = json.loads((guard_dir / 'completed-source.db.json').read_text())
     assert done['source_identity'] == M.file_identity(source)
     assert done['vps_free_bytes'] >= M.RESERVE
