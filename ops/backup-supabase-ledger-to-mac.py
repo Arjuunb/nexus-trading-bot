@@ -262,6 +262,8 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
         require(CORE_TABLES <= {r["name"] for r in tables if r["schema"] == "public"},
                 "EXPECTED_FINANCIAL_TABLES_MISSING")
         require(not any(r["kind"] == "f" for r in before["relations"]), "FOREIGN_TABLE_BACKUP_REVIEW_REQUIRED")
+        require(all(c["validated"] for c in before["constraints"]),
+                "SOURCE_UNVALIDATED_CONSTRAINT_REVIEW_REQUIRED")
         require(all(r["name"] in SAFE_EXTENSIONS for r in before["extensions"]),
                 "LOCAL_RESTORE_EXTENSION_REVIEW_REQUIRED")
         dependencies = source.execute("""

@@ -166,6 +166,29 @@ def test_insufficient_space_never_connects_or_copies(source, tmp_path, monkeypat
     assert not (tmp_path / "recovery/.pgpass").exists()
 
 
+def test_new_write_grant_fails_even_with_unchanged_financial_rows(source, tmp_path, monkeypatch):
+    original = helper.command
+    def grant_unexpected_write(args, **kwargs):
+        original(args, **kwargs)
+        if kwargs.get("name") == "restore":
+            dsn = next(str(a).split("=",1)[1] for a in args if str(a).startswith("--dbname="))
+            with psycopg.connect(dsn, autocommit=True) as c:
+                c.execute("GRANT UPDATE ON public.positions TO authenticated")
+    monkeypatch.setattr(helper, "command", grant_unexpected_write)
+    with pytest.raises(helper.Blocked, match="RESTORED_SCHEMA_DEFINITION_MISMATCH"):
+        run_recovery(source, tmp_path)
+    assert (tmp_path / "recovery/application-ledger.dump").is_file()
+    assert not (tmp_path / "recovery/detached-postgres-17/postmaster.pid").exists()
+
+
+def test_unvalidated_financial_constraint_requires_review(source, tmp_path):
+    with psycopg.connect(**source, autocommit=True) as c:
+        c.execute("ALTER TABLE public.positions ADD CONSTRAINT amount_positive CHECK(amount>0) NOT VALID")
+    with pytest.raises(helper.Blocked, match="SOURCE_UNVALIDATED_CONSTRAINT_REVIEW_REQUIRED"):
+        run_recovery(source, tmp_path)
+    assert not (tmp_path / "recovery/application-ledger.dump").exists()
+
+
 def test_password_escaping_does_not_change_special_characters():
     config = dict(host="example.invalid", port=5432, dbname="postgres", user="postgres.ref", password="a:b\\c'$")
     assert helper.passfile_line(config).endswith(":a\\:b\\\\c'$\n")
