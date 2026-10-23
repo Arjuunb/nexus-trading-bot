@@ -418,6 +418,38 @@ def canonical_session(conn):
     conn.execute("SET row_security=off")
 
 
+def logical_catalog(recorded):
+    """Compare visible column order while retaining raw catalog evidence.
+
+    PostgreSQL keeps attnum gaps after DROP COLUMN. A logical pg_dump restore
+    rebuilds visible columns with dense attnums. Only that physical numbering
+    is canonicalized: column names, relative order, definitions and every other
+    catalog section remain part of the exact equality check. Inputs are not
+    changed, including the source-schema.json required for recovery.
+    """
+    result = dict(recorded)
+    columns = recorded.get("columns")
+    require(isinstance(columns, list), "RECORDED_COLUMN_METADATA_REQUIRED")
+    positions, names, counts, normalized = set(), set(), {}, []
+    for row in columns:
+        require(isinstance(row, dict) and isinstance(row.get("schema"), str)
+                and isinstance(row.get("relation"), str) and isinstance(row.get("name"), str)
+                and type(row.get("ordinal")) is int and row["ordinal"] > 0,
+                "INVALID_RECORDED_COLUMN_METADATA")
+        relation = (row["schema"], row["relation"])
+        position, name = (*relation, row["ordinal"]), (*relation, row["name"])
+        require(position not in positions and name not in names,
+                "DUPLICATE_RECORDED_COLUMN_METADATA")
+        positions.add(position)
+        names.add(name)
+    for row in sorted(columns, key=lambda c: (c["schema"], c["relation"], c["ordinal"])):
+        relation = (row["schema"], row["relation"])
+        counts[relation] = counts.get(relation, 0) + 1
+        normalized.append(dict(row, ordinal=counts[relation]))
+    result["columns"] = normalized
+    return result
+
+
 def restore_recorded_schema_grants(conn, expected):
     """Replay recorded namespace grants omitted by pg_dump's public-schema baseline.
 
@@ -576,7 +608,8 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
             grants_reapplied = restore_recorded_schema_grants(restored, before)
             after = catalog(restored)
             private_json(directory / "restored-schema.json", after)
-            require(before == after, "RESTORED_SCHEMA_DEFINITION_MISMATCH")
+            require(logical_catalog(before) == logical_catalog(after),
+                    "RESTORED_SCHEMA_DEFINITION_MISMATCH")
             recovered = fingerprint(restored, tables, deadline=deadline)
             require(identities == recovered, "RESTORED_FINANCIAL_ROW_FINGERPRINT_MISMATCH")
             invalid = restored.execute("""

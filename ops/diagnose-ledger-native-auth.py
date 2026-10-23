@@ -14,7 +14,7 @@ import re
 import socket
 import tempfile
 
-HELPER_SHA256 = "47cc58a99d46fdb66edca3f2d17c316dfd5d8b840daa68845a0b474a3dcce0af"
+HELPER_SHA256 = "172d0deacc84432cda85436bc882c00718157e1b392eb087722cd4cb098f3fdb"
 HELPER_PATH = Path(__file__).with_name("backup-supabase-ledger-to-mac.py")
 if hashlib.sha256(HELPER_PATH.read_bytes()).hexdigest() != HELPER_SHA256:
     raise SystemExit("BLOCKED:PINNED_BACKUP_HELPER_REQUIRED")

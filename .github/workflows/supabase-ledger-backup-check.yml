@@ -9,6 +9,8 @@ on:
       - 'tests/test_supabase_ledger_to_mac.py'
       - 'ops/diagnose-ledger-native-auth.py'
       - 'tests/test_ledger_native_auth.py'
+      - 'ops/verify-retained-supabase-ledger.py'
+      - 'tests/test_ledger_schema_recovery.py'
       - '.github/workflows/supabase-ledger-backup-check.yml'
 
 permissions:
@@ -48,4 +50,4 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install --no-install-recommends -y postgresql-17
       - name: Verify snapshots, concurrent writes, financial restore, and fail-closed gates
-        run: python -m pytest -q tests/test_supabase_ledger_to_mac.py tests/test_ledger_native_auth.py
+        run: python -m pytest -q tests/test_supabase_ledger_to_mac.py tests/test_ledger_native_auth.py tests/test_ledger_schema_recovery.py
