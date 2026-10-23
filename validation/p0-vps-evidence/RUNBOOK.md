@@ -7,32 +7,45 @@ prune, vacuum, checkpoint or write anywhere except one output file you choose.
 ## 1. Get the exact script onto the VPS
 
 Do **not** `git pull` inside `/opt/nexus-trading-bot`: that is the production
-checkout and must not change. Copy the single file instead.
+checkout and must not change. Fetch the single file instead.
 
-On your own computer, in any clone of the repository:
+Expected SHA-256: `ef243cdfcf65091a7ae67ee9b12f9af10fa0e60fd8086f7b1d7c4fd650494097`
+
+**Option A — download on the VPS (simplest).** The URL is pinned to commit
+`f9f51d9d0c0538bcf3da859904cd71a30b79fc6b`, so its content cannot change.
+
+```bash
+sudo install -d -m 700 /root/p0-evidence
+sudo curl -fsSL -o /root/p0-evidence/collect_p0_evidence.py \
+  https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/f9f51d9d0c0538bcf3da859904cd71a30b79fc6b/validation/p0-vps-evidence/collect_p0_evidence.py
+echo "ef243cdfcf65091a7ae67ee9b12f9af10fa0e60fd8086f7b1d7c4fd650494097  /root/p0-evidence/collect_p0_evidence.py" | sudo sha256sum -c -
+df -h /                                                 # note free space before
+```
+
+The `sha256sum -c` line must print `OK`. If it does not, stop.
+
+**Option B — copy from your computer.** In any clone of the repository:
 
 ```bash
 git fetch origin claude/beautiful-faraday-0nbitn
-git show origin/claude/beautiful-faraday-0nbitn:validation/p0-vps-evidence/collect_p0_evidence.py > collect_p0_evidence.py
-sha256sum collect_p0_evidence.py
-#   expected: ef243cdfcf65091a7ae67ee9b12f9af10fa0e60fd8086f7b1d7c4fd650494097
+git show f9f51d9d0c0538bcf3da859904cd71a30b79fc6b:validation/p0-vps-evidence/collect_p0_evidence.py > collect_p0_evidence.py
+sha256sum collect_p0_evidence.py                        # must equal the value above
 scp collect_p0_evidence.py ubuntu@<vps-address>:/tmp/
 ```
 
-On the VPS:
+Then on the VPS:
 
 ```bash
 sudo install -d -m 700 /root/p0-evidence
 sudo install -m 600 /tmp/collect_p0_evidence.py /root/p0-evidence/
-sha256sum /root/p0-evidence/collect_p0_evidence.py     # must match the value above
+echo "ef243cdfcf65091a7ae67ee9b12f9af10fa0e60fd8086f7b1d7c4fd650494097  /root/p0-evidence/collect_p0_evidence.py" | sudo sha256sum -c -
 df -h /                                                 # note free space before
 ```
 
 ## 2. Run it
 
 ```bash
-cd /root/p0-evidence
-sudo python3 collect_p0_evidence.py --out /root/p0-evidence --sample-seconds 600
+sudo python3 -I /root/p0-evidence/collect_p0_evidence.py --out /root/p0-evidence --sample-seconds 600
 ```
 
 - Runs at the lowest CPU and I/O priority (`nice 19`, `ionice` idle).
