@@ -13,8 +13,9 @@ RUN --mount=type=bind,target=/source \
     python -c "import psycopg; assert psycopg.pq.__impl__ == 'binary'"; \
     pip check; \
     mkdir -p automation-hub/services automation-hub/data automation-hub/migrations/shadow automation-hub/migrations/workers ops; \
-    cp /source/automation-hub/services/*.py automation-hub/services/; \
-    cp /source/automation-hub/data/*.py /source/automation-hub/data/pr6_real_paper_freeze.json automation-hub/data/; \
+    (cd /source/automation-hub && find services data -type f -name '*.py') | while IFS= read -r f; do \
+      mkdir -p "automation-hub/${f%/*}"; cp "/source/automation-hub/$f" "automation-hub/$f"; done; \
+    cp /source/automation-hub/data/pr6_real_paper_freeze.json automation-hub/data/; \
     cp -a /source/automation-hub/strategies automation-hub/; \
     cp /source/automation-hub/migrations/shadow/*.sql automation-hub/migrations/shadow/; \
     cp /source/automation-hub/migrations/workers/*.sql automation-hub/migrations/workers/; \
