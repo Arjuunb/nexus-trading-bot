@@ -102,6 +102,7 @@ def catalog(conn):
     result = {}
     result["relations"] = rows(conn, f"""
         SELECT n.nspname AS schema, c.relname AS name, c.relkind::text AS kind,
+          pg_get_userbyid(c.relowner) AS owner,
           c.relrowsecurity AS rls, c.relforcerowsecurity AS force_rls,
           CASE WHEN c.relkind IN ('v','m') THEN pg_get_viewdef(c.oid, true) ELSE NULL END AS view
         FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
@@ -142,6 +143,7 @@ def catalog(conn):
         WHERE {namespace} AND NOT t.tgisinternal ORDER BY 1,2,3""", params)
     result["functions"] = rows(conn, f"""
         SELECT n.nspname AS schema,p.proname AS name,pg_get_function_identity_arguments(p.oid) AS arguments,
+          pg_get_userbyid(p.proowner) AS owner,
           pg_get_functiondef(p.oid) AS definition
         FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE {namespace} AND p.prokind <> 'a'
@@ -160,6 +162,37 @@ def catalog(conn):
         SELECT e.extname AS name,e.extversion AS version,n.nspname AS schema
         FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace
         WHERE n.nspname=ANY(%s) ORDER BY 1""", params)
+    result["schemas"] = rows(conn, """
+        SELECT nspname AS name,pg_get_userbyid(nspowner) AS owner FROM pg_namespace
+        WHERE nspname=ANY(%s) ORDER BY 1""", params)
+    result["relation_permissions"] = rows(conn, f"""
+        SELECT n.nspname AS schema,c.relname AS name,pg_get_userbyid(a.grantor) AS grantor,
+          CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS grantee,
+          a.privilege_type,a.is_grantable
+        FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+        CROSS JOIN LATERAL aclexplode(COALESCE(c.relacl,
+          acldefault((CASE WHEN c.relkind='S' THEN 's' ELSE 'r' END)::\"char\",c.relowner))) a
+        WHERE {namespace} AND c.relkind IN ('r','p','v','m','S')
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_class'::regclass
+            AND d.objid=c.oid AND d.deptype='e')
+        ORDER BY 1,2,3,4,5,6""", params)
+    result["schema_permissions"] = rows(conn, f"""
+        SELECT n.nspname AS schema,pg_get_userbyid(a.grantor) AS grantor,
+          CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS grantee,
+          a.privilege_type,a.is_grantable FROM pg_namespace n
+        CROSS JOIN LATERAL aclexplode(COALESCE(n.nspacl,acldefault('n',n.nspowner))) a
+        WHERE {namespace} ORDER BY 1,2,3,4,5""", params)
+    result["function_permissions"] = rows(conn, f"""
+        SELECT n.nspname AS schema,p.proname AS name,pg_get_function_identity_arguments(p.oid) AS arguments,
+          pg_get_userbyid(a.grantor) AS grantor,
+          CASE WHEN a.grantee=0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END AS grantee,
+          a.privilege_type,a.is_grantable FROM pg_proc p
+        JOIN pg_namespace n ON n.oid=p.pronamespace
+        CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl,acldefault('f',p.proowner))) a
+        WHERE {namespace} AND p.prokind <> 'a'
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_proc'::regclass
+            AND d.objid=p.oid AND d.deptype='e')
+        ORDER BY 1,2,3,4,5,6,7""", params)
     return result
 
 
@@ -243,6 +276,7 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
         require(not any(r["kind"] == "m" for r in before["relations"]),
                 "MATERIALIZED_VIEW_RESTORE_REVIEW_REQUIRED")
         role_names = [r[0] for r in source.execute("SELECT rolname FROM pg_roles ORDER BY rolname")]
+        database_owner = source.execute("SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname=current_database()").fetchone()[0]
         identities = fingerprint(source, tables, deadline=deadline)
         private_json(directory / "source-schema.json", before)
         private_json(directory / "source-fingerprints.json", identities)
@@ -259,6 +293,10 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
                      "--file=" + str(archive)]
         for name in SCHEMAS:
             dump_args.append("--schema=" + name)
+        # pg_dump's schema filter does not include CREATE EXTENSION by itself.
+        # Preserve reviewed dependency definitions explicitly, then verify them.
+        for extension in before["extensions"]:
+            dump_args.append("--extension=" + extension["name"])
         print(json.dumps({"phase": "COPY_CONSISTENT_EXTERNAL_LEDGER_SNAPSHOT"}), flush=True)
         command(dump_args, directory=directory, name="dump", env=source_env)
         require(archive.is_file() and 0 < archive.stat().st_size <= MAX_DATABASE, "DUMP_SIZE_LIMIT")
@@ -284,7 +322,8 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
                 if name not in existing:
                     require(not name.startswith("pg_"), "POSTGRES_BUILTIN_ROLE_VERSION_MISMATCH")
                     admin.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(name)))
-            admin.execute("CREATE DATABASE nexus_ledger_restore TEMPLATE template0 ENCODING 'UTF8'")
+            admin.execute(sql.SQL("CREATE DATABASE nexus_ledger_restore OWNER {} TEMPLATE template0 ENCODING 'UTF8'").format(
+                sql.Identifier(database_owner)))
         target["dbname"] = "nexus_ledger_restore"
         with psycopg.connect(**target, autocommit=True) as restored:
             # Only the empty default schema of our newly created local database.
@@ -292,7 +331,7 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
         print(json.dumps({"phase": "RESTORE_AND_COMPARE_IN_NEW_LOCAL_POSTGRES_17"}), flush=True)
         target_dsn = psycopg.conninfo.make_conninfo(**target)
         command([bin_dir / "pg_restore", "--no-password", "--exit-on-error", "--single-transaction",
-                 "--no-owner", "--no-privileges", "--dbname=" + target_dsn, archive],
+                 "--dbname=" + target_dsn, archive],
                 directory=directory, name="restore")
         with psycopg.connect(**target, autocommit=True) as restored:
             canonical_session(restored)
@@ -315,7 +354,8 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
                 "external_application_ledger_recovery_proven": True,
                 "storage_object_payloads_included": False,
                 "original_role_passwords_included": False,
-                "original_role_ownership_and_grants_restore_tested": False,
+                "object_ownership_and_grants_match": True,
+                "original_role_login_attributes_and_memberships_recovered": False,
                 "schema_columns_constraints_indexes_triggers_functions_policies_match": True,
                 "all_selected_table_rows_match_same_exported_snapshot": True,
                 "tables_verified": len(tables), "rows_verified": sum(r["rows"] for r in identities),

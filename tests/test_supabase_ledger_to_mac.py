@@ -64,6 +64,8 @@ def source(server):
         c.execute("UPDATE public.positions SET owner='00000000-0000-0000-0000-000000000001'")
         c.execute("ALTER TABLE public.positions ENABLE ROW LEVEL SECURITY")
         c.execute("CREATE POLICY owned_positions ON public.positions FOR SELECT TO authenticated USING (owner=auth.uid())")
+        c.execute("GRANT USAGE ON SCHEMA auth TO authenticated")
+        c.execute("GRANT SELECT ON public.positions TO authenticated")
         c.execute("CREATE INDEX position_amount ON public.positions(amount)")
         c.execute("CREATE FUNCTION public.keep_record() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$")
         c.execute("CREATE TRIGGER keep_record BEFORE UPDATE ON public.positions FOR EACH ROW EXECUTE FUNCTION public.keep_record()")
@@ -102,7 +104,8 @@ def test_real_snapshot_restores_every_row_and_definition_during_concurrent_write
     assert report["rows_verified"] == 7
     assert report["all_selected_table_rows_match_same_exported_snapshot"] is True
     assert report["schema_columns_constraints_indexes_triggers_functions_policies_match"] is True
-    assert report["original_role_ownership_and_grants_restore_tested"] is False
+    assert report["object_ownership_and_grants_match"] is True
+    assert report["original_role_login_attributes_and_memberships_recovered"] is False
     assert not (directory / ".pgpass").exists()
     assert not (directory / "detached-postgres-17/postmaster.pid").exists()
     with psycopg.connect(**source) as c:
