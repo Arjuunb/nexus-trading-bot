@@ -143,13 +143,17 @@ def resolve(strategy: str, symbol: str, timeframe: str, tuning: dict,
 
 def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spec: dict,
             rows, macro: str = None, confirmation: str = None, fill_cost: float = 0.0,
-            native_context=None, *, capture_identity: bool = False) -> dict:
+            native_context=None, *, capture_identity: bool = False, trade_start_at=None) -> dict:
     """Run a resolved configuration over a given bar list (no fetch). Returns the
     raw results dict (with diagnosis, _mtf_gate, _spec) or {'error': ...}.
 
     ``fill_cost`` (per-side, as a fraction of price) adds the realistic-fill
     spread+slippage+latency on top of the base cost — the same execution model
-    the paper engine uses, so backtests stop assuming perfect fills."""
+    the paper engine uses, so backtests stop assuming perfect fills.
+
+    ``trade_start_at``: the rows before it are warm-up context only. A built-in
+    strategy sees them (indicators warm) but enters no trade before it; a custom
+    spec, whose simulator has no such bound, runs from it on without the context."""
     from strategies.custom import simulate, simulate_strategy
     from strategies.brain import TradeBrain
     from strategies.diagnosis import diagnose
@@ -169,6 +173,10 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
                 _, native_context = load_adaptive_history(symbol, entry_rows=rows)
             except Exception as exc:  # native cache failure is an unavailable result, never zero trades
                 return {"error": f"Native Adaptive MTF history unavailable: {exc}"}
+
+    if trade_start_at is not None and desc["kind"] != "builtin":
+        # Before the row-index MTF lookup is built, so its indexes match the rows simulated.
+        rows = [row for row in rows if row.timestamp >= trade_start_at]
 
     mtf_lookup = mtf_tfs = None
     requested = [tf for tf in (confirmation, macro) if tf and tf != timeframe]
@@ -196,7 +204,7 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
                              if capture_identity else None)
         results = simulate_strategy(strat, rows, brain=brain, min_score=min_score, slippage=slippage,
                                     mtf_lookup=mtf_lookup, mtf_tfs=mtf_tfs,
-                                    native_context=native_context,
+                                    native_context=native_context, trade_start_at=trade_start_at,
                                     entry_mode="limit" if adaptive else "market",
                                     **_risk_kwargs(tuning))
     else:

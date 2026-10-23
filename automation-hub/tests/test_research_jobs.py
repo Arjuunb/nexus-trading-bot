@@ -137,3 +137,77 @@ def test_worker_commits_one_logical_result_and_reuses_it_on_restart(tmp_path):
     assert len(service.context.validation_runs(filters={"run_id": "validation:" + job["job_id"]})) == 1
     assert worker.process_once() is False
     assert service.get(job["job_id"], owner_id="owner")["status"] == "COMPLETED"
+
+
+def _period_job(tmp_path, monkeypatch, *, warmup, cached_through_end=True, job_type="HISTORICAL_BACKTEST"):
+    """A period job over a candle store that behaves like HistoricalStore.get_bars:
+    the end bound is inclusive and only the newest n rows are kept."""
+    from bot.types import Bar
+    from data import market_data
+    from services import strategy_presets
+    from test_strategy_evidence_runtime import runtime
+    ledger, store, decisions, paper, pipeline, capture = runtime(tmp_path)
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    hour = timedelta(hours=1)
+    cache = [Bar(start + hour * i, 100, 101, 99, 100, 10) for i in range(-warmup, 600 + (1 if cached_through_end else 0))]
+    fetched, runs = [], []
+
+    def get_bars(symbol, n=1500, timeframe="1h", seed=1, since_ms=None, end_ms=None, require_real=False):
+        fetched.append(end_ms)
+        rows = [b for b in cache if (since_ms is None or b.timestamp.timestamp() * 1000 >= since_ms)
+                and (end_ms is None or b.timestamp.timestamp() * 1000 <= end_ms)]
+        return rows[-n:], "isolated-test-store"
+
+    def run_on(strategy, symbol, timeframe, tuning, custom_spec, rows, *, capture_identity=False, trade_start_at=None):
+        runs.append({"rows": list(rows), "trade_start_at": trade_start_at})
+        return {"trades": [], "_strategy_identity": None}
+
+    monkeypatch.setattr(market_data, "get_bars", get_bars)
+    monkeypatch.setattr(strategy_presets, "_run_on", run_on)
+    service = ResearchJobService(store.context)
+    job = service.create(_request(idempotency_key="period-%d-%s" % (warmup, job_type), job_type=job_type,
+                                  timeframe="1h", bars=600, warmup=warmup,
+                                  period_start=start.isoformat(), period_end=(start + hour * 600).isoformat()),
+                         owner_id="owner", scope={"owner_id": "owner"})
+    return service.run(job["job_id"], owner_id="owner"), start, fetched, runs
+
+
+def test_period_fetch_excludes_the_candle_at_period_end(tmp_path, monkeypatch):
+    """A cached candle exactly at period_end must not push out the first candle."""
+    finished, start, fetched, runs = _period_job(tmp_path, monkeypatch, warmup=0)
+    assert finished["status"] == "COMPLETED", finished
+    assert fetched[0] == int((start + timedelta(hours=600)).timestamp() * 1000) - 1
+    assert runs[0]["rows"][0].timestamp == start and len(runs[0]["rows"]) == 600
+
+
+def test_requested_warmup_reaches_the_simulator_as_context_only(tmp_path, monkeypatch):
+    finished, start, fetched, runs = _period_job(tmp_path, monkeypatch, warmup=50)
+    assert finished["status"] == "COMPLETED", finished
+    rows = runs[0]["rows"]
+    assert len(rows) == 650
+    assert rows[0].timestamp == start - timedelta(hours=50)
+    assert runs[0]["trade_start_at"] == start          # no entry before the evaluation period
+
+
+def test_without_warmup_the_simulator_gets_only_the_evaluation_period(tmp_path, monkeypatch):
+    finished, start, fetched, runs = _period_job(tmp_path, monkeypatch, warmup=0, job_type="ANCHORED_WALK_FORWARD")
+    assert finished["status"] == "COMPLETED", finished
+    assert all(run["trade_start_at"] is None for run in runs)
+    assert all(run["rows"][0].timestamp >= start for run in runs)
+
+
+def test_run_on_feeds_warmup_to_builtins_and_drops_it_for_custom_specs(monkeypatch):
+    from bot.types import Bar
+    from strategies import custom
+    from services.strategy_presets import _run_on
+    seen = {}
+    monkeypatch.setattr(custom, "simulate_strategy",
+                        lambda strat, rows, **kw: seen.update(builtin=(len(rows), kw.get("trade_start_at"))) or {"trades": []})
+    monkeypatch.setattr(custom, "simulate", lambda spec, rows, **kw: seen.update(custom=len(rows)) or {"trades": []})
+    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    rows = [Bar(start + timedelta(hours=i), 100, 101, 99, 100, 10) for i in range(300)]
+    cut = rows[100].timestamp
+    _run_on("Decision Brain", "BTCUSDT", "1h", {}, None, rows, trade_start_at=cut)
+    assert seen["builtin"] == (300, cut)
+    _run_on("EMA 20/50", "BTCUSDT", "1h", {}, None, rows, trade_start_at=cut)
+    assert seen["custom"] == 200

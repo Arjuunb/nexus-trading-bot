@@ -129,9 +129,12 @@ class ResearchJobService:
         if retained:
             rows, source = retained["bars"], retained["manifest"]["provider"]
         else:
+            # The period is [start, end). The store's end bound is inclusive and it keeps the
+            # newest n rows, so an inclusive end would let a candle at period_end push out
+            # the first required candle.
             rows, source = get_bars(symbol, n=limit + warmup, timeframe=timeframe,
                                     since_ms=int(fetch_start.timestamp() * 1000) if fetch_start else None,
-                                    end_ms=int(period_end.timestamp() * 1000) if period_end else None,
+                                    end_ms=int(period_end.timestamp() * 1000) - 1 if period_end else None,
                                     require_real=True)
         if period_start:
             from data.historical import slice_candles
@@ -141,9 +144,11 @@ class ResearchJobService:
                 raise RuntimeError(f"INSUFFICIENT_DATA: {exc}") from exc
             if len(sliced["warmup"]) < warmup:
                 raise RuntimeError("INSUFFICIENT_DATA: required warm-up history is unavailable")
+            warmup_rows = sliced["warmup"]
             evaluation_rows = sliced["evaluation"]
             coverage = sliced["coverage"]
         else:
+            warmup_rows = []
             evaluation_rows, coverage = rows, {"status": "UNKNOWN", "warmup_candles": 0,
                                                 "evaluation_candles": len(rows), "missing_candles": None,
                                                 "duplicate_candles": None}
@@ -160,10 +165,18 @@ class ResearchJobService:
         manifest["retention"] = retention.retain(job, manifest, rows)
         tuning = job.get("frozen_config") or {}
         observed_identities, evaluated_results = [], []
+        # Each evaluated segment gets up to ``warmup`` candles immediately before it as
+        # indicator context; entries are only taken from the segment's first candle.
+        history = list(warmup_rows) + list(evaluation_rows)
+        position = {id(row): index for index, row in enumerate(history)}
         def evaluate(segment, **_):
             if checkpoint:
                 checkpoint()
-            result = _run_on(strategy_for_engine, symbol, timeframe, tuning, None, segment, capture_identity=True)
+            segment = list(segment)
+            first = position.get(id(segment[0])) if segment and warmup else None
+            context = history[max(0, first - warmup):first] if first else []
+            result = _run_on(strategy_for_engine, symbol, timeframe, tuning, None, context + segment,
+                             capture_identity=True, trade_start_at=segment[0].timestamp if context else None)
             observed_identities.append(result.get("_strategy_identity"))
             evaluated_results.append(result)
             return _metrics(result)
