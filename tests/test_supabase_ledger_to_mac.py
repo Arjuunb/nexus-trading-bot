@@ -385,17 +385,22 @@ def test_cli_requires_ca_before_password_and_never_uses_global_pg_settings(tmp_p
     assert json.loads(capsys.readouterr().out)['reason'] == 'PROVIDER_CA_CERTIFICATE_FILE_REQUIRED'
 
 
-def test_cli_uses_one_fixed_ca_copy_and_verify_full_for_recovery(tls_certificates, tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize('direct', [False, True])
+def test_cli_uses_one_fixed_ca_copy_and_verify_full_for_recovery(tls_certificates, tmp_path, monkeypatch, capsys, direct):
     path = tls_certificates / 'ca.crt'
     original_ca = path.read_bytes()
+    mode_args = ['--direct'] if direct else ['--pooler-host', 'aws-0-fixture.pooler.supabase.com']
     monkeypatch.setattr(sys, 'argv', ['backup.py', '--backup', '--project', 'a' * 20,
-        '--pooler-host', 'aws-0-fixture.pooler.supabase.com', '--destination', str(tmp_path), '--sslrootcert', str(path)])
+        '--destination', str(tmp_path), '--sslrootcert', str(path)] + mode_args)
     monkeypatch.setenv('PGSSLMODE', 'disable')
     monkeypatch.setenv('PGSSLROOTCERT', '/untrusted/ambient.crt')
     monkeypatch.setattr(helper, 'check_tools', lambda *args: None)
     monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: 'fixture-only')
     monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
     def recover(config, *, directory, bin_dir):
+        assert config['host'] == ('db.' + 'a' * 20 + '.supabase.co' if direct else 'aws-0-fixture.pooler.supabase.com')
+        assert config['user'] == ('postgres' if direct else 'postgres.' + 'a' * 20)
+        assert config['port'] == 5432 and config['dbname'] == 'postgres'
         assert config['sslmode'] == 'verify-full'
         saved_ca = Path(config['sslrootcert'])
         assert saved_ca.parent == directory
@@ -407,8 +412,30 @@ def test_cli_uses_one_fixed_ca_copy_and_verify_full_for_recovery(tls_certificate
     assert helper.main() == 0
     report = json.loads(capsys.readouterr().out)
     assert report['source_tls_mode'] == 'verify-full'
+    assert report['source_connection_method'] == ('DIRECT' if direct else 'SESSION_POOLER')
     assert report['trusted_ca_sha256'] == helper.hashlib.sha256(original_ca).hexdigest()
     assert 'fixture-only' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('mode_args', [[], ['--direct', '--pooler-host', 'aws-0-fixture.pooler.supabase.com']])
+def test_cli_requires_exactly_one_explicit_connection_mode(tmp_path, monkeypatch, mode_args):
+    monkeypatch.setattr(sys, 'argv', ['backup.py', '--backup', '--project', 'a' * 20,
+        '--sslrootcert', str(tmp_path / 'ca.crt')] + mode_args)
+    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: pytest.fail('Unexpected password prompt'))
+    with pytest.raises(SystemExit) as caught:
+        helper.main()
+    assert caught.value.code == 2
+
+
+def test_direct_mode_rejects_invalid_project_before_password_or_connection(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, 'argv', ['backup.py', '--backup', '--project', 'other.invalid/host',
+        '--direct', '--sslrootcert', str(tmp_path / 'ca.crt')])
+    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: pytest.fail('Unexpected password prompt'))
+    monkeypatch.setattr(psycopg, 'connect', lambda **kwargs: pytest.fail('Unexpected source connection'))
+    assert helper.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report['reason'] == 'SUPABASE_PROJECT_REF_REQUIRED'
+    assert report['source_connection_method'] == 'DIRECT'
 
 
 def test_real_pg_dump_and_financial_restore_use_explicit_ca_and_verify_full(source, tls_certificates, tmp_path):

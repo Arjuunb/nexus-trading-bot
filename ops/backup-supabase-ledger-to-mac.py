@@ -511,12 +511,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--backup", action="store_true", required=True)
     parser.add_argument("--project", required=True)
-    parser.add_argument("--pooler-host", required=True)
+    connection = parser.add_mutually_exclusive_group(required=True)
+    connection.add_argument("--pooler-host", help="Official session pooler hostname from the project dashboard")
+    connection.add_argument("--direct", action="store_true",
+                            help="Connect to db.PROJECT.supabase.co as postgres; requires direct network reachability")
     parser.add_argument("--sslrootcert", type=Path, required=True,
                         help="CA certificate downloaded from Supabase Database Settings; verify-full remains mandatory")
     parser.add_argument("--pg-bin", type=Path, default=Path("/Applications/Postgres.app/Contents/Versions/17/bin"))
     parser.add_argument("--destination", type=Path, default=Path.home() / "Nexus-Backups")
     args = parser.parse_args()
+    connection_method = "DIRECT" if args.direct else "SESSION_POOLER"
     os.umask(0o077)
     directory = None
     try:
@@ -525,8 +529,12 @@ def main():
                 del os.environ[key]
         import psycopg  # noqa: F401 — fail before requesting any password if unavailable
         require(re.fullmatch(r"[a-z0-9]{20}", args.project), "SUPABASE_PROJECT_REF_REQUIRED")
-        require(re.fullmatch(r"aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com", args.pooler_host),
-                "OFFICIAL_SESSION_POOLER_HOST_REQUIRED")
+        if args.direct:
+            host, user = "db." + args.project + ".supabase.co", "postgres"
+        else:
+            require(re.fullmatch(r"aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com", args.pooler_host),
+                    "OFFICIAL_SESSION_POOLER_HOST_REQUIRED")
+            host, user = args.pooler_host, "postgres." + args.project
         check_tools(args.pg_bin)
         destination = args.destination.expanduser().resolve()
         require(destination.is_dir(), "EXISTING_BACKUP_DESTINATION_REQUIRED")
@@ -536,11 +544,11 @@ def main():
         require(bool(password), "DATABASE_PASSWORD_REQUIRED")
         directory = Path(tempfile.mkdtemp(prefix="external-ledger-", dir=destination))
         ca_path = preserve_root_certificate(directory, ca_data)
-        config = {"host": args.pooler_host, "port": 5432, "dbname": "postgres", "user": "postgres." + args.project,
+        config = {"host": host, "port": 5432, "dbname": "postgres", "user": user,
                   "password": password, "sslmode": "verify-full", "sslrootcert": str(ca_path),
                   "connect_timeout": 10, "application_name": "nexus_read_only_ledger_backup"}
         report = recover(config, bin_dir=args.pg_bin.resolve(), directory=directory)
-        report.update(project=args.project, local_restore_server_stopped=True,
+        report.update(project=args.project, source_connection_method=connection_method, local_restore_server_stopped=True,
                       source_tls_mode="verify-full", trusted_ca_sha256=hashlib.sha256(ca_data).hexdigest(),
                       at_utc=dt.datetime.now(dt.timezone.utc).isoformat())
         private_json(directory / "recovery-receipt.json", report)
@@ -548,6 +556,7 @@ def main():
         return 0
     except Exception as error:
         report = failure_report(error)
+        report["source_connection_method"] = connection_method
         if directory:
             report["directory"] = str(directory)
             private_json(directory / "blocked-receipt.json", report)
