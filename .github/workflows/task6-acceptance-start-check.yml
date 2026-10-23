@@ -1,0 +1,40 @@
+name: Check bounded Task 6 staging startup helper
+
+on:
+  push:
+    branches: ['ops/task6-acceptance-start-*']
+  pull_request:
+    paths:
+      - 'ops/start-task6-staging-acceptance.py'
+      - 'ops/run-task6-staging-from-mac.py'
+      - 'ops/task6-verified-staging-backup.sh'
+      - 'tests/test_task6_acceptance_start.py'
+      - '.github/workflows/task6-acceptance-start-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  staging-boundaries:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Verify config preservation, backup gates, and failure containment
+        run: |
+          python -B -m unittest discover -s tests -p 'test_task6_acceptance_start.py' -v
+          sh -n ops/task6-verified-staging-backup.sh
+          python -B - <<'PY'
+          import hashlib, importlib.util, pathlib
+          root = pathlib.Path('ops')
+          spec = importlib.util.spec_from_file_location('owner_start', root/'run-task6-staging-from-mac.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          assert hashlib.sha256((root/'start-task6-staging-acceptance.py').read_bytes()).hexdigest() == module.SERVER_SHA
+          assert hashlib.sha256((root/'task6-verified-staging-backup.sh').read_bytes()).hexdigest() == module.BACKUP_SHA
+          PY
