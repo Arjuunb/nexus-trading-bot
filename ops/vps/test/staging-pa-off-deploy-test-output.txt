@@ -1,0 +1,44 @@
+PASS  setup: API stopped with 1536 MiB set directly
+PASS  plan refuses before the image is loaded
+PASS  plan refuses before the backup
+PASS  backup OK
+PASS  plan refuses an image recorded for another commit
+PASS  plan refuses a changed Compose file
+PASS  plan refuses when API data changed after the backup
+PASS  plan refuses while the API runs
+PASS  apply refuses without a plan
+PASS  plan ready
+PASS  plan shows image change
+PASS  plan keeps memory
+PASS  plan lists untouched services
+PASS  plan prints no secrets
+PASS  apply refuses a plan older than 2 hours
+PASS  apply refuses when something changed since the plan
+PASS  nothing changed by refusals
+      | recorded the current API for rollback: nexus-rc3-api:fake-old (sha256:1ccda35994e7)
+      | nexus-remote-stage-rc3-28acdbc-api-1 recreated with the PA-off image; waiting for it to be healthy (up to 8 minutes)
+      | container check: image, 1536 MiB memory, volumes, networks, user and all 6 Compose environment values as planned
+      | /health: {"status": "ok", "pa": false}; PA lab routes in the API's route list: {"operations": 3, "not_retired": []}
+      | staging web proxy reloaded: healthy
+      | production: unchanged (same containers, start times, restart counts)
+      | DEPLOYED: staging API runs the PA-off image (Price Action Lab OFF). Next: staging-pa-off-check measure.
+PASS  apply deploys
+PASS  container check passes
+PASS  health says PA off
+PASS  PA routes all retired
+PASS  web proxy reloaded and healthy
+PASS  production unchanged
+PASS  apply prints no secrets
+PASS  API running new image with 1536 MiB
+PASS  research worker untouched
+PASS  Postgres untouched
+PASS  API keeps its env file values
+PASS  web proxy reaches the new API
+PASS  rollback restores old image, stopped
+PASS  API back on old image, stopped, 1536 MiB
+PASS  research worker untouched by rollback
+PASS  unhealthy new API is stopped again
+PASS  API stopped after failed deploy
+PASS  rollback after a failed deploy
+PASS  rejects unknown argument
+staging_pa_off_deploy_test: 0 failed
