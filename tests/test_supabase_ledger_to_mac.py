@@ -270,6 +270,8 @@ def test_failed_connection_attempt_is_not_retried_or_downgraded_and_removes_pass
         return path
     def fail_connect(**kwargs):
         calls.append(kwargs)
+        assert 'password' not in kwargs
+        assert kwargs['passfile'] == str(directory / '.pgpass')
         assert kwargs['sslmode'] == 'verify-full'
         assert kwargs['sslrootcert'] == '/etc/ssl/cert.pem'
         assert 'default_transaction_read_only=on' in kwargs['options']
@@ -278,6 +280,8 @@ def test_failed_connection_attempt_is_not_retried_or_downgraded_and_removes_pass
         raise psycopg.OperationalError('SSL error: certificate verify failed; password=fixture-secret')
     monkeypatch.setattr(helper.tempfile, 'mkdtemp', track_socket)
     monkeypatch.setattr(helper, 'check_tools', lambda *args: None)
+    monkeypatch.setattr(helper, 'verify_native_source', lambda *args, **kwargs:
+                        {'native_psql_authenticated': True, 'native_identity_and_read_only_verified': True})
     monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
     monkeypatch.setattr(psycopg, 'connect', fail_connect)
     config = dict(host='fixture.invalid', port=5432, dbname='postgres', user='postgres.fixture',
@@ -289,7 +293,10 @@ def test_failed_connection_attempt_is_not_retried_or_downgraded_and_removes_pass
     assert not (directory / 'application-ledger.dump').exists()
     assert sockets and all(not path.exists() for path in sockets)
     assert 'fixture-secret' not in capsys.readouterr().out
-    assert 'fixture-secret' not in json.dumps(helper.failure_report(caught.value))
+    report = helper.failure_report(caught.value)
+    assert report['client_authentication_evidence']['native_psql_authenticated'] is True
+    assert report['client_authentication_evidence']['same_private_passfile_for_all_clients'] is True
+    assert 'fixture-secret' not in json.dumps(report)
 
 
 @pytest.fixture(scope='module')
@@ -460,5 +467,119 @@ def test_native_libpq_wrong_ca_cannot_copy_or_fall_back_to_unverified_tls(source
                   sslmode='verify-full', sslrootcert=str(tls_certificates / 'untrusted.crt'))
     with pytest.raises(helper.SourceConnectionBlocked, match='TLS_CERTIFICATE_VERIFICATION_FAILED'):
         helper.recover(config, bin_dir=PG_BIN, directory=directory)
+    assert not (directory / 'application-ledger.dump').exists()
+    assert not (directory / '.pgpass').exists()
+
+
+def test_native_probe_uses_private_passfile_without_secret_in_argv_or_env(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    secret = 'synthetic-password-never-disclose'
+    path = tmp_path / '.pgpass'
+    config = dict(host='fixture.invalid', port=5432, dbname='postgres', user='postgres',
+                  passfile=str(path), sslmode='verify-full', sslrootcert='/fixture-ca.crt', connect_timeout=10)
+    monkeypatch.setenv('PGPASSWORD', secret)
+    calls = []
+    def execute(args, **kwargs):
+        calls.append(args)
+        assert secret not in json.dumps(args) and secret not in json.dumps(kwargs['env'])
+        assert 'PGPASSWORD' not in kwargs['env']
+        assert '-X' in args and '--no-password' in args
+        dsn = next(a.split('=', 1)[1] for a in args if a.startswith('--dbname='))
+        connection = psycopg.conninfo.conninfo_to_dict(dsn)
+        assert connection['passfile'] == str(path)
+        assert 'password' not in connection
+        assert connection['sslmode'] == 'verify-full'
+        assert connection['options'] == helper.SOURCE_OPTIONS
+        return SimpleNamespace(returncode=0, stdout=json.dumps(dict(role='postgres', database='postgres', read_only='on')), stderr='')
+    monkeypatch.setattr(helper.subprocess, 'run', execute)
+    assert helper.verify_native_source(config, bin_dir=PG_BIN)['native_psql_authenticated'] is True
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('response', [
+    'not json',
+    json.dumps(dict(role='other', database='postgres', read_only='on')),
+    json.dumps(dict(role='postgres', database='other', read_only='on')),
+    json.dumps(dict(role='postgres', database='postgres', read_only='off')),
+])
+def test_native_probe_rejects_wrong_identity_or_writable_session(response, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(helper.subprocess, 'run', lambda *args, **kwargs:
+        SimpleNamespace(returncode=0, stdout=response, stderr=''))
+    config = dict(host='fixture.invalid', port=5432, dbname='postgres', user='postgres', passfile=str(tmp_path / '.pgpass'))
+    with pytest.raises(helper.SourceConnectionBlocked, match='NATIVE_SOURCE_IDENTITY_OR_READ_ONLY_MISMATCH'):
+        helper.verify_native_source(config, bin_dir=PG_BIN)
+
+
+def test_native_auth_failure_stops_before_python_and_removes_passfile(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    directory = tmp_path / 'recovery'
+    directory.mkdir(mode=0o700)
+    secret = 'synthetic-password-never-disclose'
+    monkeypatch.setattr(helper, 'check_tools', lambda *args: {'psql': '17.11'})
+    monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
+    monkeypatch.setattr(helper.subprocess, 'run', lambda *args, **kwargs:
+        SimpleNamespace(returncode=2, stdout='', stderr='FATAL: password authentication failed; ' + secret))
+    monkeypatch.setattr(psycopg, 'connect', lambda *args, **kwargs: pytest.fail('Python attempted after native authentication failed'))
+    config = dict(host='fixture.invalid', port=5432, dbname='postgres', user='postgres', password=secret)
+    with pytest.raises(helper.SourceConnectionBlocked) as caught:
+        helper.recover(config, bin_dir=PG_BIN, directory=directory)
+    report = helper.failure_report(caught.value)
+    assert report['reason'].endswith('PASSWORD_AUTHENTICATION_FAILED')
+    assert report['stage'] == 'VERIFY_NATIVE_PSQL_READ_ONLY'
+    assert report['client_authentication_evidence']['native_psql_authenticated'] is False
+    assert report['client_authentication_evidence']['native_psql_version'] == '17.11'
+    assert secret not in json.dumps(report)
+    assert not (directory / '.pgpass').exists()
+    assert not (directory / 'application-ledger.dump').exists()
+
+
+def test_real_tls_special_password_works_for_native_python_and_pg_dump(source, tls_certificates, tmp_path, monkeypatch):
+    password = "synthetic:back\\slash '$%& पद"
+    with psycopg.connect(**source, autocommit=True) as connection:
+        connection.execute(sql.SQL('ALTER ROLE postgres PASSWORD {}').format(sql.Literal(password)))
+    original = helper.command
+    dump_checks = []
+    def check_dump(args, **kwargs):
+        if kwargs.get('name') == 'dump':
+            dsn = next(str(a).split('=', 1)[1] for a in args if str(a).startswith('--dbname='))
+            parameters = psycopg.conninfo.conninfo_to_dict(dsn)
+            assert 'password' not in parameters and password not in dsn
+            assert Path(parameters['passfile']).is_file()
+            assert parameters['passfile'] == kwargs['env']['PGPASSFILE']
+            assert Path(parameters['passfile']).stat().st_mode & 0o777 == 0o600
+            dump_checks.append(True)
+        return original(args, **kwargs)
+    monkeypatch.setattr(helper, 'command', check_dump)
+    directory = tmp_path / 'recovery'
+    directory.mkdir(mode=0o700)
+    config = dict(source, password=password, host='ledger.fixture.invalid', hostaddr='127.0.0.1',
+                  sslmode='verify-full', sslrootcert=str(tls_certificates / 'ca.crt'))
+    try:
+        report = helper.recover(config, bin_dir=PG_BIN, directory=directory)
+    finally:
+        with psycopg.connect(**source, autocommit=True) as connection:
+            connection.execute(sql.SQL('ALTER ROLE postgres PASSWORD {}').format(sql.Literal(source['password'])))
+    evidence = report['client_authentication_evidence']
+    assert evidence['native_psql_authenticated'] is True
+    assert evidence['python_psycopg_authenticated'] is True
+    assert evidence['same_private_passfile_for_all_clients'] is True
+    assert report['external_application_ledger_recovery_proven'] is True
+    assert dump_checks == [True]
+    assert password not in json.dumps(report)
+    assert not (directory / '.pgpass').exists()
+
+
+def test_real_native_wrong_password_stops_before_python_or_dump(source, tls_certificates, tmp_path):
+    directory = tmp_path / 'recovery'
+    directory.mkdir(mode=0o700)
+    config = dict(source, password='synthetic-wrong-password', host='ledger.fixture.invalid', hostaddr='127.0.0.1',
+                  sslmode='verify-full', sslrootcert=str(tls_certificates / 'ca.crt'))
+    with pytest.raises(helper.SourceConnectionBlocked) as caught:
+        helper.recover(config, bin_dir=PG_BIN, directory=directory)
+    report = helper.failure_report(caught.value)
+    assert report['stage'] == 'VERIFY_NATIVE_PSQL_READ_ONLY'
+    assert report['reason'].endswith('PASSWORD_AUTHENTICATION_FAILED')
+    assert report['client_authentication_evidence']['native_psql_authenticated'] is False
     assert not (directory / 'application-ledger.dump').exists()
     assert not (directory / '.pgpass').exists()

@@ -29,6 +29,7 @@ RESERVE = 8 * 1024 ** 3
 WORK_BUDGET = 2 * 1024 ** 3
 MAX_DATABASE = 256 * MIB
 MAX_LOGICAL = 512 * MIB
+SOURCE_OPTIONS = "-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=240000"
 
 
 class Blocked(RuntimeError):
@@ -38,9 +39,11 @@ class Blocked(RuntimeError):
 class SourceConnectionBlocked(Blocked):
     """Only fixed diagnostic labels and a validated SQLSTATE may leave the helper."""
 
-    def __init__(self, category, sqlstate):
+    def __init__(self, category, sqlstate, *, stage="CONNECT_EXTERNAL_LEDGER_READ_ONLY", evidence=None):
         super().__init__("EXTERNAL_LEDGER_CONNECTION_FAILED:" + category)
         self.sqlstate = sqlstate
+        self.stage = stage
+        self.client_evidence = evidence or {}
 
 
 def connection_diagnostic(error):
@@ -64,6 +67,8 @@ def connection_diagnostic(error):
         category = "TLS_CERTIFICATE_VERIFICATION_FAILED"
     elif state == "28P01" or "password authentication failed" in message:
         category = "PASSWORD_AUTHENTICATION_FAILED"
+    elif "no password supplied" in message:
+        category = "PASSWORD_FILE_NOT_USED"
     elif any(term in message for term in ("circuit breaker", "too many authentication errors", "ip banned")):
         category = "PROVIDER_CONNECTION_BLOCKED"
     elif state == "53300" or any(term in message for term in
@@ -89,7 +94,7 @@ def connect_source(config):
     print(json.dumps({"phase": "CONNECT_EXTERNAL_LEDGER_READ_ONLY"}), flush=True)
     try:
         return psycopg.connect(**config, autocommit=True,
-            options="-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=240000")
+            options=SOURCE_OPTIONS)
     except psycopg.Error as error:
         raise SourceConnectionBlocked(*connection_diagnostic(error)) from None
 
@@ -99,8 +104,10 @@ def failure_report(error):
               "deployment_performed": False, "original_data_deleted": False,
               "external_ledger_recovery_proven": False, "partial_copies_retained": True}
     if isinstance(error, SourceConnectionBlocked):
-        report.update(stage="CONNECT_EXTERNAL_LEDGER_READ_ONLY", sqlstate=error.sqlstate,
+        report.update(stage=error.stage, sqlstate=error.sqlstate,
                       automatic_retries=0, raw_driver_message_printed=False)
+        if error.client_evidence:
+            report["client_authentication_evidence"] = error.client_evidence
     return report
 
 
@@ -162,6 +169,7 @@ def file_hash(path):
 
 def check_tools(bin_dir):
     names = ("pg_dump", "pg_restore", "psql", "initdb", "pg_ctl")
+    versions = {}
     for name in names:
         binary = bin_dir / name
         require(binary.is_file() and os.access(binary, os.X_OK), "POSTGRES_17_TOOLS_REQUIRED")
@@ -169,6 +177,46 @@ def check_tools(bin_dir):
                                text=True, timeout=10, env=clean_environment())
         require(value.returncode == 0 and re.search(r"\b17\.\d+\b", value.stdout),
                 "ALL_POSTGRES_TOOLS_MUST_BE_VERSION_17")
+        versions[name] = re.search(r"\b17\.\d+\b", value.stdout).group(0)
+    return versions
+
+
+def verify_native_source(config, *, bin_dir):
+    """One psql attempt using exactly the same private passfile as Python/dump.
+
+    Only connection identity and the read-only setting are queried. Passwords
+    never enter argv or environment. Raw client output is never printed/saved.
+    A native failure stops before attempting a Python login or financial reads.
+    """
+    import psycopg
+    require("password" not in config and bool(config.get("passfile")),
+            "NATIVE_PASSWORD_MUST_USE_PRIVATE_PASSFILE")
+    dsn = psycopg.conninfo.make_conninfo(**config, options=SOURCE_OPTIONS)
+    query = "SELECT pg_catalog.json_build_object('role',current_user,'database',current_database(),'read_only',pg_catalog.current_setting('transaction_read_only'));"
+    try:
+        value = subprocess.run([str(bin_dir / "psql"), "-X", "--no-password", "-qAt",
+                                "-v", "ON_ERROR_STOP=1", "--dbname=" + dsn, "-c", query],
+                               capture_output=True, text=True, timeout=20,
+                               env=clean_environment())
+    except subprocess.TimeoutExpired:
+        raise SourceConnectionBlocked("CONNECTION_TIMEOUT", None,
+            stage="VERIFY_NATIVE_PSQL_READ_ONLY",
+            evidence={"native_psql_authenticated": False}) from None
+    if value.returncode != 0:
+        category, state = connection_diagnostic(RuntimeError(value.stderr))
+        raise SourceConnectionBlocked(category, state, stage="VERIFY_NATIVE_PSQL_READ_ONLY",
+            evidence={"native_psql_authenticated": False}) from None
+    try:
+        result = json.loads(value.stdout)
+        matched = (isinstance(result, dict) and result.get("role") == str(config["user"]).split(".", 1)[0]
+                   and result.get("database") == config["dbname"] and result.get("read_only") == "on")
+    except (ValueError, TypeError):
+        matched = False
+    if not matched:
+        raise SourceConnectionBlocked("NATIVE_SOURCE_IDENTITY_OR_READ_ONLY_MISMATCH", None,
+            stage="VERIFY_NATIVE_PSQL_READ_ONLY",
+            evidence={"native_psql_authenticated": True, "native_identity_and_read_only_verified": False})
+    return {"native_psql_authenticated": True, "native_identity_and_read_only_verified": True}
 
 
 def command(args, *, directory, name, env=None, timeout=180):
@@ -366,12 +414,29 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
     try:
         require(shutil.disk_usage(directory).free >= RESERVE + WORK_BUDGET,
                 "MAC_RECOVERY_SPACE_REQUIRED")
-        check_tools(bin_dir)
-        # This file is used only by pg_dump, is never printed, and is removed below.
+        versions = check_tools(bin_dir) or {}
+        # One fixed private credential source for psql, psycopg and pg_dump.
         fd = os.open(password_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(passfile_line(config))
-        source = connect_source(config)
+        source_config = {key: value for key, value in config.items() if key != "password"}
+        source_config["passfile"] = str(password_file)
+        client_evidence = {"same_private_passfile_for_all_clients": True,
+                           "native_psql_version": versions.get("psql"),
+                           "python_psycopg_version": psycopg.__version__,
+                           "python_libpq_version": psycopg.pq.version(),
+                           "python_pq_implementation": psycopg.pq.__impl__,
+                           "python_psycopg_attempted": False,
+                           "python_psycopg_authenticated": None}
+        print(json.dumps({"phase": "VERIFY_NATIVE_PSQL_READ_ONLY"}), flush=True)
+        try:
+            client_evidence.update(verify_native_source(source_config, bin_dir=bin_dir))
+            client_evidence.update(python_psycopg_attempted=True, python_psycopg_authenticated=False)
+            source = connect_source(source_config)
+        except SourceConnectionBlocked as error:
+            error.client_evidence = dict(client_evidence, **error.client_evidence)
+            raise
+        client_evidence["python_psycopg_authenticated"] = True
         print(json.dumps({"phase": "VERIFY_EXTERNAL_LEDGER_SOURCE_AND_SNAPSHOT"}), flush=True)
         require(source.info.server_version // 10000 == 17, "SOURCE_POSTGRES_VERSION_CHANGED")
         require(source.execute("SELECT pg_database_size(current_database())").fetchone()[0] <= MAX_DATABASE,
@@ -416,7 +481,7 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
         source_env.update(PGPASSFILE=str(password_file), PGCONNECT_TIMEOUT="10",
                           PGOPTIONS="-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=3000")
         # A password-free connection string; secrets are only in the private passfile.
-        public_config = {k: v for k, v in config.items() if k != "password"}
+        public_config = source_config
         dsn = psycopg.conninfo.make_conninfo(**public_config)
         dump_args = [bin_dir / "pg_dump", "--no-password", "--format=custom", "--strict-names",
                      "--lock-wait-timeout=3000", "--snapshot=" + snapshot, "--dbname=" + dsn,
@@ -491,6 +556,7 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
                 "original_role_login_attributes_and_memberships_recovered": False,
                 "schema_columns_constraints_indexes_triggers_functions_policies_match": True,
                 "all_selected_table_rows_match_same_exported_snapshot": True,
+                "client_authentication_evidence": client_evidence,
                 "tables_verified": len(tables), "rows_verified": sum(r["rows"] for r in identities),
                 "dump_bytes": archive.stat().st_size, "dump_sha256": original_hash,
                 "directory": str(directory), "source_rows_mutated_by_helper": False,
