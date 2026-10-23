@@ -297,6 +297,7 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
         with psycopg.connect(**target, autocommit=True) as restored:
             canonical_session(restored)
             after = catalog(restored)
+            private_json(directory / "restored-schema.json", after)
             require(before == after, "RESTORED_SCHEMA_DEFINITION_MISMATCH")
             recovered = fingerprint(restored, tables, deadline=deadline)
             require(identities == recovered, "RESTORED_FINANCIAL_ROW_FINGERPRINT_MISMATCH")

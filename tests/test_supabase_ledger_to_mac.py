@@ -1,5 +1,6 @@
 """Real PostgreSQL 17 backup/restore checks; never connects to an external provider."""
 import importlib.util
+import json
 import os
 from pathlib import Path
 import shutil
@@ -77,7 +78,15 @@ def source(server):
 def run_recovery(source, tmp_path, **kwargs):
     path = tmp_path / "recovery"
     path.mkdir(mode=0o700)
-    return helper.recover(source, bin_dir=PG_BIN, directory=path, require_tls=False, **kwargs), path
+    try:
+        return helper.recover(source, bin_dir=PG_BIN, directory=path, require_tls=False, **kwargs), path
+    except helper.Blocked as error:
+        if str(error) == 'RESTORED_SCHEMA_DEFINITION_MISMATCH':
+            before=json.loads((path/'source-schema.json').read_text())
+            after=json.loads((path/'restored-schema.json').read_text())
+            # Only synthetic test definitions. The operator helper never prints these.
+            print(json.dumps({k:{'before':before[k],'after':after[k]} for k in before if before[k]!=after[k]},indent=2))
+        raise
 
 
 def test_real_snapshot_restores_every_row_and_definition_during_concurrent_write(source, tmp_path):
