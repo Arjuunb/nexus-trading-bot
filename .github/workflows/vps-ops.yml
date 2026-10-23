@@ -1,7 +1,10 @@
 name: VPS operations
 
-# Runs ONE script from ops/vps/operations on the VPS, and only after the repository owner
-# approves the run (required reviewer on the "vps" environment). Never runs on push.
+# Runs ONE script from ops/vps/operations on the VPS. Never runs on push.
+# - Normally only after the repository owner approves the run (required reviewer on "vps").
+# - Read-only checks listed in ops/vps/check-operations.txt, started from main, use the
+#   "vps-check" environment instead: no per-run approval, a separate key that the VPS runner only
+#   accepts for those checks, and only after check-env-guard.py confirms vps-check is limited to main.
 # How it works and how to set it up: ops/vps/README.md
 on:
   workflow_dispatch:
@@ -31,8 +34,12 @@ jobs:
     name: What will run
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     outputs:
       sha256: ${{ steps.resolve.outputs.sha256 }}
+      environment: ${{ steps.mode.outputs.environment }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -63,18 +70,36 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "operation=$OPERATION argument=${ARGUMENT:-none} script=$script sha256=$sum"
+      - id: mode
+        name: Approval needed, or read-only check
+        env:
+          OPERATION: ${{ inputs.operation }}
+          ARGUMENT: ${{ inputs.argument }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          environment=vps
+          if [ "$GITHUB_REF" = refs/heads/main ] && sh ops/vps/check-mode.sh "$OPERATION" "$ARGUMENT"; then
+            if python3 -I ops/vps/check-env-guard.py; then environment=vps-check; fi
+          fi
+          echo "environment=$environment" >> "$GITHUB_OUTPUT"
+          if [ "$environment" = vps-check ]; then
+            msg="Read-only check from main: runs WITHOUT approval (environment vps-check, check key; the VPS accepts only read-only checks with it)."
+          else
+            msg="Waits for the owner's approval (environment vps)."
+          fi
+          echo "$msg"; { echo ""; echo "**$msg**"; } >> "$GITHUB_STEP_SUMMARY"
 
   run:
-    name: Run on the VPS (after approval)
+    name: Run on the VPS (${{ needs.plan.outputs.environment == 'vps-check' && 'read-only check' || 'after approval' }})
     needs: plan
     runs-on: ubuntu-24.04
     timeout-minutes: 40
-    environment: vps
+    environment: ${{ needs.plan.outputs.environment }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - name: Send the approved script to the VPS runner
+      - name: Send the script to the VPS runner
         env:
           OPERATION: ${{ inputs.operation }}
           ARGUMENT: ${{ inputs.argument }}

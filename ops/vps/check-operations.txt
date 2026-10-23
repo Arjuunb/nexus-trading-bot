@@ -1,0 +1,18 @@
+# Read-only checks that may run WITHOUT a per-run approval (GitHub environment "vps-check").
+# Format: <operation> <argument>   ("-" = no argument, "#" = a number such as a GitHub run id)
+#
+# Only these exact operation + argument pairs. Anything that changes the server (deploy, stop,
+# start, delete, backup start, cleanup) is not listed and always waits for the owner's approval.
+# The VPS runner has its own built-in copy of this list (nexus-ops-runner, "check mode"); a test
+# keeps the two identical, and the VPS enforces its copy even if this file is changed.
+hello -
+ops-log #
+staging-inventory show
+staging-config-check show
+staging-backup status
+pa-backup status
+staging-pa-off-check measure
+staging-pa-off-stop check
+staging-pa-off-stop verify
+p1b-stop-staging check
+p1b-stop-staging verify

@@ -2,7 +2,11 @@
 # nexus-ops-runner: the only program the GitHub "VPS operations" key can start on this server.
 #
 # Installed at /usr/local/sbin/nexus-ops-runner by setup-vps-ops.sh. sshd runs it as the forced
-# command of the nexus-ops key:   sudo -n /usr/local/sbin/nexus-ops-runner "$SSH_ORIGINAL_COMMAND"
+# command of the nexus-ops keys:
+#   main key (owner approves each run):  sudo -n /usr/local/sbin/nexus-ops-runner "$SSH_ORIGINAL_COMMAND"
+#   check key (no per-run approval):     sudo -n /usr/local/sbin/nexus-ops-runner --check "$SSH_ORIGINAL_COMMAND"
+# In check mode only the read-only checks listed in check_allowed below are accepted; the list is
+# part of this file, so changing it means installing a new runner on the server.
 #
 # Request (one argument):  run <operation> <argument|-> <script-sha256> <commit> <github-run-id>
 # The script itself arrives on stdin. It must match the SHA-256 shown on the GitHub approval page.
@@ -28,6 +32,20 @@ refuse() { say "nexus-ops: refused: $*"; exit 3; }
 matches() { printf '%s' "$1" | grep -Eqx -- "$2"; }
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# The read-only checks the check key may start (operation and argument; "-" means none).
+# Keep identical to ops/vps/check-operations.txt (a test compares them).
+check_allowed() {
+    case "$1 $2" in
+        "hello -" | "staging-inventory show" | "staging-config-check show" | "staging-backup status" | \
+        "pa-backup status" | "staging-pa-off-check measure" | "staging-pa-off-stop check" | \
+        "staging-pa-off-stop verify" | "p1b-stop-staging check" | "p1b-stop-staging verify") return 0 ;;
+        "ops-log "*) matches "$2" '[0-9]{1,20}' ;;
+        *) return 1 ;;
+    esac
+}
+
+mode=approved
+if [ "${1:-}" = --check ]; then mode=check; shift; fi
 [ "$(id -u)" = 0 ] || refuse "must run as root (through sudo)"
 [ -e "$DISABLED" ] && refuse "operations are switched off on this server ($DISABLED exists)"
 [ "$#" = 1 ] || refuse "expected exactly one request argument"
@@ -44,6 +62,9 @@ matches "$op" '[a-z0-9][a-z0-9-]{0,40}' || refuse "bad operation name"
 matches "$want" '[0-9a-f]{64}' || refuse "bad sha256"
 matches "$commit" '[0-9a-f]{40}' || refuse "bad commit"
 matches "$run_id" '[0-9]{1,20}' || refuse "bad run id"
+if [ "$mode" = check ]; then
+    check_allowed "$op" "$arg" || refuse "the check key may only start read-only checks; '$op ${arg#-}' needs the owner's approval"
+fi
 
 mkdir -p "$BASE/scripts" "$BASE/work/$op" "$LOGDIR"
 chmod 700 "$BASE" "$LOGDIR"
@@ -64,8 +85,8 @@ log="$LOGDIR/$run_id-$op.log"
 rc_file="$LOGDIR/$run_id-$op.rc"
 [ -e "$rc_file" ] && refuse "run $run_id of $op already happened; see $log"
 : > "$log"
-say "$(now) run=$run_id op=$op arg=$arg commit=$commit sha256=$got started" >> "$LOGDIR/runs.log"
-say "nexus-ops: run $run_id: $op ${arg#-} (commit ${commit%"${commit#???????}"}, script ${got%"${got#????????????}"}…)"
+say "$(now) run=$run_id op=$op arg=$arg commit=$commit sha256=$got mode=$mode started" >> "$LOGDIR/runs.log"
+say "nexus-ops: run $run_id: $op ${arg#-} (commit ${commit%"${commit#???????}"}, script ${got%"${got#????????????}"}…, $mode)"
 
 # Detached: new session, no terminal, stdin closed. Exit code goes to $rc_file when it ends.
 # The wrapper keeps the lock (fd 9) until the script ends; the script itself does not inherit it.

@@ -1,0 +1,56 @@
+== the list and check-mode.sh
+PASS  check: hello -
+PASS  check: ops-log 40007923856
+PASS  check: staging-inventory show
+PASS  check: staging-backup status
+PASS  check: staging-pa-off-check measure
+PASS  check: staging-pa-off-stop verify
+PASS  needs approval: staging-pa-off-stop stop
+PASS  needs approval: p1b-stop-staging stop
+PASS  needs approval: staging-pa-off-deploy apply
+PASS  needs approval: staging-pa-off-deploy rollback
+PASS  needs approval: staging-pa-off-deploy plan
+PASS  needs approval: staging-backup start
+PASS  needs approval: pa-backup start
+PASS  needs approval: staging-pa-delete delete
+PASS  needs approval: docker-cleanup apply
+PASS  needs approval: staging-pa-off-images load
+PASS  needs approval: hello x
+PASS  needs approval: ops-log abc
+PASS  needs approval: ops-log -
+PASS  needs approval: hello;id -
+PASS  needs approval:  -
+== the runner's built-in list is identical to check-operations.txt
+PASS  runner and file list the same 11 checks
+PASS  listed check exists: hello
+PASS  listed check exists: ops-log
+PASS  listed check exists: p1b-stop-staging
+PASS  listed check exists: pa-backup
+PASS  listed check exists: staging-backup
+PASS  listed check exists: staging-config-check
+PASS  listed check exists: staging-inventory
+PASS  listed check exists: staging-pa-off-check
+PASS  listed check exists: staging-pa-off-stop
+== the runner refuses changes in check mode (as the runner sees them, before any script is read)
+PASS  check mode runs an allowed check
+PASS  check mode is shown in the output
+PASS  check mode recorded in runs.log
+PASS  check mode refuses: staging-pa-off-deploy apply
+PASS  check mode refuses: p1b-stop-staging stop
+PASS  check mode refuses: staging-pa-delete delete
+PASS  check mode refuses: hello x
+PASS  check mode refuses: ops-log abc
+PASS  check mode refuses: selftest -
+PASS  refused requests never start a run
+PASS  check mode needs a request
+PASS  main key path still runs (approved mode)
+== check-env-guard.py against a fake GitHub API
+PASS  guard passes when vps-check is limited to main
+PASS  guard refuses main + claude/*
+PASS  guard refuses a tag named main
+PASS  guard refuses an empty branch list
+PASS  guard refuses 'all branches'
+PASS  guard refuses 'protected branches'
+PASS  guard refuses when vps-check does not exist
+PASS  guard refuses when GitHub cannot be reached
+check_mode_test: 0 failed

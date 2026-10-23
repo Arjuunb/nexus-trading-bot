@@ -72,6 +72,30 @@ out=$(send hello "" $((RUN + 1))); has "same run id twice is refused" "$out" "al
 out=$(send 'Bad;Name' "" $((RUN + 8))); has "bad operation name refused before sending" "$out" "invalid operation name"
 out=$(send hello 'a b' $((RUN + 9))); has "bad argument refused before sending" "$out" "invalid argument"
 
+if [ -n "${CHECK_KEY_FILE:-}" ]; then
+    echo "== check key (GitHub environment vps-check, no per-run approval): read-only checks only"
+    MAIN_KEY=$VPS_SSH_KEY; VPS_SSH_KEY=$(cat "$CHECK_KEY_FILE"); export VPS_SSH_KEY
+    out=$(send hello "" $((RUN + 30))); has "check key runs hello" "$out" "finished with exit code 0"
+    has "runner shows check mode" "$out" ", check)"
+    out=$(send p1b-stop-staging verify $((RUN + 31))); has "check key runs a read-only P1-B verify" "$out" "Nothing was changed."
+    out=$(send ops-log "$((RUN + 30))" $((RUN + 32))); has "check key runs ops-log" "$out" "finished, exit code 0"
+    before=$(docker inspect -f '{{.State.Status}}' nexus-remote-stage-rc3-28acdbc-api-1)
+    for req in "p1b-stop-staging stop" "staging-pa-off-deploy apply" "staging-pa-delete delete" "docker-cleanup apply" "staging-backup start"; do
+        set -- $req
+        out=$(send "$1" "$2" $((RUN + 33))); has "check key refused: $req" "$out" "only start read-only checks"
+    done
+    expect "nothing changed by the refused requests" "$(docker inspect -f '{{.State.Status}}' nexus-remote-stage-rc3-28acdbc-api-1)" "$before"
+    grep -q "run=$((RUN + 33))" /var/log/nexus-ops/runs.log && bad "a refused check-key request started a run" || ok "refused check-key requests never start a run"
+    out=$(raw nexus-ops@$VPS_HOST "id"); has "check key: arbitrary command refused" "$out" "refused"
+    out=$(raw nexus-ops@$VPS_HOST < /dev/null); has "check key: plain login refused" "$out" "refused"
+    keys=$(grep -c '^restrict,command=' /var/lib/nexus-ops/.ssh/authorized_keys)
+    expect "authorized_keys holds the main and the check key" "$keys" 2
+    grep -q 'nexus-ops-runner --check \\"\$SSH_ORIGINAL_COMMAND\\"' /var/lib/nexus-ops/.ssh/authorized_keys \
+        && ok "check key is forced into check mode" || bad "check key line is not in check mode"
+    VPS_SSH_KEY=$MAIN_KEY; export VPS_SSH_KEY
+    out=$(send hello "" $((RUN + 34))); has "main key still runs in approved mode" "$out" ", approved)"
+fi
+
 echo "== off switch"
 touch /etc/nexus-ops/disabled
 out=$(send hello "" $((RUN + 10))); has "off switch refuses" "$out" "switched off"

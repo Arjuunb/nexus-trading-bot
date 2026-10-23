@@ -1,4 +1,4 @@
-# ops/vps/test/pipeline_test.sh output, 2026-10-23, Ubuntu 24.04, OpenSSH sshd on port 2222, Docker replicas from validation/p1b-stop-staging/replica-test
+# ops/vps/test/pipeline_test.sh, 2026-10-23, with the main key and the check key (setup-vps-ops.sh, then --add-check-key)
 == hello through the full path (workflow script -> ssh -> forced command -> sudo -> runner)
 PASS  hello exit 0
 PASS  hello shows disk
@@ -22,6 +22,23 @@ PASS  port forwarding refused (restrict)
 PASS  same run id twice is refused
 PASS  bad operation name refused before sending
 PASS  bad argument refused before sending
+== check key (GitHub environment vps-check, no per-run approval): read-only checks only
+PASS  check key runs hello
+PASS  runner shows check mode
+PASS  check key runs a read-only P1-B verify
+PASS  check key runs ops-log
+PASS  check key refused: p1b-stop-staging stop
+PASS  check key refused: staging-pa-off-deploy apply
+PASS  check key refused: staging-pa-delete delete
+PASS  check key refused: docker-cleanup apply
+PASS  check key refused: staging-backup start
+PASS  nothing changed by the refused requests
+PASS  refused check-key requests never start a run
+PASS  check key: arbitrary command refused
+PASS  check key: plain login refused
+PASS  authorized_keys holds the main and the check key
+PASS  check key is forced into check mode
+PASS  main key still runs in approved mode
 == off switch
 PASS  off switch refuses
 PASS  works again after the switch is removed
@@ -39,5 +56,4 @@ PASS  end of the P1-B stop recorded with exit code
 PASS  refused requests never start a run
 PASS  script kept by its sha256
 failures: 0
-
-# Also checked by hand: sshd log line 'refused local port forward'; setup --remove (key rejected afterwards, root sudo unaffected); re-running setup replaces the key (old key rejected) and keeps exactly one key line; actionlint v1.7.7 reports no findings for .github/workflows/vps-ops.yml
+# extra: re-running the main setup keeps the check key; the old main key is refused (Permission denied), the new main key runs (approved), the check key runs (check)
