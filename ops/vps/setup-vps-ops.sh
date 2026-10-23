@@ -96,13 +96,13 @@ sum=$(sha256sum "$test_script" | cut -d' ' -f1)
 if [ "$kind" = check ]; then
     out=$(su -s /bin/sh "$U" -c "sudo -n $RUNNER --check 'run hello - $sum 0000000000000000000000000000000000000000 $(date +%s)1'" \
         < "$test_script" 2>&1) || true
-    printf '%s\n' "$out" | grep -q '^nexus-ops-selftest-ok$' || fail "self-test failed:
+    printf '%s\n' "$out" | grep -q "is not trusted for the check key" || fail "self-test failed: check mode ran a script nobody approved:
 $out"
     out=$(su -s /bin/sh "$U" -c "sudo -n $RUNNER --check 'run p1b-stop-staging stop $sum 0000000000000000000000000000000000000000 $(date +%s)2'" \
         < "$test_script" 2>&1) || true
     printf '%s\n' "$out" | grep -q "only start read-only checks" || fail "self-test failed: check mode accepted a change:
 $out"
-    say "    ok: check mode runs a read-only check and refuses a change"
+    say "    ok: check mode refuses a change and any script the owner has not trusted"
 else
     out=$(su -s /bin/sh "$U" -c "sudo -n $RUNNER 'run selftest - $sum 0000000000000000000000000000000000000000 $(date +%s)'" \
         < "$test_script" 2>&1) || true
@@ -143,3 +143,7 @@ say "---------------------------------------------------------------------------
 cat "$kdir/key"
 say "-----------------------------------------------------------------------------------------"
 say "The private key is now deleted from this server. To make a new one, run this script again."
+if [ "$kind" = check ]; then
+    say ""
+    say "The check key runs nothing until the owner approves one 'trust-checks apply' run from main."
+fi

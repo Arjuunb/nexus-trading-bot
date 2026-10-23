@@ -1,6 +1,7 @@
 #!/bin/sh
 # Tests for the no-approval read-only checks: ops/vps/check-operations.txt, check-mode.sh, the
-# runner's built-in copy of the list, and check-env-guard.py (against a fake GitHub API).
+# runner's built-in copy of the list, the owner-trusted fingerprints (trust-checks), and
+# check-env-guard.py (against a fake GitHub API).
 # Safe anywhere (no root, no Docker). Run from the repository root:  sh ops/vps/test/check_mode_test.sh
 set -u
 FAILS=0
@@ -42,23 +43,60 @@ for op in $(printf '%s\n' "$file_list" | cut -d' ' -f1 | sort -u); do
     [ -e "ops/vps/operations/$op.sh" ] && ok "listed check exists: $op" || bad "listed check has no script: $op"
 done
 
-echo "== the runner refuses changes in check mode (as the runner sees them, before any script is read)"
+echo "== the runner in check mode: read-only list AND owner-trusted script fingerprints"
 T=$(mktemp -d)
+grep -q -- '-type f -user 0 ! -perm /022' ops/vps/nexus-ops-runner && ok "runner requires a root-owned, not group/world-writable trust file" || bad "trust file ownership check missing"
 sed -e "s|^BASE=.*|BASE=$T/state|" -e "s|^LOGDIR=.*|LOGDIR=$T/log|" -e "s|^DISABLED=.*|DISABLED=$T/disabled|" \
+    -e "s|^TRUSTED=.*|TRUSTED=$T/trusted|" -e "s|-user 0 |-user $(id -u) |" \
     -e 's|^\[ "$(id -u)" = 0 \] .*||' ops/vps/nexus-ops-runner > "$T/runner"
-printf 'echo check-ran\n' > "$T/s.sh"; S=$(sha256sum "$T/s.sh" | cut -d' ' -f1); C=0000000000000000000000000000000000000000
-out=$(sh "$T/runner" --check "run hello - $S $C 101" < "$T/s.sh" 2>&1)
-printf '%s' "$out" | grep -q '^check-ran$' && ok "check mode runs an allowed check" || bad "check mode did not run hello: $out"
-printf '%s' "$out" | grep -q ', check)' && ok "check mode is shown in the output" || bad "mode not shown"
-grep -q 'run=101 op=hello .* mode=check started' "$T/log/runs.log" && ok "check mode recorded in runs.log" || bad "mode not in runs.log"
-for req in "staging-pa-off-deploy apply" "p1b-stop-staging stop" "staging-pa-delete delete" "hello x" "ops-log abc" "selftest -"; do
-    out=$(sh "$T/runner" --check "run $req $S $C 102" < "$T/s.sh" 2>&1)
-    printf '%s' "$out" | grep -q "only start read-only checks" && ok "check mode refuses: $req" || bad "check mode accepted: $req ($out)"
+C=0000000000000000000000000000000000000000
+H=$(sha256sum ops/vps/operations/hello.sh | cut -d' ' -f1)
+creq() { sh "$T/runner" --check "run $1 $2 $(sha256sum "$3" | cut -d' ' -f1) $C $4" < "$3" 2>&1; }
+out=$(creq hello - ops/vps/operations/hello.sh 101)
+printf '%s' "$out" | grep -q "is not trusted for the check key" && ok "nothing runs before the owner trusts it" || bad "ran untrusted: $out"
+printf 'hello %s\n' "$H" > "$T/trusted"; chmod 644 "$T/trusted"
+out=$(creq hello - ops/vps/operations/hello.sh 102)
+printf '%s' "$out" | grep -q ', check)' && printf '%s' "$out" | grep -q 'finished\|disk /:' && ok "trusted hello runs in check mode" || bad "trusted hello: $out"
+grep -q 'run=102 op=hello .* mode=check started' "$T/log/runs.log" && ok "check mode recorded in runs.log" || bad "mode not in runs.log"
+printf 'touch %s/pwned\necho payload-ran\n' "$T" > "$T/payload.sh"
+out=$(creq hello - "$T/payload.sh" 103)
+printf '%s' "$out" | grep -q "is not trusted for the check key" && [ ! -e "$T/pwned" ] \
+    && ok "a replacement script under an allowed name is refused and never runs (Codex P1)" || bad "payload ran or was accepted: $out"
+printf 'staging-inventory %s\n' "$H" > "$T/trusted"
+out=$(creq hello - ops/vps/operations/hello.sh 104)
+printf '%s' "$out" | grep -q "not trusted" && ok "a fingerprint trusted for another check does not count" || bad "cross-check trust: $out"
+printf 'hello %s\n' "$H" > "$T/trusted"; chmod 664 "$T/trusted"
+out=$(creq hello - ops/vps/operations/hello.sh 105)
+printf '%s' "$out" | grep -q "not trusted" && ok "a group-writable trust file is ignored" || bad "writable trust file accepted: $out"
+chmod 644 "$T/trusted"; mv "$T/trusted" "$T/real"; ln -s "$T/real" "$T/trusted"
+out=$(creq hello - ops/vps/operations/hello.sh 106)
+printf '%s' "$out" | grep -q "not trusted" && ok "a symlinked trust file is ignored" || bad "symlink accepted: $out"
+rm -f "$T/trusted"; mv "$T/real" "$T/trusted"
+printf 'p1b-stop-staging %s\nstaging-pa-delete %s\ntrust-checks %s\n' "$H" "$H" "$H" >> "$T/trusted"
+for req in "staging-pa-off-deploy apply" "p1b-stop-staging stop" "staging-pa-delete delete" "trust-checks apply" "hello x" "ops-log abc" "selftest -"; do
+    set -- $req
+    out=$(creq "$1" "$2" ops/vps/operations/hello.sh 107)
+    printf '%s' "$out" | grep -q "only start read-only checks" && ok "check mode refuses even when trusted: $req" || bad "check mode accepted: $req ($out)"
 done
-grep -q 'run=102' "$T/log/runs.log" && bad "a refused check-mode request started a run" || ok "refused requests never start a run"
-out=$(sh "$T/runner" --check < "$T/s.sh" 2>&1); printf '%s' "$out" | grep -q "exactly one request" && ok "check mode needs a request" || bad "$out"
-out=$(sh "$T/runner" "run p1b-stop-staging verify $S $C 103" < "$T/s.sh" 2>&1)
-printf '%s' "$out" | grep -q ', approved)' && ok "main key path still runs (approved mode)" || bad "approved mode: $out"
+grep -q 'run=101\|run=103\|run=104\|run=105\|run=106\|run=107' "$T/log/runs.log" && bad "a refused check-mode request started a run" || ok "refused requests never start a run"
+out=$(sh "$T/runner" --check < /dev/null 2>&1); printf '%s' "$out" | grep -q "exactly one request" && ok "check mode needs a request" || bad "$out"
+out=$(sh "$T/runner" "run p1b-stop-staging verify $H $C 108" < ops/vps/operations/hello.sh 2>&1)
+printf '%s' "$out" | grep -q ', approved)' && ok "main key path still runs anything approved (no trust file needed)" || bad "approved mode: $out"
+
+echo "== trust-checks: generated list is current, and apply/show work"
+sh ops/vps/make-trust-checks.sh "$T/fresh.sh" >/dev/null
+cmp -s "$T/fresh.sh" ops/vps/operations/trust-checks.sh && ok "trust-checks.sh matches the current check scripts" \
+    || bad "trust-checks.sh is out of date: run sh ops/vps/make-trust-checks.sh"
+n=$(grep -cE '^[a-z0-9-]+ [0-9a-f]{64}$' ops/vps/operations/trust-checks.sh)
+[ "$n" = "$(grep -v '^#' ops/vps/check-operations.txt | awk 'NF {print $1}' | sort -u | wc -l)" ] && ok "one fingerprint per listed check ($n)" || bad "fingerprints: $n"
+if sh ops/vps/check-mode.sh trust-checks apply || sh ops/vps/check-mode.sh trust-checks show; then bad "trust-checks must need approval"; else ok "trust-checks always needs the owner's approval"; fi
+out=$(NEXUS_OPS_TEST_TRUSTED=$T/applied sh ops/vps/operations/trust-checks.sh show); printf '%s' "$out" | grep -q "nothing trusted yet" && ok "show before apply" || bad "$out"
+out=$(NEXUS_OPS_TEST_TRUSTED=$T/applied sh ops/vps/operations/trust-checks.sh apply)
+[ "$(grep -c . "$T/applied")" = "$n" ] && [ "$(stat -c %a "$T/applied")" = 644 ] && ok "apply writes $n entries, mode 644" || bad "apply: $out"
+grep -qxF "hello $H" "$T/applied" && ok "applied list holds the current hello fingerprint" || bad "hello missing"
+cp "$T/applied" "$T/trusted"
+out=$(creq hello - ops/vps/operations/hello.sh 109); printf '%s' "$out" | grep -q ', check)' && ok "after apply, the check key runs hello" || bad "$out"
+out=$(sh ops/vps/operations/trust-checks.sh nope); printf '%s' "$out" | grep -q usage && ok "trust-checks rejects unknown argument" || bad "$out"
 rm -rf "$T"
 
 echo "== check-env-guard.py against a fake GitHub API"

@@ -1,4 +1,4 @@
-# ops/vps/test/pipeline_test.sh, 2026-10-23, with the main key and the check key (setup-vps-ops.sh, then --add-check-key)
+# ops/vps/test/pipeline_test.sh, 2026-10-23, main key + check key with owner-trusted fingerprints (trust-checks)
 == hello through the full path (workflow script -> ssh -> forced command -> sudo -> runner)
 PASS  hello exit 0
 PASS  hello shows disk
@@ -23,7 +23,13 @@ PASS  same run id twice is refused
 PASS  bad operation name refused before sending
 PASS  bad argument refused before sending
 == check key (GitHub environment vps-check, no per-run approval): read-only checks only
-PASS  check key runs hello
+PASS  check key runs nothing before the owner trusts it
+PASS  owner-approved trust-checks apply (main key)
+PASS  trust file is root-owned 644
+PASS  check key cannot change the trust list
+PASS  check key: replacement script under an allowed name refused (Codex P1)
+PASS  the replacement script never ran
+PASS  check key runs trusted hello
 PASS  runner shows check mode
 PASS  check key runs a read-only P1-B verify
 PASS  check key runs ops-log
@@ -56,4 +62,3 @@ PASS  end of the P1-B stop recorded with exit code
 PASS  refused requests never start a run
 PASS  script kept by its sha256
 failures: 0
-# extra: re-running the main setup keeps the check key; the old main key is refused (Permission denied), the new main key runs (approved), the check key runs (check)

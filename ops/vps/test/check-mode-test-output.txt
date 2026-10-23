@@ -31,19 +31,34 @@ PASS  listed check exists: staging-config-check
 PASS  listed check exists: staging-inventory
 PASS  listed check exists: staging-pa-off-check
 PASS  listed check exists: staging-pa-off-stop
-== the runner refuses changes in check mode (as the runner sees them, before any script is read)
-PASS  check mode runs an allowed check
-PASS  check mode is shown in the output
+== the runner in check mode: read-only list AND owner-trusted script fingerprints
+PASS  runner requires a root-owned, not group/world-writable trust file
+PASS  nothing runs before the owner trusts it
+PASS  trusted hello runs in check mode
 PASS  check mode recorded in runs.log
-PASS  check mode refuses: staging-pa-off-deploy apply
-PASS  check mode refuses: p1b-stop-staging stop
-PASS  check mode refuses: staging-pa-delete delete
-PASS  check mode refuses: hello x
-PASS  check mode refuses: ops-log abc
-PASS  check mode refuses: selftest -
+PASS  a replacement script under an allowed name is refused and never runs (Codex P1)
+PASS  a fingerprint trusted for another check does not count
+PASS  a group-writable trust file is ignored
+PASS  a symlinked trust file is ignored
+PASS  check mode refuses even when trusted: staging-pa-off-deploy apply
+PASS  check mode refuses even when trusted: p1b-stop-staging stop
+PASS  check mode refuses even when trusted: staging-pa-delete delete
+PASS  check mode refuses even when trusted: trust-checks apply
+PASS  check mode refuses even when trusted: hello x
+PASS  check mode refuses even when trusted: ops-log abc
+PASS  check mode refuses even when trusted: selftest -
 PASS  refused requests never start a run
 PASS  check mode needs a request
-PASS  main key path still runs (approved mode)
+PASS  main key path still runs anything approved (no trust file needed)
+== trust-checks: generated list is current, and apply/show work
+PASS  trust-checks.sh matches the current check scripts
+PASS  one fingerprint per listed check (9)
+PASS  trust-checks always needs the owner's approval
+PASS  show before apply
+PASS  apply writes 9 entries, mode 644
+PASS  applied list holds the current hello fingerprint
+PASS  after apply, the check key runs hello
+PASS  trust-checks rejects unknown argument
 == check-env-guard.py against a fake GitHub API
 PASS  guard passes when vps-check is limited to main
 PASS  guard refuses main + claude/*

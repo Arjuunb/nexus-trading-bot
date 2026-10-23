@@ -5,8 +5,12 @@
 # command of the nexus-ops keys:
 #   main key (owner approves each run):  sudo -n /usr/local/sbin/nexus-ops-runner "$SSH_ORIGINAL_COMMAND"
 #   check key (no per-run approval):     sudo -n /usr/local/sbin/nexus-ops-runner --check "$SSH_ORIGINAL_COMMAND"
-# In check mode only the read-only checks listed in check_allowed below are accepted; the list is
-# part of this file, so changing it means installing a new runner on the server.
+# In check mode a request is accepted only if BOTH hold:
+#   - the operation and argument are one of the read-only checks in check_allowed below (part of
+#     this file, so changing it means installing a new runner on the server), and
+#   - the exact script (its SHA-256) is listed for that operation in /etc/nexus-ops/trusted-checks,
+#     a root-owned file written only by the owner-approved operation "trust-checks apply".
+# So the check key can never run code the owner has not approved once.
 #
 # Request (one argument):  run <operation> <argument|-> <script-sha256> <commit> <github-run-id>
 # The script itself arrives on stdin. It must match the SHA-256 shown on the GitHub approval page.
@@ -24,6 +28,7 @@ export LC_ALL
 BASE=/var/lib/nexus-ops/state
 LOGDIR=/var/log/nexus-ops
 DISABLED=/etc/nexus-ops/disabled
+TRUSTED=/etc/nexus-ops/trusted-checks
 MAX_BYTES=524288
 TIME_LIMIT=1800
 
@@ -78,6 +83,13 @@ size=$(stat -c %s "$tmp")
 if [ "$size" -gt "$MAX_BYTES" ] || [ "$size" = 0 ]; then rm -f "$tmp"; refuse "script is empty or larger than $MAX_BYTES bytes"; fi
 got=$(sha256sum "$tmp" | cut -d' ' -f1)
 if [ "$got" != "$want" ]; then rm -f "$tmp"; refuse "script SHA-256 $got does not match the approved $want"; fi
+if [ "$mode" = check ]; then
+    if [ -z "$(find "$TRUSTED" -maxdepth 0 -type f -user 0 ! -perm /022 2>/dev/null)" ] \
+        || ! grep -qxF "$op $got" "$TRUSTED"; then
+        rm -f "$tmp"
+        refuse "this exact $op script (${got%"${got#????????????}"}…) is not trusted for the check key; the owner approves it once with 'trust-checks apply'"
+    fi
+fi
 script="$BASE/scripts/$got.sh"
 mv -f "$tmp" "$script"
 
