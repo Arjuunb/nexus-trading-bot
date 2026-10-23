@@ -86,5 +86,19 @@ has "sees rows still in the -wal" "$out" "v2_positions: 2 open positions"
 ls -d /tmp/prod-inventory-* >/dev/null 2>&1 && bad "a private copy was left in /tmp" || ok "private copy removed"
 
 [ "$(docker inspect -f '{{.State.Running}} {{.RestartCount}}' ${P}-app-1)" = "true 0" ] && ok "app left running, never restarted" || bad "app state changed"
+
+# Production's real layout: the data volume was created outside Compose and the app container
+# has no working_dir label; the checkout is found above the project's bind mounts.
+docker rm -f ${P}-app-1 >/dev/null
+docker volume create ext-data >/dev/null; XV=$(docker volume inspect -f '{{.Mountpoint}}' ext-data)
+cp -a "$V/." "$XV/"
+docker run -d --name ${P}-app-1 --label com.docker.compose.project=$P --label com.docker.compose.service=app \
+    -v ext-data:/var/lib/tradexa -v "$T/checkout/scripts:/mnt/scripts:ro" python:3.12-alpine python -c "$SIG" >/dev/null
+out=$(sh "$S" show 2>&1)
+has "finds the external data volume" "$out" "ext-data: "
+has "reads PA state from the app's own volume" "$out" "data dir $XV"
+has "counts PA positions there" "$out" "v2_positions: 2 open positions"
+has "finds the checkout without a working_dir label" "$out" "checkout found above the bind mounts: $T/checkout"
+docker rm -f ${P}-app-1 >/dev/null; docker volume rm -f ext-data >/dev/null
 echo "== $FAILS failed"
 [ "$FAILS" = 0 ]

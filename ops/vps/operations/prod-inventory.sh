@@ -80,6 +80,7 @@ for line in sorted(out.splitlines()):
 print("== production containers (project %s)" % PROJECT)
 rc, out, _ = sh("docker", "ps", "-aq", "--filter", "label=com.docker.compose.project=" + PROJECT)
 compose_labels = app_env = app_image = None
+app_mounts, bind_sources = [], []
 for cid in out.split():
     c = docker_json("inspect", cid)[0]
     lab = c["Config"].get("Labels") or {}
@@ -97,9 +98,15 @@ for cid in out.split():
         hc.get("ReadonlyRootfs"), c["Config"].get("StopTimeout")))
     for m in c.get("Mounts", []):
         print("    mount %s %s -> %s %s" % (m["Type"], m.get("Name") or m.get("Source"), m["Destination"], "rw" if m.get("RW") else "ro"))
+        if m["Type"] == "bind":
+            bind_sources.append(m.get("Source") or "")
+    if lab.get("com.docker.compose.service") == "app" and st["Status"] == "running":
+        app_mounts = c.get("Mounts", [])
+        print("    compose labels: %s" % ", ".join("%s=%s" % (k.replace("com.docker.compose.", ""), v)
+              for k, v in sorted(lab.items()) if k.startswith("com.docker.compose.") and "config_hash" not in k))
     if lab.get("com.docker.compose.oneoff") != "True" and compose_labels is None:
         compose_labels = lab
-    if lab.get("com.docker.compose.service") == "app":
+    if lab.get("com.docker.compose.service") == "app" and st["Status"] == "running":
         compose_labels, app_env, app_image = lab, c["Config"].get("Env") or [], c["Image"]
 
 print("== app environment (names; values only for non-secret switches)")
@@ -123,6 +130,20 @@ if compose_labels:
         print("  %d. %s %s" % (i, f, "(%d bytes, sha256 %s)" % (os.path.getsize(f), sha(f)[:16]) if os.path.isfile(f) else "MISSING"))
     for f in envf:
         print("  env file %s %s" % (f, "present" if os.path.isfile(f) else "MISSING"))
+if not wd:
+    # No working_dir label: look for the checkout above the project's bind mounts.
+    for src in bind_sources:
+        d = os.path.dirname(src)
+        while d not in ("", "/"):
+            if os.path.isdir(os.path.join(d, ".git")):
+                wd = d; break
+            d = os.path.dirname(d)
+        if wd:
+            print("  no working_dir label; checkout found above the bind mounts: %s" % wd)
+            for name in ("compose.yaml", "compose.override.yaml", "docker-compose.yml", ".env"):
+                f = os.path.join(wd, name)
+                print("  %s %s" % (name, "(%d bytes, sha256 %s)" % (os.path.getsize(f), sha(f)[:16]) if os.path.isfile(f) else "absent"))
+            break
 if wd and os.path.isdir(os.path.join(wd, ".git")):
     g = ["git", "--no-optional-locks", "-c", "safe.directory=*", "-C", wd]
     for label, args in (("HEAD", ["rev-parse", "HEAD"]), ("branch", ["branch", "--show-current"]),
@@ -142,10 +163,12 @@ if app_image:
     rc, out, err = sh("docker", "run", "--rm", "--network", "none", "--entrypoint", "id", app_image, timeout=60)
     print("== app image user (throwaway container, no network, no volume): %s" % (out.strip() or err.strip()[:200]))
 
-print("== production volumes")
+print("== production volumes (labelled by Compose, plus every volume the app mounts)")
 rc, out, _ = sh("docker", "volume", "ls", "-q", "--filter", "label=com.docker.compose.project=" + PROJECT)
-data_dir = None
-for vname in out.split():
+names = out.split()
+names += [m["Name"] for m in app_mounts if m.get("Type") == "volume" and m.get("Name") not in names]
+data_dir = next((m["Source"] for m in app_mounts if m.get("Destination") == "/var/lib/tradexa"), None)
+for vname in names:
     v = docker_json("volume", "inspect", vname)[0]
     mp = v["Mountpoint"]; total = 0; rows = []; owners = {}
     for root, dirs, fs in os.walk(mp):
@@ -162,10 +185,10 @@ for vname in out.split():
     for size, rel in sorted(rows, reverse=True)[:30]:
         if size >= 50_000_000 or re.search(r"\.(db|sqlite)(-wal|-shm)?$", rel):
             print("    %s  %s" % (gb(size), rel))
-    if os.path.exists(os.path.join(mp, "smc_strategy_paper.db")) or os.path.exists(os.path.join(mp, "ledger.db")):
+    if data_dir is None and (os.path.exists(os.path.join(mp, "smc_strategy_paper.db")) or os.path.exists(os.path.join(mp, "ledger.db"))):
         data_dir = mp
 
-print("== Price Action Lab state (read-only)")
+print("== Price Action Lab state (read-only; data dir %s)" % data_dir)
 pa = os.path.join(data_dir or "/nonexistent", "price_action_paper.db")
 if not os.path.isfile(pa):
     print("no price_action_paper.db in the data volume")
