@@ -225,6 +225,32 @@ def canonical_session(conn):
     conn.execute("SET row_security=off")
 
 
+def restore_recorded_schema_grants(conn, expected):
+    """Replay recorded namespace grants omitted by pg_dump's public-schema baseline.
+
+Only the new detached database is changed. Unexpected grants are never removed
+or ignored: the full comparison below must still match the exported snapshot.
+Keep source-schema.json with the archive as part of the recovery bundle.
+"""
+    from psycopg import sql
+    current = catalog(conn)["schema_permissions"]
+    owners = {r["name"]: r["owner"] for r in expected["schemas"]}
+    count = 0
+    for grant in expected["schema_permissions"]:
+        if grant in current:
+            continue
+        require(grant["grantor"] == owners[grant["schema"]], "RESTORE_GRANT_CHAIN_REVIEW_REQUIRED")
+        require(grant["privilege_type"] in ("CREATE", "USAGE"), "UNEXPECTED_SCHEMA_PRIVILEGE")
+        grantee = sql.SQL("PUBLIC") if grant["grantee"] == "PUBLIC" else sql.Identifier(grant["grantee"])
+        query = sql.SQL("GRANT {} ON SCHEMA {} TO {}").format(
+            sql.SQL(grant["privilege_type"]), sql.Identifier(grant["schema"]), grantee)
+        if grant["is_grantable"]:
+            query += sql.SQL(" WITH GRANT OPTION")
+        conn.execute(query)
+        count += 1
+    return count
+
+
 def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None):
     import psycopg
     from psycopg import sql
@@ -337,6 +363,7 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
                 directory=directory, name="restore")
         with psycopg.connect(**target, autocommit=True) as restored:
             canonical_session(restored)
+            grants_reapplied = restore_recorded_schema_grants(restored, before)
             after = catalog(restored)
             private_json(directory / "restored-schema.json", after)
             require(before == after, "RESTORED_SCHEMA_DEFINITION_MISMATCH")
@@ -357,6 +384,8 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
                 "storage_object_payloads_included": False,
                 "original_role_passwords_included": False,
                 "object_ownership_and_grants_match": True,
+                "recorded_schema_grants_reapplied": grants_reapplied,
+                "recovery_bundle_requires_archive_and_source_schema_metadata": True,
                 "original_role_login_attributes_and_memberships_recovered": False,
                 "schema_columns_constraints_indexes_triggers_functions_policies_match": True,
                 "all_selected_table_rows_match_same_exported_snapshot": True,
