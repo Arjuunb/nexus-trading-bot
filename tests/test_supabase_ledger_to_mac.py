@@ -203,3 +203,80 @@ def test_private_metadata_is_not_world_readable_or_overwritten(tmp_path):
     assert path.stat().st_mode & 0o777 == 0o600
     with pytest.raises(FileExistsError):
         helper.private_json(path, {"schema": "replaced"})
+
+
+@pytest.mark.parametrize(("message", "state", "expected"), [
+    ('FATAL: Tenant or user not found', '28P01', 'POOLER_TENANT_OR_USER_NOT_FOUND'),
+    ('FATAL: (ENOTFOUND) tenant/user postgres.fixture not found', None, 'POOLER_TENANT_OR_USER_NOT_FOUND'),
+    ('SSL error: certificate verify failed', None, 'TLS_CERTIFICATE_VERIFICATION_FAILED'),
+    ('server certificate for "other.invalid" does not match host name "fixture.invalid"', None,
+     'TLS_HOSTNAME_VERIFICATION_FAILED'),
+    ('FATAL: password authentication failed for user "postgres.fixture"', None, 'PASSWORD_AUTHENTICATION_FAILED'),
+    ('authentication rejected', '28P01', 'PASSWORD_AUTHENTICATION_FAILED'),
+    ('FATAL: Circuit breaker open: Too many authentication errors', None, 'PROVIDER_CONNECTION_BLOCKED'),
+    ('FATAL: MaxClientsInSessionMode: max clients reached', None, 'PROVIDER_CONNECTION_LIMIT'),
+    ('connections exhausted', '53300', 'PROVIDER_CONNECTION_LIMIT'),
+    ('could not translate host name "fixture.invalid" to address: nodename nor servname provided', None,
+     'HOSTNAME_RESOLUTION_FAILED'),
+    ('connection to server at "fixture.invalid" failed: Connection refused', None, 'CONNECTION_REFUSED'),
+    ('connection timeout expired', None, 'CONNECTION_TIMEOUT'),
+    ('FATAL: unsupported startup parameter: options', None, 'STARTUP_PARAMETER_REJECTED'),
+    ('unfamiliar provider failure', None, 'UNCLASSIFIED_DRIVER_ERROR'),
+])
+def test_connection_diagnostics_are_categorized_without_disclosing_driver_text(message, state, expected):
+    class DriverError(Exception):
+        sqlstate = state
+    secret = 'fixture-password-never-disclose'
+    error = DriverError(message + ' postgresql://private-user:' + secret + '@private-host/private-db')
+    category, sqlstate = helper.connection_diagnostic(error)
+    assert (category, sqlstate) == (expected, state)
+    report = helper.failure_report(helper.SourceConnectionBlocked(category, sqlstate))
+    serialized = json.dumps(report)
+    assert report['stage'] == 'CONNECT_EXTERNAL_LEDGER_READ_ONLY'
+    assert report['external_ledger_recovery_proven'] is False
+    assert secret not in serialized
+    assert 'private-user' not in serialized and 'private-host' not in serialized
+    assert report['automatic_retries'] == 0
+
+
+def test_untrusted_sqlstate_and_unknown_error_details_are_never_printed():
+    class DriverError(Exception):
+        sqlstate = 'fixture-password-in-untrusted-field'
+    error = DriverError('postgresql://private-user:fixture-secret@private-host/private-db')
+    assert helper.connection_diagnostic(error) == ('UNCLASSIFIED_DRIVER_ERROR', None)
+    serialized = json.dumps(helper.failure_report(error))
+    assert 'fixture-secret' not in serialized and 'private-host' not in serialized
+
+
+def test_failed_connection_attempt_is_not_retried_or_downgraded_and_removes_passfile(tmp_path, monkeypatch, capsys):
+    directory = tmp_path / 'recovery'
+    directory.mkdir(mode=0o700)
+    calls = []
+    sockets = []
+    original_mkdtemp = helper.tempfile.mkdtemp
+    def track_socket(*args, **kwargs):
+        path = original_mkdtemp(*args, **kwargs)
+        sockets.append(Path(path))
+        return path
+    def fail_connect(**kwargs):
+        calls.append(kwargs)
+        assert kwargs['sslmode'] == 'verify-full'
+        assert kwargs['sslrootcert'] == '/etc/ssl/cert.pem'
+        assert 'default_transaction_read_only=on' in kwargs['options']
+        assert kwargs['connect_timeout'] == 10
+        assert (directory / '.pgpass').stat().st_mode & 0o777 == 0o600
+        raise psycopg.OperationalError('SSL error: certificate verify failed; password=fixture-secret')
+    monkeypatch.setattr(helper.tempfile, 'mkdtemp', track_socket)
+    monkeypatch.setattr(helper, 'check_tools', lambda *args: None)
+    monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
+    monkeypatch.setattr(psycopg, 'connect', fail_connect)
+    config = dict(host='fixture.invalid', port=5432, dbname='postgres', user='postgres.fixture',
+                  password='fixture-secret', sslmode='verify-full', sslrootcert='/etc/ssl/cert.pem', connect_timeout=10)
+    with pytest.raises(helper.SourceConnectionBlocked, match='TLS_CERTIFICATE_VERIFICATION_FAILED') as caught:
+        helper.recover(config, bin_dir=PG_BIN, directory=directory)
+    assert len(calls) == 1
+    assert not (directory / '.pgpass').exists()
+    assert not (directory / 'application-ledger.dump').exists()
+    assert sockets and all(not path.exists() for path in sockets)
+    assert 'fixture-secret' not in capsys.readouterr().out
+    assert 'fixture-secret' not in json.dumps(helper.failure_report(caught.value))

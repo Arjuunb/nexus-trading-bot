@@ -34,6 +34,75 @@ class Blocked(RuntimeError):
     pass
 
 
+class SourceConnectionBlocked(Blocked):
+    """Only fixed diagnostic labels and a validated SQLSTATE may leave the helper."""
+
+    def __init__(self, category, sqlstate):
+        super().__init__("EXTERNAL_LEDGER_CONNECTION_FAILED:" + category)
+        self.sqlstate = sqlstate
+
+
+def connection_diagnostic(error):
+    """Classify driver messages privately; never return raw text, a DSN or a secret.
+
+    Providers may omit SQLSTATE during connection setup. These labels identify
+    what the driver reported, rather than claiming a verified underlying cause.
+    Unknown errors remain blocked and require review; there is no retry or TLS
+    downgrade. Pooler routing errors take precedence over authentication codes.
+    """
+    state = getattr(error, "sqlstate", None)
+    state = state if isinstance(state, str) and re.fullmatch(r"[0-9A-Z]{5}", state) else None
+    message = str(error).lower()
+    if "tenant or user not found" in message or ("tenant/user" in message and "not found" in message):
+        category = "POOLER_TENANT_OR_USER_NOT_FOUND"
+    elif "certificate" in message and any(term in message for term in
+            ("does not match host name", "hostname mismatch", "host name mismatch")):
+        category = "TLS_HOSTNAME_VERIFICATION_FAILED"
+    elif any(term in message for term in ("certificate verify failed", "certificate verification failed",
+                                          "self-signed certificate", "unable to get local issuer certificate")):
+        category = "TLS_CERTIFICATE_VERIFICATION_FAILED"
+    elif state == "28P01" or "password authentication failed" in message:
+        category = "PASSWORD_AUTHENTICATION_FAILED"
+    elif any(term in message for term in ("circuit breaker", "too many authentication errors", "ip banned")):
+        category = "PROVIDER_CONNECTION_BLOCKED"
+    elif state == "53300" or any(term in message for term in
+            ("too many clients", "too many connections", "max clients reached", "maxclientsinsessionmode")):
+        category = "PROVIDER_CONNECTION_LIMIT"
+    elif any(term in message for term in ("could not translate host name", "name or service not known",
+                                          "nodename nor servname", "temporary failure in name resolution")):
+        category = "HOSTNAME_RESOLUTION_FAILED"
+    elif "connection refused" in message:
+        category = "CONNECTION_REFUSED"
+    elif any(term in message for term in ("timeout expired", "connection timed out", "timeout exceeded")):
+        category = "CONNECTION_TIMEOUT"
+    elif any(term in message for term in ("unsupported startup parameter", "invalid startup parameter",
+                                          "unrecognized configuration parameter")):
+        category = "STARTUP_PARAMETER_REJECTED"
+    else:
+        category = "UNCLASSIFIED_DRIVER_ERROR"
+    return category, state
+
+
+def connect_source(config):
+    import psycopg
+    print(json.dumps({"phase": "CONNECT_EXTERNAL_LEDGER_READ_ONLY"}), flush=True)
+    try:
+        return psycopg.connect(**config, autocommit=True,
+            options="-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=240000")
+    except psycopg.Error as error:
+        raise SourceConnectionBlocked(*connection_diagnostic(error)) from None
+
+
+def failure_report(error):
+    report = {"status": "BLOCKED", "reason": str(error) if isinstance(error, Blocked) else type(error).__name__,
+              "deployment_performed": False, "original_data_deleted": False,
+              "external_ledger_recovery_proven": False, "partial_copies_retained": True}
+    if isinstance(error, SourceConnectionBlocked):
+        report.update(stage="CONNECT_EXTERNAL_LEDGER_READ_ONLY", sqlstate=error.sqlstate,
+                      automatic_retries=0, raw_driver_message_printed=False)
+    return report
+
+
 def require(value, reason):
     if not value:
         raise Blocked(reason)
@@ -269,8 +338,8 @@ def recover(config, *, bin_dir, directory, require_tls=True, snapshot_hook=None)
         fd = os.open(password_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(passfile_line(config))
-        source = psycopg.connect(**config, autocommit=True,
-            options="-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=240000")
+        source = connect_source(config)
+        print(json.dumps({"phase": "VERIFY_EXTERNAL_LEDGER_SOURCE_AND_SNAPSHOT"}), flush=True)
         require(source.info.server_version // 10000 == 17, "SOURCE_POSTGRES_VERSION_CHANGED")
         require(source.execute("SELECT pg_database_size(current_database())").fetchone()[0] <= MAX_DATABASE,
                 "SOURCE_DATABASE_SIZE_REVIEW_REQUIRED")
@@ -441,9 +510,7 @@ def main():
         print(json.dumps(report, indent=2))
         return 0
     except Exception as error:
-        report = {"status": "BLOCKED", "reason": str(error) if isinstance(error, Blocked) else type(error).__name__,
-                  "deployment_performed": False, "original_data_deleted": False,
-                  "external_ledger_recovery_proven": False, "partial_copies_retained": True}
+        report = failure_report(error)
         if directory:
             report["directory"] = str(directory)
             private_json(directory / "blocked-receipt.json", report)
