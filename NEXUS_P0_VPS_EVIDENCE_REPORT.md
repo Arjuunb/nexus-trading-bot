@@ -20,7 +20,7 @@ source (`215c96c`) · **[LOCAL]** measured in the sandbox · **[PENDING]** needs
    your trusted SSH terminal, as all previous VPS evidence was.
 2. **I built a read-only collector for that run** (`validation/p0-vps-evidence/collect_p0_evidence.py`)
    plus an analyzer that turns its output into the evidence report and settles B1–B8 automatically.
-   It is validated: 14/14 tests, size estimates within 3.5% of SQLite's exact page counts, and a
+   It is validated: 15/15 tests, size estimates within 3.5% of SQLite's exact page counts, and a
    rehearsal against a live app (24 databases, 1.0 s, zero files created or changed, app healthy).
 3. **Repository history already answers part of P0** — five earlier on-the-box measurements show the
    **PA and SMC lab runtimes were the main CPU and memory consumers** on the VPS (97–157% CPU, memory
@@ -35,9 +35,10 @@ source (`215c96c`) · **[LOCAL]** measured in the sandbox · **[PENDING]** needs
    and the only manual procedure in the guide writes to `/root/tradexa-backups` on the same host.
    No off-host copy exists in code or docs. Runtime confirmation is [PENDING].
 
-**Recommended next approved action:** run the collector on the VPS now (it is within P0), using
-`validation/p0-vps-evidence/RUNBOOK.md`, and send me the JSON. Free disk was ~19 GiB on Oct 22 and
-falling roughly 4 GiB/day across three readings, so this is time-sensitive.
+**Recommended next approved action (approved 2026-10-23):** run the collector on the VPS, detached,
+per `validation/p0-vps-evidence/RUNBOOK.md`, and send me the JSON. The first attempt (Oct 23 09:44 UTC)
+was cut off by an SSH connection reset before it wrote output; see §1.1. Free disk was 18 GiB on
+Oct 23, down from 32 GiB on Oct 19.
 
 ---
 
@@ -51,6 +52,23 @@ falling roughly 4 GiB/day across three readings, so this is time-sensitive.
 | GitHub (repository, PRs, Actions) | Reachable — used below |
 
 No request reached the VPS.
+
+### 1.1 Operator run log
+
+| When (UTC) | What happened | Observed by the operator |
+|---|---|---|
+| 2026-10-23 09:44 | Collector downloaded from the pinned commit `f9f51d9`; checksum `OK`; started in the foreground | Login banner: Ubuntu **26.04.1 LTS**, kernel **7.0.0-34**, load **4.08**, memory **58%**, swap 0%, `/` **81.7%** of 95.85 GB, "System restart required". `df -h /`: **96G size, 79G used, 18G free (82%)** |
+| 09:44–10:00 | SSH session ended with `Connection reset by peer` during the run | The collector printed nothing while sampling and wrote output only at the end, so it stopped with the session and left no file |
+| 10:00 | Reconnected; no output file present | Load **2.96**, memory **59%**, `/` 81.5%; `df -h /` still **18G free** — the interrupted run consumed no disk |
+
+Free-disk trend from all readings so far: 32 GiB (Oct 19) → 28 GiB (Oct 20) → ~19 GiB (Oct 22) →
+**18 GiB (Oct 23 09:44)**. The fall slowed to about 1 GiB over the most recent day.
+
+Fix (commit `27bba32`, SHA-256 `4a2a1382…80c74`): the collector now ignores hang-up signals, survives a
+vanished terminal, logs timestamped progress to `<stamp>.progress.log`, saves partial results after every
+step, and is started detached (`setsid nohup`) per the updated runbook. It also no longer asks Docker for
+per-container root-filesystem sizes, which made the daemon walk every image layer. A new test reproduces
+the failure (hang-up plus closed terminal mid-run) and the run completes with a full file.
 
 ## 2. Blocker status
 
@@ -123,7 +141,7 @@ host. Runbook: `validation/p0-vps-evidence/RUNBOOK.md`. Expected SHA-256 is prin
 
 | Check | Result |
 |---|---|
-| Unit and safety tests (`test_p0_evidence.py`) | **14/14 pass** |
+| Unit and safety tests (`test_p0_evidence.py`) | **15/15 pass** (incl. dropped-SSH-session reproduction) |
 | Live WAL database: bytes of `.db`, `-wal`, `-shm` before/after inspection | Identical; no file created |
 | Concurrent writer during inspection | 0 lock/busy errors |
 | Size estimates vs exact `dbstat` (150 MB synthetic PA file, real schema) | `pa_journal_revisions` 0.999×, `pa_evaluations` 0.998×, `pa_activity` 1.035×, all tables + indexes 1.021× |
