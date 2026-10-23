@@ -228,7 +228,7 @@ def stop_process(process):
             process.wait(timeout=3)
 
 
-def origin(config, rest):
+def _origin(config, rest):
     require(len(rest) == 3 and rest[0] == '--origin', 'ONLY_ORIGIN_ROLE_ALLOWED')
     plan = json.loads(Path(config).read_text())
     rows = [r for r in plan['files'] if r.get('source') == rest[1] and r['exists']]
@@ -271,11 +271,68 @@ def origin(config, rest):
             unchanged(plan)
             # A completion receipt is separate from the native binary protocol.
             write_json(base / ('completed-' + row['name'] + '.json'),
-                       {'name': row['name'], 'source_identity': file_identity(path),
+                       {'status': 'ORIGIN_COPY_AND_GUARDS_PASSED', 'native_origin_exit_code': 0,
+                        'name': row['name'], 'source_identity': file_identity(path),
                         'vps_free_bytes': free_bytes(path.parent), 'wal_growth_bytes': wal_size(path) - initial_wal,
                         'elapsed_seconds': round(time.monotonic() - started, 3), 'at_utc': utc()})
         finally:
             stop_process(p)
+
+
+def origin(config, rest):
+    try:
+        _origin(config, rest)
+    except BaseException as error:
+        # Keep failures outside the binary protocol so finish can reject promptly.
+        try:
+            plan = json.loads(Path(config).read_text())
+            rows = [r for r in plan['files'] if r.get('source') == rest[1] and r.get('exists')]
+            require(len(rest) == 3 and rest[0] == '--origin' and len(rows) == 1
+                    and rest[2] == rows[0]['name'] and Path(rest[2]).name == rest[2], 'EXACT_PLANNED_SOURCE_REQUIRED')
+            reason = str(error) if isinstance(error, Blocked) else type(error).__name__
+            require(bool(re.fullmatch(r'[A-Za-z0-9_:.-]{1,180}', reason)), 'SAFE_FAILURE_REASON_REQUIRED')
+            write_json(Path(config).parent / ('failed-' + rest[2] + '.json'),
+                       {'status': 'ORIGIN_FAILED', 'name': rest[2], 'reason': reason, 'at_utc': utc()})
+        except Exception:
+            pass
+        raise
+
+
+def finish_origin(config, name, timeout=30, interval=0.1):
+    plan = json.loads(Path(config).read_text())
+    rows = [r for r in plan['files'] if r.get('name') == name and r.get('exists')]
+    require(len(rows) == 1 and Path(name).name == name, 'PLANNED_DATABASE_REQUIRED')
+    row = rows[0]
+    completed = Path(config).parent / ('completed-' + name + '.json')
+    failed = Path(config).parent / ('failed-' + name + '.json')
+    unchanged(plan)
+    deadline = time.monotonic() + timeout
+    while True:
+        for p in (completed, failed):
+            require(not p.is_symlink(), 'ORIGIN_RECEIPT_SYMLINK_REJECTED')
+            if p.exists():
+                require(p.is_file() and p.stat().st_size <= 65536, 'BOUNDED_ORIGIN_RECEIPT_REQUIRED')
+        if failed.exists():
+            error = json.loads(failed.read_text())
+            reason = error.get('reason', '')
+            require(error.get('status') == 'ORIGIN_FAILED' and error.get('name') == name
+                    and isinstance(reason, str) and bool(re.fullmatch(r'[A-Za-z0-9_:.-]{1,180}', reason)),
+                    'INVALID_ORIGIN_FAILURE_RECEIPT')
+            raise Blocked('ORIGIN_FAILED:' + reason)
+        if completed.exists():
+            value = json.loads(completed.read_text())
+            require(value.get('status') == 'ORIGIN_COPY_AND_GUARDS_PASSED'
+                    and value.get('native_origin_exit_code') == 0 and value.get('name') == name
+                    and value.get('source_identity') == row['identity'], 'INVALID_ORIGIN_COMPLETION_RECEIPT')
+            require(value.get('vps_free_bytes', 0) >= RESERVE
+                    and value.get('wal_growth_bytes', WAL_GROWTH_CAP + 1) <= WAL_GROWTH_CAP
+                    and 0 <= value.get('elapsed_seconds', ORIGIN_SECONDS) < ORIGIN_SECONDS,
+                    'ORIGIN_COMPLETION_BOUNDS_FAILED')
+            require(file_identity(Path(row['source'])) == row['identity'], 'SOURCE_IDENTITY_CHANGED')
+            unchanged(plan)
+            return value
+        require(time.monotonic() < deadline, 'ORIGIN_COMPLETION_RECEIPT_TIMEOUT')
+        time.sleep(interval)
 
 
 def utc():
@@ -283,10 +340,16 @@ def utc():
 
 
 def write_json(path, value):
-    with Path(path).open('x') as stream:
+    path = Path(path)
+    # Readers see either no receipt or complete JSON. Never replace an old file.
+    with tempfile.NamedTemporaryFile(mode='w', dir=str(path.parent),
+                                     prefix='.' + path.name + '-', delete=False) as stream:
         json.dump(value, stream, indent=2)
         stream.write('\n')
-    Path(path).chmod(0o600)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.link(stream.name, path)
+    os.unlink(stream.name)  # Only this helper's newly written temporary metadata.
 
 
 def bootstrap(payload):
@@ -465,13 +528,11 @@ def entry():
         origin(sys.argv[2], sys.argv[3:])
         return
     if len(sys.argv) > 1 and sys.argv[1] in ('finish', 'unchanged'):
-        plan = json.loads(Path(sys.argv[2]).read_text())
-        unchanged(plan)
         if sys.argv[1] == 'finish':
-            require(sys.argv[3] in [r['name'] for r in plan['files']], 'PLANNED_DATABASE_REQUIRED')
-            completed = Path(sys.argv[2]).parent / ('completed-' + sys.argv[3] + '.json')
-            print(completed.read_text())
+            print(json.dumps(finish_origin(sys.argv[2], sys.argv[3])))
         else:
+            plan = json.loads(Path(sys.argv[2]).read_text())
+            unchanged(plan)
             print(json.dumps({'container_identities_and_configuration_unchanged': True}))
         return
     parser = argparse.ArgumentParser(description=__doc__)

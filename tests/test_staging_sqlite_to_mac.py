@@ -9,6 +9,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 
 import pytest
@@ -136,6 +137,81 @@ def test_bootstrap_does_not_execute_cli_or_accept_an_unpinned_binary(tmp_path, m
     assert list(tmp_path.iterdir()) == []
 
 
+def completion_plan(tmp_path):
+    source = tmp_path / 'source.db'; source.write_bytes(b'synthetic')
+    row = {'name': source.name, 'source': str(source), 'exists': True, 'identity': M.file_identity(source)}
+    config = tmp_path / 'request.json'; M.write_json(config, {'files': [row]})
+    receipt = {'name': row['name'], 'source_identity': row['identity'],
+               'status': 'ORIGIN_COPY_AND_GUARDS_PASSED', 'native_origin_exit_code': 0,
+               'vps_free_bytes': M.RESERVE + 1000, 'wal_growth_bytes': 0,
+               'elapsed_seconds': 1.0, 'at_utc': M.utc()}
+    return config, receipt
+
+
+def test_finish_waits_for_delayed_origin_receipt(tmp_path, monkeypatch, capsys):
+    config, receipt = completion_plan(tmp_path)
+    monkeypatch.setattr(M, 'unchanged', lambda p: None)
+    monkeypatch.setattr(sys, 'argv', ['backup.py', 'finish', str(config), 'source.db'])
+    def delayed_completion():
+        time.sleep(0.2)
+        M.write_json(tmp_path / 'completed-source.db.json', receipt)
+    writer = threading.Thread(target=delayed_completion); writer.start()
+    try:
+        M.entry()
+    finally:
+        writer.join(timeout=2)
+    import json
+    assert json.loads(capsys.readouterr().out) == receipt
+
+
+def test_missing_receipt_times_out_without_accepting_copy(tmp_path, monkeypatch):
+    config, _ = completion_plan(tmp_path)
+    monkeypatch.setattr(M, 'unchanged', lambda p: None)
+    with pytest.raises(M.Blocked, match='ORIGIN_COMPLETION_RECEIPT_TIMEOUT'):
+        M.finish_origin(config, 'source.db', timeout=0.03, interval=0.01)
+
+
+@pytest.mark.parametrize('changed', ['status', 'native_origin_exit_code', 'name', 'source_identity',
+                                   'vps_free_bytes', 'wal_growth_bytes', 'elapsed_seconds'])
+def test_completion_receipt_must_prove_all_gates(tmp_path, monkeypatch, changed):
+    config, receipt = completion_plan(tmp_path)
+    monkeypatch.setattr(M, 'unchanged', lambda p: None)
+    bad = {'status': 'UNVERIFIED', 'native_origin_exit_code': 1, 'name': 'other.db',
+           'source_identity': {}, 'vps_free_bytes': M.RESERVE - 1,
+           'wal_growth_bytes': M.WAL_GROWTH_CAP + 1, 'elapsed_seconds': M.ORIGIN_SECONDS}
+    receipt[changed] = bad[changed]
+    M.write_json(tmp_path / 'completed-source.db.json', receipt)
+    with pytest.raises(M.Blocked, match='ORIGIN_COMPLETION'):
+        M.finish_origin(config, 'source.db', timeout=0.01)
+
+
+def test_origin_failure_is_reported_instead_of_waited_past(tmp_path, monkeypatch):
+    config, _ = completion_plan(tmp_path)
+    monkeypatch.setattr(M, 'unchanged', lambda p: None)
+    with pytest.raises(FileNotFoundError):
+        M.origin(config, ['--origin', str(tmp_path / 'source.db'), 'source.db'])
+    with pytest.raises(M.Blocked, match='^ORIGIN_FAILED:FileNotFoundError$'):
+        M.finish_origin(config, 'source.db', timeout=0.01)
+
+
+def test_receipt_publication_is_complete_and_never_overwrites(tmp_path):
+    import json
+    target = tmp_path / 'receipt.json'
+    value = {'synthetic_payload': 'x' * 1000000}
+    writer = threading.Thread(target=M.write_json, args=(target, value)); writer.start()
+    try:
+        deadline = time.monotonic() + 2
+        while not target.exists() and time.monotonic() < deadline:
+            time.sleep(0.001)
+        assert json.loads(target.read_text()) == value
+    finally:
+        writer.join(timeout=2)
+    assert target.stat().st_mode & 0o777 == 0o600
+    with pytest.raises(FileExistsError):
+        M.write_json(target, {'replacement': True})
+    assert json.loads(target.read_text()) == value
+
+
 @pytest.fixture
 def native_tools():
     base = os.environ.get('NEXUS_SYNTHETIC_SQLITE_TOOLS')
@@ -210,7 +286,7 @@ def test_changed_container_configuration_cannot_be_accepted(monkeypatch):
 
 
 @pytest.mark.skipif(platform.system() != 'Linux', reason='Linux origin resource/IO controls require native Linux')
-def test_complete_guarded_origin_protocol_without_network(native_tools, tmp_path):
+def test_complete_guarded_origin_protocol_without_network(native_tools, tmp_path, monkeypatch):
     import json
     source = tmp_path / 'source.db'; db = fixture_db(source)
     guard_dir = tmp_path / 'guard'; guard_dir.mkdir()
@@ -221,9 +297,14 @@ def test_complete_guarded_origin_protocol_without_network(native_tools, tmp_path
     # The wire is a local process bridge, never SSH. Docker identity checking is
     # exercised separately; only that external boundary is substituted here.
     harness = tmp_path / 'origin-fixture.py'
-    harness.write_text('import sys,importlib.util\n'
+    harness.write_text('import sys,importlib.util,time\n'
                        's=importlib.util.spec_from_file_location("guard",sys.argv[1]);m=importlib.util.module_from_spec(s);s.loader.exec_module(m)\n'
                        'm.unchanged=lambda p:None\n'
+                       'publish=m.write_json\n'
+                       'def delayed_publish(path,value):\n'
+                       ' if path.name.startswith("completed-"):time.sleep(0.5)\n'
+                       ' publish(path,value)\n'
+                       'm.write_json=delayed_publish\n'
                        'm.origin(sys.argv[2],sys.argv[3:])\n')
     bridge = tmp_path / 'local-wire'
     bridge.write_text('#!' + sys.executable + '\nimport os,sys\n'
@@ -241,7 +322,8 @@ def test_complete_guarded_origin_protocol_without_network(native_tools, tmp_path
                             capture_output=True, text=True, timeout=30)
     log = guard_dir / 'origin-source.db.log'
     assert result.returncode == 0, result.stderr + result.stdout + (log.read_text() if log.exists() else '')
-    done = json.loads((guard_dir / 'completed-source.db.json').read_text())
+    monkeypatch.setattr(M, 'unchanged', lambda p: None)
+    done = M.finish_origin(guard_dir / 'request.json', 'source.db', timeout=5)
     assert done['source_identity'] == M.file_identity(source)
     assert done['vps_free_bytes'] >= M.RESERVE
     assert M.check_snapshot(native_tools / 'sqlite3', target) == M.check_snapshot(native_tools / 'sqlite3', source)
