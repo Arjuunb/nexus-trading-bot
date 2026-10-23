@@ -1,0 +1,76 @@
+# ops/vps/test/staging_pa_delete_test.sh output, 2026-10-23, Docker Engine 29.9.1
+== 1. realistic state: WAL holds committed data, no backup
+      == staging Price Action database: read-only check (2026-10-23T14:41:17Z)
+      volume: nexus-remote-stage-rc3-28acdbc_api-state  driver=local  project=nexus-remote-stage-rc3-28acdbc  created=2026-10-23T14:41:17
+      folder: /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data
+      -- containers and services
+        nexus-remote-stage-rc3-28acdbc-api-1: created (uses this volume)
+        containers inspected: 2; using this volume: nexus-remote-stage-rc3-28acdbc-api-1
+        [PASS] staging API stopped: nexus-remote-stage-rc3-28acdbc-api-1 is created
+        [PASS] no running container uses the volume: none running (stopped users: nexus-remote-stage-rc3-28acdbc-api-1)
+      -- processes
+        [PASS] no process holds any file in the volume open: 88 processes scanned, 0 unreadable; holders: none
+      -- exact targets
+        /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data/price_action_paper.db: 0.00 GB, allocated 0.00 GB, inode 689150, uid:gid 0:0, mode 0o644, links 1, modified 2026-10-23T14:41:17Z
+        /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data/price_action_paper.db-wal: 0.00 GB, allocated 0.00 GB, inode 689151, uid:gid 0:0, mode 0o644, links 1, modified 2026-10-23T14:41:17Z
+        /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data/price_action_paper.db-shm: 0.00 GB, allocated 0.00 GB, inode 689152, uid:gid 0:0, mode 0o644, links 1, modified 2026-10-23T14:41:17Z
+        [PASS] database present as a regular file: present
+        [PASS] targets are regular files with one link each (no hard links, no symlinks): 3 target files
+        [PASS] targets live in the staging volume folder: /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data
+      -- SQLite identity (immutable read-only open; WAL ignored by design)
+        header: SQLite format 3 = True, page size 4096, pages 3 (0.00 GB), WAL mode = True
+        [PASS] schema is the Price Action paper database (pa_* tables, no SMC tables): 2 tables: 1 pa_* (e.g. pa_sessions), 1 v2_* PA broker tables (incl. v2_source_evidence=True), 0 SMC-named
+      -- WAL (frames read directly; nothing is checkpointed or recovered)
+        WAL 0.00 GB; valid frames 150; committed frames 150; checkpointed per SHM index unknown (SHM index not usable)
+        [FAIL] no committed WAL transactions waiting for a checkpoint: 150 committed frames (0.00 GB) exist only in the WAL; a backup must include them
+      -- production isolation (read-only)
+        [PASS] production uses a different volume and a different PA file: production nexus-trading-bot-app-1 mounts nexus-migration-tradexa-data-cutover-20260913 at /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-migration-tradexa-data-cutover-20260913/_data; its price_action_paper.db is 0.00 GB (inode 689157) and is NOT a target
+        production container: running, health -, restarts 0
+        production status: no answer (URLError)
+      -- excluded from deletion (kept in the staging volume)
+        journal.db  0.00 GB
+        smc_strategy_paper.db  0.00 GB
+      -- backup and recovery
+        no file mentioning price_action_paper found in the staging volume backup folders, /home/ubuntu, /root, /var/backups or /tmp/tmp.VQHFlUmJ7l/pa-backup
+        [FAIL] verified, restore-tested backup of the current files: no verified backup manifest at /tmp/tmp.VQHFlUmJ7l/pa-backup/manifest.json
+        backup sizing: database + WAL 0.00 GB; sampled compression ratio 0.02 -> archive about 0.00 GB; a restore test needs 0.00 GB more, temporarily; free now 31.10 GB
+      -- scope
+        deletion would remove exactly: /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data/price_action_paper.db, /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data/price_action_paper.db-wal, /tmp/claude-0/-home-user-nexus-trading-bot/06818d8e-7896-5336-90f7-9ef7404af9e7/scratchpad/dockerd/root/volumes/nexus-remote-stage-rc3-28acdbc_api-state/_data/price_action_paper.db-shm
+        disk space it would free: 0.00 GB (allocated blocks)
+      
+      BLOCKED: no committed WAL transactions waiting for a checkpoint; verified, restore-tested backup of the current files
+      Nothing was changed. Deletion is not possible until every gate passes.
+PASS  check exits 2 (blocked)
+PASS  staging API stopped gate passes
+PASS  no running consumer gate passes
+PASS  process gate passes
+PASS  schema gate passes
+PASS  production isolation passes
+PASS  WAL gate fails: committed frames only in the WAL
+PASS  backup gate fails: none
+PASS  verdict BLOCKED
+PASS  SMC listed as excluded
+PASS  exact scope printed
+PASS  check changed no byte, size, time or inode in the volume
+== 2. WAL frame count matches SQLite's own count
+PASS  committed WAL frames: script 150 = SQLite 150
+== 3. unsafe states are reported
+PASS  running staging API fails
+PASS  other running consumer fails
+PASS  open file anywhere in the volume fails
+== 4. all gates satisfied (checkpointed copy state + verified backup) -> SAFE, still nothing deleted
+PASS  check exits 0
+PASS  WAL gate passes after checkpoint
+PASS  backup gate passes with verified manifest
+PASS  verdict SAFE (for separate approval)
+PASS  states it is not permission
+PASS  delete exits 2 even when every gate passes
+PASS  delete is disabled in this version
+PASS  nothing deleted
+== 5. backup tampering and mismatched source are caught
+PASS  tampered archive fails
+PASS  backup of different files fails
+== 6. production database is never a target
+PASS  production path not in scope
+PASS  production PA file untouched
+failures: 0

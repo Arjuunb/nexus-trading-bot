@@ -27,6 +27,7 @@ never secrets, balances or detailed evidence.
 | `ops-log` | GitHub run id | Read-only: end of an earlier run's log, including one whose connection dropped |
 | `p1b-stop-staging` | `check`, `stop` or `verify` | The reviewed P1-B script (`validation/p1b-stop-staging/`) |
 | `backup` | `run`, `status`, `check` or `restore-test` | Encrypted off-server backups to Backblaze B2 (`backup/README.md`). Not set up: the owner chose to skip backups on 2026-10-23 |
+| `staging-pa-delete` | `check` (`delete` is disabled) | Read-only safety and recovery check for the stopped staging PA lab database (`price_action_paper.db` and its `-wal` and `-shm`). Ends with SAFE FOR SEPARATE DELETION APPROVAL or BLOCKED. `delete` re-runs every gate and never deletes in this version |
 | `docker-cleanup` | `plan`, then `apply` | P1-C: remove unused old production app images, keeping the two most recent and every image a container uses, plus the build cache. `apply` removes exactly the list from the last `plan` and refuses if anything changed |
 
 **Off switch** (blocks every run at once): `sudo touch /etc/nexus-ops/disabled`. To switch it back
