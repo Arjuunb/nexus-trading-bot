@@ -66,19 +66,19 @@ On the VPS (one command per box). Connect: `ssh -o ServerAliveInterval=30 ubuntu
 **1. Download the new runner**
 
 ```bash
-sudo curl -fsSL -o /root/nexus-ops-setup/nexus-ops-runner https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/322c4e8de628f3903ddce73464c9cdd39c31b31d/ops/vps/nexus-ops-runner
+sudo curl -fsSL -o /root/nexus-ops-setup/nexus-ops-runner https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/d3de824b1142beacfe52e4c667933600e233ba36/ops/vps/nexus-ops-runner
 ```
 
 **2. Download the new setup script**
 
 ```bash
-sudo curl -fsSL -o /root/nexus-ops-setup/setup-vps-ops.sh https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/322c4e8de628f3903ddce73464c9cdd39c31b31d/ops/vps/setup-vps-ops.sh
+sudo curl -fsSL -o /root/nexus-ops-setup/setup-vps-ops.sh https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/d3de824b1142beacfe52e4c667933600e233ba36/ops/vps/setup-vps-ops.sh
 ```
 
 **3. Check the runner.** It must say `OK`.
 
 ```bash
-echo "29b14dbbad4e17224fa96ea93e9623497118af9bb785ab0db8da73bf17e15d70  /root/nexus-ops-setup/nexus-ops-runner" | sudo sha256sum -c -
+echo "3bfcfb424d52dd366b6e6b843a68c7c68dde6b65017d81eda43138d48b512096  /root/nexus-ops-setup/nexus-ops-runner" | sudo sha256sum -c -
 ```
 
 **4. Check the setup script.** It must say `OK`.
@@ -188,7 +188,7 @@ merged, the first run should be `hello`, to prove the connection works.
 runner, against a local OpenSSH server and the P1-B replica containers. Result with both keys:
 54 passed, 0 failed (`test/test-output.txt`). `test/check_mode_test.sh` covers the read-only list,
 the runner's built-in copy, trusted fingerprints, check-mode refusals and the environment guard:
-65 passed. The tests cover:
+72 passed. The tests cover:
 
 - P1-B through the pipeline
 - tampered scripts, shell characters, arbitrary commands, plain login and port forwarding (all refused)
@@ -197,3 +197,5 @@ the runner's built-in copy, trusted fingerprints, check-mode refusals and the en
 - the check key: nothing runs until the owner trusts it; a replacement script under an allowed name
   is refused and never runs; read-only checks run; stop, deploy, delete, cleanup, backup start and
   trust-checks are refused; re-installing the main key keeps the check key
+- a request that never finishes sending its script is cut off after 120 s and cannot block other
+  operations (the runner receives and verifies the script before it takes the one-at-a-time lock)
