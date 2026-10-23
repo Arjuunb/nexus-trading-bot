@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the unchanged reviewed RC3 browser suite with its isolated test API.
+"""Run the unchanged dashboard browser suite and the reviewed clipboard harness with its isolated test API.
 
 This only starts disposable localhost fixtures. It cannot connect to a VPS,
 publish images, start staging workers or change production state.
@@ -17,8 +17,8 @@ from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 HARNESS = {
-    "playwright.config.cjs": "6b1cb8d1827f2301c567fe50b4a3957cf9ed2cde28aa62b7a6f0e57478e2a6da",
-    "clipboard.spec.cjs": "4185ce2a072662f04649a67763321b4de03cdb81dfcc55f8ae179d3d919d219e",
+    "playwright.config.cjs": "8471eb93a117695112478fd84ed1d9dc3e0b345e32e4faa1d1be70a3b38094de",
+    "clipboard.spec.cjs": "44442aec9d596abfdb966d62b59fe306306a78a6293cb8163efe0582af4c187c",
 }
 
 
@@ -29,11 +29,11 @@ def main():
     args = parser.parse_args()
     config = Path(args.config).resolve()
     if config.name != "playwright.config.cjs":
-        raise ValueError("REVIEWED_RC3_CONFIG_REQUIRED")
+        raise ValueError("REVIEWED_CONFIG_REQUIRED")
     for name, expected in HARNESS.items():
         path = config.parent / name
         if not path.is_file() or path.stat().st_size > 64 * 1024 or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
-            raise ValueError("REVIEWED_RC3_HARNESS_HASH_MISMATCH")
+            raise ValueError("REVIEWED_HARNESS_HASH_MISMATCH")
     output = Path(args.output).absolute()
     output.mkdir(parents=True, exist_ok=False)
     dashboard = ROOT / "automation-hub-dashboard"
