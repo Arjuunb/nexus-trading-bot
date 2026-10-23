@@ -1,0 +1,68 @@
+# run_tests.sh output, 2026-10-23, Docker Engine 29.9.1, with P1B_RESTART_DOCKER_CMD set (dockerd restarted twice)
+== 1. check (read-only)
+PASS  check exits 0
+PASS  check says GO
+PASS  check shows production workers
+PASS  check leaves staging running
+PASS  check writes nothing
+PASS  check: no secret or address printed
+== 2. stop (clean shutdown)
+PASS  stop exits 0
+PASS  stop says DONE
+PASS  staging exited
+PASS  staging exit code
+PASS  restart policy kept (clean exit)
+PASS  production still running
+PASS  production not restarted
+PASS  no Docker actions on production other than its own health checks
+PASS  WAL files merged and removed
+PASS  staging file intact after stop
+PASS  staging rows kept (333)
+PASS  stop: no secret or address printed
+== 3. verify
+PASS  verify exits 0
+PASS  verify: still stopped
+PASS  verify: files unchanged
+== 4. stop again (idempotent)
+PASS  second stop does nothing
+PASS  before-record kept
+== 5. reboot simulation after a clean stop
+PASS  staging stays stopped after Docker restart
+PASS  production back after Docker restart
+== 6. undo (runbook commands) is detected by verify
+PASS  verify warns staging running
+PASS  verify reports changed files
+== 7. shutdown that hangs until Docker kills it (exit 137)
+PASS  killed staging exit code
+PASS  restart policy set to no
+PASS  original policy recorded
+PASS  stop explains the policy change
+PASS  staging stays stopped after Docker restart
+PASS  control container WITHOUT the change restarts
+== 8. refusals change nothing
+PASS  same Supabase project: exit 2
+PASS  same Supabase project: message
+PASS  same Supabase project: staging still running
+PASS  same Supabase project: no secret or address printed
+PASS  other staging build: exit 2
+PASS  other staging build: message
+PASS  other staging build: staging still running
+PASS  other staging build: no secret or address printed
+PASS  staging without SUPABASE_URL: exit 2
+PASS  staging without SUPABASE_URL: message
+PASS  staging without SUPABASE_URL: staging still running
+PASS  staging without SUPABASE_URL: no secret or address printed
+PASS  production missing: exit 2
+PASS  production missing: message
+PASS  production missing: staging still running
+PASS  production missing: no secret or address printed
+PASS  staging on another volume: exit 2
+PASS  staging on another volume: message
+PASS  staging on another volume: staging still running
+PASS  staging on another volume: no secret or address printed
+PASS  non-root: exit 2
+PASS  non-root: staging still running
+PASS  refusals wrote nothing
+PASS  no mode: usage exit 64
+== cleanup
+failures: 0
