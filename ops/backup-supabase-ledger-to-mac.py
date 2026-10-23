@@ -18,6 +18,7 @@ import re
 import shutil
 import ssl
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -30,6 +31,11 @@ WORK_BUDGET = 2 * 1024 ** 3
 MAX_DATABASE = 256 * MIB
 MAX_LOGICAL = 512 * MIB
 SOURCE_OPTIONS = "-c default_transaction_read_only=on -c statement_timeout=120000 -c lock_timeout=3000 -c idle_in_transaction_session_timeout=240000"
+MAC_PASSWORD_SCRIPT = '''on run argv
+    activate
+    set answerRecord to display dialog (item 1 of argv) default answer "" with hidden answer buttons {"Cancel", "Continue"} default button "Continue" cancel button "Cancel" with title "Nexus staging ledger backup"
+    return text returned of answerRecord
+end run'''
 
 
 class Blocked(RuntimeError):
@@ -118,6 +124,43 @@ def require(value, reason):
 
 def clean_environment():
     return {k: v for k, v in os.environ.items() if not k.startswith("PG")}
+
+
+def read_database_password(method, *, project):
+    """An optional owner-local Mac dialog avoids the terminal input path.
+
+    This is an alternative input method, not an authentication fallback or a
+    diagnosis of earlier failures. No password, hash or length is logged. The
+    dialog result stays in captured process memory and the same temporary
+    private passfile used by all existing clients. All recovery gates remain.
+    """
+    if method == "terminal":
+        password = getpass.getpass("Staging Supabase DATABASE password (hidden): ")
+        require(bool(password), "DATABASE_PASSWORD_REQUIRED")
+        return password
+    require(method == "mac-dialog" and sys.platform == "darwin",
+            "MAC_PASSWORD_DIALOG_REQUIRES_MACOS")
+    # Prevent inherited Apple Event debug switches from logging dialog results.
+    environment = {k: v for k, v in clean_environment().items() if not k.startswith("AEDebug")}
+    answers = []
+    for label in ("Enter", "Confirm"):
+        prompt = label + " the staging Supabase DATABASE password.\nProject: " + project + "\nUse the same password that worked in psql."
+        try:
+            result = subprocess.run(["/usr/bin/osascript", "-s", "he", "-e", MAC_PASSWORD_SCRIPT, prompt],
+                                    stdin=subprocess.DEVNULL, capture_output=True,
+                                    encoding="utf-8", timeout=180, env=environment)
+        except (OSError, UnicodeError, subprocess.TimeoutExpired):
+            raise Blocked("MAC_PASSWORD_DIALOG_UNAVAILABLE") from None
+        require(result.returncode == 0, "MAC_PASSWORD_DIALOG_CANCELLED_OR_FAILED")
+        # osascript adds one output newline. Never trim significant spaces,
+        # quotes, backslashes or other password characters.
+        require(result.stdout.endswith("\n"), "MAC_PASSWORD_DIALOG_INVALID_OUTPUT")
+        answer = result.stdout[:-1]
+        require(bool(answer), "DATABASE_PASSWORD_REQUIRED")
+        require(not any(c in answer for c in "\r\n\x00"), "INVALID_CREDENTIAL_CHARACTER")
+        answers.append(answer)
+    require(answers[0] == answers[1], "DATABASE_PASSWORD_CONFIRMATION_MISMATCH")
+    return answers[0]
 
 
 def private_json(path, value):
@@ -583,6 +626,8 @@ def main():
                             help="Connect to db.PROJECT.supabase.co as postgres; requires direct network reachability")
     parser.add_argument("--sslrootcert", type=Path, required=True,
                         help="CA certificate downloaded from Supabase Database Settings; verify-full remains mandatory")
+    parser.add_argument("--password-input", choices=("terminal", "mac-dialog"), default="terminal",
+                        help="Optional confirmed Mac dialog; authentication, TLS and recovery checks are unchanged")
     parser.add_argument("--pg-bin", type=Path, default=Path("/Applications/Postgres.app/Contents/Versions/17/bin"))
     parser.add_argument("--destination", type=Path, default=Path.home() / "Nexus-Backups")
     args = parser.parse_args()
@@ -606,15 +651,15 @@ def main():
         require(destination.is_dir(), "EXISTING_BACKUP_DESTINATION_REQUIRED")
         require(shutil.disk_usage(destination).free >= RESERVE + WORK_BUDGET, "MAC_RECOVERY_SPACE_REQUIRED")
         ca_data = load_root_certificate(args.sslrootcert)
-        password = getpass.getpass("Staging Supabase DATABASE password (hidden): ")
-        require(bool(password), "DATABASE_PASSWORD_REQUIRED")
+        password = read_database_password(args.password_input, project=args.project)
         directory = Path(tempfile.mkdtemp(prefix="external-ledger-", dir=destination))
         ca_path = preserve_root_certificate(directory, ca_data)
         config = {"host": host, "port": 5432, "dbname": "postgres", "user": user,
                   "password": password, "sslmode": "verify-full", "sslrootcert": str(ca_path),
                   "connect_timeout": 10, "application_name": "nexus_read_only_ledger_backup"}
         report = recover(config, bin_dir=args.pg_bin.resolve(), directory=directory)
-        report.update(project=args.project, source_connection_method=connection_method, local_restore_server_stopped=True,
+        report.update(project=args.project, source_connection_method=connection_method,
+                      password_input_method=args.password_input, local_restore_server_stopped=True,
                       source_tls_mode="verify-full", trusted_ca_sha256=hashlib.sha256(ca_data).hexdigest(),
                       at_utc=dt.datetime.now(dt.timezone.utc).isoformat())
         private_json(directory / "recovery-receipt.json", report)
@@ -623,6 +668,7 @@ def main():
     except Exception as error:
         report = failure_report(error)
         report["source_connection_method"] = connection_method
+        report["password_input_method"] = args.password_input
         if directory:
             report["directory"] = str(directory)
             private_json(directory / "blocked-receipt.json", report)

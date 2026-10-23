@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -393,16 +394,20 @@ def test_cli_requires_ca_before_password_and_never_uses_global_pg_settings(tmp_p
 
 
 @pytest.mark.parametrize('direct', [False, True])
-def test_cli_uses_one_fixed_ca_copy_and_verify_full_for_recovery(tls_certificates, tmp_path, monkeypatch, capsys, direct):
+@pytest.mark.parametrize('password_input', ['terminal', 'mac-dialog'])
+def test_cli_uses_one_fixed_ca_copy_and_verify_full_for_recovery(tls_certificates, tmp_path, monkeypatch, capsys, direct, password_input):
     path = tls_certificates / 'ca.crt'
     original_ca = path.read_bytes()
     mode_args = ['--direct'] if direct else ['--pooler-host', 'aws-0-fixture.pooler.supabase.com']
     monkeypatch.setattr(sys, 'argv', ['backup.py', '--backup', '--project', 'a' * 20,
-        '--destination', str(tmp_path), '--sslrootcert', str(path)] + mode_args)
+        '--destination', str(tmp_path), '--sslrootcert', str(path), '--password-input', password_input] + mode_args)
     monkeypatch.setenv('PGSSLMODE', 'disable')
     monkeypatch.setenv('PGSSLROOTCERT', '/untrusted/ambient.crt')
     monkeypatch.setattr(helper, 'check_tools', lambda *args: None)
-    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: 'fixture-only')
+    def read_password(method, *, project):
+        assert method == password_input and project == 'a' * 20
+        return 'fixture-only'
+    monkeypatch.setattr(helper, 'read_database_password', read_password)
     monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
     def recover(config, *, directory, bin_dir):
         assert config['host'] == ('db.' + 'a' * 20 + '.supabase.co' if direct else 'aws-0-fixture.pooler.supabase.com')
@@ -420,6 +425,7 @@ def test_cli_uses_one_fixed_ca_copy_and_verify_full_for_recovery(tls_certificate
     report = json.loads(capsys.readouterr().out)
     assert report['source_tls_mode'] == 'verify-full'
     assert report['source_connection_method'] == ('DIRECT' if direct else 'SESSION_POOLER')
+    assert report['password_input_method'] == password_input
     assert report['trusted_ca_sha256'] == helper.hashlib.sha256(original_ca).hexdigest()
     assert 'fixture-only' not in json.dumps(report)
 
@@ -534,8 +540,21 @@ def test_native_auth_failure_stops_before_python_and_removes_passfile(tmp_path, 
     assert not (directory / 'application-ledger.dump').exists()
 
 
-def test_real_tls_special_password_works_for_native_python_and_pg_dump(source, tls_certificates, tmp_path, monkeypatch):
+@pytest.mark.parametrize('password_input', ['existing', 'mac-dialog'])
+def test_real_tls_special_password_works_for_native_python_and_pg_dump(source, tls_certificates, tmp_path, monkeypatch, password_input):
     password = "synthetic:back\\slash '$%& पद"
+    if password_input == 'mac-dialog':
+        native_run = helper.subprocess.run
+        dialog_calls = []
+        def dialog_or_native(args, **kwargs):
+            if args[0] == '/usr/bin/osascript':
+                dialog_calls.append(True)
+                return SimpleNamespace(returncode=0, stdout=password + '\n', stderr='')
+            return native_run(args, **kwargs)
+        monkeypatch.setattr(helper, 'sys', SimpleNamespace(platform='darwin'))
+        monkeypatch.setattr(helper.subprocess, 'run', dialog_or_native)
+        assert helper.read_database_password('mac-dialog', project='fixture') == password
+        assert dialog_calls == [True, True]
     with psycopg.connect(**source, autocommit=True) as connection:
         connection.execute(sql.SQL('ALTER ROLE postgres PASSWORD {}').format(sql.Literal(password)))
     original = helper.command
@@ -568,6 +587,125 @@ def test_real_tls_special_password_works_for_native_python_and_pg_dump(source, t
     assert dump_checks == [True]
     assert password not in json.dumps(report)
     assert not (directory / '.pgpass').exists()
+
+
+def test_mac_dialog_confirms_exact_password_without_logging_or_secret_arguments(monkeypatch, capsys):
+    secret = "  synthetic:back\\slash '$%& नेपाल  "
+    calls = []
+    monkeypatch.setattr(helper, 'sys', SimpleNamespace(platform='darwin'))
+    monkeypatch.setenv('PGPASSWORD', 'unrelated-fixture-secret')
+    monkeypatch.setenv('AEDebugSends', '1')
+    monkeypatch.setenv('AEDebugReceives', '1')
+    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: pytest.fail('Terminal input was used'))
+    def native_dialog(args, **kwargs):
+        assert args[:5] == ['/usr/bin/osascript', '-s', 'he', '-e', helper.MAC_PASSWORD_SCRIPT]
+        assert 'with hidden answer' in args[4]
+        assert secret not in str(args) and secret not in str(kwargs)
+        assert kwargs['capture_output'] is True and kwargs['encoding'] == 'utf-8'
+        assert kwargs['stdin'] == subprocess.DEVNULL and kwargs['timeout'] == 180
+        assert not any(k.startswith(('PG', 'AEDebug')) for k in kwargs['env'])
+        calls.append(args[-1])
+        return SimpleNamespace(returncode=0, stdout=secret + '\n', stderr='')
+    monkeypatch.setattr(helper.subprocess, 'run', native_dialog)
+    assert helper.read_database_password('mac-dialog', project='fixture-project') == secret
+    assert len(calls) == 2 and calls[0].startswith('Enter') and calls[1].startswith('Confirm')
+    assert 'fixture-project' in calls[0]
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+
+
+@pytest.mark.parametrize(('responses', 'reason'), [
+    (['\n'], 'DATABASE_PASSWORD_REQUIRED'),
+    (['without-output-newline'], 'MAC_PASSWORD_DIALOG_INVALID_OUTPUT'),
+    (['line\nbreak\n'], 'INVALID_CREDENTIAL_CHARACTER'),
+    (['carriage\rreturn\n'], 'INVALID_CREDENTIAL_CHARACTER'),
+    (['nul\x00value\n'], 'INVALID_CREDENTIAL_CHARACTER'),
+    (['first\n', 'different\n'], 'DATABASE_PASSWORD_CONFIRMATION_MISMATCH'),
+])
+def test_mac_dialog_invalid_input_blocks_without_retry_or_secret_disclosure(monkeypatch, capsys, responses, reason):
+    monkeypatch.setattr(helper, 'sys', SimpleNamespace(platform='darwin'))
+    calls = []
+    def dialog(*args, **kwargs):
+        calls.append(True)
+        return SimpleNamespace(returncode=0, stdout=responses[len(calls)-1], stderr='fixture-private-detail')
+    monkeypatch.setattr(helper.subprocess, 'run', dialog)
+    with pytest.raises(helper.Blocked) as caught:
+        helper.read_database_password('mac-dialog', project='fixture')
+    report = helper.failure_report(caught.value)
+    assert report['reason'] == reason and report['deployment_performed'] is False
+    assert report['external_ledger_recovery_proven'] is False
+    assert len(calls) == len(responses)
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+    assert 'fixture-private-detail' not in json.dumps(report)
+
+
+def test_mac_dialog_cancel_stops_without_fallback_and_redacts_process_output(monkeypatch, capsys):
+    secret = 'synthetic-private-output'
+    monkeypatch.setattr(helper, 'sys', SimpleNamespace(platform='darwin'))
+    calls = []
+    def cancel(*args, **kwargs):
+        calls.append(True)
+        return SimpleNamespace(returncode=1, stdout=secret, stderr=secret + ' User canceled. (-128)')
+    monkeypatch.setattr(helper.subprocess, 'run', cancel)
+    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: pytest.fail('Unexpected fallback'))
+    with pytest.raises(helper.Blocked, match='MAC_PASSWORD_DIALOG_CANCELLED_OR_FAILED') as caught:
+        helper.read_database_password('mac-dialog', project='fixture')
+    assert calls == [True]
+    assert secret not in json.dumps(helper.failure_report(caught.value))
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+
+
+@pytest.mark.parametrize('error', [OSError('fixture-secret'),
+    subprocess.TimeoutExpired('fixture-secret', 180, output='fixture-secret'),
+    UnicodeError('fixture-secret')])
+def test_mac_dialog_process_failure_is_fixed_and_never_retried(monkeypatch, capsys, error):
+    monkeypatch.setattr(helper, 'sys', SimpleNamespace(platform='darwin'))
+    calls = []
+    def fail(*args, **kwargs):
+        calls.append(True)
+        raise error
+    monkeypatch.setattr(helper.subprocess, 'run', fail)
+    with pytest.raises(helper.Blocked, match='MAC_PASSWORD_DIALOG_UNAVAILABLE') as caught:
+        helper.read_database_password('mac-dialog', project='fixture')
+    assert calls == [True]
+    assert 'fixture-secret' not in json.dumps(helper.failure_report(caught.value))
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+
+
+def test_mac_dialog_requires_macos_before_starting_any_process(monkeypatch):
+    monkeypatch.setattr(helper, 'sys', SimpleNamespace(platform='linux'))
+    monkeypatch.setattr(helper.subprocess, 'run', lambda *args, **kwargs: pytest.fail('Process started'))
+    with pytest.raises(helper.Blocked, match='MAC_PASSWORD_DIALOG_REQUIRES_MACOS'):
+        helper.read_database_password('mac-dialog', project='fixture')
+
+
+def test_terminal_password_input_stays_unchanged(monkeypatch, capsys):
+    secret = '  synthetic:back\\slash  '
+    monkeypatch.setattr(helper.getpass, 'getpass', lambda *args: secret)
+    assert helper.read_database_password('terminal', project='fixture') == secret
+    assert capsys.readouterr().out == ''
+
+
+def test_cli_mac_dialog_cancellation_cannot_start_backup(tls_certificates, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(sys, 'argv', ['backup.py', '--backup', '--project', 'a' * 20,
+        '--direct', '--password-input', 'mac-dialog', '--sslrootcert', str(tls_certificates / 'ca.crt'),
+        '--destination', str(tmp_path)])
+    monkeypatch.setattr(helper, 'check_tools', lambda *args: None)
+    monkeypatch.setattr(helper.shutil, 'disk_usage', lambda path: shutil._ntuple_diskusage(20*helper.RESERVE, 0, 20*helper.RESERVE))
+    def cancel(method, *, project):
+        assert method == 'mac-dialog'
+        raise helper.Blocked('MAC_PASSWORD_DIALOG_CANCELLED_OR_FAILED')
+    monkeypatch.setattr(helper, 'read_database_password', cancel)
+    monkeypatch.setattr(helper, 'recover', lambda *args, **kwargs: pytest.fail('Recovery started after cancellation'))
+    assert helper.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report['reason'] == 'MAC_PASSWORD_DIALOG_CANCELLED_OR_FAILED'
+    assert report['password_input_method'] == 'mac-dialog'
+    assert report['external_ledger_recovery_proven'] is False
+    assert not list(tmp_path.glob('external-ledger-*'))
 
 
 def test_real_native_wrong_password_stops_before_python_or_dump(source, tls_certificates, tmp_path):
