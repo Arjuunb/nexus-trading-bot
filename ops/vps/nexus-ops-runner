@@ -72,8 +72,8 @@ if [ "$mode" = check ]; then
     check_allowed "$op" "$arg" || refuse "the check key may only start read-only checks; '$op ${arg#-}' needs the owner's approval"
 fi
 
-mkdir -p "$BASE/scripts" "$BASE/work/$op" "$LOGDIR"
-chmod 700 "$BASE" "$LOGDIR"
+mkdir -p "$BASE/scripts" "$BASE/work/$op" "$LOGDIR/check"
+chmod 700 "$BASE" "$LOGDIR" "$LOGDIR/check"
 
 # Receive and verify the script BEFORE taking the one-at-a-time lock, with a time limit on the
 # upload, so a request that never finishes sending cannot block other operations.
@@ -98,8 +98,11 @@ if ! flock -n 9; then rm -f "$tmp"; refuse "another operation is still running";
 script="$BASE/scripts/$got.sh"
 mv -f "$tmp" "$script"
 
-log="$LOGDIR/$run_id-$op.log"
-rc_file="$LOGDIR/$run_id-$op.rc"
+# Check-key runs keep their own records, so a check-key request can never use up the run id of an
+# owner-approved run (the caller chooses the run id).
+if [ "$mode" = check ]; then rec="$LOGDIR/check/$run_id-$op"; else rec="$LOGDIR/$run_id-$op"; fi
+log="$rec.log"
+rc_file="$rec.rc"
 [ -e "$rc_file" ] && refuse "run $run_id of $op already happened; see $log"
 : > "$log"
 say "$(now) run=$run_id op=$op arg=$arg commit=$commit sha256=$got mode=$mode started" >> "$LOGDIR/runs.log"

@@ -83,6 +83,19 @@ out=$(sh "$T/runner" --check < /dev/null 2>&1); printf '%s' "$out" | grep -q "ex
 out=$(sh "$T/runner" "run p1b-stop-staging verify $H $C 108" < ops/vps/operations/hello.sh 2>&1)
 printf '%s' "$out" | grep -q ', approved)' && ok "main key path still runs anything approved (no trust file needed)" || bad "approved mode: $out"
 
+echo "== check-key runs cannot use up an approved run's id (Codex P2)"
+printf 'staging-backup %s\n' "$H" >> "$T/trusted"
+out=$(creq staging-backup status ops/vps/operations/hello.sh 301)
+printf '%s' "$out" | grep -q ', check)' && ok "check-key staging-backup status ran as run 301" || bad "check run: $out"
+out=$(sh "$T/runner" "run staging-backup start $H $C 301" < ops/vps/operations/hello.sh 2>&1)
+printf '%s' "$out" | grep -q ', approved)' && ! printf '%s' "$out" | grep -q "already happened" \
+    && ok "the approved staging-backup start with run 301 still runs" || bad "approved run blocked: $out"
+[ -f "$T/log/check/301-staging-backup.rc" ] && [ -f "$T/log/301-staging-backup.rc" ] && ok "check and approved records are kept apart" || bad "records: $(ls -R "$T/log")"
+out=$(creq staging-backup status ops/vps/operations/hello.sh 301)
+printf '%s' "$out" | grep -q "already happened" && ok "a check-key run id still cannot be replayed" || bad "check replay: $out"
+out=$(sh "$T/runner" "run staging-backup start $H $C 301" < ops/vps/operations/hello.sh 2>&1)
+printf '%s' "$out" | grep -q "already happened" && ok "an approved run id still cannot be replayed" || bad "approved replay: $out"
+
 echo "== a request that never finishes sending cannot block other operations (Codex P2)"
 sed -i 's/^UPLOAD_LIMIT=.*/UPLOAD_LIMIT=2/' "$T/runner"
 grep -q '^UPLOAD_LIMIT=120$' ops/vps/nexus-ops-runner && ok "real runner limits uploads to 120 s" || bad "upload limit missing"

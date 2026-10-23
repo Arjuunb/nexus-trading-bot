@@ -50,6 +50,12 @@ PASS  check mode refuses even when trusted: selftest -
 PASS  refused requests never start a run
 PASS  check mode needs a request
 PASS  main key path still runs anything approved (no trust file needed)
+== check-key runs cannot use up an approved run's id (Codex P2)
+PASS  check-key staging-backup status ran as run 301
+PASS  the approved staging-backup start with run 301 still runs
+PASS  check and approved records are kept apart
+PASS  a check-key run id still cannot be replayed
+PASS  an approved run id still cannot be replayed
 == a request that never finishes sending cannot block other operations (Codex P2)
 PASS  real runner limits uploads to 120 s
 PASS  an approved operation runs while a check-key upload hangs
