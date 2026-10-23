@@ -210,10 +210,24 @@ def record_funding_schedule(broker, *, symbol, start, end, settlements, source_r
         return result
 
 
-def observe_equity(broker, marks, *, observed_at, maximum_age_seconds=30, commit=True):
-    """Explicit source-timed valuation observation, never persist broker metrics."""
+#: Position fields whose change makes a new valuation worth recording at once.
+#: The mark-driven ones (unrealized P&L, a trailing stop's peak) are not listed.
+_MATERIAL_POSITION_FIELDS = ('symbol', 'side', 'size', 'entry_price', 'stop_loss', 'take_profit')
+
+
+def observe_equity(broker, marks, *, observed_at, maximum_age_seconds=30, commit=True,
+                   minimum_interval_seconds=0):
+    """Explicit source-timed valuation observation, never persist broker metrics.
+
+    ``minimum_interval_seconds`` is for the per-quote caller. An observation
+    whose cash, positions and completeness match the last one this broker
+    recorded less than that many seconds earlier is skipped and None is
+    returned. So a valuation is still recorded at once whenever anything
+    material changes, and otherwise at most once per interval instead of on
+    every quote (one row per quote grew a lab database by about 4.7 GB/day).
+    The default 0 records every call, as before."""
     at = datetime.fromisoformat(observed_at.replace('Z', '+00:00'))
-    if at.tzinfo is None or not 1 <= maximum_age_seconds <= 300:
+    if at.tzinfo is None or not 1 <= maximum_age_seconds <= 300 or minimum_interval_seconds < 0:
         raise ValueError('INVALID_EQUITY_OBSERVATION')
     with broker._lock:
         positions = [dict(row) for row in broker._c.execute('SELECT * FROM v2_positions')]
@@ -228,9 +242,16 @@ def observe_equity(broker, marks, *, observed_at, maximum_age_seconds=30, commit
                 unrealized += (price-position['entry_price'])*position['size']*(1 if position['side']=='long' else -1)
             except (KeyError,ValueError,TypeError):
                 complete = False
+        state = digest([cash, complete, [{key: position.get(key) for key in _MATERIAL_POSITION_FIELDS}
+                                         for position in positions]])
+        last = getattr(broker, '_last_equity_observation', None)
+        if (minimum_interval_seconds and last and last[1] == state
+                and 0 <= (at - last[0]).total_seconds() < minimum_interval_seconds):
+            return None
         result = emit(broker, 'EQUITY_OBSERVED', {'cash_balance': cash, 'positions': positions, 'marks': marks,
             'unrealized_pnl': unrealized if complete else None, 'equity': cash+unrealized if complete else None,
             'completeness': 'COMPLETE' if complete else 'UNKNOWN', 'valuation_model': 'native-paper-mark.v1'},
             event_id='paper-equity:' + digest([broker._account_row()['account_id'], observed_at, marks, positions, cash]), timestamp=observed_at)
+        broker._last_equity_observation = (at, state)
         if commit:broker._c.commit()
         return result

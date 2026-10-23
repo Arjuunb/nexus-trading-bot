@@ -6,12 +6,12 @@
   "strategy_intelligence_commit": "f9ebd32a3eedf6740c14a3daafb32e981d1d7ce8",
   "alpha_rules_changed": false,
   "fill_timing_changed": false,
-  "purpose": "Strategy Intelligence (main line, last frozen by task6-acceptance-read-only.v1) merged onto the production line. Every file and method below differs from the Strategy Intelligence freeze only because it now also carries the production line's own changes. origin=production: byte-identical to the production commit, which is already live. origin=merge: the union of both lines' changes, with no new logic. The production-line changes are recorded as subsequent_approved_deltas in pr6_real_paper_freeze.json. This file is not deployment approval.",
+  "purpose": "Strategy Intelligence (main line, last frozen by task6-acceptance-read-only.v1) merged onto the production line. Every file and method below differs from the Strategy Intelligence freeze only because it now also carries the production line's own changes. origin=production: byte-identical to the production commit, which is already live. origin=merge: the union of both lines' changes, with no new logic. origin=fix: a named, owner-approved change, with its reason. The production-line changes are recorded as subsequent_approved_deltas in pr6_real_paper_freeze.json. This file is not deployment approval.",
   "files": {
     "execution/paper_broker_v2.py": {
       "prior_sha256": "8653d2026c93673184ca1cb4e8813106e6e67e1e6e1bbe074423f49081060532",
-      "sha256": "e16613df264c5a264f10682879e1f7a7dfba875dcc85faa6a04b23be2803979f",
-      "origin": "merge",
+      "sha256": "8111392ff3aca4c39fdde1e5b785061994933f98a1e2cb99bcba5fcce61079b6",
+      "origin": "fix",
       "method_updates": {
         "PaperBrokerV2._fill": {
           "prior_sha256": "fb2dcc7da0bfe8d65cdd984fed11987ed3ab298f991052c6979c82b7d4cef5c9",
@@ -45,8 +45,9 @@
         },
         "PaperBrokerV2.process_tick": {
           "prior_sha256": "e19aef0bd430afbb89e6d4f1b48e50ab21947df3447310527aa6f48090b34e2c",
-          "sha256": "caca435d98580c710afbb35ceea2c1e65ac073ba2aa58388d3dcb810e3093090",
-          "origin": "merge"
+          "sha256": "7e04c38cc738a6710c4d1b6fd3294e0759098dc20db9d17542ad5440c8fe7196",
+          "origin": "fix",
+          "reason": "Owner-approved fix (2026-10-23): per-quote equity snapshots are limited to one per account per minute while cash, positions and completeness are unchanged; any change is recorded at once. One row per quote grew a lab database by about 4.7 GB/day on staging. Fills, prices, orders and strategy rules are unchanged."
         },
         "PaperBrokerV2.restore_state": {
           "prior_sha256": "9d83461683249d08bd66946bdd06f5750bc7091da07e2c3a639900c66b304c3a",
@@ -68,7 +69,23 @@
           "sha256": "df82a92882dc62936f5814c4b65952fe04a2cab853e6223d3f8ace9dc199073b",
           "origin": "production"
         }
-      }
+      },
+      "reason": "Owner-approved fix (2026-10-23): per-quote equity snapshots are limited to one per account per minute while cash, positions and completeness are unchanged; any change is recorded at once. One row per quote grew a lab database by about 4.7 GB/day on staging. Fills, prices, orders and strategy rules are unchanged."
+    },
+    "services/native_paper_evidence.py": {
+      "prior_sha256": "3dee132be02e78c289bb0689826157a670d9e049d349f1a246d23f8ba3eb4049",
+      "sha256": "07ff0ed943dac8367799b1c3ac76aff1062aa4c4c88caf7e7cde081cee22ab9a",
+      "origin": "fix",
+      "method_updates": {
+        "observe_equity": {
+          "prior_sha256": "8b20afca4eff0cebc1cc155965491b3b5890e8108c66881ed054e06c1ff35ea1",
+          "sha256": "d3da3dc22aec45d752729f7219a169592b05e739f160e7ad58064306dc0d4527",
+          "origin": "fix",
+          "reason": "Owner-approved fix (2026-10-23): per-quote equity snapshots are limited to one per account per minute while cash, positions and completeness are unchanged; any change is recorded at once. One row per quote grew a lab database by about 4.7 GB/day on staging. Fills, prices, orders and strategy rules are unchanged."
+        }
+      },
+      "added_methods": {},
+      "reason": "Owner-approved fix (2026-10-23): per-quote equity snapshots are limited to one per account per minute while cash, positions and completeness are unchanged; any change is recorded at once. One row per quote grew a lab database by about 4.7 GB/day on staging. Fills, prices, orders and strategy rules are unchanged."
     },
     "services/native_price_action.py": {
       "prior_sha256": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",

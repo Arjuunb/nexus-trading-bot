@@ -301,3 +301,36 @@ def test_reversal_risk_uses_only_actual_new_entry_quantity(tmp_path):
     assert entry['initial_risk']==pytest.approx(event['payload']['fill']['risk_amount']/2)
     assert event['payload']['allocations'][0]['initial_risk'] is None
 
+
+
+def test_per_quote_equity_snapshots_are_limited_unless_something_material_changes(tmp_path):
+    """One row per quote grew a lab database by about 4.7 GB/day. Unchanged
+    state is recorded at most once a minute; a stale mark or a fill at once."""
+    from datetime import datetime, timedelta, timezone
+    b = broker(tmp_path); submit(b); advance(b)
+    assert b.positions()
+    start = datetime.now(timezone.utc) + timedelta(seconds=1)
+    sequence = iter(range(1, 1000))
+
+    def tick(seconds, *, mark_age=0):
+        at = start + timedelta(seconds=seconds)
+        return b.process_tick('XRPUSDT', {'bid': 99, 'ask': 100, 'mark': 100,
+            'received_at': at.isoformat(), 'event_timestamp': at.isoformat(), 'sequence': next(sequence),
+            'source': 'fixture-original-public-mark',
+            'mark_event_timestamp': (at - timedelta(seconds=mark_age)).isoformat()})
+
+    for second in range(59):                    # 59 quotes inside one minute, nothing changes
+        tick(second)
+    assert len(events(b, 'EQUITY_OBSERVED')) == 1
+    tick(60)                                    # the interval has passed
+    assert len(events(b, 'EQUITY_OBSERVED')) == 2
+    tick(61, mark_age=120)                      # the mark went stale: completeness changed
+    assert events(b, 'EQUITY_OBSERVED')[-1]['payload']['completeness'] == 'UNKNOWN'
+    assert len(events(b, 'EQUITY_OBSERVED')) == 3
+    submit(b, 'sell', 1, reduce_only=True)
+    assert tick(62)['events']                   # the close fills on this quote
+    assert not b.positions()
+    assert len(events(b, 'EQUITY_OBSERVED')) == 4
+    b.equity_observation_interval_s = 0         # 0 keeps the every-quote behaviour
+    tick(63); tick(64)
+    assert len(events(b, 'EQUITY_OBSERVED')) == 6

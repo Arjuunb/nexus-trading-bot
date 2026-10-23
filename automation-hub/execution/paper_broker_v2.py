@@ -50,6 +50,10 @@ class PaperBrokerV2:
     configurable fraction of its reported volume.  That avoids claiming
     impossible price improvement or liquidity.
     """
+    #: Per-quote equity snapshots: at most one per this many seconds while cash,
+    #: positions and completeness are unchanged (any change is recorded at once).
+    equity_observation_interval_s = 60.0
+
     def __init__(self, path: str | Path, *, starting_balance: float = 10_000.0,
                  leverage: float = 1.0, fee_rate: float = 0.0004,
                  spread_bps: float = 2.0, slippage_bps: float = 3.0,
@@ -694,7 +698,8 @@ class PaperBrokerV2:
                     )
             source_evidence.observe_equity(self, {symbol:{'price':mark,
                 'timestamp':quote.get('mark_event_timestamp'), 'source':quote.get('source')}},
-                observed_at=received.isoformat(), commit=False)
+                observed_at=received.isoformat(), commit=False,
+                minimum_interval_seconds=self.equity_observation_interval_s)
             self._c.commit()
         return {
             "symbol": symbol, "events": events,

@@ -4,7 +4,8 @@ Two successor records apply, in order, on top of pr6_real_paper_freeze.json:
 1. data/task6_acceptance_read_only_delta.json (the Strategy Intelligence line);
 2. data/production_integration_delta.json (that line merged onto the
    production line: each entry names its prior hash, its new hash and whether
-   it is byte-identical to the production commit or the union of both lines).
+   it is byte-identical to the production commit, the union of both lines,
+   or a named owner-approved fix with its reason).
 """
 import json
 
@@ -15,7 +16,7 @@ ALLOWED_METHODS = {
     'execution/paper_broker_v2.py': {'PaperBrokerV2.__init__', 'PaperBrokerV2.account'},
     'services/price_action_governance.py': {'PriceActionJournalStore.__init__'},
 }
-INTEGRATION_ORIGINS = {'production', 'merge'}
+INTEGRATION_ORIGINS = {'production', 'merge', 'fix'}
 
 
 def proposal(root):
@@ -36,9 +37,12 @@ def integration(root):
     for path, change in value['files'].items():
         assert change['prior_sha256'] != change['sha256'], path
         assert change['origin'] in INTEGRATION_ORIGINS, path
+        # A fix is never anonymous: it carries the reason it was approved.
+        assert change['origin'] != 'fix' or change.get('reason'), path
         for name, update in change.get('method_updates', {}).items():
             assert update['prior_sha256'] != update['sha256'], (path, name)
             assert update['origin'] in INTEGRATION_ORIGINS, (path, name)
+            assert update['origin'] != 'fix' or update.get('reason'), (path, name)
         for name, added in change.get('added_methods', {}).items():
             assert added['origin'] in INTEGRATION_ORIGINS, (path, name)
     return value
