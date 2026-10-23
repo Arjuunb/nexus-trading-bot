@@ -320,6 +320,41 @@ class RevisionMatchTests(unittest.TestCase):
                     self.assertFalse(lin["main"])
 
 
+@unittest.skipUnless(os.geteuid() == 0, "the collector refuses to run without root")
+class DroppedSessionTests(unittest.TestCase):
+    """The failure seen on the VPS: the SSH session dropped mid-run."""
+
+    def test_hangup_and_dead_terminal_do_not_stop_the_run(self):
+        import signal
+        with tempfile.TemporaryDirectory() as out:
+            proc = subprocess.Popen(
+                [sys.executable, "-I", os.path.join(HERE, "collect_p0_evidence.py"), "--out", out,
+                 "--sample-seconds", "12", "--sample-interval", "3", "--walk-budget", "4", "--walk-deadline", "2"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            deadline = time.time() + 60
+            while time.time() < deadline and not any(f.endswith(".partial.json") for f in os.listdir(out)):
+                time.sleep(0.2)
+            self.assertTrue(any(f.endswith(".partial.json") for f in os.listdir(out)), "partial results saved early")
+            proc.send_signal(signal.SIGHUP)      # what a dropped SSH session delivers
+            proc.stderr.close()                  # ...and the terminal is gone
+            proc.wait(timeout=180)
+            self.assertEqual(proc.returncode, 0)
+            files = os.listdir(out)
+            finals = [f for f in files if f.endswith(".json") and ".partial" not in f]
+            self.assertEqual(len(finals), 1, files)
+            self.assertFalse(any(".partial" in f for f in files), files)
+            with open(os.path.join(out, finals[0])) as fh:
+                ev = json.load(fh)
+            self.assertFalse(ev["partial"])
+            self.assertIn("resources", ev)
+            log = next(f for f in files if f.endswith(".progress.log"))
+            with open(os.path.join(out, log)) as fh:
+                text = fh.read()
+            self.assertIn("step resources: done", text)
+            self.assertIn("finished:", text)
+            proc.stdout.close()
+
+
 class AnalyzerSmokeTests(unittest.TestCase):
     def test_report_renders_from_partial_evidence(self):
         ev = {"schema": C.SCHEMA, "host": "vps", "started_at": "t0", "finished_at": "t1",

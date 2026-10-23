@@ -32,6 +32,8 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -127,13 +129,44 @@ class Runner:
         return out.stdout if out.returncode == 0 else ""
 
 
+# Progress goes to the terminal AND to a log file beside the output, so a dropped
+# SSH session neither stops the run nor hides how far it got.
+_PROGRESS = {"path": None}
+_AFTER_STEP = []
+
+
+def log(msg):
+    line = f"{utcnow()} {msg}"
+    if _PROGRESS["path"]:
+        try:
+            with open(_PROGRESS["path"], "a") as fh:
+                fh.write(line + "\n")
+        except OSError:
+            pass
+    try:
+        print(line, file=sys.stderr, flush=True)
+    except (OSError, ValueError):
+        # The terminal is gone. Swap the stream so shutdown does not fail on
+        # flushing it (which would end the run with exit code 120).
+        sys.stderr = open(os.devnull, "w")
+
+
 def step(report, name, fn, *args, **kwargs):
     started = time.monotonic()
+    log(f"step {name}: started")
     try:
         report[name] = fn(*args, **kwargs)
     except Exception as exc:  # noqa: BLE001 -- one failed step never stops the others
         report[name] = {"error": f"{type(exc).__name__}: {clip(exc, 300)}"}
-    report.setdefault("_step_seconds", {})[name] = round(time.monotonic() - started, 2)
+    seconds = round(time.monotonic() - started, 2)
+    report.setdefault("_step_seconds", {})[name] = seconds
+    failed = isinstance(report[name], dict) and "error" in report[name]
+    log(f"step {name}: {'FAILED (recorded, continuing)' if failed else 'done'} in {seconds}s")
+    for hook in _AFTER_STEP:
+        try:
+            hook(report)
+        except Exception as exc:  # noqa: BLE001
+            log(f"could not save partial results: {type(exc).__name__}")
     return report[name]
 
 
@@ -163,7 +196,9 @@ def containers(run: Runner):
     ids = run.docker(["ps", "-a", "--no-trunc", "--format", "{{.ID}}"]).split()
     if not ids:
         return []
-    rows = json.loads(run.docker(["inspect", "--size", *ids], timeout=180))
+    # No --size: computing every container's full root filesystem size makes the
+    # Docker daemon walk all image layers. Disk use comes from `system df` instead.
+    rows = json.loads(run.docker(["inspect", *ids], timeout=120))
     out = []
     for c in rows:
         state, host = c.get("State") or {}, c.get("HostConfig") or {}
@@ -576,8 +611,12 @@ def resources(conts, prod_name, opts):
     main_pid = next((c["pid"] for c in conts if c["name"] == prod_name), None)
     samples = []
     end = time.monotonic() + opts.sample_seconds
+    next_note = time.monotonic() + 60
     while True:
         samples.append(snapshot(cgroups, main_pid))
+        if time.monotonic() >= next_note:
+            log(f"  sampling: {len(samples)} samples, {max(0, int(end - time.monotonic()))}s left")
+            next_note += 60
         if time.monotonic() >= end:
             break
         time.sleep(min(opts.sample_interval, max(0.0, end - time.monotonic())))
@@ -1114,6 +1153,8 @@ def main(argv=None):
     ap.add_argument("--skip-resources", action="store_true")
     opts = ap.parse_args(argv)
 
+    # A dropped SSH session sends SIGHUP; finish the run instead of dying with it.
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
     if os.geteuid() != 0:
         print("Run as root (sudo): volume paths and container /proc entries are root-only.", file=sys.stderr)
         return 2
@@ -1137,6 +1178,26 @@ def main(argv=None):
     if any(out_dir == f or out_dir.startswith(f.rstrip("/") + "/") for f in forbidden):
         print(f"Refusing to write inside a data volume or Docker storage: {out_dir}", file=sys.stderr)
         return 2
+    os.makedirs(out_dir, exist_ok=True)
+    if shutil.disk_usage(out_dir).free < 100 * 2**20:
+        print("Refusing to write: less than 100 MiB free at the output directory.", file=sys.stderr)
+        return 3
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    final_path = os.path.join(out_dir, f"nexus-p0-evidence-{stamp}.json")
+    partial_path = os.path.join(out_dir, f"nexus-p0-evidence-{stamp}.partial.json")
+    _PROGRESS["path"] = os.path.join(out_dir, f"nexus-p0-evidence-{stamp}.progress.log")
+
+    def save_partial(rep, partial=True):
+        # Written after every step and replaced atomically, so an interrupted run
+        # still leaves everything collected up to that point.
+        tmp = partial_path + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({**rep, "partial": partial}, fh, indent=1, default=str)
+        os.replace(tmp, partial_path)
+
+    _AFTER_STEP.append(save_partial)
+    log(f"collector {SCHEMA} pid {os.getpid()}; output {final_path}")
+    save_partial(report)
     step(report, "images", images, run, {c.get("image_id") for c in conts})
     step(report, "running_source", running_source, conts)
     step(report, "checkouts", checkout_state, run, conts)
@@ -1152,15 +1213,13 @@ def main(argv=None):
         step(report, "docker_stats_once", lambda: [json.loads(l) for l in run.docker(
             ["stats", "--no-stream", "--format", "{{json .}}"], timeout=60).splitlines() if l.strip()])
     report["finished_at"] = utcnow()
-    os.makedirs(out_dir, exist_ok=True)
-    import shutil
-    if shutil.disk_usage(out_dir).free < 100 * 2**20:
-        print("Refusing to write: less than 100 MiB free at the output directory.", file=sys.stderr)
-        return 3
-    path = os.path.join(out_dir, f"nexus-p0-evidence-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json")
-    with open(path, "w") as fh:
-        json.dump(report, fh, indent=1, default=str)
-    print(path)
+    save_partial(report, partial=False)
+    os.replace(partial_path, final_path)     # the complete file appears only when finished
+    log(f"finished: {final_path}")
+    try:
+        print(final_path, flush=True)
+    except (OSError, ValueError):
+        sys.stdout = open(os.devnull, "w")
     return 0
 
 
