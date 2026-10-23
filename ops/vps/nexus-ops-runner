@@ -31,6 +31,7 @@ DISABLED=/etc/nexus-ops/disabled
 TRUSTED=/etc/nexus-ops/trusted-checks
 MAX_BYTES=524288
 TIME_LIMIT=1800
+UPLOAD_LIMIT=120
 
 say() { printf '%s\n' "$*"; }
 refuse() { say "nexus-ops: refused: $*"; exit 3; }
@@ -74,11 +75,12 @@ fi
 mkdir -p "$BASE/scripts" "$BASE/work/$op" "$LOGDIR"
 chmod 700 "$BASE" "$LOGDIR"
 
-exec 9>"$BASE/lock"
-flock -n 9 || refuse "another operation is still running"
-
+# Receive and verify the script BEFORE taking the one-at-a-time lock, with a time limit on the
+# upload, so a request that never finishes sending cannot block other operations.
 tmp=$(mktemp "$BASE/incoming.XXXXXX") || refuse "cannot create a temporary file"
-head -c $((MAX_BYTES + 1)) > "$tmp"
+if ! timeout "$UPLOAD_LIMIT" head -c $((MAX_BYTES + 1)) > "$tmp"; then
+    rm -f "$tmp"; refuse "the script did not arrive within $UPLOAD_LIMIT seconds"
+fi
 size=$(stat -c %s "$tmp")
 if [ "$size" -gt "$MAX_BYTES" ] || [ "$size" = 0 ]; then rm -f "$tmp"; refuse "script is empty or larger than $MAX_BYTES bytes"; fi
 got=$(sha256sum "$tmp" | cut -d' ' -f1)
@@ -90,6 +92,9 @@ if [ "$mode" = check ]; then
         refuse "this exact $op script (${got%"${got#????????????}"}…) is not trusted for the check key; the owner approves it once with 'trust-checks apply'"
     fi
 fi
+
+exec 9>"$BASE/lock"
+if ! flock -n 9; then rm -f "$tmp"; refuse "another operation is still running"; fi
 script="$BASE/scripts/$got.sh"
 mv -f "$tmp" "$script"
 

@@ -1,4 +1,4 @@
-# ops/vps/test/pipeline_test.sh, 2026-10-23, main key + check key with owner-trusted fingerprints (trust-checks)
+# ops/vps/test/pipeline_test.sh, 2026-10-23, main key + check key with owner-trusted fingerprints; script received and verified before the lock
 == hello through the full path (workflow script -> ssh -> forced command -> sudo -> runner)
 PASS  hello exit 0
 PASS  hello shows disk

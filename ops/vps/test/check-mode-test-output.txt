@@ -50,6 +50,14 @@ PASS  check mode refuses even when trusted: selftest -
 PASS  refused requests never start a run
 PASS  check mode needs a request
 PASS  main key path still runs anything approved (no trust file needed)
+== a request that never finishes sending cannot block other operations (Codex P2)
+PASS  real runner limits uploads to 120 s
+PASS  an approved operation runs while a check-key upload hangs
+PASS  the hanging upload is cut off at the limit
+PASS  the runner gave up after the limit, not when the sender did
+PASS  approved-mode uploads are limited too
+PASS  hung uploads never start a run
+PASS  no temporary upload files left behind
 == trust-checks: generated list is current, and apply/show work
 PASS  trust-checks.sh matches the current check scripts
 PASS  one fingerprint per listed check (9)

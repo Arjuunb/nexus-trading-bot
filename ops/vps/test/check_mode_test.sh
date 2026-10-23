@@ -83,6 +83,24 @@ out=$(sh "$T/runner" --check < /dev/null 2>&1); printf '%s' "$out" | grep -q "ex
 out=$(sh "$T/runner" "run p1b-stop-staging verify $H $C 108" < ops/vps/operations/hello.sh 2>&1)
 printf '%s' "$out" | grep -q ', approved)' && ok "main key path still runs anything approved (no trust file needed)" || bad "approved mode: $out"
 
+echo "== a request that never finishes sending cannot block other operations (Codex P2)"
+sed -i 's/^UPLOAD_LIMIT=.*/UPLOAD_LIMIT=2/' "$T/runner"
+grep -q '^UPLOAD_LIMIT=120$' ops/vps/nexus-ops-runner && ok "real runner limits uploads to 120 s" || bad "upload limit missing"
+start=$(date +%s)
+( sleep 15 ) | { sh "$T/runner" --check "run hello - $H $C 201" > "$T/hang.out" 2>&1; date +%s > "$T/hang.end"; } &
+hang=$!
+sleep 0.5
+out=$(sh "$T/runner" "run p1b-stop-staging verify $H $C 202" < ops/vps/operations/hello.sh 2>&1)
+printf '%s' "$out" | grep -q ', approved)' && ! printf '%s' "$out" | grep -q "another operation" \
+    && ok "an approved operation runs while a check-key upload hangs" || bad "approved run blocked: $out"
+wait $hang
+grep -q "did not arrive within 2 seconds" "$T/hang.out" && ok "the hanging upload is cut off at the limit" || bad "hang: $(cat "$T/hang.out")"
+[ $(( $(cat "$T/hang.end") - start )) -lt 8 ] && ok "the runner gave up after the limit, not when the sender did" || bad "upload limit not applied"
+( sleep 15 ) | sh "$T/runner" "run hello - $H $C 203" > "$T/hang2.out" 2>&1
+grep -q "did not arrive within 2 seconds" "$T/hang2.out" && ok "approved-mode uploads are limited too" || bad "$(cat "$T/hang2.out")"
+grep -q 'run=201\|run=203' "$T/log/runs.log" && bad "a hung upload started a run" || ok "hung uploads never start a run"
+ls "$T/state"/incoming.* >/dev/null 2>&1 && bad "temporary upload files left behind" || ok "no temporary upload files left behind"
+
 echo "== trust-checks: generated list is current, and apply/show work"
 sh ops/vps/make-trust-checks.sh "$T/fresh.sh" >/dev/null
 cmp -s "$T/fresh.sh" ops/vps/operations/trust-checks.sh && ok "trust-checks.sh matches the current check scripts" \
