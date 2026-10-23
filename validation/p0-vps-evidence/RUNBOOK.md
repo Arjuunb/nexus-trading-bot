@@ -22,16 +22,16 @@ If a process is listed, wait for it to finish instead of starting another.
 Do **not** `git pull` inside `/opt/nexus-trading-bot`: that is the production
 checkout and must not change. Fetch the single file instead.
 
-Expected SHA-256: `4a2a13828ce3cad08fa07d9a7836f17688b98fa566ca5c97cc1f4b3d56180c74`
-(pinned to commit `27bba32075909e8d0d203881a45729a81c9e0cd2`).
+Expected SHA-256: `aaa0457d17fcf5a796ef91abdfd0d3925b2e7026f9fd188471a1c8f0518141a9`
+(pinned to commit `2f076294b72ae2d4feb0e33f5f420fa520ed20b2`).
 
 **Option A — download on the VPS (simplest):**
 
 ```bash
 sudo install -d -m 700 /root/p0-evidence
 sudo curl -fsSL -o /root/p0-evidence/collect_p0_evidence.py \
-  https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/27bba32075909e8d0d203881a45729a81c9e0cd2/validation/p0-vps-evidence/collect_p0_evidence.py
-echo "4a2a13828ce3cad08fa07d9a7836f17688b98fa566ca5c97cc1f4b3d56180c74  /root/p0-evidence/collect_p0_evidence.py" | sudo sha256sum -c -
+  https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/2f076294b72ae2d4feb0e33f5f420fa520ed20b2/validation/p0-vps-evidence/collect_p0_evidence.py
+echo "aaa0457d17fcf5a796ef91abdfd0d3925b2e7026f9fd188471a1c8f0518141a9  /root/p0-evidence/collect_p0_evidence.py" | sudo sha256sum -c -
 df -h /                                                 # note free space before
 ```
 
@@ -41,7 +41,7 @@ The `sha256sum -c` line must print `OK`. If it does not, stop.
 
 ```bash
 git fetch origin claude/beautiful-faraday-0nbitn
-git show 27bba32075909e8d0d203881a45729a81c9e0cd2:validation/p0-vps-evidence/collect_p0_evidence.py > collect_p0_evidence.py
+git show 2f076294b72ae2d4feb0e33f5f420fa520ed20b2:validation/p0-vps-evidence/collect_p0_evidence.py > collect_p0_evidence.py
 sha256sum collect_p0_evidence.py                        # must equal the value above
 scp collect_p0_evidence.py ubuntu@<vps-address>:/tmp/
 ```
@@ -51,7 +51,7 @@ Then on the VPS:
 ```bash
 sudo install -d -m 700 /root/p0-evidence
 sudo install -m 600 /tmp/collect_p0_evidence.py /root/p0-evidence/
-echo "4a2a13828ce3cad08fa07d9a7836f17688b98fa566ca5c97cc1f4b3d56180c74  /root/p0-evidence/collect_p0_evidence.py" | sudo sha256sum -c -
+echo "aaa0457d17fcf5a796ef91abdfd0d3925b2e7026f9fd188471a1c8f0518141a9  /root/p0-evidence/collect_p0_evidence.py" | sudo sha256sum -c -
 df -h /                                                 # note free space before
 ```
 
@@ -118,3 +118,21 @@ before sharing if you prefer; nothing in it is a credential.
 
 Run step 2 again about 24 hours later with `--sample-seconds 60`. Comparing the
 two files gives measured daily growth per database, backup folder and volume.
+
+## 5. Follow-up: one-minute database measurement (2026-10-23)
+
+The first run could not size the staging `v2_source_evidence` table (fixed in `2f07629`). This run skips the
+10-minute resource sampling and takes about a minute. On the VPS:
+
+```bash
+sudo curl -fsSL -o /root/p0-evidence/collect_p0_evidence.py \
+  https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/2f076294b72ae2d4feb0e33f5f420fa520ed20b2/validation/p0-vps-evidence/collect_p0_evidence.py
+echo "aaa0457d17fcf5a796ef91abdfd0d3925b2e7026f9fd188471a1c8f0518141a9  /root/p0-evidence/collect_p0_evidence.py" | sudo sha256sum -c -
+sudo sh -c 'setsid nohup python3 -I /root/p0-evidence/collect_p0_evidence.py --out /root/p0-evidence --skip-resources > /root/p0-evidence/run-followup.log 2>&1 < /dev/null &'
+sleep 75; sudo sh -c 'tail -n 2 /root/p0-evidence/*.progress.log'
+sudo sh -c 'cp /root/p0-evidence/nexus-p0-evidence-*Z.json /tmp/' && sudo chown ubuntu /tmp/nexus-p0-evidence-*
+df -h /
+```
+
+On your computer: `scp -i ~/.ssh/id_ed25519 'ubuntu@<vps-address>:/tmp/nexus-p0-evidence-*Z.json' ~/Downloads/`
+and attach the two newest `.json` files.

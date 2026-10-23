@@ -1,191 +1,218 @@
-# Nexus Proposal 01 — P0 Read-Only VPS Operational Evidence
+# Nexus Proposal 01 — P0 VPS Operational Evidence Report
 
-**Date:** 2026-10-22 · **Phase:** P0 only · **Baseline:** `NEXUS_P01_PERFORMANCE_AND_RETIREMENT_AUDIT.md`, `validation/p01-audit/`
-**Status:** evidence collector built, tested and rehearsed against a live app; **the VPS run itself is pending**,
-because the VPS cannot be reached from this environment. Nothing on the VPS was touched.
+**Date:** 2026-10-23 · **Phase:** P0 (read-only) · **Baseline:** `NEXUS_P01_PERFORMANCE_AND_RETIREMENT_AUDIT.md`
+**Evidence:** collector run on `vps-46469a44`, 2026-10-23 09:44:18 → 09:54:57 UTC, every step succeeded.
+Collector `f9f51d9` (SHA-256 `ef243cdf…94097`); evidence file 562,564 bytes, SHA-256
+`c8d99d147644889b373f2992006d55f6e44eac1c2cd7b6dc9dc8061b3a9f0309`. The raw evidence file is **not**
+committed (public repository); this report summarizes it.
 
-No deployment, source-code change, configuration change, restart, deletion or database scan was made.
-New files are evidence tooling and documentation only, under `validation/p0-vps-evidence/`.
+**Nothing was changed on the VPS.** No deployment, restart, configuration change, deletion or database
+write. Free disk was 18 GiB before and after the run.
 
-Labels: **[REPO]** recorded in this repository's history or docs · **[CODE]** read in the deployed-lineage
-source (`215c96c`) · **[LOCAL]** measured in the sandbox · **[PENDING]** needs the VPS run.
+Labels: **[MEASURED]** from the evidence file · **[CODE]** read in the running commit's source ·
+**[ESTIMATE]** derived, with method stated · **[HYPO]** needs further measurement.
 
 ---
 
 ## 0. Summary
 
-1. **VPS access from here is blocked.** The environment's network policy denies `trade-logx.com`
-   (HTTPS CONNECT refused) and `57.129.155.230:22`, and no SSH identity exists in this session.
-   Earlier Task 6 work hit the same limit. The host-level evidence therefore has to be gathered from
-   your trusted SSH terminal, as all previous VPS evidence was.
-2. **I built a read-only collector for that run** (`validation/p0-vps-evidence/collect_p0_evidence.py`)
-   plus an analyzer that turns its output into the evidence report and settles B1–B8 automatically.
-   It is validated: 15/15 tests, size estimates within 3.5% of SQLite's exact page counts, and a
-   rehearsal against a live app (24 databases, 1.0 s, zero files created or changed, app healthy).
-3. **Repository history already answers part of P0** — five earlier on-the-box measurements show the
-   **PA and SMC lab runtimes were the main CPU and memory consumers** on the VPS (97–157% CPU, memory
-   exhaustion after five hours). One root cause they named is **still present** on the deployed
-   lineage: the SMC runtime rebuilds its full 800-bar analysis every 5 s regardless of whether a new
-   candle has closed. [REPO] [CODE]
-4. **B1 is one command away**, because `scripts/deploy.sh` tags every production image as
-   `nexus-trading-bot-app:<branch>-<commit>` and bakes `GIT_COMMIT` into it. **B2 is at risk**: the
-   deployment guide tells the operator to run `docker image prune -a` after deploys, which deletes every
-   unused image, including the previous app image needed for rollback. [REPO]
-5. **B8 is confirmed at the documentation level**: the in-app nightly backup writes to the same volume,
-   and the only manual procedure in the guide writes to `/root/tradexa-backups` on the same host.
-   No off-host copy exists in code or docs. Runtime confirmation is [PENDING].
+1. **Production runs exactly `215c96c`** (Guardian lineage), confirmed three independent ways; staging runs
+   exactly `f8778ed` (main lineage). 23 earlier production images are retained for rollback. [MEASURED]
+2. **Staging is the dominant load and the disk-growth source.** The staging API sits at its 1-CPU and
+   1.5 GiB limits, reads **~220 MiB/s** from disk continuously (51.2 TB read since Oct 18), and its two lab
+   databases grew to **31 GiB in 6.5 days**. 93% of each file is one append-only table,
+   `v2_source_evidence`, which the staging code writes an `EQUITY_OBSERVED` row into **on every market
+   quote**. Production does not have that code. [MEASURED] [CODE]
+3. **Production's Python process is saturated.** It uses ~1.07 CPU cores continuously (a single Python
+   process cannot do much more), with 62 threads; one thread takes 41.5% of it. The **Journal Recorder's last
+   pass took 341 s** (interval 30 s) and **Guardian's last cycle took 21.5 s** (interval 15 s) — both run
+   back-to-back. Two requests hit nginx's 90 s timeout (504) in the sampled hour. [MEASURED]
+4. **Production has no recent backup.** In-app nightly backups are disabled (`HUB_DAILY_REPORT_HOUR=-1`
+   also disables retention pruning); the newest in-app snapshot is **Sept 25**, the newest manual archive
+   **Oct 7**. Every copy is on the same disk; nothing is copied off the server. [MEASURED] [CODE]
+5. **Production memory is high and unbounded:** 4.16 GiB process memory, 7.88 GiB peak since Oct 17, no
+   container limit, no swap, 5.2 GiB host memory available. [MEASURED]
+6. **Disk:** 17.50 GiB free (82% used). Reclaimable without touching any database: ~12.4 GiB of unused
+   Docker images plus an 11.1 GiB build cache. [MEASURED]
+7. **All protected assets are running:** 3 of 3 trading instances, Adaptive MTF XRPUSDT bot, SMC Agent
+   (session in `manual_approval`), Guardian, Journal. [MEASURED]
+8. **Collector defects found and fixed** (§9): one query type scanned indexes (bounded to 2 s each, no
+   locks); sparse-key tables were overcounted. My earlier statement that the first run "left no file" was
+   wrong — the run completed; the copy command's `*` was expanded without root permission.
 
-**Recommended next approved action (approved 2026-10-23):** run the collector on the VPS, detached,
-per `validation/p0-vps-evidence/RUNBOOK.md`, and send me the JSON. The first attempt (Oct 23 09:44 UTC)
-was cut off by an SSH connection reset before it wrote output; see §1.1. Free disk was 18 GiB on
-Oct 23, down from 32 GiB on Oct 19.
+## 1. Blocker status
 
----
+| ID | Blocker | Status | Evidence |
+|---|---|---|---|
+| B1 | Production source revision | **RESOLVED: `215c96c`** | Image tag `nexus-trading-bot-app:guardian-215c96c…`; `/health` commit `215c96c`, branch `codex/guardian-vps-integration`, deployed 2026-10-09T00:59Z; 17 source-file fingerprints match exactly; `/opt/nexus-trading-bot` HEAD `215c96c`, 0 modified files |
+| B2 | Rollback images retained | **RESOLVED: retained** | 24 production app images; previous release `93f5f2d` (image `7aa91b705676`, Oct 7) and 22 older ones present |
+| B3 | Per-container CPU/RAM/I/O | **RESOLVED (one 10-min window)** | §3 |
+| B4 | 17.16 GB staging PA file by table | **RESOLVED (by subtraction)** | `v2_source_evidence` 15.48 GiB of 16.57 GiB (93%); §5 |
+| B5 | Disk-space drop | **RESOLVED** | Staging lab databases (+31 GiB since Oct 16), Task 6 artifacts, images and build cache; §4 |
+| B6 | Lab symbols/timeframes/modes | **RESOLVED** | §8 |
+| B7 | Production ledger backend | **RESOLVED: Supabase** | `[startup] ledger backend = SupabaseLedger (Supabase active: True)` |
+| B8 | Off-host backup and restore test | **CONFIRMED GAP** | No off-host copy or schedule; newest backup Oct 7; §7 |
 
-## 1. Access attempt (facts)
+## 2. Identity and rollback [MEASURED]
 
-| Attempt | Result |
-|---|---|
-| TCP `57.129.155.230:22` from this sandbox | Unreachable |
-| `GET https://trade-logx.com/health` (and `www.`, `api.`) | Denied by the environment's outbound network policy |
-| SSH identity in this session | None |
-| GitHub (repository, PRs, Actions) | Reachable — used below |
+| Container | Image / revision | Started | Restarts | OOM | CPU limit | Memory limit |
+|---|---|---|---|---|---|---|
+| nexus-trading-bot-app-1 (production) | `215c96c` | Oct 17 17:56 | 0 | no | none | none |
+| nexus-trading-bot-nginx-1 | nginx 1.27-alpine | Sept 25 | 0 | no | none | none |
+| staging api | `f8778ed` (`customer-workspace-candidate`) | Oct 18 07:45 | 0 | no | 1 CPU | 1.5 GiB |
+| staging research-worker / postgres / ingress | RC3 images | Oct 17–21 | 0 | no | 1 / 1 / 0.25 CPU | 512 / 512 / 96 MiB |
+| `pa-replay-2025` (exited) | `724927c` (Sept 16) | — | — | — | — | **mounts the production data volume read-write**; restart policy `no` |
 
-No request reached the VPS.
+Production's container restarted on Oct 17 with the same image deployed on Oct 9 (not a redeploy).
+Configuration seen (non-secret values): `HUB_PA_POLL=600`, `HUB_SMC_POLL=5`, `HUB_DAILY_REPORT_HOUR=-1`,
+`HUB_AUTH_MODE=supabase`; master key and previous master key are set.
 
-### 1.1 Operator run log
+## 3. Resources — 10 minutes, 41 samples [MEASURED]
 
-| When (UTC) | What happened | Observed by the operator |
-|---|---|---|
-| 2026-10-23 09:44 | Collector downloaded from the pinned commit `f9f51d9`; checksum `OK`; started in the foreground | Login banner: Ubuntu **26.04.1 LTS**, kernel **7.0.0-34**, load **4.08**, memory **58%**, swap 0%, `/` **81.7%** of 95.85 GB, "System restart required". `df -h /`: **96G size, 79G used, 18G free (82%)** |
-| 09:44–10:00 | SSH session ended with `Connection reset by peer` during the run | The collector printed nothing while sampling and wrote output only at the end, so it stopped with the session and left no file |
-| 10:00 | Reconnected; no output file present | Load **2.96**, memory **59%**, `/` 81.5%; `df -h /` still **18G free** — the interrupted run consumed no disk |
+Host: 6 CPUs, busy **39%** average (≈2.3 cores; p95 40%), iowait 1.75%, steal 0.02%. CPU pressure (PSI
+"some") 16–19%. Memory available **5.2 GiB** of 11.4 GiB; swap 0. Disk `sda`: **read 220.6 MiB/s**,
+write 1.2 MiB/s, utilisation 26–32%. Load average 3.1–3.3.
 
-Free-disk trend from all readings so far: 32 GiB (Oct 19) → 28 GiB (Oct 20) → ~19 GiB (Oct 22) →
-**18 GiB (Oct 23 09:44)**. The fall slowed to about 1 GiB over the most recent day.
-
-Fix (commit `27bba32`, SHA-256 `4a2a1382…80c74`): the collector now ignores hang-up signals, survives a
-vanished terminal, logs timestamped progress to `<stamp>.progress.log`, saves partial results after every
-step, and is started detached (`setsid nohup`) per the updated runbook. It also no longer asks Docker for
-per-container root-filesystem sizes, which made the daemon walk every image layer. A new test reproduces
-the failure (hang-up plus closed terminal mid-run) and the run completes with a full file.
-
-## 2. Blocker status
-
-| ID | Blocker | Status now | What is already known | What settles it in the VPS run |
-|---|---|---|---|---|
-| B1 | Production source revision | **PENDING** (method ready) | `deploy.sh` tags images `<branch>-<commit>` and sets `GIT_COMMIT`; `/health` returns it. Commit `215c96c` (Oct 9) says the deployed runtime was then `93f5f2d`. The production container started Oct 17. [REPO] | Image tags + `GIT_COMMIT`, `/health` deploy info, and **git blob fingerprints of 17 source files read from the running container**, matched against every commit. Locally this identified `215c96c` and `f8778ed` exactly. [LOCAL] |
-| B2 | Rollback images retained | **AT RISK** | `DEPLOYMENT_VPS.md` instructs `docker image prune -a` once new containers are healthy. [REPO] | Full image list with tags, creation dates and `GIT_COMMIT` per image |
-| B3 | Per-container CPU/RAM/I/O | **PENDING** | Earlier on-the-box measurements in §3 | cgroup v2 sampling of every container for 5–10 min, host CPU busy/iowait/**steal**, PSI, disk I/O, top app threads |
-| B4 | 17.16 GB staging PA file by table | **PENDING** (method validated) | Staging lacks the five PA journal fixes; production's file was 78% `pa_journal_revisions` on Sept 15. [REPO] | Per-table row and size estimates, plus the sampled share of duplicate-revision reason codes and a rowid→date growth curve |
-| B5 | Cause of the ~13 GiB disk drop | **PENDING** | Candidates: nightly backups (7 full copies, same disk), Task 6 snapshot copies, preloaded images, Docker build cache. [REPO] | `docker system df` (images, build cache, volumes), volume and host-directory walks, **bytes by last-modified day**, 25 largest files per location |
-| B6 | PA/SMC symbols, timeframes, modes | **PENDING** | — | Latest `pa_sessions` / `smc_sessions` rows (no balances) |
-| B7 | Ledger backend in production | **PENDING** | Production volume name `nexus-migration-tradexa-data-cutover-20260913`; the guide documents a SQLite→Supabase migration. [REPO] | `[startup] ledger backend = …` log line; presence of `SUPABASE_URL` (yes/no only); `ledger_mirror.db` existence |
-| B8 | Off-host backup and restore test | **CONFIRMED GAP in code/docs**; runtime [PENDING] | In-app backup: same volume, keep 7. Manual guide: same host. [CODE] [REPO] | Backup listings, manifest errors, truncated-copy detection by header, cron/systemd schedules classified by keyword |
-
-## 3. Earlier production measurements recovered from history [REPO]
-
-These were measured on the VPS by previous sessions and recorded in commit messages.
-
-| Date | Measured on the VPS | Cause found | Fix | In production lineage | In staging (`f8778ed`) |
+| Container | CPU (% of one core) avg / p95 | Memory avg / peak | Process memory | Disk read / write | Since start |
 |---|---|---|---|---|---|
-| Sept 11 (`cbf47ae`) | Host **97% CPU**, SSH locked out; app container **157% CPU** hours earlier. Commit describes a **two-core** VPS | PA and SMC lab supervisors tick every 5 s; each SMC tick rebuilds an 800-bar structure engine and nine-candidate ladder — 59 of 60 ticks recompute an unchanged 5m result | Made intervals tunable (`HUB_SMC_POLL`, `HUB_PA_POLL`, default 5). Commit states the real fix (cache against the last closed candle) was left for later | Yes | Yes |
-| Sept 13 (`e824bfa`) | Thread dump: app "burning six cores", stream threads queued on one lock | Quote hand-off took the market hub's global lock | Lock removed from quote path | Yes | Yes |
-| Sept 14 (`2bbcc2f`) | Memory ceiling hit after **5 h**; **~500 MB read and ~500 MB written every 30 s**, a core at **104%**, memory **+30 MB/s**. Ending two open lab sessions → flat memory, **1–7% CPU** | Lab `state()` re-read every candidate/order/funding row on each tick and each `bot-status` poll | Bounded reads | Yes | Yes |
-| Sept 15 (`42de6d0`…) | `pa_journal_revisions`: **72,443 rows, 690 MB of an 888 MB** file; lab refused orders on write timeouts | Duplicate journal revisions from drifting counters | Five fixes + audited prune tool | Yes | **No** |
-| Oct 1 (`536b3bf`) | Thread sample: ~10 request threads re-reading a year of candles; Journal Recorder **~1 min per pass** waiting for the interpreter | Full-series reads for last-n candles (99.8 ms → 1.3 ms) | Bounded read | Yes | **No** |
+| **production app** | **107.5 / 112.1** | 4.77 GiB / **7.88 GiB** | **4.16 GiB** | 0.14 / 0.81 MiB/s | 9.6 GB read, **502 GB written** (5.7 days) |
+| **staging api** | **95.5 / 100.1 (capped)** | **1.50 / 1.50 GiB (at limit)** | 1.07 GiB | **220.5** / 0.36 MiB/s | **51.2 TB read**, 536 GB written (5.1 days) |
+| staging research-worker | 14.8 / 16.3 | 41 MiB | 30 MiB | 0 / 0 | — |
+| staging postgres | 2.8 / 3.1 | 112 MiB | 12 MiB | 0 / 0 | — |
+| nginx, ingress, certbot | < 3 | < 40 MiB | — | 0 | — |
 
-Confirmed in the deployed source [CODE]: `SMCStrategyLabRuntime._run` still calls `tick()` every
-`poll_seconds` while a live session exists, and `tick()` always calls `live_visual_state(limit=800)`;
-there is no check for "no new closed candle since the last tick". The closed-candle callback already
-triggers a tick on each close, so the timer path is redundant most of the time.
+Inside production: 62 threads; busiest thread **41.5%** of the process's CPU, next four 7–8% each.
+Application-recorded timings: **Journal Recorder last pass 341.3 s** (configured every 30 s, 0 errors);
+**Guardian last cycle 21,450 ms** (configured every 15 s; 14,359 cycles since restart). Thread names are not
+visible at OS level, so which component owns the 41.5% thread is [HYPO] — the Journal Recorder is the
+strongest candidate.
 
-The CPU-count discrepancy (two cores on Sept 11, "six cores" on Sept 13) suggests the VPS was resized;
-the collector records `nproc` and host memory.
+## 4. Disk [MEASURED]
 
-## 4. The collector
+`/` 95.85 GiB: **78.33 GiB used, 17.50 GiB free**.
 
-`validation/p0-vps-evidence/collect_p0_evidence.py` — Python 3 standard library only, run as root on the
-host. Runbook: `validation/p0-vps-evidence/RUNBOOK.md`. Expected SHA-256 is printed there.
-
-**What it collects**
-
-| Area | Items |
-|---|---|
-| Identity (B1, B2) | Containers (state, start time, restarts, OOM, memory limits, mounts, compose labels, allow-listed env values), all images with tags and `GIT_COMMIT`, production checkout HEAD and modified-file count (no fetch, no lock), git blob fingerprints of running source via `/proc/<pid>/root` |
-| Disk (B5) | `df` bytes and inodes, `docker info`, `docker system df`, bounded metadata walks of every Docker volume and of `/opt/nexus-trading-bot`, `/home/ubuntu`, `/root`, `/var/log`, `/tmp`, container log directories; bytes by modified day; largest files |
-| Resources (B3) | `/proc` + cgroup v2 samples: per-container CPU, memory current/peak, anon, I/O bytes, pids, OOM kills; host busy/iowait/steal, MemAvailable, swap, PSI, disk throughput/utilisation; production app's busiest threads |
-| App performance | nginx access logs (last 60 min): requests/min, top paths, error paths incl. 499/504; 5× `/health` timing; `/status/public` (component states, 90-day uptime, incidents); `[startup]` lines; 24 h log keyword counts (tracebacks, locked, disk full) |
-| Databases (B4, B6, B7) | Every SQLite file: header (pages, free pages, truncation), WAL/SHM sizes, open file descriptors; per-table row and size estimates incl. indexes; latest row times; instances, lab sessions, Guardian heartbeat, Journal Recorder last pass (no balances) |
-| Backups (B8) | In-app `backups/` and `/root/tradexa-backups`: snapshots, sizes, manifests, errors, encryption flag, header-consistency of each copied database; restore functions present in the running image; cron/systemd schedules classified by keyword only |
-
-**Safety design**
-
-- Docker access goes through an allow-list: `ps`, `inspect`, `logs`, `info`, `version`, `image ls/inspect`,
-  `volume ls/inspect`, `system df`, `stats --no-stream`. `exec`, `run`, `rm`, `prune`, `cp`, `restart`,
-  `compose`, etc. are refused before anything runs (tested).
-- SQLite files are opened `mode=ro&immutable=1`. Local testing showed this is the only read mode that
-  leaves a WAL database untouched: with the app connected, `readonly_shm=1` modified the `-shm` file;
-  with the app's connections closed, plain `mode=ro` **created** both `-wal` and `-shm`, and
-  `readonly_shm=1` created `-wal`. Run as root on the VPS, a created sidecar would be root-owned and
-  could stop the app writing that database. Cost: readings reflect the last checkpoint (the WAL size
-  is reported with every file). Evidence: `validation/p0-vps-evidence/validation-runs/sqlite-open-mode-check.txt`.
-- No full-table scans: row counts come from `MIN/MAX(rowid)` plus 48–256 single-row lookups per table,
-  each query capped at 2 s, each database at 30 s.
-- Lowest CPU and I/O priority; metadata walks capped (200,000 entries / 60 s each, 8 min total).
-- Output never contains secret values, balances, P&L, client IPs or log text other than `[startup]` lines.
-- Writes only its output JSON, refuses to write inside a data volume or Docker storage, and checks free
-  space first.
-
-**Validation [LOCAL]**
-
-| Check | Result |
-|---|---|
-| Unit and safety tests (`test_p0_evidence.py`) | **15/15 pass** (incl. dropped-SSH-session reproduction) |
-| Live WAL database: bytes of `.db`, `-wal`, `-shm` before/after inspection | Identical; no file created |
-| Concurrent writer during inspection | 0 lock/busy errors |
-| Size estimates vs exact `dbstat` (150 MB synthetic PA file, real schema) | `pa_journal_revisions` 0.999×, `pa_evaluations` 0.998×, `pa_activity` 1.035×, all tables + indexes 1.021× |
-| Duplicate-revision share from sample | 0.78 sampled vs 0.80 true |
-| Source fingerprint → commit | `215c96c` and `f8778ed` matched exactly, lineage identified correctly |
-| Rehearsal against the running Guardian-lineage app | 24 databases in 1.0 s, 0 errors, 0 files created, 0 ownership changes, app healthy after; instances read from `ledger.db` and `adaptive_lab.db` |
-| Full run without Docker | Completes in 13 s, failed steps recorded, nothing crashes |
-
-**Known limits:** Docker's own size calculations (`inspect --size`, `system df`) run inside `dockerd`
-at normal priority (metadata only); values in young WAL-only tables (e.g. a fresh Guardian heartbeat)
-can be behind by up to one checkpoint; `/status/public` exists only on the Guardian lineage.
-
-## 5. Protected dependencies (item 6)
-
-Confirmed in the deployed source [CODE]; the collector confirms presence, size, open handles and latest
-activity of each store at runtime [PENDING].
-
-| Asset | Stores that must be preserved | Who reads them |
+| Location | GiB | Contents |
 |---|---|---|
-| Trading Instances (3 paper instances) | `ledger.db` (or Supabase + `ledger_mirror.db`), `decisions.db`, `cycles.db`, `skipped.db`, `account.db` | Instance manager, Guardian (integrity `MAIN`), Journal Recorder, Calendar |
-| Adaptive MTF Trend Pullback | `adaptive_lab.db`, `adaptive_lab_decisions.db`, `adaptive_lab_journal.db`; strategy `adaptive_trend_pullback` | Adaptive lab manager, Guardian (`ADAPTIVE_LAB`), Journal Recorder, Calendar |
-| SMC Agent | `smc_strategy_paper.db`, `smc_agent_journal.db`, `smc_agent_policy.json` | SMC runtime (Agent subclasses it), Guardian, Journal Recorder, Calendar |
-| Guardian | `guardian.db` (append-only, delete-blocked) | Guardian only |
-| Historical journals | `trade_records.db`, `journal.db`, JSON memory/learning stores | Journal, Guardian, Calendar |
-| Price Action history (retain) | `price_action_paper.db`, `price_action_research.db` | PA runtime, Guardian, Journal Recorder, Calendar |
+| Docker volumes | 40.80 | **staging api-state 32.90** (PA db 16.57, SMC db 14.46, Task 6 recovery snapshot 1.79); production 5.60; **pre-cutover volume `nexus-migration-tradexa-data` 2.18 (not used by any container)**; staging postgres 0.10 |
+| Docker images | 15.82 | 36 images; **12.44 GiB reclaimable** (not used by any container), incl. 22 production app images |
+| Docker build cache | 11.14 | 159 entries (Docker reports 0 B reclaimable; actual savings from pruning are uncertain) |
+| `/home/ubuntu` | 5.36 | manual backups 3.64; staging release 0.91; migration tarballs 0.43; Task 6 image zips 0.32 |
+| `/var/log` | 0.51 | journald 0.40 |
+| `/root` | 0.22 | Oct 6 manual backup |
+| Not walked (OS, packages) | ≈4.4 | — |
 
-The P01 retirement audit script's protected list still omits `trade_records.db`, `guardian.db`,
-`adaptive_lab*.db` and `smc_agent_journal.db` (P01 finding, unchanged).
+**Growth** [ESTIMATE from row timestamps]:
 
-## 6. Hypotheses the VPS run will confirm or refute
+| Store | Growth |
+|---|---|
+| Staging PA + SMC databases | 31.0 GiB since sessions started Oct 16 22:19 → **4.8 GiB/day average**; current rate [HYPO] (see §10) |
+| Production live databases | **≈30 MiB/day** total (Guardian ≈12, PA ≈8, SMC ≈6, Adaptive MTF ≈2, SMC Agent ≈1) |
+| Production stale stores | `decisions.db` Core V2 shadow table 1.09 GiB — no rows after Sept 18; `shadow_research.db` 0.97 GiB — no rows after Sept 10 |
 
-| # | Hypothesis | Deciding evidence |
+Free-disk readings: 32 GiB (Oct 19) → 28 (Oct 20) → ~19 (Oct 22) → 17.5 (Oct 23 09:44). At 2.5–4.8
+GiB/day the remaining space lasts roughly **4–7 days**. The login banners at 09:44, 10:00 and 10:11
+(81.7% → 81.5% → 81.5%) suggest growth may have slowed; §10 measures it.
+
+## 5. Databases [MEASURED] [ESTIMATE]
+
+**Staging** (lab sessions PA and SMC, both BTCUSDT 5m automatic, started Oct 16 22:19):
+
+| File | Size | `v2_source_evidence` (by subtraction) | Other large tables |
+|---|---|---|---|
+| `price_action_paper.db` | 16.57 GiB | **15.48 GiB (93%)** | `pa_evaluations` 1,775 rows × **260 KiB** = 452 MiB; `active_decision_receipts` 416 MiB; `pa_journal_revisions` 22,090 rows (210 MiB, 83% of sample `MATERIAL_EVIDENCE_CHANGED` — the duplicate-revision bug, unfixed on staging) |
+| `smc_strategy_paper.db` | 14.46 GiB | **13.48 GiB (93%)** | `smc_evaluations` 1,780 × **394 KiB** = 687 MiB; receipts 310 MiB |
+
+Cause [CODE, `f8778ed`]: `PaperBrokerV2.process_quote` (`execution/paper_broker_v2.py:651`) calls
+`observe_equity`, which inserts an `EQUITY_OBSERVED` row into `v2_source_evidence` for every quote; the table
+is append-only with delete-blocking triggers. Staging evaluation rows are ~150–260× larger than production's
+(260–394 KiB vs 1.8–15 KiB). **This is the code line the PA-retirement branch is built on.**
+
+**Production** (data volume 5.60 GiB; ≈4.0 GiB live databases):
+
+| File | Size | Main content |
 |---|---|---|
-| H1 | Production runs a Guardian-lineage commit between `93f5f2d` and `215c96c` or a later local commit | Fingerprint match + image tag |
-| H2 | `pa_journal_revisions` is most of the 17.16 GB staging file, mostly `MATERIAL_EVIDENCE_CHANGED` | Table estimates + sampled reason codes |
-| H3 | The disk drop since Oct 19 is mainly Task 6 snapshot copies, staging backups and images/build cache, not production growth | Bytes by day per location; `docker system df` |
-| H4 | The SMC and PA lab runtimes remain the largest steady CPU consumers in the production app | Container CPU + app thread shares + lab session modes |
-| H5 | No earlier production image is retained | Image list |
-| H6 | Production backups exist only on the VPS | Backup listings + schedules |
+| `decisions.db` | 1.15 GiB | Core V2 shadow decisions 227,450 rows (1.09 GiB), stale since Sept 18 |
+| `shadow_research.db` | 0.97 GiB | 19,152 shadow decisions, stale since Sept 10 |
+| `price_action_paper.db` | 0.86 GiB | `pa_journal_revisions` 534 MiB (64%), `pa_journal_entries` 176 MiB, `pa_activity` 163k rows |
+| `smc_strategy_paper.db` | 0.34 GiB | `smc_evaluations` 15,584 rows (240 MiB), `smc_activity` 181k rows (92% stream events) |
+| `guardian.db` | 0.31 GiB | `guardian_events` 85,668 rows (217 MiB), growing ≈3,500 rows/day |
+| others | < 0.1 GiB each | ledger (pre-Supabase, last trade Aug 5), journals, adaptive lab, trade records |
 
-## 7. Recommended next approved action
+All database headers are consistent with their file sizes (no truncation).
 
-1. **Run the collector on the VPS now** (P0, read-only) following `RUNBOOK.md`; send me the JSON.
-   I will analyze it, commit the factual evidence report, and update B1–B8.
-2. While it runs, avoid deploys and image pruning, so B1/B2 reflect the current state.
-3. After the evidence is in, I will propose the P1 disk-safety step with exact items and byte counts
-   for your approval. Nothing beyond P0 will start without explicit approval.
+## 6. Application performance [MEASURED]
+
+- nginx, last 60 min: 360 requests (6/min — at most one dashboard tab open); **5 × 504 timeouts**:
+  `/markets/watchlist` ×4, `/research/price-action/bot-status` ×1. Most 4xx were unauthenticated requests,
+  including scanner probes (`/.git/config`).
+- `/instances` responses average ~170 KB; `/strategy/performance` ~34 KB.
+- `/health`: production 15, 21, 15, **422**, 136 ms; staging first call 3,783 ms then 9–45 ms.
+- Public status page (90 days): API 99.985%, **workers 87.2%**, database 99.94%, market data 100%.
+  Notable incidents: **all 3 workers down 48.7 h from Oct 15 17:18** (started with a 5-minute ledger
+  outage; recovered with the Oct 17 restart); all workers down 22.6 h from Sept 25; API not answering
+  3 min twice on Oct 18 without a restart.
+- Production log keywords (24 h): 2 tracebacks; 0 locked, disk-full or persistence-blocked messages.
+
+## 7. Backups and restore readiness [MEASURED] [CODE]
+
+| Location | Contents | Newest |
+|---|---|---|
+| Production volume `backups/` | 3 sealed (encrypted) snapshots Sept 24–25, ~260 MiB each; archive of pruned PA revisions (514 MiB) | **Sept 25** |
+| `/home/ubuntu/tradexa-backups` | manual `tar.gz` archives Sept 13, Sept 28, Oct 7 (×2), ~1.15 GiB each | **Oct 7** |
+| `/root/tradexa-backups` | manual archive | Oct 6 |
+| Staging | none (Task 6 recovery snapshot 1.79 GiB, Oct 21) | — |
+| Off-host | **none**; only standard OS cron/timers scheduled | — |
+
+- Nightly backups stopped because `HUB_DAILY_REPORT_HOUR=-1` stops `DailyTasks` entirely, which also stops
+  retention pruning and the retune check. [CODE]
+- **Do not simply re-enable it:** each nightly run copies every database (≈4 GiB now) and keeps 7, all on
+  this disk — about 28 GiB, more than is free.
+- Restore code in the production image: `restore_to` and `restore_check` present, sealed archives
+  supported. Restoring a sealed archive requires the master key — its off-host safekeeping is unverified.
+- Supabase holds the instance ledger; the provider's backup plan was not checked.
+- Manual archives were not opened or verified (that would mean reading GBs).
+
+## 8. Protected dependencies [MEASURED]
+
+| Asset | State |
+|---|---|
+| Trading Instances | **3 of 3 running** (status page); stored in Supabase |
+| Adaptive MTF Trend Pullback | XRPUSDT 5m **running**; BTCUSDT 5m stopped (since Sept 24); journal growing |
+| SMC Strategy Lab + SMC Agent | session `8babc86251`, BTCUSDT 5m, **`manual_approval` — SMC Agent is the approver**; latest agent decision Oct 23 01:00 |
+| Price Action Lab | session `e2838f758c`, BTCUSDT 5m automatic, active since Sept 13; latest fill Oct 23 09:27 |
+| Guardian | running; latest event 09:35 |
+| Journal | `trade_records` updated 09:33; records: PA_LAB 174, INSTANCE 192, ADAPTIVE_LAB 49, SMC_LAB 2, legacy 114 |
+
+The production app holds 21 open handles to the Price Action database files and 12 to the SMC ones.
+
+## 9. Corrections and collector defects
+
+- **First run:** completed at 09:54:57. Its file was missed because `sudo cp /root/…/*.json` expands `*`
+  as the unprivileged user. The current runbook uses `sudo sh -c '…'`.
+- **Row-range query:** `SELECT MIN(rowid), MAX(rowid)` is not optimised by SQLite and scanned an index
+  per table, stopped by the 2 s per-query cap (the whole database step took 14 s, lowest I/O priority, no
+  locks). This contradicted the "no full-table scans" guarantee. Fixed in `2f07629`: two single-seek
+  statements, and `rowid >= ?` seeks for samples (test: a 300,000-row table inspects within 50 ms per query).
+- **Sparse keys:** a 1.5 MiB file was estimated at 1.8 billion rows; fixed (spacing from seek gaps;
+  exact page counts used for files ≤ 64 MiB). Fixed collector SHA-256 `aaa0457d…41a9`; 18/18 tests pass.
+
+## 10. Recommended next actions
+
+**Immediate (P0, read-only, ~1 minute):** run the fixed collector once with `--skip-resources` (runbook §5)
+to measure `v2_source_evidence` row count, row size, event types and its growth curve — that tells us whether
+staging is still adding GiBs per day — and fetch the 10:12 run's file.
+
+**P1 proposals — each needs your explicit approval; none started:**
+
+| # | Action | Gain | Risk | Rollback |
+|---|---|---|---|---|
+| P1-A | **Off-host copy of production data now** (consistent SQLite backups or the app's sealed backup, copied to your computer; confirm the master key is stored off-host) | The newest backup is 16 days old and none exists on another machine | Low (reads, one temporary file) | n/a |
+| P1-B | **Stop staging growth and load:** pause the two staging lab sessions, or stop the staging API container | Frees ~1 CPU core, 1.5 GiB RAM, ~220 MiB/s disk reads; halts staging growth | Pauses Task 6 staging acceptance; production untouched | Resume sessions / start container; data retained |
+| P1-C | **Reclaim Docker space:** remove unused images except the rollback set (`215c96c`, `93f5f2d`, plus one older); prune build cache | Up to ~12 GiB (+ build cache, uncertain) | Slower next build; removed images rebuildable from git | Rebuild from commit |
+| P1-D | Keep nightly in-app backups **off** until off-host copies and retention fit the disk | Avoids filling the disk | — | — |
+
+**Deferred to later phases (evidence-backed):** raise `HUB_SMC_POLL` from 5 s (SMC decides on candle close
+anyway); make the Journal Recorder incremental; fix Guardian's scans; investigate production's 4.2 GiB
+process memory; decide on the stale 2.1 GiB of Core V2 and shadow-research data; remove or keep the
+`pa-replay-2025` container (it mounts production data); port PA Lab retirement to the `215c96c` line — and
+never deploy the `f8778ed` line to production until its per-quote evidence writes are bounded.
