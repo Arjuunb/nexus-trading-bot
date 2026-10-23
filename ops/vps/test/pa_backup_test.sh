@@ -98,7 +98,6 @@ out=$(sh "$C" check); code=$?; echo "$out" | grep -E "\[(PASS|FAIL)\]|^SAFE|^BLO
 has "WAL gate passes because the backup holds exactly those frames" "$out" "\[PASS\] no committed WAL transactions waiting for a checkpoint, or all of them inside the verified backup"
 has "backup gate passes" "$out" "\[PASS\] verified, restore-tested backup of the current files"
 has "verdict SAFE FOR SEPARATE DELETION APPROVAL" "$out" "^SAFE FOR SEPARATE DELETION APPROVAL"
-out=$(sh "$C" delete); has "delete still disabled" "$out" "deletion is disabled in this version"
 [ "$(fingerprint)" = "$before" ] && ok "still nothing changed" || bad "files changed"
 out=$(sh "$B" start); has "second start does not redo a verified backup" "$out" "already exists"
 
@@ -114,6 +113,26 @@ rm -f "$STAGING_PA_TEST_BACKUP/manifest.json" "$STAGING_PA_TEST_BACKUP"/price_ac
 out=$(sh "$B" start); out=$(wait_done); wait
 has "backup FAILED when the source changed" "$out" "RESULT: FAILED"
 [ -f "$STAGING_PA_TEST_BACKUP/manifest.json" ] && bad "manifest written despite failure" || ok "no manifest after a failed backup"
+
+echo "== 8. the full VPS sequence: WAL outstanding -> backup -> check SAFE -> owner-approved delete of all 3 files"
+make_db
+rm -f "$STAGING_PA_TEST_BACKUP/manifest.json" "$STAGING_PA_TEST_BACKUP"/price_action_paper.tar.* "$STAGING_PA_TEST_STATE/checked.json"
+[ -f "$SV/price_action_paper.db-wal" ] && [ -f "$SV/price_action_paper.db-shm" ] && ok "db, -wal and -shm all present" || bad "sidecars missing"
+sh "$B" start >/dev/null; out=$(wait_done); has "backup OK" "$out" "RESULT: OK"
+out=$(sh "$C" check); has "check SAFE" "$out" "^SAFE FOR SEPARATE DELETION APPROVAL"
+out=$(sh "$C" delete); code=$?
+[ "$code" = 0 ] && ok "delete exits 0" || bad "delete exit $code"
+for f in price_action_paper.db price_action_paper.db-wal price_action_paper.db-shm; do
+    [ -e "$SV/$f" ] && bad "$f still there" || ok "$f deleted"
+    printf '%s' "$out" | grep -q "deleted $SV/$f " && ok "$f listed as deleted" || bad "$f not reported"
+done
+[ -f "$SV/smc_strategy_paper.db" ] && ok "staging SMC kept" || bad "staging SMC removed"
+ls "$STAGING_PA_TEST_BACKUP"/price_action_paper.tar.* >/dev/null 2>&1 && ok "backup archive kept" || bad "backup archive removed"
+# the kept backup really restores the deleted data, including the WAL-only rows
+mkdir -p "$T/after"; a=$(ls "$STAGING_PA_TEST_BACKUP"/price_action_paper.tar.*)
+case "$a" in *.zst) zstd -dc "$a" | tar -C "$T/after" -xf - ;; *) gzip -dc "$a" | tar -C "$T/after" -xf - ;; esac
+n=$(python3 -c "import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute('select count(*) from v2_source_evidence').fetchone()[0])" "$T/after/price_action_paper.db")
+[ "$n" = 30400 ] && ok "restore from the kept backup after deletion: all 30,400 rows" || bad "restored rows: $n"
 
 echo "== 7. production untouched"
 [ -f "$PV/price_action_paper.db" ] && ok "production PA file present" || bad "production PA file missing"

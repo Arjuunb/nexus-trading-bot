@@ -71,6 +71,8 @@ has "verdict BLOCKED" "$out" "^BLOCKED: no committed WAL transactions"
 has "SMC listed as excluded" "$out" "  smc_strategy_paper.db  "
 has "exact scope printed" "$out" "deletion would remove exactly: $SV/price_action_paper.db, $SV/price_action_paper.db-wal, $SV/price_action_paper.db-shm"
 [ "$(fingerprint)" = "$before" ] && ok "check changed no byte, size, time or inode in the volume" || bad "check modified the volume"
+out=$(sh "$S" delete); has "delete refuses while gates fail" "$out" "^BLOCKED: no committed WAL"
+[ "$(fingerprint)" = "$before" ] && ok "refused delete changed nothing" || bad "refused delete modified the volume"
 
 echo "== 2. WAL frame count matches SQLite's own count"
 mine=$(printf '%s' "$out" | sed -n 's/.*committed frames \([0-9]*\);.*/\1/p')
@@ -112,9 +114,8 @@ has "WAL gate passes after checkpoint" "$out" "\[PASS\] no committed WAL transac
 has "backup gate passes with verified manifest" "$out" "\[PASS\] verified, restore-tested backup"
 has "verdict SAFE (for separate approval)" "$out" "^SAFE FOR SEPARATE DELETION APPROVAL"
 has "states it is not permission" "$out" "not permission to delete"
-out=$(sh "$S" delete); code=$?
-[ "$code" = 2 ] && ok "delete exits 2 even when every gate passes" || bad "delete exit $code"
-has "delete is disabled in this version" "$out" "deletion is disabled in this version"
+python3 -c "import json,sys; p=sys.argv[1]; d=json.load(open(p)); d['time']-=25*3600; json.dump(d,open(p,'w'))" "$STAGING_PA_TEST_STATE/checked.json"
+out=$(sh "$S" delete); has "delete refuses a check older than 24 hours" "$out" "older than 24 hours"
 [ -f "$SV/price_action_paper.db" ] && ok "nothing deleted" || bad "database was deleted"
 
 echo "== 5. backup tampering and mismatched source are caught"
@@ -127,6 +128,49 @@ out=$(sh "$S" check); has "backup of different files fails" "$out" "made from di
 echo "== 6. production database is never a target"
 hasnt "production path not in scope" "$(sh "$S" check | grep 'deletion would remove')" "$PV"
 [ -f "$PV/price_action_paper.db" ] && ok "production PA file untouched" || bad "production PA file missing"
+
+echo "== 7. owner-approved deletion"
+gzip -c "$SV/price_action_paper.db" > "$STAGING_PA_TEST_BACKUP/price_action_paper.db.gz"
+python3 -I - "$SV" "$STAGING_PA_TEST_BACKUP" <<'PY2'
+import hashlib, json, os, sys
+sv, b = sys.argv[1], sys.argv[2]
+arch = os.path.join(b, "price_action_paper.db.gz")
+src = {}
+for f in ("price_action_paper.db", "price_action_paper.db-wal"):
+    p = os.path.join(sv, f)
+    if os.path.exists(p): st = os.stat(p); src[f] = {"inode": st.st_ino, "size": st.st_size, "mtime": int(st.st_mtime)}
+json.dump({"source": src, "archive": arch, "archive_bytes": os.path.getsize(arch),
+           "archive_sha256": hashlib.sha256(open(arch, "rb").read()).hexdigest(),
+           "restore_test": {"integrity_check": "ok", "at": "test"}}, open(os.path.join(b, "manifest.json"), "w"))
+PY2
+rm -f "$STAGING_PA_TEST_STATE/checked.json"
+out=$(sh "$S" delete); has "delete refuses without a reviewed check" "$out" "run 'check' first"
+out=$(sh "$S" check); has "fresh check is SAFE" "$out" "^SAFE FOR SEPARATE DELETION APPROVAL"
+chmod 600 "$SV/price_action_paper.db"
+out=$(sh "$S" delete); has "delete refuses files that changed after the check (gates still pass)" "$out" "differ from what the last 'check' reviewed"
+[ -f "$SV/price_action_paper.db" ] && ok "nothing deleted after the change" || bad "deleted after a change"
+python3 -I - "$SV" "$STAGING_PA_TEST_BACKUP" <<'PY3'
+import json, os, sys
+sv, b = sys.argv[1], sys.argv[2]
+m = json.load(open(os.path.join(b, "manifest.json")))
+for f in m["source"]:
+    st = os.stat(os.path.join(sv, f)); m["source"][f] = {"inode": st.st_ino, "size": st.st_size, "mtime": int(st.st_mtime)}
+json.dump(m, open(os.path.join(b, "manifest.json"), "w"))
+PY3
+out=$(sh "$S" check); has "check SAFE again" "$out" "^SAFE FOR SEPARATE DELETION APPROVAL"
+others=$(cd "$SV" && ls -A | grep -v -x -e price_action_paper.db -e price_action_paper.db-wal -e price_action_paper.db-shm | sort | tr '\n' ' ')
+out=$(sh "$S" delete); code=$?; echo "$out" | sed -n '/-- deleting/,$p' | sed 's/^/      /'
+[ "$code" = 0 ] && ok "delete exits 0" || bad "delete exit $code"
+has "delete reports DONE" "$out" "^DONE: staging PA database deleted"
+for f in price_action_paper.db price_action_paper.db-wal price_action_paper.db-shm; do
+    [ -e "$SV/$f" ] && bad "$f still there" || ok "$f deleted"
+done
+[ "$(cd "$SV" && ls -A | sort | tr '\n' ' ')" = "$others" ] && ok "every other staging file kept" || bad "other staging files changed"
+[ -f "$STAGING_PA_TEST_BACKUP/price_action_paper.db.gz" ] && ok "backup archive kept" || bad "backup archive removed"
+[ -f "$PV/price_action_paper.db" ] && [ -f "$PV/smc_strategy_paper.db" ] && ok "production files untouched" || bad "production files changed"
+ls "$STAGING_PA_TEST_STATE"/deleted-*.json >/dev/null 2>&1 && ok "deletion receipt written" || bad "no receipt"
+[ -f "$STAGING_PA_TEST_STATE/checked.json" ] && bad "check not used up" || ok "the check approved one deletion only"
+out=$(sh "$S" delete); has "second delete refused" "$out" "BLOCKED"
 
 docker rm -f "$P-api-1" nexus-trading-bot-app-1 >/dev/null
 docker volume rm "${P}_api-state" nexus-migration-tradexa-data-cutover-20260913 >/dev/null

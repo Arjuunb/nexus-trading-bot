@@ -3,8 +3,11 @@
 #
 #   check    READ-ONLY. Verifies every safety and recovery gate and prints the exact deletion scope.
 #            Ends with "SAFE FOR SEPARATE DELETION APPROVAL" or "BLOCKED: <reasons>".
-#   delete   DISABLED in this version: re-runs every gate, then always stops without deleting.
-#            Deleting needs a separately reviewed release after the owner's explicit approval.
+#   delete   Owner-approved on 2026-10-23. Deletes ONLY when every gate passes again right now, the
+#            last 'check' (this version, under 24 h old) was SAFE, and the files are exactly what that
+#            check reviewed (inode, device, size, owner, mode, times). Each file is re-confirmed just
+#            before it is unlinked. The verified backup is kept. A receipt is written, and the check is
+#            used up (one check approves one deletion).
 #
 # Targets (only these, in the STAGING api-state volume): price_action_paper.db and its -wal / -shm.
 # Gates: staging API and every container using that volume stopped; no process holds any file in the
@@ -309,10 +312,11 @@ total = sum(i["alloc"] for i in ident.values())
 say("  deletion would remove exactly: %s" % ", ".join("%s/%s" % (DIR, f) for f in ident))
 say("  disk space it would free: %s (allocated blocks)" % gb(total))
 failed = [g[0] for g in gates if not g[1]]
-verdict = {"time": time.time(), "safe": not failed, "failed": failed, "identity": ident}
-with open(os.path.join(STATE, "verdict.json"), "w") as f: json.dump(verdict, f)
+CHECKED = os.path.join(STATE, "checked.json")
 
 if MODE == "check":
+    with open(CHECKED, "w") as f:
+        json.dump({"time": time.time(), "safe": not failed, "failed": failed, "identity": ident}, f)
     say("")
     if failed:
         say("BLOCKED: " + "; ".join(failed))
@@ -322,10 +326,52 @@ if MODE == "check":
     say("Nothing was changed. This is not permission to delete; deletion needs a separate, explicit approval.")
     sys.exit(0)
 
-# MODE == delete: every gate was re-checked above. Deleting stays disabled in this version.
+# MODE == delete (owner approved on 2026-10-23). Every gate was re-checked above, just now.
+def stop(reason):
+    say("BLOCKED: " + reason); say("Nothing was deleted."); sys.exit(2)
 if failed:
-    say("BLOCKED: " + "; ".join(failed)); say("Nothing was deleted."); sys.exit(2)
-say("BLOCKED: deletion is disabled in this version; it needs a separately reviewed and approved release")
-say("Nothing was deleted.")
-sys.exit(2)
+    stop("; ".join(failed))
+if not os.path.isfile(CHECKED):
+    stop("run 'check' first and review its result")
+prev = json.load(open(CHECKED))
+if not prev.get("safe"):
+    stop("the last 'check' was not SAFE")
+if time.time() - prev.get("time", 0) > 24 * 3600:
+    stop("the last 'check' is older than 24 hours; run 'check' again")
+if prev.get("identity") != json.loads(json.dumps(ident)):
+    stop("the files differ from what the last 'check' reviewed; run 'check' again")
+
+say("-- deleting (owner-approved)")
+free_before = free_bytes()
+deleted = []
+for f in TARGETS:
+    if f not in ident:
+        continue
+    p = os.path.join(DIR, f)
+    st = os.lstat(p)
+    want = ident[f]
+    if not stat.S_ISREG(st.st_mode) or (st.st_ino, st.st_dev, st.st_size) != (want["inode"], want["dev"], want["size"]):
+        say("PROBLEM: %s changed immediately before deletion; stopping. Deleted so far: %s" % (f, ", ".join(deleted) or "nothing"))
+        sys.exit(3)
+    os.unlink(p)
+    deleted.append(f)
+    say("  deleted %s  (%s, inode %d)" % (p, gb(want["size"]), want["inode"]))
+os.sync()
+left = [f for f in TARGETS if os.path.lexists(os.path.join(DIR, f))]
+free_after = free_bytes()
+receipt = {"time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "volume": VOLUME, "folder": DIR,
+           "deleted": {f: ident[f] for f in deleted}, "left": left,
+           "free_before": free_before, "free_after": free_after,
+           "backup": {k: MANIFEST.get(k) for k in ("archive", "archive_bytes", "archive_sha256")},
+           "backup_source_sha256": {f: v.get("sha256") for f, v in MANIFEST.get("source", {}).items()}}
+with open(os.path.join(STATE, "deleted-%s.json" % time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())), "w") as f:
+    json.dump(receipt, f, indent=1)
+os.remove(CHECKED)   # a check approves one deletion only
+if left:
+    say("PROBLEM: still present: %s" % ", ".join(left)); sys.exit(3)
+say("  free space: %s before, %s after (+%s)" % (gb(free_before), gb(free_after), gb(free_after - free_before)))
+say("  kept: the verified backup %s (%s) and every other file in the volume" % (MANIFEST.get("archive"), gb(MANIFEST.get("archive_bytes") or 0)))
+say("  receipt: %s" % os.path.join(STATE, "deleted-*.json"))
+say("DONE: staging PA database deleted. If staging is started again with the old image, its PA lab starts with an empty database.")
+sys.exit(0)
 PY
