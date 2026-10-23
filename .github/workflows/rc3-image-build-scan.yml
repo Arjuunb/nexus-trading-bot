@@ -1,0 +1,99 @@
+name: RC3 image build and scan only
+
+# First build runs on this dedicated branch; registration on main is optional.
+# Every run builds the same immutable accepted source, never the controller tree.
+on:
+  push:
+    branches: [ci/rc3-isolated-image-build]
+    paths:
+      - .github/rc3-images/**
+      - .github/workflows/rc3-image-build-scan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc3-image-build-only
+  cancel-in-progress: false
+
+jobs:
+  build-scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      HUB_AUTO_ENGINE: '0'
+      HUB_ENABLE_EXTERNAL_LIVE: '0'
+      HUB_USE_LIVE_DATA: '0'
+      HUB_RESEARCH_AUTOSTART: '0'
+      HUB_MONITOR_AGENT: '0'
+      NEXUS_SHADOW_SUPERVISED: '0'
+      OPENBLAS_NUM_THREADS: '1'
+      OMP_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - name: Require a disposable GitHub Linux amd64 runner
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = Arjuunb/nexus-trading-bot
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          test "$RUNNER_OS" = Linux
+          test "$RUNNER_ARCH" = X64
+          test "$(uname -sm)" = 'Linux x86_64'
+          test -z "${DOCKER_HOST:-}"
+          test -z "${DOCKER_CONTEXT:-}"
+      - name: Check out build controller only
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-images
+      - name: Test all build and scan gates
+        shell: bash
+        run: python3 controller/.github/rc3-images/test_build_scan.py
+      - name: Verify prior validation and actual builder resources
+        shell: bash
+        run: python3 controller/.github/rc3-images/build_scan.py preflight
+      - name: Check out accepted immutable RC3 source separately
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          ref: '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Install checksum-pinned Trivy 0.69.3
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/rc3-trivy"
+          curl --fail --location --retry 3 --proto '=https' --tlsv1.2 \
+            https://github.com/aquasecurity/trivy/releases/download/v0.69.3/trivy_0.69.3_Linux-64bit.tar.gz \
+            -o "$RUNNER_TEMP/rc3-trivy/trivy.tar.gz"
+          printf '%s  %s\n' \
+            1816b632dfe529869c740c0913e36bd1629cb7688bd5634f4a858c1d57c88b75 \
+            "$RUNNER_TEMP/rc3-trivy/trivy.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/rc3-trivy/trivy.tar.gz" -C "$RUNNER_TEMP/rc3-trivy" trivy
+          "$RUNNER_TEMP/rc3-trivy/trivy" --version > "$RUNNER_TEMP/rc3-image-evidence/trivy-version.txt"
+          printf '%s\n' "$RUNNER_TEMP/rc3-trivy" >> "$GITHUB_PATH"
+      - name: Build fresh API and worker, verify provenance, and enforce scans
+        shell: bash
+        run: python3 controller/.github/rc3-images/build_scan.py build
+      - name: Retain sanitized evidence even when a gate fails
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-image-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rc3-image-evidence/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain locally built image archives only after all gates pass
+        if: success()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-local-images-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rc3-image-archives/*.docker.tar
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7

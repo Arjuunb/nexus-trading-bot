@@ -1,0 +1,29 @@
+{
+  "build_run": 38788079327,
+  "build_controller": "ce990572de58e161e589cc934c5585d6b735160b",
+  "archive_sha256": "16a2f8fa7b365a7b324692220c2eb6bc1b0673001f17326f46b638d5f28dfea0",
+  "archive_bytes": 299097600,
+  "config_id": "sha256:9223b83d7d0ed373a991c449034e0d1f054f9cc920369463fa7360a911f9a17c",
+  "local_tag": "nexus-rc3-postgres:pg16.15-gosu1.19-go1.27.2-38788079327-1",
+  "gosu_binary_sha256": "cb10cde9e982841ef820691ea3b0a92813d0a1ac4b0470c72236a730ed627e90",
+  "gosu_commit": "6456aaa0f3c854d199d0f037f068eb97515b7513",
+  "go_version": "1.27.2",
+  "base_config_id": "sha256:81bd698b4594e751a3269e4dcd3e03a4a0ec0daf7b72e7aa1abd43cce9887542",
+  "image_artifact_id": 11999595298,
+  "image_artifact_zip_digest": "sha256:0b57d716b64ebf97cbaeabb85b52a042cc1482a5fd0437c1290db08bc94f7835",
+  "evidence_artifact_id": 11999390308,
+  "evidence_artifact_zip_digest": "sha256:0e49397a03631fb90dd3859eee29857c963b367f71312fcfb1c1c61eb6705350",
+  "target": "ghcr.io/arjuunb/nexus-trading-bot-postgres:rc3-pg16.15-gosu1.19-go1.27.2-build-38788079327",
+  "evidence_sha256": {
+    "result.json": "f31c62c46f230f842519c010df8e1171ca70f64c36b678691436c33830b1fbac",
+    "postgres-scan.json": "7b363fbb53fb8196005366e188b1354e6d8e692d04a32108a2b10eba17adf98c",
+    "scan-result.json": "2290cd2d154ee07d9415f089873ae980346b362c5e2ba89054a13467c61784a2",
+    "verified-inputs.json": "c9b521f0cf51179a588b9a79eb3cbb4f0393289c1f36c1ac238a58134b3ac25c",
+    "base-image.json": "466eee555ac6ec0123afb47f9f3d38e5725644b9e686806f50cc33a5872f3396",
+    "image.json": "aa75e1f5b82af064cce2b20688aed67ac50ada050fb27fac125be1ba8e65480d",
+    "disposable-postgres-tests.json": "d282c65ecb54392cf92792ff4505360e2435817e47233dcd996b0ba11588d8d4",
+    "trivy-db-metadata.json": "a58c7dbb27a5a81464924a2e6356f6dfbea6a79ab6aba902f70e0ad5521251bc",
+    "request.json": "ba2b35fca6e2b0961245e823703c5f96601142c623adeaf0082fbe02b591b1fe",
+    "buildkit.json": "4047bab99114d44e0957da2a50310ab57c869ad0653ef5df44bca15affe4abf4"
+  }
+}
