@@ -22,6 +22,10 @@ MIGRATIONS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "migra
 # Tenant-scoped tables that MUST carry RLS. ``tenants`` is scoped by its own id;
 # the rest by ``tenant_id``.
 TENANT_TABLES: tuple[str, ...] = ("tenants", "users", "profiles", "sessions", "user_settings")
+# Legacy shadow DDL is applied by ShadowResearchStore to its isolated SQLite
+# file. Discovery previously routed this unscoped schema into PostgreSQL.
+# Preserve the file/version for old local consumers; never apply it here.
+SQLITE_ONLY_MIGRATIONS = {"0002_shadow_research.sql"}
 
 
 @dataclass(frozen=True)
@@ -32,10 +36,10 @@ class Migration:
 
 
 def discover(directory: str = MIGRATIONS_DIR) -> list[Migration]:
-    """Return every *.sql migration, sorted by filename (== apply order)."""
+    """Return PostgreSQL migrations only, sorted by apply order."""
     out: list[Migration] = []
     for fn in sorted(os.listdir(directory)):
-        if not fn.endswith(".sql"):
+        if not fn.endswith(".sql") or fn in SQLITE_ONLY_MIGRATIONS:
             continue
         path = os.path.join(directory, fn)
         with open(path, encoding="utf-8") as f:

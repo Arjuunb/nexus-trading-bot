@@ -44,7 +44,9 @@ def test_channel_status_no_secret_leak(tmp_path, monkeypatch):
     assert "SECRET" not in str(ch.status())
 
 
-def test_senders_failsafe_when_unconfigured():
+def test_senders_failsafe_when_unconfigured(monkeypatch):
+    monkeypatch.delenv("ALERT_DISCORD_WEBHOOK", raising=False)
+    monkeypatch.delenv("ALERT_EMAIL_TO", raising=False)
     assert send_discord("", "hi") is False                 # no webhook -> False, no raise
     ch = AlertChannels(notifier=None, path=None)
     res = dispatch_alert({"title": "x", "detail": "y", "severity": "info"}, ch)
@@ -53,13 +55,14 @@ def test_senders_failsafe_when_unconfigured():
 
 # ───────────────────────── endpoints ─────────────────────────
 @pytest.fixture()
-def client(tmp_path):
+def client(tmp_path, monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import webhook_api
     from services.alerts import AlertChannels
-    webhook_api.alert_channels = AlertChannels(webhook_api.notifier, str(tmp_path / "ch.json"))
+    from services.notifier import Notifier
+    monkeypatch.setattr(webhook_api, "alert_channels", AlertChannels(Notifier("", ""), str(tmp_path / "ch.json")))
     app = FastAPI(); app.include_router(webhook_api.router)
     return TestClient(app)
 

@@ -1,0 +1,198 @@
+{
+  "evidence_source": "USER_SUPPLIED_VPS_COMMAND_OUTPUT",
+  "observed_at": "2026-10-20T22:44:53Z",
+  "remote_command_performed_by_assistant": false,
+  "stage_project": "nexus-remote-stage-rc3-28acdbc",
+  "stage_containers": [
+    {
+      "service": "research-worker",
+      "id": "14bc8b74e8a82a740c5096cf8ecd57f7bfc621fae77558a0d61d73397e395988",
+      "image": "sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1",
+      "status": "running",
+      "health": "healthy",
+      "started": "2026-10-18T07:59:28.082370303Z",
+      "restarts": 0,
+      "oom": false,
+      "user": "100:100",
+      "memory": 536870912,
+      "memory_plus_swap": 1073741824,
+      "mounts": [
+        {
+          "type": "volume",
+          "name": "nexus-remote-stage-rc3-28acdbc_datasets",
+          "target": "/datasets",
+          "read_only": true
+        },
+        {
+          "type": "volume",
+          "name": "nexus-remote-stage-rc3-28acdbc_research-state",
+          "target": "/observation",
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "service": "ingress",
+      "id": "a5fec392f8a1c314a0788d8785ac3d6f5f0ea9336484b8eae2f7ed83269e99ad",
+      "image": "sha256:959ae6b898852db82e5b29b929388e59914f42be0a8f4d44c89a4c1f53b49208",
+      "status": "running",
+      "health": "healthy",
+      "started": "2026-10-17T22:55:22.218994156Z",
+      "restarts": 0,
+      "oom": false,
+      "user": "",
+      "memory": 100663296,
+      "memory_plus_swap": 201326592,
+      "mounts": [
+        {
+          "type": "bind",
+          "source": "/home/ubuntu/nexus-rc3-staging-28acdbc/private/tls",
+          "target": "/run/fixture",
+          "read_only": true
+        },
+        {
+          "type": "bind",
+          "source": "/home/ubuntu/nexus-rc3-staging-28acdbc/release/customer-workspace/staging.customer-workspace.nginx.conf",
+          "target": "/etc/nginx/nginx.conf",
+          "read_only": true
+        }
+      ]
+    },
+    {
+      "service": "api",
+      "id": "c05db09e87da526f297414d8866bff622eb841bb6b9ce5a873be452f675e3f90",
+      "image": "sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397",
+      "status": "running",
+      "health": "healthy",
+      "started": "2026-10-18T07:45:50.477132258Z",
+      "restarts": 0,
+      "oom": false,
+      "user": "tradexa",
+      "memory": 1610612736,
+      "memory_plus_swap": 1610612736,
+      "mounts": [
+        {
+          "type": "volume",
+          "name": "nexus-remote-stage-rc3-28acdbc_datasets",
+          "target": "/datasets",
+          "read_only": true
+        },
+        {
+          "type": "volume",
+          "name": "nexus-remote-stage-rc3-28acdbc_research-state",
+          "target": "/workers/research",
+          "read_only": true
+        },
+        {
+          "type": "volume",
+          "name": "nexus-remote-stage-rc3-28acdbc_shadow-state",
+          "target": "/workers/shadow",
+          "read_only": true
+        },
+        {
+          "type": "volume",
+          "name": "nexus-remote-stage-rc3-28acdbc_api-state",
+          "target": "/var/lib/tradexa",
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "service": "postgres",
+      "id": "ea61c07993c5f7c8b5646fcfe1baab11c76af580c5a76465a13147341e5f24c3",
+      "image": "sha256:0c184f826eac85c55b6abd3ad520470cc5556870570e287997109e860dcce8f9",
+      "status": "running",
+      "health": "healthy",
+      "started": "2026-10-17T22:54:50.748506633Z",
+      "restarts": 0,
+      "oom": false,
+      "user": "",
+      "memory": 536870912,
+      "memory_plus_swap": 1073741824,
+      "mounts": [
+        {
+          "type": "volume",
+          "name": "nexus-remote-stage-rc3-28acdbc_postgres-state",
+          "target": "/var/lib/postgresql/data",
+          "read_only": false
+        }
+      ]
+    }
+  ],
+  "inspection_limit": "Four containers without a State.Health key were omitted by the original Go template. Full corrected baseline remains required.",
+  "approved_release_deployed": false,
+  "production_containers": [
+    {
+      "service": "app",
+      "id": "66f8d23f476cf6eef90801ff06526bd3010434a3ccac83b41982a93cb9bd0628",
+      "image": "sha256:d4c51634a70e88c026f4b4d6e84c1e4bf6604603bb1307217ec2f88938bbe523",
+      "started": "2026-10-17T17:56:16.549491074Z",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "oom": false,
+      "user": "tradexa",
+      "memory": 0,
+      "memory_plus_swap": 0,
+      "mounts": [
+        {
+          "name": "nexus-migration-tradexa-data-cutover-20260913",
+          "target": "/var/lib/tradexa",
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "service": "nginx",
+      "id": "0c79c95a544a0a462952c88398d1a9b80ee1bf3ae6dd45673ce575ea1553d719",
+      "image": "sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10",
+      "started": "2026-09-25T22:50:32.488827102Z",
+      "status": "running",
+      "health": "healthy",
+      "restarts": 0,
+      "oom": false,
+      "user": "",
+      "memory": 0,
+      "memory_plus_swap": 0,
+      "mounts": [
+        {
+          "type": "bind",
+          "source": "/opt/nexus-trading-bot/nginx/entrypoint/10-render-config.sh",
+          "target": "/docker-entrypoint.d/10-render-config.sh",
+          "read_only": true
+        },
+        {
+          "type": "bind",
+          "source": "/opt/nexus-trading-bot/nginx/entrypoint/20-watch-cert-reload.sh",
+          "target": "/docker-entrypoint.d/20-watch-cert-reload.sh",
+          "read_only": true
+        },
+        {
+          "name": "nexus-migration-letsencrypt",
+          "target": "/etc/letsencrypt",
+          "read_only": true
+        },
+        {
+          "type": "bind",
+          "source": "/opt/nexus-trading-bot/nginx/templates",
+          "target": "/etc/nginx/templates",
+          "read_only": true
+        },
+        {
+          "name": "nexus-trading-bot_certbot-webroot",
+          "target": "/var/www/certbot",
+          "read_only": true
+        }
+      ]
+    }
+  ],
+  "host": {
+    "memory_total_mib": 11671,
+    "memory_available_mib": 6180,
+    "swap_total_mib": 0,
+    "root_disk_size_reported": "96G",
+    "root_disk_used_reported": "69G",
+    "root_disk_available_reported": "28G",
+    "root_disk_used_percent": 72
+  }
+}

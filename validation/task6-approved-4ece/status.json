@@ -1,0 +1,247 @@
+{
+  "recorded_at": "2026-10-20T21:47:12.119867+00:00",
+  "task": 6,
+  "task_complete": false,
+  "deployment_status": "DIRECT_ARCHIVE_ROUTE_PREPARED_BLOCKED_ON_VPS_PRESERVATION_ACCESS",
+  "source_approval": {
+    "user_response": "approve",
+    "scope": "Replace pinned 0ded1cc with the concrete reviewed 4eceb97 source; all existing Task 6 target and preservation boundaries remain binding",
+    "approved": true,
+    "repository": "Arjuunb/nexus-trading-bot",
+    "commit": "4eceb973e98e1350dd625153753637629453c401",
+    "tree": "1af45a4993d83919c5007373ba8b9a27e9de5a71",
+    "source_sha256": "82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8",
+    "superseded_commit": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+    "approval_is_github_environment_review": false
+  },
+  "source_verification": {
+    "retained_files": 1468,
+    "files_rehashed": 1468,
+    "mismatches": 0,
+    "clean_detached_checkout": true,
+    "checkout": "/workspace/scratch/734bba8326aa/nexus-task6-candidate-4eceb97",
+    "manifest": "/workspace/scratch/734bba8326aa/task6-release-source-4eceb97/source-manifest.json",
+    "runtime_strategy_financial_service_or_migration_source_changed_from_task5": false
+  },
+  "release_ref": {
+    "name": "refs/heads/release/strategy-intelligence-task6-4eceb97",
+    "created": true,
+    "independent_readback_commit": "4eceb973e98e1350dd625153753637629453c401",
+    "local_request_guard_check": "PASS_WITH_EXPLICIT_SIMULATED_WORKFLOW_CONTEXT_NOT_AN_ACTUAL_BUILD"
+  },
+  "exact_source_release_validation": {
+    "run_id": 39173887337,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39173887337",
+    "head_sha": "4eceb973e98e1350dd625153753637629453c401",
+    "conclusion": "success",
+    "python_311_passed": 4553,
+    "python_312_passed": 4553,
+    "python_skipped_each": 76,
+    "postgres_passed": 31,
+    "postgres_skipped": 2,
+    "browser_passed": 165,
+    "browser_failed": 0,
+    "browser_skipped": 0,
+    "vps_acceptance": false
+  },
+  "manual_image_workflow": {
+    "name": "staging-release.yml",
+    "dispatch_available_in_connected_tools": false,
+    "fresh_dispatch_performed": true,
+    "previous_same_source_run": 39331267323,
+    "previous_same_source_conclusion": "cancelled",
+    "previous_run_has_image_artifacts": false,
+    "retry_allowed_by_source_guard": false,
+    "fresh_manual_first_attempt_required": true,
+    "images_built": true,
+    "images_scanned": true,
+    "images_published": false,
+    "api_digest": null,
+    "worker_digest": null,
+    "run_id": 39503485769,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769",
+    "status": "completed",
+    "attempt": 1,
+    "head_sha": "4eceb973e98e1350dd625153753637629453c401",
+    "initiated_by": "USER_IN_GITHUB_ACTIONS_UI",
+    "api_config_id": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+    "worker_config_id": "sha256:b16074411ac65ed2cc8c0d6981b0608eb25bebdf8445abdad1a04aa8913cda41",
+    "artifact_id": 12303500964,
+    "artifact_sha256": "bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da",
+    "artifact_expires_at": "2026-10-27T22:07:45Z",
+    "independently_verified_packet_files": 16,
+    "verified_layer_pairs": 12,
+    "conclusion": "failure",
+    "publication_guard_error": "PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED"
+  },
+  "target": {
+    "project": "nexus-remote-stage-rc3-28acdbc",
+    "release_directory": "/home/ubuntu/nexus-rc3-staging-28acdbc/release",
+    "api_memory_mib": 1536,
+    "api_memory_bytes": 1610612736,
+    "api_memory_plus_swap_bytes": 1610612736,
+    "memory_overlay_last": "intelligence-recovery-20261018/compose.memory.yaml",
+    "preserve_customer_workspace_credentials_mounts_volumes_and_existing_data": true,
+    "create_new_project": false,
+    "operator_observed_compose_bindings": {
+      "evidence": "vps-operator-bindings-20261020.txt",
+      "working_directory": "/home/ubuntu/nexus-rc3-staging-28acdbc/release/ops",
+      "config_files": [
+        "/home/ubuntu/nexus-rc3-staging-28acdbc/release/ops/staging.alpine.compose.yaml",
+        "/home/ubuntu/nexus-rc3-staging-28acdbc/release/customer-workspace/compose.customer-workspace.yaml"
+      ],
+      "environment_file": "/home/ubuntu/nexus-rc3-staging-28acdbc/private/compose.env",
+      "environment_values_read": false,
+      "effective_configuration_verified": false,
+      "memory_overlay_listed_in_labels": false
+    },
+    "current_research_worker_user": "100:100",
+    "current_api_user": "tradexa"
+  },
+  "ssh_probe": {
+    "exit_code": 255,
+    "message": "ssh: connect to host 57.129.155.230 port 22: Network is unreachable",
+    "strict_host_key_checking": true,
+    "remote_command_ran": false
+  },
+  "actual_vps_acceptance": {
+    "container_health": "EXISTING_STAGE_API_INGRESS_POSTGRES_RESEARCH_HEALTHY_OPERATOR_2026_10_20T22_44_53Z;NEW_RELEASE_NOT_RUN",
+    "authenticated_dashboard_api": "NOT_RUN",
+    "research_worker": "EXISTING_28acdbc_WORKER_HEALTHY_IN_OPERATOR_BASELINE;NEW_RELEASE_JOB_ACCEPTANCE_NOT_RUN",
+    "database_migrations_persistence_recovery": "NOT_RUN_FOR_APPROVED_RELEASE",
+    "full_prd": "NOT_RUN",
+    "insufficient_financial_evidence_abstention": "NOT_RUN_ON_VPS",
+    "restart_resource_recovery": "NOT_RUN_FOR_APPROVED_RELEASE",
+    "production_isolation_before_after": "NOT_RUN",
+    "partial_baseline": "vps-operator-baseline-20261020.json"
+  },
+  "remote_mutations_performed": false,
+  "production_mutations_performed": false,
+  "new_paper_execution_started": false,
+  "automatic_promotion_enabled": false,
+  "public_feed_activated": false,
+  "main_pulled_or_merged_in_this_continuation": false,
+  "blockers": [
+    "VPS SSH remains unreachable from this workspace and no configured SSH identity is available. Use the existing trusted operator terminal for read-only inventory.",
+    "Binding paths and a partial current container/resource/mount baseline are recorded. Complete inventory for containers without health checks, sanitized effective-config comparison, migrations and restorable backups remain required.",
+    "Actual authenticated PRD/research-worker, financial-evidence abstention, PostgreSQL/persistence/resource/restart/recovery and production-isolation acceptance are still pending."
+  ],
+  "previous_evidence": "../task6-approved-0ded/acceptance-report.md",
+  "last_rechecked_at": "2026-10-20T22:36:31.118479+00:00",
+  "fresh_manual_release_validation": {
+    "run_id": 39503485769,
+    "python_311": {
+      "passed": 4553,
+      "skipped": 76,
+      "warnings": 4,
+      "seconds": 523.51,
+      "conclusion": "success",
+      "job_id": 118906533591
+    },
+    "python_312": {
+      "passed": 4553,
+      "skipped": 76,
+      "warnings": 83,
+      "seconds": 382.5,
+      "conclusion": "success",
+      "job_id": 118906533151
+    },
+    "postgresql": {
+      "passed": 31,
+      "skipped": 2,
+      "seconds": 36.69,
+      "vps_acceptance": false
+    },
+    "browser": {
+      "passed": 165,
+      "failed": 0,
+      "skipped": 0,
+      "minutes": 5.5,
+      "original_reviewed_harness_and_assertion_guard": "success"
+    },
+    "actual_api_image": {
+      "tests": 725,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 25,
+      "image": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+      "exit_code": 0,
+      "scope": "NATIVE_DISPOSABLE_TEST_FIXTURES",
+      "services_started": false,
+      "production_access": false,
+      "passed": 700
+    }
+  },
+  "publication_gate": {
+    "job_id": 118914426007,
+    "status": "completed",
+    "environment": "ghcr-staging-release",
+    "environment_id": 24412364022,
+    "listed_reviewers": [
+      {
+        "login": "Arjuunb",
+        "id": 190428336
+      }
+    ],
+    "run_actor": {
+      "login": "Arjuunb",
+      "id": 190428336
+    },
+    "triggering_actor": {
+      "login": "Arjuunb",
+      "id": 190428336
+    },
+    "eligible_listed_distinct_reviewers": [],
+    "approved_source_guard_requires_distinct_configured_reviewer": true,
+    "approved_source_guard_requires_prevent_self_review": true,
+    "environment_configuration_read": "UNAVAILABLE_CONNECTED_FETCH_ENDPOINT_UNSUPPORTED",
+    "approval_attempted_by_assistant": false,
+    "registry_api_digest": null,
+    "registry_worker_digest": null,
+    "conclusion": "failure",
+    "guard_error": "PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED",
+    "guard_failed_at": "2026-10-20T22:17:11.3556268Z",
+    "actual_approval_history": [
+      {
+        "state": "approved",
+        "user": "Arjuunb",
+        "user_id": 190428336,
+        "environments": [
+          {
+            "name": "ghcr-staging-release",
+            "id": 24412364022
+          }
+        ]
+      }
+    ],
+    "registry_login_attempted": false,
+    "registry_push_attempted": false,
+    "failure_receipt": "publication-failure-39503485769.json",
+    "fresh_manual_run_required_after_protection_fix": true,
+    "operator_screenshot_20261020": {
+      "required_reviewers": [
+        "Arjuunb"
+      ],
+      "prevent_self_review": false,
+      "deployment_branch_policy": "SELECTED_BRANCHES_AND_TAGS",
+      "allowed_branch_pattern": "release/*",
+      "administrator_bypass": false,
+      "source": "USER_SUPPLIED_ENVIRONMENT_SETTINGS_SCREENSHOT",
+      "used_to_change_any_setting": false
+    }
+  },
+  "build_receipt": "built-images-and-scans.json",
+  "release_receipt": "release-run-39503485769.json",
+  "selected_staging_delivery": {
+    "method": "DIRECT_VERIFIED_ARCHIVE_TRANSFER_AND_LOCAL_IMMUTABLE_IMAGE_IDS",
+    "plan": "direct-archive/plan.json",
+    "source_or_built_image_changed": false,
+    "new_build_required": false,
+    "registry_publication_required_for_this_route": false,
+    "registry_publication_protection_changed": false,
+    "failed_publication_claimed_as_deployment_approval": false,
+    "authorization": "Original bounded Task 6 staging deployment request plus explicit 4eceb97 source approval",
+    "actual_vps_transfer_or_load_or_update_performed": false
+  },
+  "optional_registry_publication_blocker": "GHCR publication remains failed under its existing distinct-reviewer guard. No other reviewer is available. This registry-write operation is not part of the selected direct-archive staging route."
+}

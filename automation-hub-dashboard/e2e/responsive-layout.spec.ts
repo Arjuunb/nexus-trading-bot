@@ -127,12 +127,12 @@ test("footer distinguishes authentication failures from network outages", async 
 
 test("lab footer never falls through to the global instance when its API fails", async ({ page }) => {
   await mockApi(page);
-  await page.route("http://localhost:8000/research/price-action/bot-status", (route) =>
+  await page.route("http://localhost:8000/research/smc/bot-status", (route) =>
     route.fulfill({ status: 500, body: "" }),
   );
-  await page.goto("/#/price-action-lab");
+  await page.goto("/#/smc-strategy-lab");
 
-  await expect(page.locator(".ticker")).toContainText("PRICE ACTION LAB");
+  await expect(page.locator(".ticker")).toContainText("SMC STRATEGY LAB");
   await expect(page.locator(".ticker")).toContainText("API_ERROR · HTTP 500");
   await expect(page.locator(".ticker")).not.toContainText("Instance mode");
 });
@@ -181,16 +181,16 @@ test("header notification and account panels fit the viewport", async ({ page })
 test("cached lab status is marked stale on failure and recovers after a successful poll", async ({ page }) => {
   await mockApi(page);
   let fail = false;
-  await page.route("http://localhost:8000/research/price-action/bot-status", (route) => fail
+  await page.route("http://localhost:8000/research/smc/bot-status", (route) => fail
     ? route.fulfill({ status: 503, json: { detail: "Persistence blocked" } })
     : route.fallback());
-  await page.goto("/#/price-action-lab");
-  await expect(page.locator(".ticker")).toContainText("SYNCHRONIZED");
+  await page.goto("/#/smc-strategy-lab");
+  await expect(page.locator(".ticker")).toContainText("SYNCING");
   fail = true;
   await expect(page.locator(".ticker")).toContainText("DEGRADED · API_ERROR · HTTP 503", { timeout: 12000 });
   await expect(page.locator(".ticker")).toContainText("STALE");
-  await expect(page.locator(".ticker")).not.toContainText("SYNCHRONIZED");
+  await expect(page.locator(".ticker")).not.toContainText("SYNCING");
   fail = false;
-  await expect(page.locator(".ticker")).toContainText("SYNCHRONIZED", { timeout: 15000 });
+  await expect(page.locator(".ticker")).toContainText("SYNCING", { timeout: 15000 });
   await expect(page.locator(".ticker")).not.toContainText("DEGRADED");
 });

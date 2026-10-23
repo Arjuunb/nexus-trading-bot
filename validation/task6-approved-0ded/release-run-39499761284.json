@@ -1,0 +1,95 @@
+{
+  "recorded_at": "2026-10-20T21:41:02.220Z",
+  "approved_source": {
+    "commit": "0ded1cc4cb77268cd4120224fa1f0d629589bd6b",
+    "tree": "9a8b1fcc22e8647452047971d950f6dda53f780a",
+    "source_sha256": "b58399c346abb3416579cade8dd2df159a7bb197cfb0e1c36ef1dad7d0045d9c"
+  },
+  "run": {
+    "id": 39499761284,
+    "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39499761284",
+    "event": "workflow_dispatch",
+    "branch": "release/strategy-intelligence-task6-0ded1cc",
+    "attempt": 1,
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-10-20T21:22:01Z",
+    "updated_at": "2026-10-20T21:35:12Z"
+  },
+  "root_python_311": {
+    "passed": 4448,
+    "skipped": 76,
+    "warnings": 4,
+    "seconds": 516.2
+  },
+  "root_python_312": {
+    "passed": 4448,
+    "skipped": 76,
+    "warnings": 86,
+    "seconds": 498.81
+  },
+  "disposable_postgresql": {
+    "passed": 31,
+    "skipped": 2,
+    "seconds": 38.1,
+    "actual_vps_database": false
+  },
+  "browser": {
+    "status": "LAUNCHER_FAILED_BEFORE_TESTS",
+    "error": "TypeError: The \"file\" argument must be of type string. Received undefined",
+    "timestamp": "2026-10-20T21:35:06.6740786Z",
+    "root_cause": "The reviewed wrapper spreads the original webServer array into an object. The resulting object has no command; Playwright passes undefined to its process launcher."
+  },
+  "build": "SKIPPED",
+  "image_security_scan": "NOT_RUN",
+  "publication": "SKIPPED",
+  "deployment": "NOT_ATTEMPTED",
+  "log_excerpts": {
+    "python311": [
+      "2026-10-20T21:34:27.8616096Z 4448 passed, 76 skipped, 4 warnings in 516.20s (0:08:36)"
+    ],
+    "python312_and_failure": [
+      "2026-10-20T21:34:02.0309495Z 4448 passed, 76 skipped, 86 warnings in 498.81s (0:08:18)",
+      "2026-10-20T21:34:46.9046107Z 31 passed, 2 skipped in 38.10s",
+      "2026-10-20T21:35:06.6740786Z TypeError: The \"file\" argument must be of type string. Received undefined"
+    ]
+  },
+  "proposed_replacement": {
+    "approved": false,
+    "commit": "4eceb973e98e1350dd625153753637629453c401",
+    "tree": "1af45a4993d83919c5007373ba8b9a27e9de5a71",
+    "source_sha256": "82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8",
+    "retained_files": 1468,
+    "rehashed_files": 1468,
+    "hash_mismatches": 0,
+    "release_validation": {
+      "run_id": 39173887337,
+      "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39173887337",
+      "head_sha": "4eceb973e98e1350dd625153753637629453c401",
+      "conclusion": "success",
+      "root_python311": {
+        "passed": 4553,
+        "skipped": 76,
+        "seconds": 1577.68
+      },
+      "root_python312": {
+        "passed": 4553,
+        "skipped": 76,
+        "seconds": 579.53
+      },
+      "disposable_postgresql": {
+        "passed": 31,
+        "skipped": 2,
+        "seconds": 42.03
+      },
+      "browser": {
+        "passed": 165,
+        "failed": 0,
+        "skipped": 0
+      }
+    },
+    "runtime_trading_strategy_financial_service_and_migration_changes": 0,
+    "existing_rc3_target_preserved": true,
+    "api_memory_mib": 1536
+  }
+}

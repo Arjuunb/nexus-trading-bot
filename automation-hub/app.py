@@ -32,6 +32,7 @@ from fastapi.responses import (  # noqa: E402
 )
 
 from config import settings, validate_credential_separation  # noqa: E402
+from services.acceptance_policy import acceptance_read_only, AcceptanceReadOnlyMiddleware
 from bots.manager import BotManager  # noqa: E402
 from bots.registry import EXCHANGES, STRATEGIES, exchange_label, strategy_label  # noqa: E402
 from dashboard import widgets as w  # noqa: E402
@@ -41,7 +42,12 @@ from database.store import SqliteStore  # noqa: E402
 from core_engine.observer import CoreV2ShadowObserver  # noqa: E402
 from core_engine.persistence import ShadowDecisionStore  # noqa: E402
 from routers.core_v2 import create_router as create_core_v2_router  # noqa: E402
+from routers.strategy_intelligence import create_router as create_intelligence_router  # noqa: E402
 from services.supabase_auth import Principal, SupabaseAuth, SupabaseAuthError  # noqa: E402
+from services.customer_workspaces import (  # noqa: E402
+    CustomerWorkspaces, WorkspaceError, validate_data as validate_workspace_data,
+    validate_namespace as validate_workspace_namespace,
+)
 
 # The API version prefix, declared before the app so the OpenAPI docs can live
 # under it (see below). The router mount further down reuses this constant.
@@ -59,31 +65,33 @@ app = FastAPI(
     docs_url=f"/api/{API_VERSION}/docs",
     redoc_url=f"/api/{API_VERSION}/redoc",
 )
+app.add_middleware(AcceptanceReadOnlyMiddleware, enabled=acceptance_read_only())
 # SQLite keeps bot configuration and is retained for the emergency-only legacy
 # mode. Customer identity is Supabase Auth; do not seed an env-password user in
 # that mode because it would silently create a second login authority.
 store = SqliteStore(settings.db_path)
-# Durable settings mirror: when SUPABASE_URL + SUPABASE_KEY are set, per-user
-# settings persist to Supabase so they survive an ephemeral-disk restart (no
-# more "defaults on every login") without needing a paid disk. No-op otherwise.
-try:
-    from data.settings_store import make_settings_mirror, SETTINGS_MIRROR_STATUS  # noqa: E402
-    store.settings_mirror = make_settings_mirror()
-    if store.settings_mirror is not None:
-        print("[settings] durable Supabase mirror CONNECTED — settings survive redeploys.", flush=True)
-    elif SETTINGS_MIRROR_STATUS["configured"]:
-        print(f"[settings] Supabase configured but NOT working: {SETTINGS_MIRROR_STATUS['error']} "
-              f"— settings will still reset on redeploy until this is fixed.", flush=True)
-    else:
-        print("[settings] no Supabase (SUPABASE_URL/KEY unset) — settings are local only "
-              "and reset on an ephemeral-disk redeploy.", flush=True)
-except Exception:  # noqa: BLE001 — never let settings persistence break boot
-    pass
+# Keep the historical global mirror only in legacy mode. Its shared key and
+# boot-time write probe must never serve the customer workspace path.
+if settings.auth_mode == "legacy":
+    try:
+        from data.settings_store import make_settings_mirror, SETTINGS_MIRROR_STATUS  # noqa: E402
+        store.settings_mirror = make_settings_mirror()
+        if store.settings_mirror is not None:
+            print("[settings] durable Supabase mirror CONNECTED — settings survive redeploys.", flush=True)
+        elif SETTINGS_MIRROR_STATUS["configured"]:
+            print(f"[settings] Supabase configured but NOT working: {SETTINGS_MIRROR_STATUS['error']} "
+                  f"— settings will still reset on redeploy until this is fixed.", flush=True)
+        else:
+            print("[settings] no Supabase (SUPABASE_URL/KEY unset) — settings are local only "
+                  "and reset on an ephemeral-disk redeploy.", flush=True)
+    except Exception:  # noqa: BLE001 — never let legacy settings persistence break boot
+        pass
 if settings.auth_mode == "legacy":
     store.seed_admin(settings.username, settings.password)
 elif settings.auth_mode != "supabase":
     raise RuntimeError("HUB_AUTH_MODE must be 'supabase' or 'legacy'")
 supabase_auth = SupabaseAuth()
+customer_workspaces = CustomerWorkspaces(supabase_auth)
 manager = BotManager(store=store)
 # V2 records are kept in a distinct table in the durable decisions database.
 # They are shadow observations, not legacy decisions and never execution input.
@@ -150,6 +158,7 @@ app.include_router(_public_api.router)
 app.add_exception_handler(_public_api.PublicApiError, _public_api.public_api_error_handler)
 from routers.guardian_observer import router as _guardian_observer_router  # noqa: E402
 app.include_router(_guardian_observer_router)
+app.include_router(create_intelligence_router())
 
 
 @app.get("/api/" + API_VERSION)
@@ -343,10 +352,14 @@ async def _require_auth(request: Request, call_next):
     # verified account/profile routes remain available under /auth/ and the
     # protected settings SPA under /settings/.
     principal = None
+    customer_workspace_path = (settings.auth_mode == "supabase"
+                               and path == "/user/settings"
+                               and request.method in {"GET", "POST"})
     if settings.auth_mode == "supabase":
         principal = _supabase_principal(request)
         legacy_engine_path = not (path.startswith("/auth/") or path.startswith("/settings/")
-                                  or path == "/app" or path.startswith("/app/"))
+                                  or path == "/app" or path.startswith("/app/")
+                                  or customer_workspace_path)
         if principal and not principal.is_admin and legacy_engine_path:
             from fastapi.responses import JSONResponse
             return JSONResponse({"error": "This deployment-wide engine is restricted to administrators while its legacy data is migrated."}, status_code=403)
@@ -367,7 +380,7 @@ async def _require_auth(request: Request, call_next):
         # A regular Supabase customer never receives this bridge, preserving the
         # fail-closed boundary around the deployment-wide legacy engine.
         is_control_operator = _has_role(request, "operator")
-        if is_control_operator and not hdr:
+        if is_control_operator and not hdr and not customer_workspace_path:
             request.scope["headers"] = list(request.scope["headers"]) + [
                 (b"x-webhook-secret", settings.admin_key.encode("utf-8"))]
         return await call_next(request)
@@ -648,6 +661,12 @@ def _start_auto_engine() -> None:
     """Start the autonomous strategy engine when the server boots (real signals
     -> paper execution -> ledger). Disabled under pytest and via HUB_AUTO_ENGINE=0."""
     import os
+    if acceptance_read_only():
+        from data.ledger import SUPABASE_STATUS
+        if SUPABASE_STATUS.get('configured') and not SUPABASE_STATUS.get('connected'):
+            raise RuntimeError('ACCEPTANCE_PRIMARY_LEDGER_UNAVAILABLE')
+        print('[startup] acceptance read-only mode: execution disabled; saved intent retained', flush=True)
+        return
     # Status monitoring starts first and unconditionally: the early return
     # below (primary ledger unreachable) is exactly the case it must report.
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.status_monitor.start():
@@ -675,6 +694,7 @@ def _start_auto_engine() -> None:
     if "PYTEST_CURRENT_TEST" not in os.environ and webhook_api.audit_exporter.start():
         print(f"[startup] audit export to {webhook_api.audit_exporter.destination} "
               f"every {webhook_api.audit_exporter.interval_s:.0f}s", flush=True)
+    _restore_shadow_observations()
     backend = type(webhook_api.ledger).__name__
     print(f"[startup] ledger backend = {backend} "
           f"(Supabase active: {backend == 'SupabaseLedger'})", flush=True)
@@ -757,9 +777,26 @@ def _start_auto_engine() -> None:
               f"{webhook_api.engine.autostart_enabled})", flush=True)
 
 
+def _restore_shadow_observations() -> None:
+    """Restore ONLY explicitly authorized durable observation intent."""
+    if acceptance_read_only() or "PYTEST_CURRENT_TEST" in _sec_os.environ:
+        return
+    try:
+        if webhook_api.shadow_router.store.registrations(active_only=True, limit=1):
+            webhook_api.shadow_observation_worker.start()
+    except Exception as exc:
+        # Observation failure must not change sibling execution startup gates.
+        print(f"[startup] shadow observation unavailable: {type(exc).__name__}", flush=True)
+
+
 @app.on_event("shutdown")
 def _shutdown_all_runtimes() -> None:
     """One process-wide shutdown boundary for every execution authority."""
+    if acceptance_read_only():
+        research_worker = getattr(webhook_api.strategy_intelligence.context, '_research_worker', None)
+        if research_worker is not None:
+            research_worker.stop()
+        return
     errors = []
 
     def run(name, operation):
@@ -787,7 +824,12 @@ def _shutdown_all_runtimes() -> None:
     run("autonomous_engine", lambda: webhook_api.engine.stop("Process shutdown"))
     run("legacy_bot_runners", manager.emergency_stop_all)
     run("research_observer", webhook_api.research_observer.stop)
-    run("price_action_lab", webhook_api.price_action_runtime.stop)
+    run("shadow_observation", webhook_api.shadow_observation_worker.stop)
+    research_worker = getattr(webhook_api.strategy_intelligence.context, "_research_worker", None)
+    if research_worker is not None:
+        run("research_worker", research_worker.stop)
+    if webhook_api.price_action_runtime is not None:
+        run("price_action_lab", webhook_api.price_action_runtime.stop)
     run("smc_lab", webhook_api.smc_runtime.stop)
     # Last: record what the workers did before they stopped, then stop.
     run("journal_recorder_final_pass", webhook_api.journal_recorder.reconcile)
@@ -1859,16 +1901,29 @@ def oauth_unlink(request: Request, provider: str):
 
 
 # ------------------------------------------------- persistent user workspace
-# Per-user settings blobs (namespace -> JSON), session-authenticated and
-# strictly isolated by username. The backend DB is the source of truth; the
-# frontends use localStorage only as a fast-boot cache. Nothing here is ever
-# reset implicitly — DELETE is wired only to the user's explicit Reset actions.
+# Supabase customers use only settings-center metadata in a dedicated RLS
+# store, owned by the UUID verified from their access token. No SQLite cache,
+# shared-key mirror or reset endpoint participates in that mode. Legacy mode
+# retains its username-scoped SQLite/mirror namespaces and explicit resets.
 _SETTINGS_NAMESPACES = ("settings-center", "dashboard", "preferences", "profile")
+_CUSTOMER_WORKSPACE_MAX_BODY_BYTES = 232_768
 
 
 @app.get("/user/settings")
 async def user_settings_get(request: Request, ns: str = "settings-center"):
     from fastapi.responses import JSONResponse
+    if settings.auth_mode == "supabase":
+        principal = _supabase_principal(request)
+        if not principal:
+            return JSONResponse({"error": "Sign in required"}, status_code=401)
+        if not principal.email_confirmed:
+            return JSONResponse({"error": "Confirm your email before using your workspace."}, status_code=403)
+        try:
+            validate_workspace_namespace(ns)
+            data = customer_workspaces.get(_supabase_token(request), ns)
+        except WorkspaceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
+        return {"ns": ns, "data": data}
     u = _user(request)
     if not u:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -1880,6 +1935,33 @@ async def user_settings_get(request: Request, ns: str = "settings-center"):
 @app.post("/user/settings")
 async def user_settings_set(request: Request):
     from fastapi.responses import JSONResponse
+    if settings.auth_mode == "supabase":
+        principal = _supabase_principal(request)
+        if not principal:
+            return JSONResponse({"error": "Sign in required"}, status_code=401)
+        if not principal.email_confirmed:
+            return JSONResponse({"error": "Confirm your email before using your workspace."}, status_code=403)
+        # Bound the entire streamed envelope before JSON parsing. A small data
+        # object must not permit unlimited whitespace or unrelated fields.
+        raw_body = bytearray()
+        async for chunk in request.stream():
+            if len(raw_body) + len(chunk) > _CUSTOMER_WORKSPACE_MAX_BODY_BYTES:
+                return JSONResponse({"error": "workspace request too large"}, status_code=413)
+            raw_body.extend(chunk)
+        try:
+            body = _json.loads(raw_body)
+        except (ValueError, UnicodeError, RecursionError):
+            return JSONResponse({"error": "A JSON object is required"}, status_code=400)
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "A JSON object is required"}, status_code=400)
+        ns, data = body.get("ns", "settings-center"), body.get("data")
+        try:
+            validate_workspace_namespace(ns)
+            validate_workspace_data(data)
+            customer_workspaces.put(_supabase_token(request), ns, data)
+        except WorkspaceError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=exc.status_code)
+        return {"saved": True, "ns": ns}
     u = _user(request)
     if not u:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -1900,6 +1982,8 @@ async def user_settings_set(request: Request):
 async def user_settings_reset(request: Request, ns: str = ""):
     """Explicit reset only (Reset Settings / Reset Dashboard / Factory Reset)."""
     from fastapi.responses import JSONResponse
+    if settings.auth_mode == "supabase":
+        return JSONResponse({"error": "Customer workspace reset is not available."}, status_code=403)
     u = _user(request)
     if not u:
         return JSONResponse({"error": "Not signed in"}, status_code=401)
@@ -2632,6 +2716,8 @@ def _persistence_info() -> dict:
 def health():
     from services.tenancy import multi_user_enabled
     return {"status": "ok", "app": settings.app_name, **_deploy_info(),
+            "acceptance_read_only": acceptance_read_only(),
+            "features": {"price_action_lab_enabled": webhook_api.PRICE_ACTION_LAB_ENABLED},
             "persistence": _persistence_info(),
             "tenancy": {"multi_user": multi_user_enabled(), "mode": "multi" if multi_user_enabled() else "single-owner"}}
 

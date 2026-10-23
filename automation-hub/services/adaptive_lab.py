@@ -219,9 +219,13 @@ class AdaptiveLab:
         # A lab that has never had a bot starts on XRPUSDT. The selection is
         # then simply the saved default symbol of the lab's own manager.
         first_use = not self._bots()
-        self.manager.configure(
-            max_active_slots=1, paper_account_capital=capacity,
-            defaults={"default_symbol": DEFAULT_SYMBOL} if first_use else None)
+        # Acceptance read-only mode opens the existing books without writing:
+        # the lab's saved settings are used as they are.
+        from services.acceptance_policy import acceptance_read_only
+        if not acceptance_read_only():
+            self.manager.configure(
+                max_active_slots=1, paper_account_capital=capacity,
+                defaults={"default_symbol": DEFAULT_SYMBOL} if first_use else None)
 
     # ------------------------------------------------- Trading Instance mirror
     def attach_instances(self, manager: TradingInstanceManager) -> None:

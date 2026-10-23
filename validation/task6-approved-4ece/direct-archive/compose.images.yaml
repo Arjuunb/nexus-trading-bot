@@ -1,0 +1,11 @@
+# PREPARATION ONLY. Existing RC3 project and preserved bindings are mandatory.
+# Add after the existing customer-workspace overlay and before the existing
+# intelligence-recovery-20261018/compose.memory.yaml, which must remain last.
+# No startup until actual preservation/backups and resolved configuration pass.
+services:
+  api:
+    image: sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321
+    pull_policy: never
+  research-worker:
+    image: sha256:b16074411ac65ed2cc8c0d6981b0608eb25bebdf8445abdad1a04aa8913cda41
+    pull_policy: never

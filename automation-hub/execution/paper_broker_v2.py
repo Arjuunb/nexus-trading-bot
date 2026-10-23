@@ -19,6 +19,8 @@ from typing import Optional
 from data.sqlite_runtime import runtime_connection
 from execution.paper_fill_provenance import encode_transition
 from execution.paper_exit_provenance import encode_exit_fill, observation
+from services.acceptance_policy import acceptance_read_only, existing_financial_connection, require_financial_columns
+from services import native_paper_evidence as source_evidence
 
 
 ORDER_TYPES = {"market", "limit", "stop", "stop_limit", "trailing_stop"}
@@ -48,15 +50,18 @@ class PaperBrokerV2:
     configurable fraction of its reported volume.  That avoids claiming
     impossible price improvement or liquidity.
     """
+    #: Per-quote equity snapshots: at most one per this many seconds while cash,
+    #: positions and completeness are unchanged (any change is recorded at once).
+    equity_observation_interval_s = 60.0
+
     def __init__(self, path: str | Path, *, starting_balance: float = 10_000.0,
                  leverage: float = 1.0, fee_rate: float = 0.0004,
                  spread_bps: float = 2.0, slippage_bps: float = 3.0,
                  participation_rate: float = 0.02,
                  account_id: str | None = None,
                  account_type: str = "PAPER",
-                 execution_engine: str = "PAPER"):
+                 execution_engine: str = "PAPER", evidence_owner: str | None = None):
         self.path = str(path)
-        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self.leverage = max(1.0, float(leverage))
         self.fee_rate = max(0.0, float(fee_rate))
         self.spread_bps = max(0.0, float(spread_bps))
@@ -65,9 +70,29 @@ class PaperBrokerV2:
         self.requested_account_id = str(account_id or "").strip()
         self.account_type = str(account_type or "PAPER").strip().upper()
         self.execution_engine = str(execution_engine or "PAPER").strip().upper()
+        self.evidence_owner = evidence_owner
         self._lock = threading.RLock()
+        self.read_only = acceptance_read_only()
+        if self.read_only:
+            self._c = existing_financial_connection(self.path)
+            require_financial_columns(self._c, {
+                'v2_account': ('id','account_id','account_type','created_at','starting_balance','balance',
+                    'peak_equity','max_drawdown','realized_pnl','fees_paid','funding_paid','updated_at'),
+                'v2_positions': ('symbol','side','size','entry_price','position_id'),
+                'v2_orders': ('id','status','account_id','order_key'),
+                'v2_fills': ('id','order_id','quantity','fee','realized_pnl','fill_key'),
+                'v2_source_evidence': ('event_id','account_id','tenant_id','evidence_hash','payload_json'),
+            })
+            source_evidence.verify_owner(self._c, evidence_owner)
+            row = self._account_row()
+            if row is None or not row['account_id'] or (self.requested_account_id and row['account_id'] != self.requested_account_id):
+                raise RuntimeError('EXISTING_FINANCIAL_ACCOUNT_IDENTITY_REQUIRED')
+            return
         self._c = runtime_connection(self.path)
+        source_evidence.verify_owner(self._c, evidence_owner)
+        new_account = not self._c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='v2_account'").fetchone()
         self._schema(starting_balance)
+        source_evidence.install(self, new_account=new_account)
 
     def _schema(self, starting_balance: float) -> None:
         with self._lock:
@@ -255,7 +280,7 @@ class PaperBrokerV2:
         equity = a["balance"] + unrealized
         peak = max(float(a["peak_equity"]), equity)
         drawdown = max(float(a["max_drawdown"]), peak - equity)
-        if persist_metrics:
+        if persist_metrics and not self.read_only:
             with self._lock:
                 self._c.execute("UPDATE v2_account SET peak_equity=?,max_drawdown=? WHERE id=1", (peak, drawdown))
                 self._c.commit()
@@ -306,6 +331,7 @@ class PaperBrokerV2:
             return [dict(r) for r in self._c.execute(
                 "SELECT * FROM v2_fills ORDER BY timestamp DESC LIMIT ?", (int(limit),))]
 
+    @source_evidence.financial_transaction
     def factory_reset(self, starting_balance: float) -> None:
         amount = float(starting_balance)
         if amount <= 0:
@@ -319,11 +345,14 @@ class PaperBrokerV2:
                 self._c.execute(
                     "UPDATE v2_account SET starting_balance=?,balance=?,fees_paid=0,funding_paid=0,realized_pnl=0,peak_equity=?,max_drawdown=0,updated_at=? WHERE id=1",
                     (amount, amount, amount, _now()))
+                source_evidence.emit(self, 'ACCOUNT_RESET', {'account': dict(self._account_row()),
+                    'history_continuity': 'BROKEN_BY_EXISTING_RESET'}, event_id='paper-reset:' + _id())
                 self._c.commit()
             except Exception:
                 self._c.rollback()
                 raise
 
+    @source_evidence.financial_transaction
     def submit(self, *, symbol: str, side: str, order_type: str, quantity: float,
                limit_price: Optional[float] = None, stop_price: Optional[float] = None,
                trailing_offset: Optional[float] = None, reduce_only: bool = False,
@@ -339,7 +368,7 @@ class PaperBrokerV2:
                strategy: str = "", strategy_version: str = "",
                timeframe: str = "", market_data_source: str = "",
                candle_id: str = "", action_class: str | None = None,
-               execution_class: str = "REAL_PAPER") -> dict:
+               execution_class: str = "REAL_PAPER", evidence_context: dict | None = None) -> dict:
         symbol = (symbol or "").upper().replace("/", "")
         side, order_type = self._norm_side(side), (order_type or "").lower()
         if order_type not in ORDER_TYPES:
@@ -406,6 +435,12 @@ class PaperBrokerV2:
                      market_data_source, account_id, self.execution_engine, candle_id,
                      decision_key, order_key, action_class, execution_class),
                 )
+                if evidence_context is None and reduce_only and pos:
+                    evidence_context = source_evidence.position_context(self, pos['position_id'])
+                    # Inheritance describes the actual existing exit instruction;
+                    # no earlier strategy decision or extra order is manufactured.
+                    evidence_context = {**evidence_context, 'order_intent_reference': 'paper-exit-intent:' + oid}
+                source_evidence.capture_order(self, self.order(oid), evidence_context)
                 self._c.commit()
             except BaseException:
                 # A commit failure must not leave an uncommitted order visible
@@ -422,6 +457,7 @@ class PaperBrokerV2:
             raise KeyError(order_id)
         return dict(row)
 
+    @source_evidence.financial_transaction
     def cancel(self, order_id: str) -> dict:
         with self._lock:
             row = self._c.execute("SELECT * FROM v2_orders WHERE id=?", (order_id,)).fetchone()
@@ -430,6 +466,8 @@ class PaperBrokerV2:
             if row["status"] not in OPEN_STATUSES:
                 raise ValueError("only open orders can be cancelled")
             self._c.execute("UPDATE v2_orders SET status='cancelled',updated_at=? WHERE id=?", (_now(), order_id))
+            source_evidence.emit(self, 'ORDER_CANCELLED', {'order': self.order(order_id)},
+                event_id='paper-cancel:' + order_id, context=source_evidence.order_context(self, order_id))
             self._c.commit()
         return self.order(order_id)
 
@@ -499,6 +537,7 @@ class PaperBrokerV2:
             self._c.rollback()
             raise
 
+    @source_evidence.financial_transaction
     def process_tick(self, symbol: str, quote: dict, *,
                      protections: Optional[dict[str, dict]] = None) -> dict:
         """Fill intents only from a complete public quote after decision time."""
@@ -657,6 +696,10 @@ class PaperBrokerV2:
                                       "price": float(stop) if hit_stop else float(target),
                                       "effective_stop": stop, "effective_peak": None},
                     )
+            source_evidence.observe_equity(self, {symbol:{'price':mark,
+                'timestamp':quote.get('mark_event_timestamp'), 'source':quote.get('source')}},
+                observed_at=received.isoformat(), commit=False,
+                minimum_interval_seconds=self.equity_observation_interval_s)
             self._c.commit()
         return {
             "symbol": symbol, "events": events,
@@ -664,6 +707,7 @@ class PaperBrokerV2:
             "quote": {**quote, "bid": bid, "ask": ask, "mark": mark},
         }
 
+    @source_evidence.financial_transaction
     def process_candle(self, symbol: str, candle, *, protections: Optional[dict[str, dict]] = None) -> dict:
         """Advance open orders and protective stops using one verified candle."""
         symbol, bar = (symbol or "").upper().replace("/", ""), self._candle(candle)
@@ -898,6 +942,10 @@ class PaperBrokerV2:
             avg = ((float(order["average_price"] or 0) * float(order["filled"]) + price * quantity) / filled)
             self._c.execute("UPDATE v2_orders SET filled=?,remaining=?,average_price=?,status=?,updated_at=? WHERE id=?",
                             (filled, max(0.0, remaining), avg, status, _now(), order["id"]))
+        after = self._c.execute('SELECT * FROM v2_positions WHERE symbol=?', (order['symbol'],)).fetchone()
+        source_evidence.capture_fill(self, fill=dict(self._c.execute('SELECT * FROM v2_fills WHERE id=?', (fid,)).fetchone()),
+            order=order, before=dict(pos) if pos else None, after=dict(after) if after else None,
+            raw_price=raw_price, persisted=persisted)
         events.append({"type": "fill", "order_id": order["id"], "symbol": order["symbol"], "side": side,
                        "quantity": quantity, "price": price, "fee": fee, "realized_pnl": pnl,
                        "signal_timestamp": order.get("signal_timestamp"),
@@ -1026,15 +1074,17 @@ class PaperBrokerV2:
             "event": events[-1], "fill": fill,
         }
 
+    @source_evidence.financial_transaction
     def apply_funding(self, symbol: str, rate: float, mark_price: float,
-                      *, funding_timestamp: str | None = None) -> dict:
+                      *, funding_timestamp: str | None = None, funding_reference: dict | None = None) -> dict:
         """Book a known provider funding rate; callers must supply the real rate."""
         with self._lock:
             pos = self._c.execute("SELECT * FROM v2_positions WHERE symbol=?", (symbol.upper(),)).fetchone()
             if not pos:
                 return {"applied": False, "reason": "no position"}
             stamp = str(funding_timestamp or _now())
-            funding_key = _key(self._account_row()["account_id"], pos["position_id"], stamp)
+            funding_key = _key(self._account_row()["account_id"], pos["position_id"],
+                (funding_reference or {}).get('provider_timestamp') or stamp)
             if self._c.execute(
                     "SELECT 1 FROM v2_funding_events WHERE funding_key=?", (funding_key,)).fetchone():
                 return {"applied": False, "reason": "duplicate funding event",
@@ -1048,10 +1098,29 @@ class PaperBrokerV2:
                 (funding_key, self._account_row()["account_id"], pos["position_id"],
                  symbol.upper(), stamp, float(rate), float(mark_price), amount, _now()),
             )
+            funding_context = source_evidence.position_context(self, pos['position_id'])
+            if funding_reference and funding_reference.get('lab') in {'pa','smc'}:
+                prefix=funding_reference['lab']
+                if self.execution_engine != {'pa':'PA_LAB','smc':'SMC_LAB'}[prefix]:raise ValueError('FUNDING_SOURCE_SCOPE_CONFLICT')
+                # Existing lab deduplication now shares the financial commit.
+                if prefix=='pa':
+                    self._c.execute('INSERT INTO pa_funding_events(session_id,symbol,funding_time,funding_rate,mark_price,applied,amount,order_id) VALUES (?,?,?,?,?,1,?,?)',
+                        (funding_reference['session_id'],symbol.upper(),funding_reference['provider_timestamp'],float(rate),float(mark_price),amount,funding_reference.get('order_id')))
+                else:
+                    self._c.execute('INSERT INTO smc_funding_events(session_id,symbol,funding_time,rate,mark_price,amount,applied) VALUES (?,?,?,?,?,?,1)',
+                        (funding_reference['session_id'],symbol.upper(),funding_reference['provider_timestamp'],float(rate),float(mark_price),amount))
+            source_evidence.emit(self, 'FUNDING_COMMITTED', {'symbol': symbol.upper(), 'position': dict(pos), 'context': funding_context,
+                'funding_key': funding_key, 'funding_timestamp': stamp, 'rate': float(rate), 'mark_price': float(mark_price),
+                'amount': amount, 'cash_delta': -amount, 'balance_after': self._account_row()['balance'],
+                'funding_coverage': 'RECORDED_FUNDING', 'schedule_status': 'UNKNOWN',
+                'provider_reference': funding_reference,
+                'funding_model_version': 'native-paper-funding.v1'}, event_id='paper-funding:' + funding_key,
+                context=funding_context, timestamp=stamp)
             self._c.commit()
         return {"applied": True, "symbol": symbol.upper(), "funding": amount,
                 "funding_key": funding_key}
 
+    @source_evidence.financial_transaction
     def process_mark(self, symbol: str, mark_price: float) -> dict:
         """Apply the documented, conservative paper liquidation estimate."""
         symbol, mark = symbol.upper(), float(mark_price)
@@ -1150,6 +1219,9 @@ class PaperBrokerV2:
                         tuple(row.get(k) for k in keys),
                     )
                 self.leverage = max(1.0, float(snapshot.get("leverage", 1)))
+                source_evidence.emit(self, 'ACCOUNT_RESTORED', {'account': dict(self._account_row()),
+                    'original_snapshot_hash': source_evidence.digest(snapshot), 'history_continuity': 'REQUIRES_ORIGINAL_CAPTURE_RECONCILIATION'},
+                    event_id='paper-restore:' + _id())
                 self._c.commit()
             except Exception:
                 self._c.rollback()

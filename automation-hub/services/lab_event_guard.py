@@ -28,6 +28,7 @@ blackout window a lab trades as it always has.
 """
 from __future__ import annotations
 
+from services.acceptance_policy import acceptance_read_only
 from services.price_action_lab import PriceActionPaperAccount
 from services.smc_agent_runtime import AgentGatedSMCPaperAccount
 from services.guardian_lifecycle_outbox import install_lab_lifecycle_outbox
@@ -57,8 +58,11 @@ class EventGuardedPriceActionPaperAccount(PriceActionPaperAccount):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        install_lab_lifecycle_outbox(self._db, "pa")
-        install_lab_decision_provenance(self._db, "pa")
+        # Acceptance read-only mode opens the lab database without writing,
+        # so Guardian's capture triggers are not (re)installed then.
+        if not acceptance_read_only():
+            install_lab_lifecycle_outbox(self._db, "pa")
+            install_lab_decision_provenance(self._db, "pa")
 
     def _runtime_control(self) -> dict:
         control = super()._runtime_control()
@@ -77,8 +81,9 @@ class EventGuardedSMCPaperAccount(AgentGatedSMCPaperAccount):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        install_lab_lifecycle_outbox(self._db, "smc")
-        install_lab_decision_provenance(self._db, "smc")
+        if not acceptance_read_only():
+            install_lab_lifecycle_outbox(self._db, "smc")
+            install_lab_decision_provenance(self._db, "smc")
 
     def submit_order(self, **kwargs):
         if kwargs.get("ownership") == "strategy":

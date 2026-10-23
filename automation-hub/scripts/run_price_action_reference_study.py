@@ -39,6 +39,9 @@ def main() -> int:
     parser.add_argument("--normalized-smc",
                         help="Optional read-only normalized SMC JSON using identical assumptions")
     args = parser.parse_args()
+    from services.feature_flags import price_action_lab_enabled
+    if not price_action_lab_enabled():
+        raise SystemExit('PRICE_ACTION_LAB_DISABLED')
     if not 500 <= args.bars <= 10_000:
         raise SystemExit("--bars must be between 500 and 10000")
 

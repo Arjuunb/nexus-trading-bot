@@ -15,6 +15,7 @@ is honest local retrieval; the store leaves room to plug one in later.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
 _NOT_CAPTURED = "not captured"
@@ -66,6 +67,102 @@ def _num(v):
         return None
 
 
+def _identity_field(journal: dict, key: str):
+    """Read captured scope only; never derive identity from current settings."""
+    value = journal.get(key)
+    if value is None:
+        value = ((journal.get("sections") or {}).get("provenance") or {}).get(key)
+    return value
+
+
+def _decision_reference(journal: dict) -> tuple[object, str]:
+    entry_context = ((journal.get("sections") or {}).get("entry_decision") or {})
+    if entry_context.get("decision_reference_status") in ("CONFLICT", "UNRESOLVED"):
+        raise ValueError("invalid explicit decision reference")
+    header = journal.get("decision_id")
+    entry = ((journal.get("sections") or {}).get("entry_decision") or {}).get("decision_reference")
+    if header is not None and entry is not None and str(header) != str(entry):
+        raise ValueError("conflicting explicit decision references")
+    if header is not None:
+        return header, "decision_id"
+    if entry is not None:
+        return entry, "decision_reference"
+    return None, "not captured"
+
+
+def _decision_scope_matches(journal: dict, decision: dict, *, legacy: bool = False) -> bool:
+    if not decision.get("executed") or decision.get("decision") != "accepted":
+        return False
+    for key in ("symbol", "side", "instance_id", "simulation_session_id", "tenant_id",
+                "owner_id", "account_id", "strategy_id", "strategy_version",
+                "strategy_config_hash", "execution_mode", "lab_id", "source_kind"):
+        expected = _identity_field(journal, key)
+        if expected not in (None, "") and decision.get(key) != expected:
+            return False
+        if (legacy and key in ("instance_id", "simulation_session_id", "owner_id", "account_id")
+                and expected in (None, "") and decision.get(key) not in (None, "")):
+            return False
+    return True
+
+
+def _memory_scope_matches(journal: dict, memory: dict) -> bool:
+    info = ((memory.get("sections") or {}).get("trade_information") or {})
+    for key in ("tenant_id", "owner_id", "account_id", "instance_id", "simulation_session_id", "lab_id"):
+        recorded = info.get(key)
+        if recorded not in (None, "", _NOT_CAPTURED) and recorded != _identity_field(journal, key):
+            return False
+    return True
+
+
+def _decision_linkage(journal: dict, decision: Optional[dict]) -> dict:
+    try:
+        reference, basis = _decision_reference(journal)
+    except ValueError:
+        return {"status": "UNVERIFIED", "basis": "conflicting_explicit_references", "decision_id": None}
+    if decision is not None and _decision_scope_matches(journal, decision):
+        if reference is not None and str(decision.get("id")) == str(reference):
+            return {"status": "VERIFIED", "basis": basis, "decision_id": decision["id"]}
+        if reference is None:
+            return {"status": "UNVERIFIED", "basis": "legacy_symbol_side_time", "decision_id": decision.get("id")}
+    return {"status": "UNVERIFIED", "basis": ("unresolved_" + basis if reference is not None
+                                               else "not captured"), "decision_id": None}
+
+
+def _financial_text(value) -> Optional[str]:
+    """Retain receipt precision; missing/nonfinite values never become zero."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        amount = Decimal(str(value))
+    except (ValueError, InvalidOperation):
+        return None
+    if not amount.is_finite():
+        return None
+    if amount == 0:
+        return "0"
+    text = format(amount, "f")
+    return text.rstrip("0").rstrip(".") if "." in text else text
+
+
+def _cost_evidence(journal: dict, exit_decision: dict) -> dict:
+    receipt = exit_decision.get("execution_receipt") or {}
+    fees = _financial_text(receipt.get("booked_fees"))
+    coverage = str(receipt.get("funding_coverage") or "UNKNOWN").upper()
+    coverage = {"NOT_MODELED": "UNMODELED"}.get(coverage, coverage)
+    funding = (_financial_text(receipt.get("funding"))
+               if coverage in ("BOOKED", "MODELED", "VERIFIED_ZERO") else None)
+    if coverage == "VERIFIED_ZERO" and funding != "0":
+        funding = None
+    if coverage != "UNMODELED" and funding is None:
+        coverage = "UNKNOWN"
+    return {"fees": fees, "fees_coverage": "BOOKED" if fees is not None else "UNKNOWN",
+            "funding": funding, "funding_coverage": coverage,
+            "gross_pnl": _financial_text(receipt.get("gross_pnl")),
+            "net_pnl": (_financial_text(receipt.get("net_pnl"))
+                        or _financial_text(journal.get("pnl"))),
+            "basis": "execution_receipt" if receipt else "journal (cost receipt not captured)"}
+
+
 def _pretrade_setup_grade(journal: dict, entry_decision: dict) -> dict:
     """Grade entry quality without looking at the eventual trade result.
 
@@ -110,6 +207,10 @@ def compose_memory(journal: dict, *, decision: Optional[dict] = None,
     entry_dec = s.get("entry_decision", {}) or {}
     exit_dec = s.get("exit_decision", {}) or {}
     provenance = s.get("provenance", {}) or {}
+    linkage = _decision_linkage(journal, decision)
+    if linkage["decision_id"] is None:
+        decision = None
+    costs = _cost_evidence(journal, exit_dec)
     setup_quality = _pretrade_setup_grade(journal, entry_dec)
 
     created = _parse_ts(journal.get("created_at"))
@@ -134,7 +235,9 @@ def compose_memory(journal: dict, *, decision: Optional[dict] = None,
         "date": created.date().isoformat() if created else _NOT_CAPTURED,
         "time_utc": created.strftime("%H:%M:%S UTC") if created else _NOT_CAPTURED,
         "exchange": provenance.get("exchange") or exchange,
-        "instance_id": provenance.get("instance_id") or _NOT_CAPTURED,
+        "instance_id": _identity_field(journal, "instance_id") or _NOT_CAPTURED,
+        **{key: _identity_field(journal, key) for key in (
+            "tenant_id", "owner_id", "account_id", "simulation_session_id", "lab_id")},
         "market_data_mode": provenance.get("market_data_mode") or _NOT_CAPTURED,
         "symbol": journal.get("symbol"),
         "direction": "Long" if journal.get("side") == "long" else "Short",
@@ -146,7 +249,10 @@ def compose_memory(journal: dict, *, decision: Optional[dict] = None,
         "risk_pct": risk_pct,
         "planned_rr": _num(journal.get("planned_rr")),
         "actual_rr": _num(journal.get("actual_rr")),
-        "fees": "0.00 (paper — fees not modeled)" if journal.get("mode") != "live" else _NOT_CAPTURED,
+        "fees": costs["fees"] if costs["fees"] is not None else "not captured (paper/live fee coverage UNKNOWN)",
+        "fees_coverage": costs["fees_coverage"],
+        "funding": costs["funding"], "funding_coverage": costs["funding_coverage"],
+        "cost_basis": costs["basis"],
         "duration": _fmt_duration(duration_s),
     }
 
@@ -187,8 +293,11 @@ def compose_memory(journal: dict, *, decision: Optional[dict] = None,
     # ---- 4. Strategy ----------------------------------------------------------
     strategy = {
         "name": journal.get("strategy"),
-        "version": (provenance.get("strategy_version") or snap.get("strategy_version")
-                    or (decision or {}).get("strategy_version") or _NOT_CAPTURED),
+        "id": _identity_field(journal, "strategy_id") or _NOT_CAPTURED,
+        "version": (_identity_field(journal, "strategy_version") or snap.get("strategy_version")
+                    or ((decision or {}).get("strategy_version") if linkage["status"] == "VERIFIED" else None)
+                    or _NOT_CAPTURED),
+        "config_fingerprint": _identity_field(journal, "strategy_config_hash"),
         "timeframe": journal.get("timeframe"),
         "setup_grade": setup_quality["grade"],
         "setup_quality_score": setup_quality["score"],
@@ -212,6 +321,7 @@ def compose_memory(journal: dict, *, decision: Optional[dict] = None,
         "execution_mode": provenance.get("execution_mode") or journal.get("mode") or _NOT_CAPTURED,
         "data_exchange": provenance.get("exchange") or exchange,
         "instrument_type": provenance.get("instrument_type") or _NOT_CAPTURED,
+        "decision_linkage": linkage,
     }
 
     # ---- 6. Emotion & Journal (manual) ---------------------------------------
@@ -225,6 +335,9 @@ def compose_memory(journal: dict, *, decision: Optional[dict] = None,
         "profit": round(pnl, 2) if pnl > 0 else 0.0,
         "loss": round(pnl, 2) if pnl < 0 else 0.0,
         "pnl": round(pnl, 2),
+        "gross_pnl": costs["gross_pnl"], "net_pnl": costs["net_pnl"],
+        "booked_fees": costs["fees"], "funding": costs["funding"],
+        "cost_basis": costs["basis"],
         "actual_rr": _num(journal.get("actual_rr")),
         "mistakes": review.get("mistake", _NOT_CAPTURED),
         "lessons_learned": evolution.get("learned", _NOT_CAPTURED),

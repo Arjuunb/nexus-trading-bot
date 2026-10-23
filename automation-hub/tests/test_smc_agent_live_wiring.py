@@ -516,9 +516,13 @@ def test_both_smc_protection_locks_hold_after_a_complete_lifecycle(tmp_path, mon
     # Lock three: the reviewed PR6 approved-delta manifest, which pins the
     # strategy lab itself. The agent is a subclass in its own module for
     # exactly this reason.
+    # Each file is checked against its explicit successor records
+    # (tests/acceptance_freeze.py), never against a hash rewritten in place.
+    from acceptance_freeze import successor_hash
     pr6 = json.loads((ROOT / "data/pr6_real_paper_freeze.json").read_text())
     for relative, expected in pr6["sha256"].items():
-        assert hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == expected
+        expected = successor_hash(ROOT, relative, expected)
+        assert hashlib.sha256((ROOT / relative).read_bytes()).hexdigest() == expected, relative
 
 
 def test_the_agent_runtime_is_the_lab_runtime_plus_one_step(tmp_path, monkeypatch):

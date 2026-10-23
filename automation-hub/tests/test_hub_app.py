@@ -22,6 +22,18 @@ def client():
     return TestClient(hub_app.app, follow_redirects=False)
 
 
+@pytest.fixture()
+def legacy_dashboard(monkeypatch):
+    """Phase 1 HTML/SSE assertions exercise the retained server renderer.
+
+    Built React assets contain a boot shell; their DOM is verified in browser
+    tests. Local generated bundles must not silently switch these HTML tests
+    to a different renderer.
+    """
+    monkeypatch.setattr(hub_app, "_LANDING_READY", False)
+    monkeypatch.setattr(hub_app, "_WEBUI_READY", False)
+
+
 def _login(client) -> None:
     r = client.post("/login", data={"username": "admin", "password": "admin"})
     assert r.status_code == 303
@@ -30,7 +42,8 @@ def _login(client) -> None:
 
 
 def test_dashboard_requires_login(client):
-    r = client.get("/")
+    dashboard = "/app" if hub_app._LANDING_READY else "/"
+    r = client.get(dashboard)
     assert r.status_code == 303
     assert r.headers["location"] == "/login"
 
@@ -41,7 +54,7 @@ def test_login_rejects_bad_password(client):
     assert "error" in r.headers["location"]
 
 
-def test_full_phase1_flow(client):
+def test_full_phase1_flow(client, legacy_dashboard):
     _login(client)
 
     # Dashboard renders with the spec's KPI labels + sidebar.
@@ -111,7 +124,7 @@ def test_admin_can_add_user(client):
     assert hub_app.store.authenticate(uname, "pw") is not None
 
 
-def test_overview_has_live_stream_client(client):
+def test_overview_has_live_stream_client(client, legacy_dashboard):
     _login(client)
     body = client.get("/").text
     assert "Live Feed" in body

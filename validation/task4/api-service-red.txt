@@ -1,0 +1,141 @@
+FFFFFFFFF............................................................... [ 66%]
+F.................................FFF                                    [100%]
+=================================== FAILURES ===================================
+_________________ test_decay_api_is_owner_scoped_and_read_only _________________
+tests/test_strategy_intelligence_api.py:97: in test_decay_api_is_owner_scoped_and_read_only
+    assert response.status_code==200 and response.headers["cache-control"]=="no-store"
+E   assert (404 == 200)
+E    +  where 404 = <Response [404 Not Found]>.status_code
+____ test_decay_query_cannot_supply_authority_policy_or_evidence[changes0] _____
+tests/test_strategy_intelligence_api.py:107: in test_decay_query_cannot_supply_authority_policy_or_evidence
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+E   AssertionError: assert 404 == 422
+E    +  where 404 = <Response [404 Not Found]>.status_code
+E    +    where <Response [404 Not Found]> = get(('/api/v2/strategy-intelligence' + '/decay'), params={'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...})
+E    +      where get = <starlette.testclient.TestClient object at 0x7f4823b4f800>.get
+E    +      and   {'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...} = edge_query(**{'owner_id': 'bob'})
+____ test_decay_query_cannot_supply_authority_policy_or_evidence[changes1] _____
+tests/test_strategy_intelligence_api.py:107: in test_decay_query_cannot_supply_authority_policy_or_evidence
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+E   AssertionError: assert 404 == 422
+E    +  where 404 = <Response [404 Not Found]>.status_code
+E    +    where <Response [404 Not Found]> = get(('/api/v2/strategy-intelligence' + '/decay'), params={'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...})
+E    +      where get = <starlette.testclient.TestClient object at 0x7f4823941ca0>.get
+E    +      and   {'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...} = edge_query(**{'source_kind': 'shadow'})
+____ test_decay_query_cannot_supply_authority_policy_or_evidence[changes2] _____
+tests/test_strategy_intelligence_api.py:107: in test_decay_query_cannot_supply_authority_policy_or_evidence
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+E   AssertionError: assert 404 == 422
+E    +  where 404 = <Response [404 Not Found]>.status_code
+E    +    where <Response [404 Not Found]> = get(('/api/v2/strategy-intelligence' + '/decay'), params={'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...})
+E    +      where get = <starlette.testclient.TestClient object at 0x7f4823a52a20>.get
+E    +      and   {'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...} = edge_query(**{'execution_mode': 'live'})
+____ test_decay_query_cannot_supply_authority_policy_or_evidence[changes3] _____
+tests/test_strategy_intelligence_api.py:107: in test_decay_query_cannot_supply_authority_policy_or_evidence
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+E   AssertionError: assert 404 == 422
+E    +  where 404 = <Response [404 Not Found]>.status_code
+E    +    where <Response [404 Not Found]> = get(('/api/v2/strategy-intelligence' + '/decay'), params={'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...})
+E    +      where get = <starlette.testclient.TestClient object at 0x7f4823753da0>.get
+E    +      and   {'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...} = edge_query(**{'as_of': '2030-01-01'})
+____ test_decay_query_cannot_supply_authority_policy_or_evidence[changes4] _____
+tests/test_strategy_intelligence_api.py:107: in test_decay_query_cannot_supply_authority_policy_or_evidence
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+E   AssertionError: assert 404 == 422
+E    +  where 404 = <Response [404 Not Found]>.status_code
+E    +    where <Response [404 Not Found]> = get(('/api/v2/strategy-intelligence' + '/decay'), params={'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...})
+E    +      where get = <starlette.testclient.TestClient object at 0x7f48234fbc20>.get
+E    +      and   {'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...} = edge_query(**{'threshold': '0'})
+____ test_decay_query_cannot_supply_authority_policy_or_evidence[changes5] _____
+tests/test_strategy_intelligence_api.py:107: in test_decay_query_cannot_supply_authority_policy_or_evidence
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+E   AssertionError: assert 404 == 422
+E    +  where 404 = <Response [404 Not Found]>.status_code
+E    +    where <Response [404 Not Found]> = get(('/api/v2/strategy-intelligence' + '/decay'), params={'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...})
+E    +      where get = <starlette.testclient.TestClient object at 0x7f48233a3890>.get
+E    +      and   {'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...} = edge_query(**{'classifier_id': 'custom'})
+____ test_decay_query_cannot_supply_authority_policy_or_evidence[changes6] _____
+tests/test_strategy_intelligence_api.py:107: in test_decay_query_cannot_supply_authority_policy_or_evidence
+    assert client.get(BASE+"/decay",params=edge_query(**changes)).status_code==422
+E   AssertionError: assert 404 == 422
+E    +  where 404 = <Response [404 Not Found]>.status_code
+E    +    where <Response [404 Not Found]> = get(('/api/v2/strategy-intelligence' + '/decay'), params={'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...})
+E    +      where get = <starlette.testclient.TestClient object at 0x7f48237bd130>.get
+E    +      and   {'instance_id': 'mine', 'strategy_id': 'adaptive_trend_pullback', 'strategy_version': '1.0.0', 'config_fingerprint': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', ...} = edge_query(**{'monitor_policy_version': 'v2'})
+______ test_weekly_report_read_and_creation_authorize_exact_server_scope _______
+tests/test_strategy_intelligence_api.py:120: in test_weekly_report_read_and_creation_authorize_exact_server_scope
+    assert response.status_code==201 and response.headers["cache-control"]=="no-store"
+E   assert (404 == 201)
+E    +  where 404 = <Response [404 Not Found]>.status_code
+_ test_registered_api_reads_persisted_groups_and_context_without_reconciliation_or_writes _
+tests/test_strategy_intelligence_api.py:523: in test_registered_api_reads_persisted_groups_and_context_without_reconciliation_or_writes
+    assert "ETHUSDT" not in result.text and "777" not in result.text
+E   assert ('ETHUSDT' not in '{"contract_...xt_count":0}'
+E
+E     'ETHUSDT' is contained here:
+E       t_count":0} and '777' not in '{"contract_...xt_count":0}'
+E
+E     '777' is contained here:
+E       c48804312077781f2b2a57721bc43e459b784758bddac","coverage_basis":"authoritative_cohort_assessment_and_exact_immutable_context_partition","group_by":["symbol"],"missing_context_count":0,"missing_context_episode_ids":[],"missing_context_episode_ids_truncated":false,"parent_binding_status":"NO_COMPLETENESS_REPORT","parent_evidence_status":"UNKNOWN","reasons":["NO_COMPLETENESS_REPORT","RECONCILIATION_REQUIRED"],"report_version":"strategy_context_evidence.v1","selector":{"classifier":{"classifier_id":"market_context_classifier","classifier_version":"1.0.0","parameter_hash"...
+E
+E     ...Full output truncated (2 lines hidden), use '-vv' to show)
+_ test_persisted_weekly_report_is_idempotent_survives_restart_and_read_never_writes _
+tests/test_weekly_strategy_research.py:74: in test_persisted_weekly_report_is_idempotent_survives_restart_and_read_never_writes
+    first=service.generate_weekly_review(SCOPE,query)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'StrategyIntelligenceService' object has no attribute 'generate_weekly_review'
+____ test_scope_invalidation_revokes_monitor_and_blocks_weekly_publication _____
+tests/test_weekly_strategy_research.py:89: in test_scope_invalidation_revokes_monitor_and_blocks_weekly_publication
+    original=service._monitoring_evidence
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'StrategyIntelligenceService' object has no attribute '_monitoring_evidence'
+___ test_due_weekly_loop_is_bounded_idempotent_and_does_not_run_future_weeks ___
+tests/test_weekly_strategy_research.py:106: in test_due_weekly_loop_is_bounded_idempotent_and_does_not_run_future_weeks
+    first=service.run_weekly_research(scope=SCOPE,cohorts=cohorts,as_of=AS_OF,classifier=CLASSIFIER)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   AttributeError: 'StrategyIntelligenceService' object has no attribute 'run_weekly_research'
+=============================== warnings summary ===============================
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/app.py:530: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("startup")
+
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/.venv/lib/python3.12/site-packages/fastapi/applications.py:4745: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+automation-hub/tests/test_strategy_intelligence_api.py::test_registered_app_resolves_authenticated_multi_user_owner
+  /workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/app.py:616: DeprecationWarning:
+          on_event is deprecated, use lifespan event handlers instead.
+
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_strategy_intelligence_api.py::test_decay_api_is_owner_scoped_and_read_only
+FAILED tests/test_strategy_intelligence_api.py::test_decay_query_cannot_supply_authority_policy_or_evidence[changes0]
+FAILED tests/test_strategy_intelligence_api.py::test_decay_query_cannot_supply_authority_policy_or_evidence[changes1]
+FAILED tests/test_strategy_intelligence_api.py::test_decay_query_cannot_supply_authority_policy_or_evidence[changes2]
+FAILED tests/test_strategy_intelligence_api.py::test_decay_query_cannot_supply_authority_policy_or_evidence[changes3]
+FAILED tests/test_strategy_intelligence_api.py::test_decay_query_cannot_supply_authority_policy_or_evidence[changes4]
+FAILED tests/test_strategy_intelligence_api.py::test_decay_query_cannot_supply_authority_policy_or_evidence[changes5]
+FAILED tests/test_strategy_intelligence_api.py::test_decay_query_cannot_supply_authority_policy_or_evidence[changes6]
+FAILED tests/test_strategy_intelligence_api.py::test_weekly_report_read_and_creation_authorize_exact_server_scope
+FAILED tests/test_strategy_intelligence_api.py::test_registered_api_reads_persisted_groups_and_context_without_reconciliation_or_writes
+FAILED tests/test_weekly_strategy_research.py::test_persisted_weekly_report_is_idempotent_survives_restart_and_read_never_writes
+FAILED tests/test_weekly_strategy_research.py::test_scope_invalidation_revokes_monitor_and_blocks_weekly_publication
+FAILED tests/test_weekly_strategy_research.py::test_due_weekly_loop_is_bounded_idempotent_and_does_not_run_future_weeks
+13 failed, 96 passed, 4 warnings in 19.61s

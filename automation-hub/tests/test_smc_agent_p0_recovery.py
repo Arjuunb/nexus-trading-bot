@@ -1,6 +1,7 @@
 """Failure injection uses real SQLite brokers/journals, never strategy changes."""
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import sqlite3
 import threading
 import subprocess
@@ -313,6 +314,8 @@ def test_real_process_death_after_fill_releases_guard_and_recovers(tmp_path):
         [sys.executable, "-c",
          "from tests.test_smc_agent_p0_recovery import _hard_crash_worker; "
          "import sys; _hard_crash_worker(sys.argv[1])", str(tmp_path)],
+        # From automation-hub/ so the child imports work wherever pytest starts.
+        cwd=str(Path(__file__).resolve().parents[1]),
         timeout=30, capture_output=True, text=True)
     assert child.returncode == 73, child.stderr
     broker = PaperBrokerV2(tmp_path / "broker.db", starting_balance=100)

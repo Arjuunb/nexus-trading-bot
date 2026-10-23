@@ -17,6 +17,7 @@ services:
     environment:
       HUB_ENV: production
       HUB_DATA_DIR: /var/lib/tradexa
+      PRICE_ACTION_LAB_ENABLED: "false"
       # Shadow research opens three additional public Binance feeds. It is
       # opt-in so an unused observer cannot consume the VPS CPU budget.
       HUB_RESEARCH_AUTOSTART: "0"

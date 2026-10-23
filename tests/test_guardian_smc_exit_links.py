@@ -411,8 +411,10 @@ def test_foreign_origin_reusing_original_position_id_is_a_conflict_not_an_exit_l
 
 
 def test_snapshot_wall_deadline_fails_closed_even_between_small_queries(store,monkeypatch):
-    import time
+    import threading, time
     complete(store)
-    calls=iter((0,2))
-    monkeypatch.setattr(time,"monotonic",lambda: next(calls,2))
+    # Script only this thread's clock (the WSGI call runs here). A background
+    # thread left running by another test would otherwise use up the readings.
+    real, owner, calls = time.monotonic, threading.get_ident(), iter((0,2))
+    monkeypatch.setattr(time,"monotonic",lambda: next(calls,2) if threading.get_ident()==owner else real())
     assert request(store)[:2]==(503,{"error":"PERSISTENCE_UNAVAILABLE"})

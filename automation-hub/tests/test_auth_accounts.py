@@ -22,7 +22,10 @@ def _login(c, user="admin", pw="admin"):
 
 # ─────────────────────────── the auth wall ───────────────────────────
 def test_react_dashboard_requires_login(client):
-    r = client.get("/")
+    import app as hub_app
+    # The bundled landing owns the public root; the protected dashboard is /app.
+    dashboard = "/app" if hub_app._LANDING_READY else "/"
+    r = client.get(dashboard)
     assert r.status_code == 303 and r.headers["location"] == "/login"
 
 

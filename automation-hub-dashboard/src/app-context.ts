@@ -33,8 +33,9 @@ export const NAV_GROUPS: { title: string | null; items: string[] }[] = [
   // Guardian: the read-only observer over everything below it (one entry).
   { title: null, items: ["Dashboard", "Guardian"] },
   { title: "Trading", items: ["Trading Instances", "Instance Visual Lab", "Strategy Studio", "Live Trading"] },
-  { title: "Research", items: ["Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting", "Forward Validation"] },
+  { title: "Research", items: ["SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting", "Forward Validation"] },
   { title: "Performance", items: ["Portfolio", "Analytics"] },
+  { title: "Strategy Intelligence", items: ["Strategy Intelligence"] },
   // Calendar: every source's realized P&L by day. Its own entry, deliberately
   // not inside Performance (Portfolio/Analytics), which stays as it is.
   { title: "Records", items: ["Calendar", "Journal"] },
@@ -104,6 +105,9 @@ export interface Route {
 export const parseHash = (): Route => {
   const raw = window.location.hash.replace(/^#\/?/, "").trim();
   const [h, query = ""] = raw.split("?", 2);
+  if (h === "price-action-lab") {
+    return { page: "Dashboard", botId: "", redirectHash: "/dashboard" };
+  }
   const tab = new URLSearchParams(query).get("tab") ?? undefined;
   const bot = h.match(/^bot\/(.+)$/);
   if (bot) return { page: "BotDetail", botId: bot[1] };

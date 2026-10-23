@@ -1,0 +1,94 @@
+{
+  "recorded_at": "2026-10-20T22:21:19.398Z",
+  "run_id": 39503485769,
+  "run_status": "completed",
+  "run_conclusion": "failure",
+  "build_conclusion": "success",
+  "publication_job_id": 118914426007,
+  "publication_conclusion": "failure",
+  "guard_error": "PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED",
+  "guard_failed_at": "2026-10-20T22:17:11.3556268Z",
+  "approved_source_guard_requires": {
+    "configured_distinct_user_reviewer": true,
+    "prevent_self_review": true,
+    "enabled_deployment_branch_policy": true,
+    "fresh_manual_first_attempt": true
+  },
+  "run_actor": {
+    "login": "Arjuunb",
+    "id": 190428336
+  },
+  "actual_approval_history": [
+    {
+      "state": "approved",
+      "user": "Arjuunb",
+      "user_id": 190428336,
+      "environments": [
+        {
+          "name": "ghcr-staging-release",
+          "id": 24412364022
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "name": "Set up job",
+      "conclusion": "success"
+    },
+    {
+      "name": "Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+      "conclusion": "success"
+    },
+    {
+      "name": "Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+      "conclusion": "success"
+    },
+    {
+      "name": "Define isolated publication directories",
+      "conclusion": "success"
+    },
+    {
+      "name": "Verify configured protection and actual approval of this run",
+      "conclusion": "failure"
+    },
+    {
+      "name": "Run actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Verify the accepted build packet before loading",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Authenticate to GHCR only after the approval guard",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Publish tested bytes and capture actual registry references",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Run actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Post Run actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1",
+      "conclusion": "skipped"
+    },
+    {
+      "name": "Post Run actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803",
+      "conclusion": "success"
+    },
+    {
+      "name": "Complete job",
+      "conclusion": "success"
+    }
+  ],
+  "registry_login_attempted": false,
+  "registry_push_attempted": false,
+  "assistant_approved_environment": false,
+  "vps_deployment_attempted": false,
+  "task6_complete": false,
+  "recovery": "Fix required environment protection and distinct-reviewer setup, then start a fresh manual workflow with the same approved source; do not retry this terminal run."
+}

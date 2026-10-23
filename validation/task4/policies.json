@@ -1,0 +1,32 @@
+{
+  "decay": {
+    "version": "edge_decay.v1",
+    "calibration": "UNCALIBRATED_RESEARCH_POLICY",
+    "windows": [
+      20,
+      50,
+      100
+    ],
+    "minimum_historical_episodes": 100,
+    "expectancy_retention_floor": "0.5",
+    "profit_factor_floor": "1",
+    "drawdown_multiple": "2",
+    "historical_drawdown_floor_r": "1",
+    "persistence": "two_consecutive_disjoint_20_episode_windows",
+    "window_order": "actual_close_time_utc_then_episode_id",
+    "recovery": "recompute_from_evidence_no_automatic_resume",
+    "rules": "any expectancy, monetary PF or R drawdown deterioration flags a complete window",
+    "fingerprint": "eec8753efe8410b243343ce70e44d5a4ef9a4f20e0e0a1ff69e93f9a7f1445e6"
+  },
+  "weekly_research": {
+    "version": "weekly_strategy_research.v1",
+    "timezone": "UTC",
+    "week_start": "MONDAY",
+    "minimum_pattern_episodes": 20,
+    "loss_cluster_minimum": 3,
+    "schedule": "after_completed_week_on_next_successful_evidence_refresh",
+    "proposal_status": "PENDING_APPROVAL",
+    "automatic_execution": false,
+    "fingerprint": "b4721017e3becb16ac3cec75345e5fd717055688eabd50c7319f99a20d71c793"
+  }
+}

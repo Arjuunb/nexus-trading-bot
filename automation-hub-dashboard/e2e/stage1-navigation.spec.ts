@@ -4,9 +4,10 @@ import { mockApi } from "./mock";
 const NAV = [
   "Dashboard", "Guardian",
   "Trading Instances", "Instance Visual Lab", "Strategy Studio", "Live Trading",
-  "Price Action Lab", "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting",
+  "SMC Strategy Lab", "SMC Agent", "Adaptive MTF Lab", "Replay", "Backtesting",
   "Forward Validation",
   "Portfolio", "Analytics",
+  "Strategy Intelligence",
   "Calendar", "Journal",
   "Risk & Health",
 ];

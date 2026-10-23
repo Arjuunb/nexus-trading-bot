@@ -1,0 +1,56 @@
+{
+  "task": 2,
+  "scope": "advisory selection by asset, session, trend/volatility regime and entry timeframe",
+  "branch": "finish/strategy-intelligence-staging",
+  "base_commit": "85c862bcd49b21d40ed4d12f5eb1efc3b8a74f92",
+  "focused": {
+    "tests": 308,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 308,
+    "warnings": 4,
+    "duration_seconds": 46.665
+  },
+  "selector": {
+    "passed": 44,
+    "failed": 0,
+    "skipped": 0
+  },
+  "local_full": {
+    "status": "INTERRUPTED",
+    "passed": null,
+    "failed": null,
+    "skipped": null,
+    "progress_reported_pct": 29,
+    "reason": "Unified exec process failed: network approval was cancelled before a decision was returned",
+    "acceptance": false,
+    "log": "validation/task2/full.txt"
+  },
+  "task1_github_ci": {
+    "run_id": 39138064963,
+    "status": "completed",
+    "conclusion": "success",
+    "python_versions": [
+      "3.10",
+      "3.11",
+      "3.12"
+    ]
+  },
+  "task2_github_ci": {
+    "status": "PENDING_PUBLICATION"
+  },
+  "dependency_check": "No broken requirements found",
+  "financial_records_changed": false,
+  "strategy_rules_changed": false,
+  "automatic_selection_or_execution_added": false,
+  "notifications": "destinations cleared; notifier transport tests use local stubs",
+  "deployed": false,
+  "task3_started": false,
+  "worker_health_isolated": {
+    "passed": 5,
+    "skipped": 1,
+    "failed": 0,
+    "log": "validation/task2/worker-health-isolated.txt"
+  }
+}

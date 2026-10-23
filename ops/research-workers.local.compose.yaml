@@ -1,0 +1,69 @@
+# Opt-in LOCAL supervision validation. Operator DSNs must target disposable DBs.
+# No production volumes/config, no env_file and no trading credentials.
+services:
+  research-worker:
+    image: ${NEXUS_RESEARCH_WORKER_IMAGE:-nexus-workers:sprint10-local}
+    user: "${NEXUS_RESEARCH_UID:-1000}:${NEXUS_RESEARCH_GID:-1000}"
+    init: true
+    entrypoint: ["python", "-m", "services.research_worker_main"]
+    command: ["--backend", "postgresql", "--health-file", "/observation/research-health.json"]
+    environment:
+      NEXUS_RESEARCH_WORKER_DSN: ${NEXUS_RESEARCH_LOCAL_DSN:?disposable metadata DSN required}
+      NEXUS_OPERATIONAL_SPOOL_PATH: /observation/research-operational-spool.sqlite
+    volumes:
+      - ${NEXUS_RESEARCH_LOCAL_DATA:?disposable health directory required}:/observation
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    cpus: 1.0
+    mem_limit: 512m
+    pids_limit: 64
+    restart: "on-failure:2"
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.shadow_worker_health", "/observation/research-health.json"]
+      interval: 2s
+      timeout: 2s
+      start_period: 3s
+      retries: 6
+    logging:
+      driver: local
+      options: {max-size: "1m", max-file: "2"}
+  shadow-worker:
+    profiles: [shadow]
+    image: ${NEXUS_RESEARCH_WORKER_IMAGE:-nexus-workers:sprint10-local}
+    user: "${NEXUS_RESEARCH_UID:-1000}:${NEXUS_RESEARCH_GID:-1000}"
+    init: true
+    entrypoint: ["python", "-m", "services.shadow_worker_main"]
+    command: ["--shadow-db", "/observation/unused-shadow.sqlite", "--journal-db", "/observation/unused-journal.sqlite", "--market-data-dir", "/observation/market", "--health-file", "/observation/shadow-health.json"]
+    environment:
+      NEXUS_RESEARCH_WORKER_BACKEND: postgresql
+      NEXUS_SHADOW_WORKER_BACKEND: postgresql
+      NEXUS_RESEARCH_WORKER_DSN: ${NEXUS_RESEARCH_LOCAL_DSN:?disposable metadata DSN required}
+      NEXUS_SHADOW_WORKER_DSN: ${NEXUS_RESEARCH_LOCAL_DSN:?disposable metadata DSN required}
+      NEXUS_OPERATIONAL_SPOOL_PATH: /observation/shadow-operational-spool.sqlite
+    volumes:
+      - ${NEXUS_RESEARCH_LOCAL_DATA:?disposable health directory required}:/observation
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:rw,noexec,nosuid,size=64m"]
+    cpus: 0.50
+    mem_limit: 384m
+    pids_limit: 64
+    restart: "on-failure:2"
+    stop_grace_period: 10s
+    healthcheck:
+      test: ["CMD", "python", "-m", "services.shadow_worker_health", "/observation/shadow-health.json"]
+      interval: 2s
+      timeout: 2s
+      start_period: 3s
+      retries: 6
+    logging:
+      driver: local
+      options: {max-size: "1m", max-file: "2"}
+networks:
+  default:
+    external: true
+    name: ${NEXUS_RESEARCH_LOCAL_NETWORK:?precreated disposable internal Docker network required}

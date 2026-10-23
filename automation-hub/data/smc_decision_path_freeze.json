@@ -11,7 +11,16 @@
     "services/native_smc.py": "47c2b7e28fee15e3366ea5434092f13c99cb50cbf718e56a35becaf715c8c36d",
     "services/smc_strategy_ladder.py": "51d3a293062644a7f1eae8585ae0ff8cf8fe0f0b143fe6388f5fe9155b1b9e8b",
     "services/smc_strategy_v1.py": "dca7f79a3ba18b126e9193db696d8997436bf86c446c25fdfed280d5f36e7afc",
-    "services/native_smc_live_visual.py": "1e0056cf067800d3e13a66349de231f24d75efbd7dc8a21dc2eebc1164550635"
+    "services/native_smc_live_visual.py": "8f241d5740b73aaaff467dae745554d5deea03b6c6b9d94bf2387450b2c21f3b"
   },
-  "behaviour_fingerprint": "7230a75e0af39ac608dfa862ad1c85903db4f244bd864c5e519c28abf8457d5e"
+  "behaviour_fingerprint": "7230a75e0af39ac608dfa862ad1c85903db4f244bd864c5e519c28abf8457d5e",
+  "revisions": [
+    {
+      "file": "services/native_smc_live_visual.py",
+      "prior_sha256": "1e0056cf067800d3e13a66349de231f24d75efbd7dc8a21dc2eebc1164550635",
+      "sha256": "8f241d5740b73aaaff467dae745554d5deea03b6c6b9d94bf2387450b2c21f3b",
+      "behaviour_fingerprint_unchanged": "7230a75e0af39ac608dfa862ad1c85903db4f244bd864c5e519c28abf8457d5e",
+      "reason": "Strategy Intelligence merged onto the production line. live_visual_state() now also attaches an observe-only active_evidence_input to the source_strategy result after the existing decision, and flags it if the engine state changed during the decision. It does not re-evaluate, mutate the engine or change any decision; the behaviour fingerprint is identical."
+    }
+  ]
 }

@@ -12,9 +12,19 @@ are unit-tested; the ``DecisionJournal`` orchestrator writes to JournalStore.
 """
 from __future__ import annotations
 
+from functools import wraps
 from typing import Optional
 
 from data.journal_store import EARLY_SIGNAL_MAX, EVIDENCE_MIN, JournalStore
+
+
+def _atomic_capture(method):
+    """Keep one journal observation durable as a complete unit on retries."""
+    @wraps(method)
+    def capture(self, *args, **kwargs):
+        with self.store.transaction():
+            return method(self, *args, **kwargs)
+    return capture
 
 # friendly names for the pipeline's risk/safety gates (the exact rule keys the
 # SignalPipeline emits as Steps). Anything not listed still shows by its key.
@@ -212,11 +222,15 @@ class DecisionJournal:
         self.store = store
 
     # ---------------------------------------------------------------- entry
+    @_atomic_capture
     def record_entry(self, *, trade_id: str, mode: str, symbol: str, side: str,
                      strategy: str, timeframe: str, entry: float, stop: float,
                      target: Optional[float], size: float, equity: float,
                      confidence: float, brain_score: Optional[float], regime: str,
                      steps: list, payload: dict, position_id: str = "") -> None:
+        # The same durable fill can be delivered after a restart or retry.
+        if self.store.get(trade_id) is not None:
+            return
         risk_dist = abs(entry - stop) if stop else 0.0
         planned_rr = (abs((target or 0) - entry) / risk_dist) if (target and risk_dist) else None
         risk_amount = round(risk_dist * size, 2)
@@ -228,6 +242,21 @@ class DecisionJournal:
         engine_guardrails = payload.get("journal_engine") or {}
         quality_gate = payload.get("journal_quality_gate") or {}
         provenance = payload.get("journal_execution") or {}
+        identity = payload.get("strategy_identity") or {}
+        signal_at = payload.get("original_signal_timestamp") or payload.get("timestamp")
+        leg = self.store.episode_for_trade(
+            trade_id, **{key: provenance.get(key) for key in (
+                "instance_id", "simulation_session_id", "owner_id", "account_id")})
+        episode = self.store.get_episode(leg["episode_id"]) if leg else None
+        evidence_headers = {
+            **{key: provenance.get(key) for key in ("owner_id", "account_id", "lab_id", "source_kind")},
+            "signal_id": payload.get("decision_identity"),
+            "episode_id": leg["episode_id"] if leg else None,
+            "parent_trade_id": leg.get("parent_trade_id") if leg else None,
+            "initial_risk_amount_text": episode.get("root_initial_risk") if episode else None,
+            "identity_status": provenance.get("identity_status") or identity.get("identity_status"),
+            "evidence_schema_version": 1 if leg or provenance.get("strategy_config_hash") else None,
+        }
         sections = {
             "entry_decision": {
                 "main_reason": reason or "Strategy signal fired.",
@@ -243,6 +272,8 @@ class DecisionJournal:
                 "quality_gate_passed": quality_gate.get("passed") or [],
                 "quality_gate_failed": quality_gate.get("failed") or quality_gate.get("blocks") or [],
                 "decision_reference": payload.get("journal_decision_id"),
+                "decision_reference_status": payload.get("decision_reference_status", "UNVERIFIED"),
+                "claimed_decision_reference": payload.get("claimed_decision_reference"),
                 "reads": checklist["entry_reads"],
             },
             "checklist": checklist,
@@ -259,12 +290,20 @@ class DecisionJournal:
                 "final_risk_decision": "Allowed — all risk gates passed.",
             },
             "provenance": {
+                **evidence_headers,
                 "instance_id": provenance.get("instance_id"),
                 "simulation_session_id": provenance.get("simulation_session_id"),
                 "instance_name": provenance.get("instance_name"),
                 "strategy_id": provenance.get("strategy_id"),
                 "strategy_name": provenance.get("strategy_name") or strategy,
                 "strategy_version": provenance.get("strategy_version"),
+                "strategy_config_hash": provenance.get("strategy_config_hash"),
+                "source_hash": provenance.get("source_hash"),
+                "decision_identity": payload.get("decision_identity"),
+                "decision_timestamp": payload.get("decision_observed_at"),
+                "signal_timestamp": signal_at,
+                "entry_timestamp": payload.get("entry_timestamp"),
+                "execution_id": payload.get("execution_id"),
                 "market_data_mode": provenance.get("market_data_mode") or "unknown",
                 "market_data_source": provenance.get("market_data_source") or "unknown",
                 "fill_model": provenance.get("fill_model") or "unknown",
@@ -274,7 +313,11 @@ class DecisionJournal:
                 "position_id": position_id or provenance.get("position_id"),
             },
         }
+        if payload.get("recovered_execution_only"):
+            sections["entry_decision"]["strategy_setup"] = "Original setup unavailable"
+            sections["risk_check"]["final_risk_decision"] = "Original preexecution gates unavailable"
         self.store.record_entry({
+            **evidence_headers,
             "trade_id": trade_id,
             "mode": provenance.get("execution_mode") or mode,
             "symbol": symbol, "side": side,
@@ -288,30 +331,51 @@ class DecisionJournal:
             "strategy_id": provenance.get("strategy_id"),
             "strategy_name": provenance.get("strategy_name") or strategy,
             "strategy_version": provenance.get("strategy_version"),
+            "strategy_config_hash": provenance.get("strategy_config_hash"),
+            "source_hash": provenance.get("source_hash"),
+            "signal_timestamp": signal_at,
+            "decision_timestamp": payload.get("decision_observed_at"),
+            "entry_timestamp": payload.get("entry_timestamp"),
+            "decision_id": payload.get("journal_decision_id"),
+            "order_id": payload.get("alert_id"),
+            "execution_id": payload.get("execution_id"),
             "execution_mode": provenance.get("execution_mode") or mode,
             "market_data_mode": provenance.get("market_data_mode"),
             "market_data_source": provenance.get("market_data_source"),
             "exchange": provenance.get("exchange"),
             "position_id": position_id or provenance.get("position_id"),
         })
-        t = payload.get("timestamp")
-        self.store.add_event(trade_id, "setup-detected", f"{strategy} setup on {symbol} {timeframe}", t)
-        self.store.add_event(trade_id, "quality-gate-passed", _quality_event_detail(quality_gate), t)
-        self.store.add_event(trade_id, "risk-check-passed", "All risk gates cleared", t)
-        self.store.add_event(trade_id, "risk-sized", _sizing_event_detail(sizing), t)
+        t = signal_at
+        decision_at = payload.get("decision_observed_at")
+        order_at = payload.get("order_observed_at") or decision_at
+        if not payload.get("recovered_execution_only"):
+            self.store.add_event(trade_id, "setup-detected", f"{strategy} setup on {symbol} {timeframe}", t,
+                                 event_id=trade_id + ":setup")
+            self.store.add_event(trade_id, "quality-gate-passed", _quality_event_detail(quality_gate), decision_at,
+                                 event_id=trade_id + ":quality")
+            self.store.add_event(trade_id, "risk-check-passed", "All risk gates cleared", order_at,
+                                 event_id=trade_id + ":risk")
+            self.store.add_event(trade_id, "risk-sized", _sizing_event_detail(sizing), order_at,
+                                 event_id=trade_id + ":sized")
         self.store.add_event(trade_id, "trade-opened",
-                             f"{side.upper()} {size:.6f} @ {entry} (stop {stop}, target {target})", t)
+                             f"{side.upper()} {size:.6f} @ {entry} (stop {stop}, target {target})",
+                             payload.get("entry_timestamp") or t, event_id=trade_id + ":opened")
 
     # ---------------------------------------------------------------- exit
+    @_atomic_capture
     def record_exit(self, *, trade_id: str, exit_price: float, pnl: float,
                     exit_reason: str, quality_score: Optional[float] = None,
                     risk_ok: bool = True, followed_strategy: bool = True,
                     mfe_r: Optional[float] = None,
                     mae_r: Optional[float] = None,
-                    instance_id: str = "") -> Optional[dict]:
+                    instance_id: str = "", execution_receipt: Optional[dict] = None,
+                    exit_timestamp: Optional[str] = None, event_id: str = "") -> Optional[dict]:
         j = self.store.get(trade_id, instance_id=instance_id or None)
         if j is None:
             return None
+        if j.get("status") != "open":
+            return {"review": j.get("sections", {}).get("review"),
+                    "evolution": j.get("sections", {}).get("evolution")}
         entry, stop = j.get("entry"), j.get("stop")
         side = j.get("side")
         planned_rr = j.get("planned_rr") or 0.0
@@ -342,15 +406,22 @@ class DecisionJournal:
                          # positions adopted without management state
                          "max_profit_r": mfe_r if mfe_r is not None else "not tracked",
                          "max_drawdown_r": mae_r if mae_r is not None else "not tracked"}
+        if execution_receipt is not None:
+            exit_decision["execution_receipt"] = execution_receipt
+        if exit_timestamp is not None:
+            exit_decision["exit_timestamp"] = exit_timestamp
         review["coach"] = build_coach(j.get("sections", {}), review, result,
                                       actual_rr, planned_rr, risk_ok)
         self.store.close_trade(trade_id, exit=exit_price, pnl=pnl, actual_rr=actual_rr,
                                result=result, grade=review["grade"],
                                extra_sections={"exit_decision": exit_decision,
                                                "review": review, "evolution": evolution},
-                               instance_id=instance_id)
-        self.store.add_event(trade_id, "exit-triggered", f"{exit_reason} @ {exit_price}")
+                               instance_id=instance_id, closed_at=exit_timestamp)
+        self.store.add_event(trade_id, "exit-triggered", f"{exit_reason} @ {exit_price}",
+                             exit_timestamp, event_id=trade_id + ":exit")
         self.store.add_event(trade_id, "trade-closed",
-                             f"{result} · {actual_rr:+.2f}R · PnL {pnl:+.2f}")
-        self.store.add_event(trade_id, "review-generated", f"Grade {review['grade']}")
+                             f"{result} · {actual_rr:+.2f}R · PnL {pnl:+.2f}",
+                             exit_timestamp, event_id=trade_id + ":closed")
+        self.store.add_event(trade_id, "review-generated", f"Grade {review['grade']}",
+                             event_id=trade_id + ":review")
         return {"review": review, "evolution": evolution}

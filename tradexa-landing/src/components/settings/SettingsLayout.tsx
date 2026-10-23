@@ -78,6 +78,7 @@ function NavList({ onNavigate }: { onNavigate?: () => void }) {
 }
 
 export default function SettingsLayout() {
+  const { loadState, error, identity } = useSettings();
   const [mobileOpen, setMobileOpen] = useState(false);
   const location = useLocation();
   const slug = location.pathname.split("/")[2] || "overview";
@@ -124,10 +125,17 @@ export default function SettingsLayout() {
         {/* content */}
         <main className="min-w-0 flex-1">
           <div className="mx-auto max-w-3xl">
+            {loadState !== "ready" && (
+              <p role="status" className="mb-5 rounded-lg border border-line p-3 text-sm text-white/65">
+                {loadState === "loading" ? "Loading your saved settings…"
+                  : loadState === "error" ? (error ?? "Your saved settings could not be loaded. Please sign in again.")
+                  : "Sign in to load your saved settings."}
+              </p>
+            )}
             <p className="mb-4 text-[11px] font-medium uppercase tracking-wider text-white/30 lg:hidden">
               {active?.label}
             </p>
-            <Outlet />
+            {loadState === "ready" && <Outlet key={identity?.id ?? "legacy-workspace"} />}
           </div>
         </main>
       </div>

@@ -1,0 +1,27 @@
+
+==================================== ERRORS ====================================
+_________ ERROR collecting automation-hub/tests/test_strategy_decay.py _________
+ImportError while importing test module '/workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/tests/test_strategy_decay.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_strategy_decay.py:7: in <module>
+    from services.strategy_decay import calculate_decay, bind_monitoring_evidence, decay_policy
+E   ModuleNotFoundError: No module named 'services.strategy_decay'
+____ ERROR collecting automation-hub/tests/test_weekly_strategy_research.py ____
+ImportError while importing test module '/workspace/scratch/734bba8326aa/nexus-trading-bot/automation-hub/tests/test_weekly_strategy_research.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/opt/codex/runtimes/codex-primary-runtime/dependencies/python/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/test_weekly_strategy_research.py:4: in <module>
+    from services.weekly_strategy_research import build_weekly_review, completed_week
+E   ModuleNotFoundError: No module named 'services.weekly_strategy_research'
+=========================== short test summary info ============================
+ERROR tests/test_strategy_decay.py
+ERROR tests/test_weekly_strategy_research.py
+!!!!!!!!!!!!!!!!!!! Interrupted: 2 errors during collection !!!!!!!!!!!!!!!!!!!!
+2 errors in 0.15s
