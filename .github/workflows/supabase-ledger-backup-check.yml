@@ -1,0 +1,49 @@
+name: Verify external ledger recovery on synthetic PostgreSQL 17
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['ops/supabase-ledger-recovery-*']
+    paths:
+      - 'ops/backup-supabase-ledger-to-mac.py'
+      - 'tests/test_supabase_ledger_to_mac.py'
+      - '.github/workflows/supabase-ledger-backup-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  native-postgres-17:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      NEXUS_TEST_PG17_BIN: /usr/lib/postgresql/17/bin
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install hash-locked test and database client dependencies
+        run: |
+          python - <<'PY'
+          import os,pathlib,re
+          blocks=re.split(r'\n(?=[a-zA-Z0-9])',pathlib.Path('ops/api-requirements.lock').read_text())
+          names=('packaging==','psycopg==','psycopg-binary==','typing-extensions==')
+          selected=[b for b in blocks if b.startswith(names)]
+          assert len(selected)==4 and all('--hash=sha256:' in b for b in selected)
+          target=pathlib.Path(os.environ['RUNNER_TEMP'])/'ledger-tests.lock'
+          target.write_text(pathlib.Path('ops/ci-test-requirements.lock').read_text()+'\n'+'\n'.join(selected)+'\n')
+          PY
+          python -m pip install --require-hashes -r "$RUNNER_TEMP/ledger-tests.lock"
+          python -m pip check
+      - name: Install official PostgreSQL 17 in the disposable CI runner
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl --fail --silent --show-error -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo 'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt noble-pgdg main' | sudo tee /etc/apt/sources.list.d/nexus-ledger-pgdg.list
+          sudo apt-get update -qq
+          sudo apt-get install --no-install-recommends -y postgresql-17
+      - name: Verify snapshots, concurrent writes, financial restore, and fail-closed gates
+        run: python -m pytest -q tests/test_supabase_ledger_to_mac.py
