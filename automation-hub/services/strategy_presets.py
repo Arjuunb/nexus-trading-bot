@@ -143,7 +143,7 @@ def resolve(strategy: str, symbol: str, timeframe: str, tuning: dict,
 
 def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spec: dict,
             rows, macro: str = None, confirmation: str = None, fill_cost: float = 0.0,
-            native_context=None) -> dict:
+            native_context=None, *, capture_identity: bool = False) -> dict:
     """Run a resolved configuration over a given bar list (no fetch). Returns the
     raw results dict (with diagnosis, _mtf_gate, _spec) or {'error': ...}.
 
@@ -190,13 +190,17 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
         brain, min_score = None, 0
     if desc["kind"] == "builtin":
         from services.strategy_factory import make_builtin_strategy
+        from services.strategy_identity import observed_strategy_identity
         strat = make_builtin_strategy(desc["key"], symbol)
+        observed_identity = (observed_strategy_identity(strat, strategy_id=desc["key"], timeframe=timeframe)
+                             if capture_identity else None)
         results = simulate_strategy(strat, rows, brain=brain, min_score=min_score, slippage=slippage,
                                     mtf_lookup=mtf_lookup, mtf_tfs=mtf_tfs,
                                     native_context=native_context,
                                     entry_mode="limit" if adaptive else "market",
                                     **_risk_kwargs(tuning))
     else:
+        observed_identity = None
         spec = desc["spec"]
         use_brain = spec.get("quality_filter", True)
         results = simulate(spec, rows, brain=brain if use_brain else None, slippage=slippage,
@@ -208,6 +212,8 @@ def _run_on(strategy: str, symbol: str, timeframe: str, tuning: dict, custom_spe
     # non-production gate from resampled 5m history.
     results["_mtf_gate"] = ["1h"] if adaptive else list(mtf_tfs) if mtf_tfs else []
     results["_spec"] = desc.get("spec")
+    if capture_identity:
+        results["_strategy_identity"] = observed_identity
     return results
 
 

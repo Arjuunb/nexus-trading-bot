@@ -1,0 +1,10 @@
+{
+  "scope": "LOCAL_SYNTHETIC_HELPER_CHECKS_NOT_VPS_ACCEPTANCE",
+  "checks": {
+    "absent_health_key": "PASS",
+    "configured_secret_comparison_without_value_output": "PASS",
+    "memory_override_difference_blocks": "PASS",
+    "compose_file_order_and_no_mutating_docker_commands": "PASS"
+  },
+  "actual_vps_run": false
+}

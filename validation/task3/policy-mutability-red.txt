@@ -1,0 +1,22 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+_________ test_policy_cannot_be_changed_through_a_mutable_weight_list __________
+
+    def test_policy_cannot_be_changed_through_a_mutable_weight_list():
+        weights = [list(item) for item in EdgeScorePolicy().weights]
+        policy = EdgeScorePolicy(weights=weights)
+        original = policy.as_dict()
+        weights[0][1] = "90"
+>       assert policy.as_dict() == original
+E       AssertionError: assert {'policy_vers...des': 30, ...} == {'policy_vers...des': 30, ...}
+E
+E         Omitting 15 identical items, use -vv to show
+E         Differing items:
+E         {'weights': {'expectancy': '90', 'profit_factor': '10', 'drawdown': '10', 'trade_count': '10', ...}} != {'weights': {'expectancy': '15', 'profit_factor': '10', 'drawdown': '10', 'trade_count': '10', ...}}
+E         {'fingerprint': '284d982ded8c52e84f05f4336f69e52bf062fc496f00f2db3945de3f3f846705'} != {'fingerprint': '503fa1c6e14181bd00b8fca86b695330f4bfa02144376a89b929176706b1bd88'}
+E         Use -v to get more diff
+
+automation-hub/tests/test_strategy_edge_score.py:260: AssertionError
+=========================== short test summary info ============================
+FAILED automation-hub/tests/test_strategy_edge_score.py::test_policy_cannot_be_changed_through_a_mutable_weight_list
+1 failed in 0.70s

@@ -48,15 +48,16 @@ def _sidebar_items() -> str:
 
 
 def test_the_existing_labs_are_untouched():
-    """Acceptance 13 and 14: Price Action Lab and SMC Lab keep working."""
+    """Acceptance 13 and 14: the SMC Labs keep working. The Price Action Lab is
+    retired (PRICE_ACTION_LAB_ENABLED off), so it has no route or menu entry."""
     app = (DASHBOARD / "App.tsx").read_text()
     sidebar = _sidebar_items()
-    for label, page in (("Price Action Lab", "PriceActionVisualPage"),
-                        ("SMC Visual Lab", "NativeSMCVisualPage"),
+    for label, page in (("SMC Visual Lab", "NativeSMCVisualPage"),
                         ("SMC Strategy Lab", "SMCStrategyLabPage")):
         assert f'case "{label}": return <{page}' in app, f"{label} lost its route"
-    for label in ("Price Action Lab", "SMC Strategy Lab"):
-        assert f'"{label}"' in sidebar, f"{label} vanished from the sidebar"
+    assert '"SMC Strategy Lab"' in sidebar, "SMC Strategy Lab vanished from the sidebar"
+    assert 'case "Price Action Lab"' not in app
+    assert '"Price Action Lab"' not in sidebar
 
 
 def test_the_smc_visual_lab_is_off_the_sidebar_but_still_reachable():

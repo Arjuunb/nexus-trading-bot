@@ -1,6 +1,13 @@
 # Keep the image lean. The dashboard SOURCE is needed (the Docker UI stage
 # builds it), but its node_modules / dist / env are not.
 .git
+# Compose injects runtime credentials. Never bake dotenv files or local state
+# into an image; the landing receives public auth config from the API at runtime.
+.env*
+**/.env*
+.venv
+**/.venv
+automation-hub/logs
 **/node_modules
 **/dist
 automation-hub-dashboard/.env
@@ -8,6 +15,12 @@ automation-hub-dashboard/.env.*
 **/__pycache__
 *.egg-info
 **/*.db
+**/*.sqlite
+**/*.sqlite3
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite-wal
+**/*.sqlite-shm
 .pytest_cache
 report.html
 
@@ -19,3 +32,8 @@ report.html
 **/.env
 **/.env.*
 !**/.env.example
+
+# Generated research history stays outside release contexts, including copies.
+**/strategy_v2_research_ledger.jsonl
+**/strategy_v2_verdict_ledger.jsonl
+**/strategy_v3_research_ledger.jsonl

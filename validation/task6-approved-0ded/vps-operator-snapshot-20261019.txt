@@ -1,0 +1,22 @@
+Evidence supplied by the operator from the existing VPS SSH terminal on 2026-10-19.
+This is an existing-stack pre-deployment snapshot, not an assistant SSH session or new-release acceptance.
+
+NAME                             STATUS              CONFIG FILES
+nexus-remote-stage-rc3-28acdbc   running(4)          /home/ubuntu/nexus-rc3-staging-28acdbc/release/ops/staging.alpine.compose.yaml,/home/ubuntu/nexus-rc3-staging-28acdbc/release/customer-workspace/compose.customer-workspace.yaml
+nexus-trading-bot              running(3)          /opt/nexus-trading-bot/compose.yaml,/opt/nexus-trading-bot/compose.override.yaml
+Name=/nexus-remote-stage-rc3-28acdbc-research-worker-1 Image=sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1 Status=running Health=healthy Restarts=0 OOM=false Memory=536870912 Swap=1073741824
+Name=/nexus-remote-stage-rc3-28acdbc-ingress-1 Image=sha256:959ae6b898852db82e5b29b929388e59914f42be0a8f4d44c89a4c1f53b49208 Status=running Health=healthy Restarts=0 OOM=false Memory=100663296 Swap=201326592
+Name=/nexus-remote-stage-rc3-28acdbc-api-1 Image=sha256:f2343e76a896ec3718328f3318adc3c2a40c93774194602858de4bdd4dce5397 Status=running Health=healthy Restarts=0 OOM=false Memory=1610612736 Swap=1610612736
+Name=/nexus-remote-stage-rc3-28acdbc-metadata-init-1 Image=sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1 Status=exited Health=none Restarts=0 OOM=false Memory=268435456 Swap=536870912
+Name=/nexus-remote-stage-rc3-28acdbc-postgres-1 Image=sha256:0c184f826eac85c55b6abd3ad520470cc5556870570e287997109e860dcce8f9 Status=running Health=healthy Restarts=0 OOM=false Memory=536870912 Swap=1073741824
+Name=/nexus-remote-stage-rc3-28acdbc-state-init-1 Image=sha256:25daa1ca6ea70c493053ab60635844d82ea5b147daf8ae64da7b58a508277fb1 Status=exited Health=none Restarts=0 OOM=false Memory=268435456 Swap=536870912
+Name=/nexus-trading-bot-app-1 Image=sha256:d4c51634a70e88c026f4b4d6e84c1e4bf6604603bb1307217ec2f88938bbe523 Status=running Health=healthy Restarts=0 OOM=false Memory=0 Swap=0
+Name=/pa-replay-2025 Image=sha256:6295f869fff7031199d4e9367b87cdf184ea600aa82d20c24a149b048de546fb Status=exited Health=none Restarts=0 OOM=false Memory=0 Swap=0
+Name=/nexus-trading-bot-certbot-1 Image=sha256:ddf9e5d226a56e886986838fa0ebedc0237511c78664352e8d0f4346ee022cd8 Status=running Health=none Restarts=0 OOM=false Memory=0 Swap=0
+Name=/nexus-trading-bot-nginx-1 Image=sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 Status=running Health=healthy Restarts=0 OOM=false Memory=0 Swap=0
+
+               total        used        free      shared  buff/cache   available
+Mem:           11671        5038        1894          30        5088        6633
+Swap:              0           0           0
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        96G   65G   32G  67% /

@@ -1,0 +1,9 @@
+Evidence source: user-supplied output from the existing ubuntu@vps-46469a44 SSH session, 2026-10-20.
+Scope: read-only API Compose labels. No environment-file contents were supplied or read.
+
+WorkingDir=/home/ubuntu/nexus-rc3-staging-28acdbc/release/ops
+ConfigFiles=/home/ubuntu/nexus-rc3-staging-28acdbc/release/ops/staging.alpine.compose.yaml,/home/ubuntu/nexus-rc3-staging-28acdbc/release/customer-workspace/compose.customer-workspace.yaml
+EnvFiles=/home/ubuntu/nexus-rc3-staging-28acdbc/private/compose.env
+
+The memory overlay is absent from these configuration-file labels. Preserve the previously required intelligence-recovery-20261018/compose.memory.yaml LAST and verify both API memory limits before any recreation.
+This identifies existing binding paths only; file existence, effective configuration, credentials, backups, current resources and acceptance remain unverified. No approved-image transfer, load or deployment is evidenced by this output.

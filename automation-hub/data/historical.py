@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime, timezone
+import hashlib
+import json
+import math
+from datetime import datetime, timezone, timedelta
 from typing import Callable, Optional
 
 from bot.types import Bar
@@ -31,6 +34,116 @@ _TF_MS = {"5m": 300_000, "15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "4h"
 
 # Binance REST hosts (the data-api mirror is friendlier to cloud IPs).
 _HOSTS = ("https://data-api.binance.vision", "https://api.binance.com")
+
+
+def _finalized_rows(rows, *, now_ms=None):
+    """Drop provider rows whose explicit close time is still in the future."""
+    now_ms = int(now_ms if now_ms is not None else time.time() * 1000)
+    return [row for row in rows if len(row) < 7 or int(row[6]) < now_ms]
+
+
+def _utc(value: datetime) -> datetime:
+    """Normalize a timestamp to an aware UTC datetime."""
+    if not isinstance(value, datetime):
+        raise ValueError("candle timestamp must be a datetime")
+    if value.tzinfo is None:
+        raise ValueError("candle timestamp must include timezone")
+    return value.astimezone(timezone.utc)
+
+
+def _timeframe_ms(timeframe: str) -> int:
+    try:
+        return _TF_MS[timeframe]
+    except KeyError:
+        raise ValueError(f"unsupported timeframe {timeframe}") from None
+
+
+def _canonical_candle(bar, timeframe: str) -> dict:
+    ts = _utc(bar.timestamp)
+    values = (bar.open, bar.high, bar.low, bar.close, bar.volume)
+    if not all(isinstance(value, (int, float)) and math.isfinite(float(value)) for value in values):
+        raise ValueError("invalid OHLCV values")
+    if float(bar.high) < max(float(bar.open), float(bar.close)) or float(bar.low) > min(float(bar.open), float(bar.close)):
+        raise ValueError("invalid OHLCV high/low")
+    interval = _timeframe_ms(timeframe)
+    if int(ts.timestamp() * 1000) % interval:
+        raise ValueError("candle timestamp is not aligned to timeframe")
+    return {"timestamp": ts.isoformat(), "open": float(bar.open), "high": float(bar.high),
+            "low": float(bar.low), "close": float(bar.close), "volume": float(bar.volume)}
+
+
+def canonical_candle_manifest(rows: list[Bar], *, symbol: str, timeframe: str,
+                              provider: str, venue: str | None = None,
+                              market_type: str | None = None,
+                              requested_start: datetime | None = None,
+                              requested_end: datetime | None = None) -> dict:
+    """Return a deterministic manifest for normalized, finalized candles.
+
+    Ranges are represented as half-open ``[start, end)`` intervals.  Duplicate
+    timestamps are accepted only when their complete canonical values agree;
+    conflicting duplicates and malformed candles fail closed.
+    """
+    canonical = [_canonical_candle(row, timeframe) for row in rows]
+    canonical.sort(key=lambda item: item["timestamp"])
+    unique = []
+    for item in canonical:
+        if unique and unique[-1]["timestamp"] == item["timestamp"]:
+            if unique[-1] != item:
+                raise ValueError("conflicting duplicate candles")
+            continue
+        unique.append(item)
+    encoded = json.dumps(unique, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    digest = hashlib.sha256(encoded.encode()).hexdigest()
+    start = _utc(requested_start).isoformat() if requested_start else (unique[0]["timestamp"] if unique else None)
+    end = _utc(requested_end).isoformat() if requested_end else None
+    return {"dataset_id": f"{symbol}:{timeframe}:{digest[:16]}", "provider": provider,
+            "venue": venue or "unknown", "market_type": market_type or "unknown",
+            "symbol": symbol, "timeframe": timeframe, "period_start": start,
+            "period_end": end or (unique[-1]["timestamp"] if unique else None),
+            "candle_count": len(unique), "timestamp_semantics": "candle_open_utc",
+            "timestamp_precision": "milliseconds", "content_hash": digest,
+            "finality": "closed_historical", "data_quality": "VERIFIED" if unique else "UNKNOWN"}
+
+
+def slice_candles(rows: list[Bar], *, timeframe: str, start: datetime, end: datetime,
+                  warmup: int = 0) -> dict:
+    """Verify and split canonical candles into warm-up and ``[start,end)`` data."""
+    start, end = _utc(start), _utc(end)
+    interval = _timeframe_ms(timeframe)
+    if end <= start or int((end - start).total_seconds() * 1000) % interval:
+        raise ValueError("evaluation period must be a positive aligned half-open interval")
+    normalized = [_canonical_candle(row, timeframe) for row in rows]
+    by_ts = {}
+    raw_by_ts = {}
+    for raw, item in zip(rows, normalized):
+        prior = by_ts.get(item["timestamp"])
+        if prior and prior != item:
+            raise ValueError("conflicting duplicate candles")
+        by_ts[item["timestamp"]] = item
+        raw_by_ts.setdefault(item["timestamp"], raw)
+    expected = int((end - start).total_seconds() * 1000 // interval)
+    evaluation = []
+    cursor = start
+    missing = []
+    while cursor < end:
+        key = cursor.isoformat()
+        item = by_ts.get(key)
+        if item is None:
+            missing.append(key)
+        else:
+            evaluation.append(raw_by_ts[key])
+        cursor += timedelta(milliseconds=interval)
+    if missing:
+        raise ValueError(f"missing critical candles: {len(missing)}")
+    warmup_rows = [raw_by_ts[item["timestamp"]] for item in normalized
+                   if start - timedelta(milliseconds=interval * max(0, warmup)) <= _utc(datetime.fromisoformat(item["timestamp"])) < start]
+    return {"warmup": warmup_rows, "evaluation": evaluation,
+            "coverage": {"requested_start": start.isoformat(), "requested_end": end.isoformat(),
+                         "actual_first": evaluation[0].timestamp.isoformat() if evaluation else None,
+                         "actual_last": evaluation[-1].timestamp.isoformat() if evaluation else None,
+                         "warmup_candles": len(warmup_rows), "evaluation_candles": len(evaluation),
+                         "expected_candles": expected, "missing_candles": len(missing),
+                         "duplicate_candles": len(normalized) - len(by_ts), "status": "VERIFIED"}}
 
 
 # --------------------------------------------------------------- local store
@@ -62,18 +175,26 @@ class HistoricalStore:
             PRIMARY KEY (symbol, timeframe, open_time))""")
         return c
 
-    def upsert(self, symbol: str, timeframe: str, rows: list) -> int:
+    def upsert(self, symbol: str, timeframe: str, rows: list, *, strict: bool = False) -> int:
         """rows = [(open_time_ms, o, h, l, c, v), ...]. Returns count written."""
         if not rows:
             return 0
         c = self._conn()
         try:
-            c.executemany(
-                "INSERT OR REPLACE INTO candles VALUES (?,?,?,?,?,?,?,?)",
-                [(symbol, timeframe, int(r[0]), float(r[1]), float(r[2]),
-                  float(r[3]), float(r[4]), float(r[5])) for r in rows])
+            normalized = []
+            for row in rows:
+                values = tuple(float(row[index]) for index in range(1, 6))
+                if not all(math.isfinite(value) for value in values) or values[1] < max(values[0], values[3]) or values[2] > min(values[0], values[3]):
+                    raise ValueError("invalid OHLCV values")
+                normalized.append((symbol, timeframe, int(row[0]), *values))
+            for item in normalized:
+                prior = c.execute("SELECT open,high,low,close,volume FROM candles WHERE symbol=? AND timeframe=? AND open_time=?",
+                                  item[:3]).fetchone()
+                if strict and prior is not None and tuple(float(value) for value in prior) != tuple(item[3:]):
+                    raise ValueError("conflicting duplicate candle")
+            c.executemany("INSERT OR REPLACE INTO candles VALUES (?,?,?,?,?,?,?,?)", normalized)
             c.commit()
-            return len(rows)
+            return len(normalized)
         finally:
             c.close()
 
@@ -202,7 +323,7 @@ def sync(store: HistoricalStore, symbol: str, timeframe: str, *, target_candles:
     end = None
     try:
         while fetched < target_candles:
-            batch = fetcher(symbol, timeframe, limit=1000, end_ms=end)
+            batch = _finalized_rows(fetcher(symbol, timeframe, limit=1000, end_ms=end))
             if not batch:
                 break
             pages.append(batch)
@@ -223,7 +344,7 @@ def sync(store: HistoricalStore, symbol: str, timeframe: str, *, target_candles:
     collected = [row for page in reversed(pages) for row in page]
 
     rows = [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in collected]
-    written = store.upsert(symbol, timeframe, rows)
+    written = store.upsert(symbol, timeframe, rows, strict=True)
     return {"symbol": symbol, "timeframe": timeframe, "fetched": len(collected),
             "stored": written, "source": "binance (real)", **store.coverage(symbol, timeframe)}
 
@@ -236,11 +357,11 @@ def update(store: HistoricalStore, symbol: str, timeframe: str, *,
         return sync(store, symbol, timeframe, fetcher=fetcher)
     start = last + _TF_MS.get(timeframe, 0)
     try:
-        batch = fetcher(symbol, timeframe, start_ms=start, limit=1000)
+        batch = _finalized_rows(fetcher(symbol, timeframe, start_ms=start, limit=1000))
     except Exception as e:  # noqa: BLE001
         return {"error": str(e), "stored": 0}
     rows = [(r[0], r[1], r[2], r[3], r[4], r[5]) for r in batch]
-    written = store.upsert(symbol, timeframe, rows)
+    written = store.upsert(symbol, timeframe, rows, strict=True)
     return {"symbol": symbol, "timeframe": timeframe, "stored": written,
             "source": "binance (real)", **store.coverage(symbol, timeframe)}
 

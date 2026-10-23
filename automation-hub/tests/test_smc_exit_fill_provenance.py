@@ -452,6 +452,8 @@ b.process_candle("BTCUSDT", dict(open=80, high=81, low=79, close=80, volume=100)
 raise AssertionError("fixture crash was not reached")
 '''
     child = subprocess.run([sys.executable, "-c", script, broker.path, boundary],
+                           # From automation-hub/ so the child imports work wherever pytest starts.
+                           cwd=str(Path(__file__).resolve().parents[1]),
                            capture_output=True, text=True, timeout=15)
     assert child.returncode == 73, child.stderr
     restarted = make_broker(broker.path)

@@ -1,0 +1,169 @@
+{
+  "recorded_at": "2026-10-20T22:05:00.576Z",
+  "run_id": 39503485769,
+  "url": "https://github.com/Arjuunb/nexus-trading-bot/actions/runs/39503485769",
+  "attempt": 1,
+  "event": "workflow_dispatch",
+  "commit": "4eceb973e98e1350dd625153753637629453c401",
+  "branch": "release/strategy-intelligence-task6-4eceb97",
+  "root_python_311": {
+    "passed": 4553,
+    "skipped": 76,
+    "warnings": 4,
+    "seconds": 523.51,
+    "conclusion": "success",
+    "job_id": 118906533591
+  },
+  "root_python_312": {
+    "passed": 4553,
+    "skipped": 76,
+    "warnings": 83,
+    "seconds": 382.5,
+    "conclusion": "success",
+    "job_id": 118906533151
+  },
+  "disposable_postgresql": {
+    "passed": 31,
+    "skipped": 2,
+    "seconds": 36.69,
+    "vps_acceptance": false
+  },
+  "browser": {
+    "passed": 165,
+    "failed": 0,
+    "skipped": 0,
+    "minutes": 5.5,
+    "original_reviewed_harness_and_assertion_guard": "success"
+  },
+  "test_artifacts": [
+    {
+      "id": 12302938650,
+      "name": "release-validation-39503485769-1-py3.11",
+      "size_in_bytes": 92950,
+      "url": "https://api.github.com/repos/Arjuunb/nexus-trading-bot/actions/artifacts/12302938650",
+      "archive_download_url": "https://api.github.com/repos/Arjuunb/nexus-trading-bot/actions/artifacts/12302938650/zip",
+      "expired": false,
+      "created_at": "2026-10-20T22:00:18Z",
+      "expires_at": "2026-10-27T22:00:17Z",
+      "updated_at": "2026-10-20T22:00:18Z",
+      "digest": "sha256:1d68cfb9da647869eff0e8f385b9a74431fc39354981e26ee268f73458c66318",
+      "workflow_run": {
+        "id": 39503485769,
+        "repository_id": 1318827690,
+        "head_repository_id": 1318827690,
+        "head_branch": "release/strategy-intelligence-task6-4eceb97",
+        "head_sha": "4eceb973e98e1350dd625153753637629453c401"
+      }
+    },
+    {
+      "id": 12301829958,
+      "name": "release-validation-39503485769-1-py3.12",
+      "size_in_bytes": 98853,
+      "url": "https://api.github.com/repos/Arjuunb/nexus-trading-bot/actions/artifacts/12301829958",
+      "archive_download_url": "https://api.github.com/repos/Arjuunb/nexus-trading-bot/actions/artifacts/12301829958/zip",
+      "expired": false,
+      "created_at": "2026-10-20T22:03:53Z",
+      "expires_at": "2026-10-27T22:03:52Z",
+      "updated_at": "2026-10-20T22:03:53Z",
+      "digest": "sha256:8e819a18c55af7d18fea3e5ee27ccf52ff0082e20bae41a1c8a9f89a3fdd70ec",
+      "workflow_run": {
+        "id": 39503485769,
+        "repository_id": 1318827690,
+        "head_repository_id": 1318827690,
+        "head_branch": "release/strategy-intelligence-task6-4eceb97",
+        "head_sha": "4eceb973e98e1350dd625153753637629453c401"
+      }
+    }
+  ],
+  "log_excerpts": {
+    "python311": [
+      "2026-10-20T22:00:15.9371783Z 4553 passed, 76 skipped, 4 warnings in 523.51s (0:08:43)"
+    ],
+    "python312_postgres_browser": [
+      "2026-10-20T21:57:23.9734037Z 4553 passed, 76 skipped, 83 warnings in 382.50s (0:06:22)",
+      "2026-10-20T21:58:06.9932571Z 31 passed, 2 skipped in 36.69s",
+      "2026-10-20T22:03:52.2636274Z   165 passed (5.5m)"
+    ]
+  },
+  "deployment_attempted": false,
+  "task6_complete": false,
+  "last_rechecked_at": "2026-10-20T22:22:15.055422+00:00",
+  "build": {
+    "job_id": 118912591216,
+    "conclusion": "success",
+    "source_freeze_guard": "success",
+    "source_secret_scan": "success",
+    "api_native_tests": {
+      "tests": 725,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 25,
+      "image": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+      "exit_code": 0,
+      "scope": "NATIVE_DISPOSABLE_TEST_FIXTURES",
+      "services_started": false,
+      "production_access": false,
+      "passed": 700
+    },
+    "image_scans": "success",
+    "all_severity_secret_scans": "success",
+    "sealed_packet": true,
+    "artifact_id": 12303500964,
+    "artifact_bytes": 176365085,
+    "artifact_sha256": "bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da",
+    "artifact_expires_at": "2026-10-27T22:07:45Z",
+    "independent_download_digest_verified": true,
+    "all_16_packet_files_rehashed": true,
+    "all_12_stored_and_uncompressed_layer_hashes_verified": true,
+    "image_details_receipt": "built-images-and-scans.json"
+  },
+  "publication": {
+    "job_id": 118914426007,
+    "status": "completed",
+    "environment": "ghcr-staging-release",
+    "environment_id": 24412364022,
+    "listed_reviewers": [
+      {
+        "login": "Arjuunb",
+        "id": 190428336
+      }
+    ],
+    "run_actor": {
+      "login": "Arjuunb",
+      "id": 190428336
+    },
+    "triggering_actor": {
+      "login": "Arjuunb",
+      "id": 190428336
+    },
+    "eligible_listed_distinct_reviewers": [],
+    "approved_source_guard_requires_distinct_configured_reviewer": true,
+    "approved_source_guard_requires_prevent_self_review": true,
+    "environment_configuration_read": "UNAVAILABLE_CONNECTED_FETCH_ENDPOINT_UNSUPPORTED",
+    "approval_attempted_by_assistant": false,
+    "registry_api_digest": null,
+    "registry_worker_digest": null,
+    "conclusion": "failure",
+    "guard_error": "PROTECTED_ENVIRONMENT_WITH_DISTINCT_USER_REVIEWER_REQUIRED",
+    "guard_failed_at": "2026-10-20T22:17:11.3556268Z",
+    "actual_approval_history": [
+      {
+        "state": "approved",
+        "user": "Arjuunb",
+        "user_id": 190428336,
+        "environments": [
+          {
+            "name": "ghcr-staging-release",
+            "id": 24412364022
+          }
+        ]
+      }
+    ],
+    "registry_login_attempted": false,
+    "registry_push_attempted": false,
+    "failure_receipt": "publication-failure-39503485769.json",
+    "fresh_manual_run_required_after_protection_fix": true
+  },
+  "workflow_status": "completed",
+  "workflow_conclusion": "failure"
+}

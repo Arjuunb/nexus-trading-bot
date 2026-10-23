@@ -211,5 +211,9 @@ def test_the_server_attaches_the_gate_to_all_three_labs():
     assert isinstance(webhook_api.smc_paper, EventGuardedSMCPaperAccount)
     assert isinstance(webhook_api.smc_paper, AgentGatedSMCPaperAccount)
     assert webhook_api.smc_paper.event_guard is webhook_api.lab_event_guard
-    assert webhook_api.price_action_paper.event_guard is webhook_api.lab_event_guard
+    # The Price Action Lab is retired by default and gets the gate only when on.
+    if webhook_api.PRICE_ACTION_LAB_ENABLED:
+        assert webhook_api.price_action_paper.event_guard is webhook_api.lab_event_guard
+    else:
+        assert webhook_api.price_action_paper is None
     assert isinstance(webhook_api.adaptive_lab.manager.event_guard, LabKeyedEventGuard)

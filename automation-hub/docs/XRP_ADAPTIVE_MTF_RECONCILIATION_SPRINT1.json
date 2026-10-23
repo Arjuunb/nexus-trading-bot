@@ -1,0 +1,178 @@
+{
+  "claim": {
+    "net_pnl_usd": "0.84",
+    "profit_factor": "1.13",
+    "strategy": "Adaptive MTF",
+    "symbol": "XRPUSDT",
+    "trade_count": 22,
+    "win_rate_pct": "40.9"
+  },
+  "claim_status": "UNVERIFIED",
+  "inspection_date": "2026-10-09",
+  "inspections": [
+    {
+      "blockers": [
+        "development_sources_do_not_verify_production_performance",
+        "exact_configuration_instance_account_mode_and_period_scope_required",
+        "missing_episode_lineage",
+        "missing_historical_configuration",
+        "no_persisted_closed_trades_for_requested_strategy_symbol"
+      ],
+      "metrics": {
+        "configuration_fingerprint": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "episode_count": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "execution_mode": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "fees": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "funding": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "gross_pnl": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "gross_profit_factor": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "net_pnl": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "net_profit_factor": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "strategy_version": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "time_period": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "trade_count": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "win_rate_pct": {
+          "status": "UNVERIFIED",
+          "value": null
+        }
+      },
+      "note": "Ledger rows can be partial-exit legs. No historical configuration, episode, execution mode or period is inferred.",
+      "observations": {
+        "closed_ledger_rows": 0,
+        "episode_headers": null,
+        "fingerprinted_journal_rows": null,
+        "journal_rows": 0,
+        "matching_declared_version_rows": 0,
+        "open_ledger_rows": 0
+      },
+      "reconciliation_status": "UNVERIFIED",
+      "report_version": "strategy_intelligence.reconciliation.v1",
+      "requested_strategy_version": "1.0.0",
+      "source_classification": "development",
+      "source_classification_basis": "explicit_caller_declaration",
+      "sources": {
+        "journal": "/workspace/nexus-dev-data/journal.db",
+        "ledger": "/workspace/nexus-dev-data/ledger.db"
+      },
+      "strategy_id": "adaptive_trend_pullback",
+      "symbol": "XRPUSDT"
+    },
+    {
+      "blockers": [
+        "development_sources_do_not_verify_production_performance",
+        "exact_configuration_instance_account_mode_and_period_scope_required",
+        "no_persisted_closed_trades_for_requested_strategy_symbol"
+      ],
+      "metrics": {
+        "configuration_fingerprint": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "episode_count": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "execution_mode": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "fees": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "funding": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "gross_pnl": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "gross_profit_factor": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "net_pnl": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "net_profit_factor": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "strategy_version": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "time_period": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "trade_count": {
+          "status": "UNVERIFIED",
+          "value": null
+        },
+        "win_rate_pct": {
+          "status": "UNVERIFIED",
+          "value": null
+        }
+      },
+      "note": "Ledger rows can be partial-exit legs. No historical configuration, episode, execution mode or period is inferred.",
+      "observations": {
+        "closed_ledger_rows": 0,
+        "episode_headers": 0,
+        "fingerprinted_journal_rows": 0,
+        "journal_rows": 0,
+        "matching_declared_version_rows": 0,
+        "open_ledger_rows": 0
+      },
+      "reconciliation_status": "UNVERIFIED",
+      "report_version": "strategy_intelligence.reconciliation.v1",
+      "requested_strategy_version": "1.0.0",
+      "source_classification": "development",
+      "source_classification_basis": "explicit_caller_declaration",
+      "sources": {
+        "journal": "/workspace/nexus-trading-bot/automation-hub/logs/journal.db",
+        "ledger": "/workspace/nexus-trading-bot/automation-hub/logs/ledger.db"
+      },
+      "strategy_id": "adaptive_trend_pullback",
+      "symbol": "XRPUSDT"
+    }
+  ]
+}

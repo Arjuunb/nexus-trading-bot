@@ -1,0 +1,46 @@
+{
+  "recorded_at": "2026-10-18T13:17:51.414260+00:00",
+  "python": "3.12.14",
+  "branch": "finish/strategy-intelligence-staging",
+  "base_commit": "9957e3e749fb0ef0a8072eb451d93f4da77ab4ab",
+  "scope": "Task 1 only; historical-to-forward-paper evidence integration",
+  "task1_targeted_validation": "PASSED",
+  "full_repository_validation": "FAILED; two wider checks remain unresolved",
+  "deployed": false,
+  "task2_started": false,
+  "notification_network_calls": "mocked; notification destination environment values cleared",
+  "focused": {
+    "tests": 253,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": 253,
+    "duration_seconds": 49.83,
+    "failed_cases": []
+  },
+  "full": {
+    "tests": 4305,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 76,
+    "passed": 4227,
+    "duration_seconds": 498.245,
+    "failed_cases": [
+      {
+        "case": "automation-hub.tests.test_forward_operations::test_real_standalone_process_writes_shutdown_health_without_execution",
+        "message": "assert False is True"
+      },
+      {
+        "case": "automation-hub.tests.test_sprint13_remote_readiness::test_real_compose_resolution_keeps_independent_volume_names_and_ports",
+        "message": "FileNotFoundError: [Errno 2] No such file or directory: 'docker'"
+      }
+    ]
+  },
+  "isolated_worker_health": {
+    "current": "5 passed, 1 existing opt-in skip",
+    "unchanged_pr40": "5 passed, 1 existing opt-in skip"
+  },
+  "compose_baseline": "Same missing Docker CLI failure on unchanged PR #40",
+  "dependency_check": "No broken requirements found using hash-locked API and CI dependencies",
+  "policy": "Hold deployment and Task 2; do not describe the full repository suite as green."
+}

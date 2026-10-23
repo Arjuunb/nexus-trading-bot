@@ -8,6 +8,21 @@ TEXT-id / REAL-money conventions and run only against SQLite.
 
 ## What's here
 
+Sprint 8 routing audit: `0002_shadow_research.sql` is a legacy **SQLite shadow**
+schema, not a tenant-isolated PostgreSQL migration. `pg_migrations.discover`
+now explicitly excludes it; nested `shadow/*.sql` are also never discovered.
+An installation that already applied it to PostgreSQL needs a separately
+authorized isolation/data-preservation review. This change does not drop or
+rewrite those tables. Local research/observation workers remain SQLite-only;
+PostgreSQL identity or financial-outbox tests do not certify their claims.
+
+The SQLite-only worker statement above describes the Sprint 8 routing audit.
+Sprint 10 added an explicit PostgreSQL research/shadow metadata backend; Sprint
+11 adds operational resilience tables. These use the separate operator migration
+entrypoint in `services/postgres_workers.py`, not identity migration discovery.
+See [NEXUS_DEPLOYMENT_READINESS.md](../docs/NEXUS_DEPLOYMENT_READINESS.md) for
+the current database boundaries, migration order and deployment blockers.
+
 | File | Creates |
 |------|---------|
 | `0001_identity.sql` | `tenants`, `users`, `profiles`, `sessions`, `user_settings` — uuid PKs, `timestamptz`, `jsonb`, FKs, and **RLS `ENABLE`+`FORCE`** with a tenant-isolation policy on every table. |

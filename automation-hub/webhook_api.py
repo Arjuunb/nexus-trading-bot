@@ -16,6 +16,10 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from config import settings
+from services.acceptance_policy import acceptance_read_only
+from services.feature_flags import price_action_lab_enabled
+
+PRICE_ACTION_LAB_ENABLED = price_action_lab_enabled()
 from data.ledger import get_ledger
 from execution.paper_engine import PaperExecutionEngine
 from services.auto_engine import AutoStrategyEngine
@@ -116,6 +120,8 @@ from data.journal_store import JournalStore as DecisionJournalStore  # noqa: E40
 from services.decision_journal import DecisionJournal  # noqa: E402
 decision_journal_store = DecisionJournalStore(settings.journal_db)
 pipeline.journal = DecisionJournal(decision_journal_store)
+from services.strategy_intelligence_service import StrategyIntelligenceService  # noqa: E402
+strategy_intelligence = StrategyIntelligenceService(decision_journal_store)
 
 # Live-trading readiness gate: an enforced checklist between paper and live.
 # Live stays locked by default; this only reports real state, never fakes it.
@@ -138,12 +144,14 @@ decision_store = DecisionStore(settings.decisions_db)
 # starting cash; the SAVED value wins over the default on every restart.
 from data.account_store import AccountStore  # noqa: E402
 account_store = AccountStore(settings.account_db)
-account_store.seed_if_empty(settings.starting_cash)
+if not acceptance_read_only():
+    account_store.seed_if_empty(settings.starting_cash)
 # the persisted initial capital drives the paper account (not the env default)
 paper.starting_balance = account_store.initial_capital()
 paper.account_store = account_store
 # reconcile the snapshot from the ledger's real closed trades on boot
-paper._persist_account_snapshot()
+if not acceptance_read_only():
+    paper._persist_account_snapshot()
 
 # Persistent market prefs: favorites / pins / watchlists survive logout + restart.
 from data.watchlist_store import WatchlistStore  # noqa: E402
@@ -173,7 +181,8 @@ pipeline.journal_context = {
     "instrument_type": "spot",
 }
 # import already-closed journal trades so the memory isn't empty on first boot
-trade_memory.backfill()
+if not acceptance_read_only():
+    trade_memory.backfill()
 
 # Broker layer (#14) — one interface, paper executable, live locked.
 from services.broker import BrokerRegistry  # noqa: E402
@@ -217,7 +226,7 @@ def _make_instance_strategy(key: str, symbol: str):
 from data.ws_feed import WebSocketFeed  # noqa: E402
 from services.auto_engine import _default_fetcher  # noqa: E402
 ws_feed = WebSocketFeed(list(settings.auto_symbols), timeframe=settings.auto_timeframe)
-if settings.use_live_data:
+if settings.use_live_data and not acceptance_read_only():
     ws_feed.start()
 
 engine = AutoStrategyEngine(
@@ -262,6 +271,7 @@ instance_manager = TradingInstanceManager(
     max_weekly_loss_pct=settings.max_weekly_loss_pct,
     max_trades_per_day=settings.max_trades_per_day,
     trading_days_mask=settings.trading_days_mask,
+    intelligence_service=strategy_intelligence,
 )
 # Opt-in news blackout per instance, fed by the same economic calendar as the
 # global engine. Attached before app startup restores any worker.
@@ -306,7 +316,8 @@ engine.approvals = approvals
 # dies, or the stream degrades to REST. Heartbeat shown at /ops/watchdog.
 from services.watchdog import Watchdog  # noqa: E402
 watchdog = Watchdog(engine, ledger, notifier.dispatch, ws_feed=ws_feed)
-watchdog.start()
+if not acceptance_read_only():
+    watchdog.start()
 
 # AI Monitoring Agent, on a timer: compares the DEPLOYED strategy's live
 # behaviour against a backtest of that same spec and alerts on deviation. Reads
@@ -317,7 +328,7 @@ monitor_runner = MonitorRunner(engine, paper, ledger, exec_quality=exec_quality,
 # Opt-out for multi-worker deployments: each worker would otherwise run its own
 # loop and alert the same deviation N times. The endpoints keep working either
 # way — only the timer stops.
-if _os.environ.get("HUB_MONITOR_AGENT", "1").strip().lower() not in ("0", "false", "no", "off"):
+if not acceptance_read_only() and _os.environ.get("HUB_MONITOR_AGENT", "1").strip().lower() not in ("0", "false", "no", "off"):
     monitor_runner.start()
 
 # Daily report + nightly backup: one honest digest to Telegram per UTC day
@@ -416,7 +427,8 @@ daily_tasks = DailyTasks(
            _auto_retune_check,
            _memory_review,
            _retention_prune])
-daily_tasks.start()
+if not acceptance_read_only():
+    daily_tasks.start()
 
 # Apply persisted runtime overrides on top of env defaults.
 from services.runtime_settings import load_overrides, save_overrides  # noqa: E402
@@ -510,7 +522,7 @@ def _settings_snapshot() -> dict:
     }
 
 
-for _k, _v in load_overrides(settings.settings_path).items():
+for _k, _v in ({} if acceptance_read_only() else load_overrides(settings.settings_path)).items():
     _apply_setting(_k, _v)
 
 # Legacy installations only have engine_symbols. New installs preserve the
@@ -948,7 +960,9 @@ candle_sync_runner = CandleSyncRunner(
 # Same opt-out as the monitor agent, for the same reason: each worker would
 # otherwise run its own loop and refetch what a sibling just fetched. The
 # manual /data/sync endpoints keep working either way — only the timer stops.
-if _os.environ.get("HUB_CANDLE_SYNC", "1").strip().lower() not in ("0", "false", "no", "off"):
+# Acceptance read-only mode starts no background fetch at all.
+if (not acceptance_read_only()
+        and _os.environ.get("HUB_CANDLE_SYNC", "1").strip().lower() not in ("0", "false", "no", "off")):
     candle_sync_runner.start()
 
 # Paper Trading V2: strict provider-backed cache and persistent candle-driven
@@ -956,7 +970,6 @@ if _os.environ.get("HUB_CANDLE_SYNC", "1").strip().lower() not in ("0", "false",
 # remains the compatibility path until callers opt into /paper-v2.
 from data.market_data_v2 import MarketDataService, MarketDataUpdateJob  # noqa: E402
 from execution.paper_broker_v2 import PaperBrokerV2  # noqa: E402
-from services.price_action_lab import PriceActionLabRuntime, PriceActionPaperAccount  # noqa: E402
 from services.smc_agent import SMCAgent  # noqa: E402
 from services.smc_agent_journal import SMCAgentJournal  # noqa: E402
 from services.smc_agent_policy_store import AgentPolicyStore  # noqa: E402
@@ -965,7 +978,6 @@ from services.smc_agent_runtime import (AgentGatedSMCPaperAccount,  # noqa: E402
 from services.forward_paper_hub import ForwardPaperMarketDataHub  # noqa: E402
 from services.research_observer import ResearchObservationRuntime  # noqa: E402
 from services.shadow_research import ShadowResearchStore  # noqa: E402
-from services.price_action_research import PriceActionExperimentRunner, PriceActionExperimentStore  # noqa: E402
 v2_market_data = MarketDataService(settings.market_data_v2_dir)
 forward_paper_market_hub = ForwardPaperMarketDataHub(v2_market_data.public_usdm_window)
 _shadow_path = _os.path.abspath(settings.shadow_research_db)
@@ -978,6 +990,28 @@ _execution_paths = {
 if _shadow_path in _execution_paths:
     raise RuntimeError("HUB_SHADOW_RESEARCH_DB must be physically separate from every paper/research ledger")
 shadow_research_store = ShadowResearchStore(settings.shadow_research_db)
+from services.worker_backends import shadow_store as selected_shadow_store  # noqa: E402
+from services.worker_backends import research_context as selected_research_context  # noqa: E402
+from services.shadow_observation_store import ShadowObservationStore  # noqa: E402
+from services.shadow_router import ShadowRouter  # noqa: E402
+from services.shadow_observation_worker import ShadowObservationWorker  # noqa: E402
+shadow_router = ShadowRouter(
+    selected_shadow_store(shadow_research_store),
+    candidate_reader=lambda candidate_id, owner_id: selected_research_context(strategy_intelligence.context).get_research_candidate(candidate_id, owner_id=owner_id),
+)
+shadow_observation_worker = ShadowObservationWorker(shadow_router, forward_paper_market_hub)
+from services.active_decision_evidence import ActiveDecisionSources  # noqa: E402
+from services.shadow_comparison_service import ShadowComparisonService  # noqa: E402
+from services.tenancy import OWNER_TENANT, multi_user_enabled  # noqa: E402
+shadow_router.active_sources = ActiveDecisionSources(
+    pa_path=settings.price_action_paper_db if PRICE_ACTION_LAB_ENABLED else None,
+    smc_path=settings.smc_paper_db,
+    decisions_path=settings.decisions_db,
+    lab_owner=None if multi_user_enabled() else OWNER_TENANT,
+)
+shadow_router.comparison_service = ShadowComparisonService(
+    shadow_router.store, source_reader=shadow_router.active_sources.read,
+)
 research_observer = ResearchObservationRuntime(
     forward_paper_market_hub, shadow_research_store,
     symbol=settings.auto_symbols[0] if settings.auto_symbols else "BTCUSDT",
@@ -991,7 +1025,7 @@ research_observer = ResearchObservationRuntime(
 # primary HTF and secondary HTF) on every deployment, even when no research
 # session is being used. Keep it opt-in so the production worker does not spend
 # CPU on an unused workload; operators can enable it explicitly when needed.
-if ("PYTEST_CURRENT_TEST" not in _os.environ and
+if (not acceptance_read_only() and "PYTEST_CURRENT_TEST" not in _os.environ and
         _os.environ.get("HUB_RESEARCH_AUTOSTART", "0").strip().lower()
         in ("1", "true", "yes", "on")):
     research_observer.start()
@@ -1103,15 +1137,27 @@ adaptive_lab_supervisor = InstanceSupervisor(
     interval_s=float(_os.environ.get("HUB_INSTANCE_SUPERVISOR_INTERVAL", "20")))
 paper_broker_v2 = PaperBrokerV2(settings.paper_broker_v2_db,
                                 starting_balance=settings.starting_cash)
-from services.lab_event_guard import (  # noqa: E402
-    EventGuardedPriceActionPaperAccount, EventGuardedSMCPaperAccount)
-price_action_paper = EventGuardedPriceActionPaperAccount(settings.price_action_paper_db,
-                                                          starting_balance=10_000.0)
-price_action_paper.event_guard = lab_event_guard
 if _os.path.abspath(settings.smc_paper_db) == _os.path.abspath(settings.price_action_paper_db):
     raise RuntimeError("HUB_SMC_PAPER_DB must not share the Price Action paper database")
-smc_paper = EventGuardedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0)
+from services.lab_event_guard import EventGuardedSMCPaperAccount  # noqa: E402
+smc_paper = EventGuardedSMCPaperAccount(settings.smc_paper_db, starting_balance=10_000.0,
+                                        evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
 smc_paper.event_guard = lab_event_guard
+
+# When explicitly enabled, the process owns PA runtime initialization.
+# Retirement skips the entire lab instead of merely hiding its page.
+# Disabled means no PA account/broker/journal/experiment SQLite connections,
+# supervisor thread or market-data subscription. Shared PA strategy definitions
+# remain available to Trading Instances and backtesting.
+price_action_paper = price_action_runtime = None
+price_action_experiments = price_action_research = None
+if PRICE_ACTION_LAB_ENABLED:
+    from services.lab_event_guard import EventGuardedPriceActionPaperAccount
+    from services.price_action_lab import PriceActionLabRuntime
+    from services.price_action_research import PriceActionExperimentRunner, PriceActionExperimentStore
+    price_action_paper = EventGuardedPriceActionPaperAccount(settings.price_action_paper_db,
+        starting_balance=10_000.0, evidence_owner=None if multi_user_enabled() else OWNER_TENANT)
+    price_action_paper.event_guard = lab_event_guard
 
 
 # App-wide realized P&L calendar (services/pnl_calendar.py, docs/PNL_CALENDAR.md):
@@ -1126,18 +1172,21 @@ def _instance_meta(manager) -> dict:
             for inst in manager.list()}
 
 
-pnl_calendar = _pnl.PnlCalendar({
+_pnl_collectors = {
     "ledger": lambda: _pnl.collect_ledger(
         _pnl.read_paper_trades(ledger), scope="ledger", default_source="paper_trading",
         instances=_instance_meta(instance_manager), journal=decision_journal_store.get),
     "adaptive_lab": lambda: _pnl.collect_ledger(
         _pnl.read_paper_trades(adaptive_lab.ledger), scope="adaptive", default_source="adaptive_lab",
         instances=_instance_meta(adaptive_lab.manager)),
-    "pa_lab": lambda: _pnl.collect_v2_lab(
-        _pnl.v2_lab_history(price_action_paper, source="pa_lab", currency="USDT"), source="pa_lab"),
     "smc_lab": lambda: _pnl.collect_v2_lab(
         _pnl.v2_lab_history(smc_paper, source="smc_lab", currency="USDT"), source="smc_lab"),
-})
+}
+# A retired PA Lab has no account to read, and its database stays closed.
+if price_action_paper is not None:
+    _pnl_collectors["pa_lab"] = lambda: _pnl.collect_v2_lab(
+        _pnl.v2_lab_history(price_action_paper, source="pa_lab", currency="USDT"), source="pa_lab")
+pnl_calendar = _pnl.PnlCalendar(_pnl_collectors)
 smc_agent_journal = SMCAgentJournal(settings.smc_agent_journal_db)
 # equity here is only a fallback: on every live tick the runtime supplies the
 # paper account's actual equity and the session's saved risk percentage.
@@ -1154,19 +1203,19 @@ _saved_agent_policies = smc_agent_policies.load()
 smc_runtime = AgentSMCStrategyLabRuntime(
     v2_market_data, smc_paper, agent=smc_agent,
     market_hub=forward_paper_market_hub,
-    poll_seconds=settings.smc_poll_s,
+    poll_seconds=settings.smc_poll_s, autostart=not acceptance_read_only(),
     trade_policy=_saved_agent_policies["trade_management"],
     context_policy=_saved_agent_policies["context"],
     memory_policy=_saved_agent_policies["memory"])
-# Price Action must remain autonomous after a server restart even when no
-# browser has opened the lab page. The supervisor owns stream initialization;
-# UI requests are read-only observers of the same server-side runtime.
-price_action_runtime = PriceActionLabRuntime(
-    v2_market_data, price_action_paper, autostart=True,
-    market_hub=forward_paper_market_hub,
-    poll_seconds=settings.price_action_poll_s)
-price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
-price_action_research = PriceActionExperimentRunner(price_action_experiments)
+if price_action_paper is not None:
+    # Price Action must remain autonomous after a server restart even when no
+    # browser has opened the lab page. The supervisor owns stream initialization;
+    # UI requests are read-only observers of the same server-side runtime.
+    price_action_runtime = PriceActionLabRuntime(
+        v2_market_data, price_action_paper, autostart=not acceptance_read_only(),
+        market_hub=forward_paper_market_hub, poll_seconds=settings.price_action_poll_s)
+    price_action_experiments = PriceActionExperimentStore(settings.price_action_research_db)
+    price_action_research = PriceActionExperimentRunner(price_action_experiments)
 v2_market_update_job = MarketDataUpdateJob(v2_market_data)
 
 # ------------------------------------------------- market-context providers
@@ -1469,8 +1518,11 @@ journal_recorder.add_ledger(LedgerSource(
     "ADAPTIVE_LAB", adaptive_lab.ledger, instances=_journal_instances(adaptive_lab.manager),
     pending_intents=_parked_intents(adaptive_lab.manager),
     decision_store=adaptive_lab.decisions, lab_id="adaptive_lab"))
-journal_recorder.labs = [SMCLabProjector(smc_paper, agent_journal=smc_agent_journal),
-                         PALabProjector(price_action_paper)]
+journal_recorder.labs = [SMCLabProjector(smc_paper, agent_journal=smc_agent_journal)]
+# A retired PA Lab is not read: its database stays closed and the journal
+# records it already holds are kept as they are.
+if price_action_paper is not None:
+    journal_recorder.labs.append(PALabProjector(price_action_paper))
 journal_recorder.legacy = LegacyJournalMigration(decision_journal_store)
 journal_recorder.after_pass.append(lambda: review_finalized(trade_records))
 weekly_review_scheduler = WeeklyReviewScheduler(
@@ -1526,30 +1578,37 @@ def _guardian_notify(text: str):
     return notifier.send(text) if notifier.configured else None
 
 
+# Guardian watches the PA Lab only while it runs. When it is retired, nothing
+# here opens its database (the opt-in observer export can still read the
+# retained history on request, read-only).
+_guardian_labs = {"smc": lambda: _guardian_sources.lab_row("smc", "SMC Lab", smc_runtime,
+                                                           session=smc_paper.session)}
+_guardian_readers = [_GuardianSMCReader(settings.smc_agent_journal_db, lab_id="smc")]
+_guardian_accounts = [
+    _GuardianSource("MAIN", getattr(_journal_main_ledger, "path", None), kind="ledger"),
+    _GuardianSource("ADAPTIVE_LAB", settings.adaptive_lab_db, kind="ledger"),
+    _GuardianSource("SMC_LAB", settings.smc_paper_db, kind="lab_broker", journal_source="SMC_LAB")]
+if price_action_paper is not None:
+    _guardian_labs["pa"] = lambda: _guardian_sources.lab_row("pa", "Price Action Lab", price_action_runtime,
+                                                             session=price_action_paper.session)
+    _guardian_readers.append(_GuardianPAReader(settings.price_action_paper_db, lab_id="pa"))
+    _guardian_accounts.append(_GuardianSource("PA_LAB", settings.price_action_paper_db, kind="lab_broker",
+                                              journal_source="PA_LAB"))
 guardian = GuardianService(
     guardian_store, guardian_bus,
     instances={"main": lambda: _guardian_sources.instance_rows(instance_manager),
                "adaptive": lambda: _guardian_sources.instance_rows(adaptive_lab.manager,
                                                                    lab_id="adaptive")},
-    labs={"smc": lambda: _guardian_sources.lab_row("smc", "SMC Lab", smc_runtime,
-                                                   session=smc_paper.session),
-          "pa": lambda: _guardian_sources.lab_row("pa", "Price Action Lab", price_action_runtime,
-                                                  session=price_action_paper.session)},
+    labs=_guardian_labs,
     database=lambda: status_monitor.confirmed(),
     journal=lambda: _guardian_sources.journal_row(journal_recorder),
     # Strategy telemetry (Phase 2): the labs' own decision tables, read through
     # read-only connections. Instances publish their traces from the engine.
-    telemetry=_GuardianTelemetry(guardian_store, [
-        _GuardianSMCReader(settings.smc_agent_journal_db, lab_id="smc"),
-        _GuardianPAReader(settings.price_action_paper_db, lab_id="pa")]),
+    telemetry=_GuardianTelemetry(guardian_store, _guardian_readers),
     performance_path=settings.trade_records_db,
     # Execution integrity and global exposure (Phase 4): each account's own
     # records, read-only; the live lock is the broker registry's own answer.
-    integrity=_GuardianIntegrity(guardian_store, [
-        _GuardianSource("MAIN", getattr(_journal_main_ledger, "path", None), kind="ledger"),
-        _GuardianSource("ADAPTIVE_LAB", settings.adaptive_lab_db, kind="ledger"),
-        _GuardianSource("SMC_LAB", settings.smc_paper_db, kind="lab_broker", journal_source="SMC_LAB"),
-        _GuardianSource("PA_LAB", settings.price_action_paper_db, kind="lab_broker", journal_source="PA_LAB")],
+    integrity=_GuardianIntegrity(guardian_store, _guardian_accounts,
         journal_path=settings.trade_records_db,
         live_status=lambda: {"locked": bool(broker_registry.live_locked())}),
     # Recovery (Phase 7): nothing automatic unless the owner lists the policy
@@ -1580,7 +1639,10 @@ import routers.market_data  # noqa: E402
 import routers.instances  # noqa: E402
 import routers.forward_validation  # noqa: E402
 import routers.native_smc  # noqa: E402
-import routers.price_action  # noqa: E402
+if PRICE_ACTION_LAB_ENABLED:
+    from routers.price_action import router as price_action_router
+else:
+    from routers.disabled_price_action import router as price_action_router
 import routers.pa_rulebook  # noqa: E402
 import routers.instance_visual_lab  # noqa: E402
 import routers.adaptive_lab  # noqa: E402
@@ -1610,7 +1672,7 @@ router.include_router(routers.market_data.router)
 router.include_router(routers.instances.router)
 router.include_router(routers.forward_validation.router)
 router.include_router(routers.native_smc.router)
-router.include_router(routers.price_action.router)
+router.include_router(price_action_router)
 router.include_router(routers.pa_rulebook.router)
 router.include_router(routers.instance_visual_lab.router)
 router.include_router(routers.adaptive_lab.router)
@@ -1684,7 +1746,7 @@ def grid_status() -> dict:
 # resume a persisted grid on boot (survives restart / redeploy)
 try:
     from data import grid_store as _grid_store  # noqa: E402
-    _grid_snap = _grid_store.load()
+    _grid_snap = None if acceptance_read_only() else _grid_store.load()
     if _grid_snap and _grid_snap.get("running"):
         from services.grid_engine import GridRunner as _GR  # noqa: E402
         grid_runner = _GR.from_snapshot(_grid_snap, _grid_fetcher, ledger, interval=30.0, persist=_grid_store.save)

@@ -48,9 +48,11 @@ class TradeMemoryManager:
             journal = self.journal_store.get(trade_id)
             if journal is None or journal.get("status") != "closed":
                 return None
+            existing = self.store.get(trade_id)
+            if existing and not tm._memory_scope_matches(journal, existing):
+                return None
             # keep any note already attached to the memory across recomposition
             if not notes:
-                existing = self.store.get(trade_id)
                 if existing:
                     notes = existing.get("notes") or ""
             decision = self._match_decision(journal)
@@ -63,19 +65,24 @@ class TradeMemoryManager:
             return None
 
     def _match_decision(self, journal: dict) -> Optional[dict]:
-        """Best-effort link to the unified decision object: the executed,
-        accepted decision for this symbol+side closest to the entry time. Only
-        attached when a confident match exists — otherwise None (composer marks
-        the extra fields honestly)."""
+        """Resolve explicit persisted IDs before any unverified legacy match.
+
+        A broken explicit reference never falls back to symbol/time. Every
+        candidate must respect captured account, instance and strategy scope.
+        The composer labels the legacy heuristic UNVERIFIED.
+        """
         if self.decision_store is None:
             return None
         try:
+            reference, _basis = tm._decision_reference(journal)
+            if reference is not None:
+                decision = self.decision_store.get(reference)
+                return decision if decision and tm._decision_scope_matches(journal, decision) else None
             symbol = journal.get("symbol")
-            side = journal.get("side")
             created = _parse(journal.get("created_at"))
             cands = [d for d in self.decision_store.list(limit=200, decision="accepted",
                                                          symbol=symbol)
-                     if d.get("executed") and d.get("side") == side]
+                     if tm._decision_scope_matches(journal, d, legacy=True)]
             if not cands or created is None:
                 return None
             best, best_gap = None, None
@@ -86,7 +93,7 @@ class TradeMemoryManager:
                 gap = abs((created - dt).total_seconds())
                 if best_gap is None or gap < best_gap:
                     best, best_gap = d, gap
-            # only trust matches within an hour of the entry
+            # Legacy context only: proximity cannot establish a verified link.
             return best if (best_gap is not None and best_gap <= 3600) else None
         except Exception:  # noqa: BLE001
             return None

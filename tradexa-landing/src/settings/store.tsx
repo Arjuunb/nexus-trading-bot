@@ -9,17 +9,17 @@ import {
   type ReactNode,
 } from "react";
 import { settingsSchema, defaultSettings, type Settings, type SettingsSection } from "./schema";
+import { isSupabaseConfigured, supabase } from "@/lib/supabase";
+import { createWorkspaceSession, type WorkspaceIdentity, type WorkspaceSnapshot } from "./workspace-session";
 
 /**
- * Settings persistence. Source of truth is validated against the Zod schema and
- * persisted to localStorage immediately (optimistic). When VITE_API_BASE is
- * configured the same payload is PATCHed to the backend — so the UI is real and
- * functional today and becomes server-backed with no component changes.
+ * Supabase customers use a verified, per-account server workspace. The legacy
+ * operator/local mode retains its existing persistence separately.
  */
 
 const STORAGE_KEY = "tradexa.settings.v1";
 
-// Signed-in operator sessions get window.__HUB_CONFIG__ injected by the
+// Legacy operator sessions get window.__HUB_CONFIG__ injected by the
 // backend (same-origin). That is the signal that a per-user server workspace
 // exists: the DB becomes the source of truth and localStorage is only the
 // fast-boot cache. Signed-out visitors keep local-only behavior.
@@ -37,6 +37,9 @@ interface Ctx {
   settings: Settings;
   saveState: SaveState;
   backendConnected: boolean;
+  identity: WorkspaceIdentity | null;
+  loadState: WorkspaceSnapshot<Settings>["loadState"];
+  error: string | null;
   /** Patch one section, merging a partial into the existing values. Autosaves. */
   update: <K extends SettingsSection>(section: K, patch: Partial<Settings[K]>) => void;
   /** Replace one section wholesale (used by RHF form submits). Autosaves. */
@@ -66,6 +69,93 @@ function load(): Settings {
 }
 
 export function SettingsProvider({ children }: { children: ReactNode }) {
+  return isSupabaseConfigured
+    ? <CustomerSettingsProvider>{children}</CustomerSettingsProvider>
+    : <LegacySettingsProvider>{children}</LegacySettingsProvider>;
+}
+
+/** Customer workspaces are loaded only after server verification, without a
+ * shared browser cache. A new identity clears pending work synchronously. */
+function CustomerSettingsProvider({ children }: { children: ReactNode }) {
+  const controller = useRef<ReturnType<typeof createWorkspaceSession<Settings>> | null>(null);
+  const [snapshot, setSnapshot] = useState<WorkspaceSnapshot<Settings>>({
+    settings: defaultSettings, identity: null, loadState: "signed-out",
+    saveState: "idle", backendConnected: false, error: null,
+  });
+
+  useEffect(() => {
+    if (!supabase) return;
+    let active = true;
+    let authRevision = 0;
+    const session = createWorkspaceSession<Settings>({
+      defaults: defaultSettings,
+      normalizeSettings: (data) => settingsSchema.parse(
+        mergeDeep(defaultSettings, settingsSchema.deepPartial().parse(data)),
+      ),
+      request: async ({ method, path, accessToken, body }) => {
+        const response = await fetch(path, {
+          method, credentials: "include", cache: "no-store",
+          headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "application/json" },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        });
+        const result: unknown = await response.json().catch(() => null);
+        return { status: response.status, body: result };
+      },
+      schedule: (callback, delay) => window.setTimeout(callback, delay),
+      cancel: (handle) => window.clearTimeout(handle as number),
+      debounceMs: 400,
+    });
+    controller.current = session;
+    const unsubscribe = session.subscribe(() => {
+      if (active) setSnapshot(session.getSnapshot());
+    });
+    setSnapshot(session.getSnapshot());
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, value) => {
+      authRevision += 1;
+      if (!active) return;
+      if (event === "TOKEN_REFRESHED" && value?.access_token && session.getSnapshot().loadState === "ready") {
+        void session.renewSession(value.access_token);
+      } else {
+        void session.setSession(value?.access_token ?? null);
+      }
+    });
+    const initialRevision = authRevision;
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (active && initialRevision === authRevision) {
+        void session.setSession(error ? null : data.session?.access_token ?? null);
+      }
+    }).catch(() => {
+      if (active && initialRevision === authRevision) void session.setSession(null);
+    });
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+      unsubscribe();
+      session.dispose();
+      if (controller.current === session) controller.current = null;
+    };
+  }, []);
+
+  // Async form submissions can finish after their screen is unmounted. Their
+  // callback must retain its original session generation, never the new user.
+  const ownedUpdate = useMemo(() => controller.current?.captureUpdater(), [snapshot]);
+  const update = useCallback<Ctx["update"]>((section, patch) => {
+    ownedUpdate?.(section, patch);
+  }, [ownedUpdate]);
+  const setSection = useCallback<Ctx["setSection"]>((section, value) => {
+    ownedUpdate?.(section, value);
+  }, [ownedUpdate]);
+  const reset = useCallback((section?: SettingsSection) => {
+    const sections = section ? [section] : Object.keys(defaultSettings) as SettingsSection[];
+    for (const key of sections) ownedUpdate?.(key, defaultSettings[key]);
+  }, [ownedUpdate]);
+  const value = useMemo<Ctx>(() => ({ ...snapshot, update, setSection, reset }),
+    [snapshot, update, setSection, reset]);
+  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
+}
+
+function LegacySettingsProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<Settings>(() =>
     typeof window === "undefined" ? defaultSettings : load(),
   );
@@ -150,7 +240,8 @@ export function SettingsProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo<Ctx>(
-    () => ({ settings, saveState, backendConnected: signedIn(), update, setSection, reset }),
+    () => ({ settings, saveState, backendConnected: signedIn(), identity: null,
+      loadState: "ready", error: null, update, setSection, reset }),
     [settings, saveState, update, setSection, reset],
   );
 

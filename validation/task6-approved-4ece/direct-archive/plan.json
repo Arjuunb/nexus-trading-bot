@@ -1,0 +1,67 @@
+{
+  "recorded_at": "2026-10-20T22:34:20.968216+00:00",
+  "scope": "DIRECT_TRANSFER_OF_ALREADY_TESTED_IMAGES_TO_EXISTING_AUTHORIZED_STAGING",
+  "approved_commit": "4eceb973e98e1350dd625153753637629453c401",
+  "source_sha256": "82a41d03d5c049051d740d154a6c941efae01b4370f4b6d167b7167b54582ea8",
+  "source_changed": false,
+  "new_build_required": false,
+  "registry_publication_performed": false,
+  "github_environment_approval_claimed": false,
+  "publication_guard_modified": false,
+  "publication_result": "FAILED_UNCHANGED",
+  "authorization": "Existing explicit Task 6 staging deployment request plus explicit approval of replacement source 4eceb97; not the failed GHCR review",
+  "basis": [
+    "staging-release.yml explicitly separates publication from target transfer/startup/worker authorization",
+    "prepare-staging-bindings.py supports immutable local sha256 config IDs",
+    "actual CI build already loaded these archives and verified source, image identities, native tests and scans"
+  ],
+  "target_project": "nexus-remote-stage-rc3-28acdbc",
+  "customer_workspace_credentials_mounts_volumes_and_data": "PRESERVE_EXISTING",
+  "api_memory_bytes": 1610612736,
+  "api_memory_plus_swap_bytes": 1610612736,
+  "memory_overlay_must_remain_last": true,
+  "allowed_service_image_changes": [
+    "api",
+    "research-worker"
+  ],
+  "new_paper_execution": false,
+  "real_money_trading": false,
+  "automatic_promotion": false,
+  "public_feed_activation": false,
+  "production_service_or_database_change": false,
+  "artifact_id": 12303500964,
+  "artifact_sha256": "bcdcdcab3b3870cad1dbc6913e941979b2ec0b22e69e6726117d35e5bf0bb1da",
+  "images": {
+    "api": {
+      "export_manifest_digest": "sha256:60b92270e1d2dbe21e84513b12602d35566ec65de4e5b4f3e853076d4f3a9ade",
+      "media_type": "application/vnd.oci.image.manifest.v1+json",
+      "config_id": "sha256:09b524395a9706115b53c8c19e8cc4239b873dcb5450bd3d43700d3bff5f0321",
+      "stored_layer_digests": [
+        "sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5",
+        "sha256:2c95de37c4a66e94a2fd637591d5c573eb939469cf19c8eb0615051cd9219617",
+        "sha256:f1244e1e87fef06de2b01420033ab5ad634d1ee6e53c94f0311a3608786494cf",
+        "sha256:82ceee3231d4eac86c0ddc609b706fd9155e8cf76395fcfa9fc419a3eeb7c45c",
+        "sha256:00093a59ed5365f981b20d42a4e6b763b0ceb45b04b6e0d2680acc5c2ccafcde",
+        "sha256:c4662351c831740591f49c511f8981aa5492cb90b070d3d5e6f4e9ce1c2e81bb"
+      ]
+    },
+    "worker": {
+      "export_manifest_digest": "sha256:6cfd023a115f8985b6298e6fd1f476064b40fda8781d604175e4d6cde20e0cc8",
+      "media_type": "application/vnd.oci.image.manifest.v1+json",
+      "config_id": "sha256:b16074411ac65ed2cc8c0d6981b0608eb25bebdf8445abdad1a04aa8913cda41",
+      "stored_layer_digests": [
+        "sha256:e2de96513ba9eb53b431787ec8a65cdde380ac4772a3e4c4b714dcfde2a102b5",
+        "sha256:bce3d672089f7ccc5125c3f8f95542fa3971138f323fb7f77e338a14396c85aa",
+        "sha256:283ac05c32e67060aa59f8a841b02df4cc0bd7fbf8d880f67d9b622e1cbd1935",
+        "sha256:e203d50c86bd38d307585d33fd69e7e7fd91e7535b65af46aa1d663cfb80c0fa",
+        "sha256:be6a743effb3545e37982e39768d793c60e038caaede98d30084f31b6ad1a06a",
+        "sha256:362cbc297cf2c7878c3316462754e7132b2399d27778f2fc254dbec1c6fc239f"
+      ]
+    }
+  },
+  "offline_archive_checksums": "PASS",
+  "offline_yaml_shape_check": "PASS; NOT_VPS_COMPOSE_RENDER",
+  "vps_preservation_and_backup_checks": "PENDING_ACCESS",
+  "deployment_attempted": false,
+  "task6_complete": false
+}

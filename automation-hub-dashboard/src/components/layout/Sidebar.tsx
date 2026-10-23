@@ -3,7 +3,7 @@ import {
   LayoutDashboard, CandlestickChart, Search, Layers, FlaskConical, RefreshCw, PlayCircle,
   NotebookPen, Rocket, Wallet, BarChart3, ShieldAlert, Brain,
   BookOpen, Activity, BadgeCheck, Settings, Lock, Blocks, SquareTerminal, SlidersHorizontal, GitCompareArrows, CalendarDays,
-  ShieldCheck,
+  ShieldCheck, BrainCircuit,
   type LucideIcon,
 } from "lucide-react";
 import { NAV_GROUPS } from "../../app-context";
@@ -31,9 +31,9 @@ const NAV_LUCIDE: Record<string, LucideIcon> = {
   "SMC Strategy Lab": Brain,
   "SMC Visual Lab": CandlestickChart,
   "Adaptive MTF Lab": RefreshCw,
-  "Price Action Lab": Activity,
   "Instance Visual Lab": Activity,
   "Risk & Health": ShieldAlert,
+  "Strategy Intelligence": BrainCircuit,
   Evolution: Brain,
   Calendar: CalendarDays,
   Journal: BookOpen,

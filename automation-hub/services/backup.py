@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Optional
 
 from services.backup_crypto import BackupSealError, open_file, seal_file
+from services.feature_flags import price_action_lab_enabled
 
 KEEP = 7
 ARCHIVE = ".tlxb"
@@ -86,6 +87,37 @@ def _snapshots(root: Path) -> list[tuple[str, Path]]:
     return sorted(found, key=lambda item: item[0])
 
 
+def retired_pa_paths(root: Path) -> set[Path]:
+    if price_action_lab_enabled():
+        return set()
+    retired = {Path(os.environ.get(key, str(root/name))).resolve() for key, name in (
+        ('HUB_PRICE_ACTION_PAPER_DB', 'price_action_paper.db'),
+        ('HUB_PRICE_ACTION_RESEARCH_DB', 'price_action_research.db'))}
+    protected = {Path(os.environ.get(key, str(root/name))).resolve() for key, name in (
+        ('HUB_ACCOUNT_DB', 'account.db'), ('HUB_JOURNAL_DB', 'journal.db'),
+        ('HUB_LEDGER_PATH', 'ledger.db'), ('HUB_PAPER_BROKER_V2_DB', 'paper_broker_v2.db'),
+        ('HUB_SMC_PAPER_DB', 'smc_strategy_paper.db'), ('HUB_MARKET_DB', 'market_data.db'),
+        ('HUB_SHADOW_RESEARCH_DB', 'shadow_research.db'), ('HUB_DECISIONS_DB', 'decisions.db'))}
+    if retired & protected:
+        raise RuntimeError('PA_DATABASE_ALIASES_PROTECTED_STORE')
+    return retired
+
+
+def _holds_retired(victim: Path, retired: set[Path]) -> bool:
+    """Whether an old snapshot holds a retired lab's database. A sealed archive
+    is judged by its manifest; one whose manifest cannot be read is kept."""
+    names = {p.name for p in retired}
+    if not names:
+        return False
+    if victim.is_dir():
+        return any((victim / name).is_file() for name in names)
+    try:
+        files = json.loads(Path(str(victim) + ".json").read_text()).get("files") or []
+    except (OSError, ValueError, AttributeError):
+        return True
+    return bool(names & set(files))
+
+
 def backup_now(data_dir: str, *, keep: int = KEEP, now: datetime = None,
                master_key=_ENV) -> dict:
     """Snapshot *.db (consistent) and *.json from ``data_dir``. Returns what was
@@ -94,6 +126,7 @@ def backup_now(data_dir: str, *, keep: int = KEEP, now: datetime = None,
     if not src.exists():
         return {"ok": False, "error": f"data dir {data_dir} does not exist"}
     key = _resolve_key(master_key)
+    retired = retired_pa_paths(src)
     now = now or datetime.now(timezone.utc)
     stamp = now.strftime("%Y%m%dT%H%M%SZ")
     root = src / "backups"
@@ -103,6 +136,8 @@ def backup_now(data_dir: str, *, keep: int = KEEP, now: datetime = None,
     saved: list[str] = []
     errors: list[str] = []
     for f in sorted(src.iterdir()):
+        if f.resolve() in retired:
+            continue
         if not f.is_file():
             continue
         try:
@@ -131,9 +166,15 @@ def backup_now(data_dir: str, *, keep: int = KEEP, now: datetime = None,
         (dest / "manifest.json").write_text(json.dumps(manifest, indent=1))
 
     pruned = []
+    retained = []
     snapshots = _snapshots(root)
     while len(snapshots) > max(1, keep):
         name, victim = snapshots.pop(0)
+        # Retiring the feature must not silently delete its prior financial
+        # backups. Their deletion belongs to the explicit retirement plan.
+        if _holds_retired(victim, retired):
+            retained.append(name)
+            continue
         if victim.is_dir():
             shutil.rmtree(victim, ignore_errors=True)
         else:
@@ -142,7 +183,8 @@ def backup_now(data_dir: str, *, keep: int = KEEP, now: datetime = None,
         pruned.append(name)
 
     out = {"ok": not errors, "snapshot": stamp, "files": saved, "errors": errors,
-           "pruned": pruned, "encrypted": archive is not None}
+           "pruned": pruned, "encrypted": archive is not None,
+           "retained_retired_lab_backups": retained}
     if archive is None and not key:
         out["warning"] = "Not encrypted: HUB_MASTER_KEY is not set."
     return out

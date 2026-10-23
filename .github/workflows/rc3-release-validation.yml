@@ -1,0 +1,324 @@
+name: RC3 validation only
+
+# Register this controller on main; its checkout is always the accepted RC3.
+# No push, pull_request, workflow_call, publication or deployment trigger.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: Exact accepted RC3 commit; other values fail closed
+        required: true
+        type: string
+        default: '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+      expected_source_sha256:
+        description: Exact accepted RC3 source hash; other values fail closed
+        required: true
+        type: string
+        default: '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d'
+      approved_supervisor_fixture_build:
+        description: Separately approved disposable CI-only worker image build and supervisor fixtures
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rc3-validation-only-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        python: ['3.11', '3.12']
+    defaults:
+      run:
+        shell: bash
+        working-directory: source
+    env:
+      PYTHON_VERSION: ${{ matrix.python }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      HUB_AUTO_ENGINE: '0'
+      HUB_ENABLE_EXTERNAL_LIVE: '0'
+      HUB_USE_LIVE_DATA: '0'
+      HUB_RESEARCH_AUTOSTART: '0'
+      HUB_MONITOR_AGENT: '0'
+      NEXUS_SHADOW_SUPERVISED: '0'
+      OMP_NUM_THREADS: '1'
+      OPENBLAS_NUM_THREADS: '1'
+      MKL_NUM_THREADS: '1'
+    steps:
+      - name: Validate fixed request and separate fixture authorization
+        working-directory: ${{ github.workspace }}
+        env:
+          REQUESTED_COMMIT: ${{ inputs.expected_commit }}
+          REQUESTED_SOURCE: ${{ inputs.expected_source_sha256 }}
+          APPROVED_FIXTURE_BUILD: ${{ inputs.approved_supervisor_fixture_build }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          evidence = Path(os.environ['RUNNER_TEMP']) / ('rc3-' + os.environ['PYTHON_VERSION'])
+          evidence.mkdir()
+          approved = (
+              os.environ['REQUESTED_COMMIT'] == '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+              and os.environ['REQUESTED_SOURCE'] == '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d'
+              and os.environ['APPROVED_FIXTURE_BUILD'] == 'true'
+              and os.environ['GITHUB_REPOSITORY'] == 'Arjuunb/nexus-trading-bot'
+              and os.environ['GITHUB_EVENT_NAME'] == 'workflow_dispatch'
+              and os.environ['GITHUB_REF'] == 'refs/heads/main'
+          )
+          (evidence / 'request.json').write_text(json.dumps({
+              'accepted': approved, 'workflow_commit': os.environ['GITHUB_WORKFLOW_SHA'],
+              'workflow_ref': os.environ['GITHUB_WORKFLOW_REF'],
+              'run_id': os.environ['GITHUB_RUN_ID'], 'python_matrix': os.environ['PYTHON_VERSION'],
+              'publication_authorized': False, 'deployment_authorized': False,
+          }, indent=2))
+          if not approved:
+              raise SystemExit('RC3 identity/controller/fixture-approval gate failed')
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              stream.write('EVIDENCE_DIR=' + str(evidence) + '\n')
+          PY
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          ref: '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+          path: source
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify exact checkout and canonical source before installing dependencies
+        timeout-minutes: 3
+        run: |
+          test "$(git rev-parse HEAD)" = '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+          test -z "$(git status --porcelain=v1 -uall)"
+          python3 ops/github-release.py freeze \
+            --output "$RUNNER_TEMP/frozen-rc3-$PYTHON_VERSION" \
+            --reviewed-commit '28acdbccc4f9b737c683d94e15bb16a09e50aa85' \
+            --expected-source '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d'
+          cp "$RUNNER_TEMP/frozen-rc3-$PYTHON_VERSION/source-manifest.json" "$EVIDENCE_DIR/source-manifest.json"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          manifest = json.loads((Path(os.environ['EVIDENCE_DIR']) / 'source-manifest.json').read_text())
+          assert manifest['head'] == '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+          assert manifest['source_sha256'] == '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d'
+          assert len(manifest['files']) == 1386
+          PY
+      - name: Scan complete clean checkout for source secrets at every severity
+        id: source-secret-scan
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          version: v0.69.3
+          scan-type: fs
+          scan-ref: ${{ github.workspace }}/source
+          scanners: secret
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          skip-dirs: ${{ github.workspace }}/source/.git
+          format: json
+          output: ${{ runner.temp }}/rc3-secret-raw-${{ matrix.python }}.json
+          exit-code: '1'
+      - name: Retain sanitized secret-scan evidence without matched secret contents
+        if: always()
+        env:
+          SECRET_SCAN_OUTCOME: ${{ steps.source-secret-scan.outcome }}
+        working-directory: ${{ github.workspace }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          raw = Path(os.environ['RUNNER_TEMP']) / ('rc3-secret-raw-' + os.environ['PYTHON_VERSION'] + '.json')
+          if not raw.is_file():
+              raise SystemExit('Secret scan evidence unavailable; no pass inferred')
+          data = json.loads(raw.read_text())
+          assert isinstance(data, dict), 'Malformed scanner report'
+          assert type(data.get('SchemaVersion')) is int and data['SchemaVersion'] == 2, 'Unsupported scanner schema'
+          # trivy fs reports Git roots as repository (v0.69.3 local/fs.go).
+          # Plain directories are filesystem; neither implies missing scan evidence.
+          assert data.get('ArtifactType') in ('filesystem', 'repository'), 'Unexpected artifact type'
+          assert data.get('Trivy') == {'Version': '0.69.3'}, 'Unexpected scanner identity'
+          assert all(isinstance(data.get(key), str) and data[key].strip()
+                     for key in ('ReportID', 'CreatedAt', 'ArtifactName')), 'Incomplete scanner evidence'
+          # Trivy 0.69.3 omits Results when no file has reportable findings.
+          # Accept that native encoding only with a successful scanner step.
+          assert 'Results' not in data or isinstance(data['Results'], list), 'Malformed results'
+          findings = []
+          for result in data.get('Results', []):
+              assert isinstance(result, dict), 'Malformed result'
+              assert 'Secrets' not in result or isinstance(result['Secrets'], list), 'Malformed secrets'
+              for finding in result.get('Secrets', []):
+                  assert isinstance(finding, dict), 'Malformed secret finding'
+                  findings.append({'file': result.get('Target'), **{key: finding.get(key) for key in ('RuleID', 'Severity', 'StartLine', 'EndLine')}})
+          evidence = Path(os.environ['RUNNER_TEMP']) / ('rc3-' + os.environ['PYTHON_VERSION'])
+          (evidence / 'source-secrets.json').write_text(json.dumps({
+              'scanner': 'Trivy 0.69.3', 'source_sha256': '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d',
+              'secret_count_all_severities': len(findings), 'findings': findings,
+          }, indent=2))
+          if findings:
+              raise SystemExit('Source secrets detected')
+          if os.environ.get('SECRET_SCAN_OUTCOME') != 'success':
+              raise SystemExit('Secret scanner did not succeed; no pass inferred')
+          PY
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            source/automation-hub-dashboard/package-lock.json
+            source/tradexa-landing/package-lock.json
+      - name: Install hash-locked dependencies
+        timeout-minutes: 12
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --require-hashes -r ops/api-requirements.lock -r ops/ci-test-requirements.lock
+          .venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+          # The public-API Python SDK (stdlib only) so the root suite can run its tests.
+          .venv/bin/python -m pip install --no-deps --no-build-isolation -e sdks/python
+          .venv/bin/python -m pip check
+      - name: Typecheck dashboard and build both production bundles
+        timeout-minutes: 10
+        run: |
+          npm ci --prefix automation-hub-dashboard
+          npm ci --prefix tradexa-landing
+          npm run typecheck --prefix automation-hub-dashboard
+          DASHBOARD_BASE=/app/ npm run build --prefix automation-hub-dashboard
+          VITE_APP_URL=/app npm run build --prefix tradexa-landing
+          mkdir -p automation-hub/webui automation-hub/landing
+          cp -a automation-hub-dashboard/dist/. automation-hub/webui/
+          cp -a tradexa-landing/dist/. automation-hub/landing/
+      - name: Complete backend and engine regression suite
+        timeout-minutes: 25
+        run: .venv/bin/python -m pytest -q --junitxml="$EVIDENCE_DIR/root-tests.xml" --basetemp="$RUNNER_TEMP/root-fixtures-$PYTHON_VERSION"
+      - name: Prepare pinned disposable database images
+        if: matrix.python == '3.12'
+        timeout-minutes: 5
+        run: |
+          docker version
+          docker compose version
+          docker buildx version
+          test "$(docker info --format '{{.OSType}}')" = linux
+          test "$(docker info --format '{{.CgroupVersion}}')" = 2
+          docker pull postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+          docker tag postgres@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea postgres:16-alpine
+          docker pull postgrest/postgrest@sha256:5f4ce744539bbba786b4e24dbbd95bdb2a956dcf568c5374995a0ff4a68f5bd2
+          docker tag postgrest/postgrest@sha256:5f4ce744539bbba786b4e24dbbd95bdb2a956dcf568c5374995a0ff4a68f5bd2 postgrest/postgrest:v12.2.12
+      - name: Real PostgreSQL migrations recovery concurrency and native outbox RPC transport
+        if: matrix.python == '3.12'
+        timeout-minutes: 10
+        env:
+          NEXUS_PG_WORKER_TEST: '1'
+          NEXUS_PG_OUTBOX_TEST: '1'
+          NEXUS_PG_TEST_TMPFS: '1'
+        run: |
+          .venv/bin/python -m pytest -q \
+            automation-hub/tests/test_postgres_workers.py \
+            automation-hub/tests/test_sprint11_postgres.py \
+            automation-hub/tests/test_sprint13_postgres.py \
+            automation-hub/tests/test_paper_evidence_outbox.py \
+            -k 'not test_real_container_research_supervision_and_kernel_limits' \
+            --junitxml="$EVIDENCE_DIR/postgres-outbox-tests.xml" --basetemp="$RUNNER_TEMP/pg-fixtures"
+      - name: Build only the separately approved ephemeral supervisor fixture image
+        if: matrix.python == '3.12'
+        timeout-minutes: 10
+        run: |
+          test -f /sys/fs/cgroup/cgroup.controllers
+          .venv/bin/python ops/prepare-shadow-worker-wheels.py "$RUNNER_TEMP/supervisor-wheels" --platform musllinux > "$EVIDENCE_DIR/supervisor-wheel-manifest.json"
+          docker buildx build --platform linux/amd64 --network=none --load \
+            --build-context "verified_wheels=$RUNNER_TEMP/supervisor-wheels" \
+            --label org.opencontainers.image.revision=28acdbccc4f9b737c683d94e15bb16a09e50aa85 \
+            --label nexus.source.sha256=3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d \
+            -f "$RUNNER_TEMP/frozen-rc3-$PYTHON_VERSION/context/ops/research-worker.alpine.Dockerfile" \
+            -t nexus-rc3-supervisor:fixture "$RUNNER_TEMP/frozen-rc3-$PYTHON_VERSION/context"
+          docker image inspect nexus-rc3-supervisor:fixture --format '{{.Id}}' > "$EVIDENCE_DIR/supervisor-image-id.txt"
+      - name: External supervisor restart health and kernel resource-limit integration
+        if: matrix.python == '3.12'
+        timeout-minutes: 5
+        env:
+          NEXUS_PG_WORKER_TEST: '1'
+          NEXUS_PG_SUPERVISOR_TEST: '1'
+          NEXUS_PG_TEST_TMPFS: '1'
+        run: |
+          export NEXUS_RESEARCH_WORKER_IMAGE="$(cat "$EVIDENCE_DIR/supervisor-image-id.txt")"
+          .venv/bin/python -m pytest -q \
+            automation-hub/tests/test_postgres_workers.py::test_real_container_research_supervision_and_kernel_limits \
+            --junitxml="$EVIDENCE_DIR/supervisor-tests.xml" --basetemp="$RUNNER_TEMP/supervisor-fixtures"
+      - name: Check out reviewed CI-only browser harness from this controller
+        if: matrix.python == '3.12'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: Arjuunb/nexus-trading-bot
+          ref: ${{ github.workflow_sha }}
+          path: validation-controller
+          persist-credentials: false
+          sparse-checkout: .github/rc3-browser
+      - name: Verify separate browser harness provenance and unchanged RC3 inputs
+        if: matrix.python == '3.12'
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          workspace = Path(os.environ['GITHUB_WORKSPACE'])
+          controller = workspace / 'validation-controller'
+          source = workspace / 'source'
+          def git(directory, *args):
+              return subprocess.check_output(['git', '-C', str(directory), *args], text=True).strip()
+          assert git(controller, 'rev-parse', 'HEAD') == os.environ['GITHUB_WORKFLOW_SHA'], 'Controller identity mismatch'
+          assert git(source, 'rev-parse', 'HEAD') == '28acdbccc4f9b737c683d94e15bb16a09e50aa85'
+          subprocess.run(['git', '-C', str(source), 'diff', '--quiet', 'HEAD', '--', 'automation-hub-dashboard'], check=True)
+          expected = {'playwright.config.cjs': '6b1cb8d1827f2301c567fe50b4a3957cf9ed2cde28aa62b7a6f0e57478e2a6da', 'clipboard.spec.cjs': '4185ce2a072662f04649a67763321b4de03cdb81dfcc55f8ae179d3d919d219e'}
+          for name, digest in expected.items():
+              assert hashlib.sha256((controller / '.github/rc3-browser' / name).read_bytes()).hexdigest() == digest, name
+          (Path(os.environ['EVIDENCE_DIR']) / 'browser-harness.json').write_text(json.dumps({
+              'controller_commit': os.environ['GITHUB_WORKFLOW_SHA'],
+              'tested_source_commit': '28acdbccc4f9b737c683d94e15bb16a09e50aa85',
+              'source_sha256': '3ba76e44d9181ee1a8910667be645bfa477a7b3e4055c30538a29030e83caa4d',
+              'harness_sha256': expected, 'permissions': ['clipboard-read', 'clipboard-write'],
+              'application_source_modified': False,
+          }, indent=2))
+          PY
+      - name: Install matched Chromium browser
+        if: matrix.python == '3.12'
+        timeout-minutes: 10
+        working-directory: source/automation-hub-dashboard
+        run: |
+          npx playwright install --with-deps chromium
+          printf 'PW_CHROMIUM=%s\n' "$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")" >> "$GITHUB_ENV"
+      - name: Chromium regression suite against mocked backend
+        if: matrix.python == '3.12'
+        timeout-minutes: 10
+        working-directory: source/automation-hub-dashboard
+        run: npx playwright test --config "$GITHUB_WORKSPACE/validation-controller/.github/rc3-browser/playwright.config.cjs" --reporter=list,junit --output="$RUNNER_TEMP/browser-output"
+        env:
+          PLAYWRIGHT_JUNIT_OUTPUT_FILE: ${{ runner.temp }}/rc3-${{ matrix.python }}/browser-tests.xml
+      - name: Verify browser execution did not modify accepted RC3 frontend inputs
+        if: always() && matrix.python == '3.12'
+        run: git diff --quiet HEAD -- automation-hub-dashboard
+      - name: Require complete integration evidence with no opt-in skips
+        if: matrix.python == '3.12'
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          from pathlib import Path
+          from xml.etree import ElementTree as ET
+          evidence = Path(os.environ['EVIDENCE_DIR'])
+          for filename, minimum in [('postgres-outbox-tests.xml', 57), ('supervisor-tests.xml', 2), ('browser-tests.xml', 156)]:
+              cases = ET.parse(evidence / filename).findall('.//testcase')
+              assert len(cases) >= minimum, filename
+              assert not any(case.find(tag) is not None for case in cases for tag in ('skipped', 'failure', 'error')), filename
+          PY
+      - name: Retain bounded test and source evidence excluding raw secret matches and fixture state
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: rc3-validation-${{ github.run_id }}-${{ github.run_attempt }}-py${{ matrix.python }}
+          path: ${{ runner.temp }}/rc3-${{ matrix.python }}/
+          if-no-files-found: error
+          retention-days: 7

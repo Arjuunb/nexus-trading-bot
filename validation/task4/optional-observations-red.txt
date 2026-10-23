@@ -1,0 +1,10 @@
+F                                                                        [100%]
+=================================== FAILURES ===================================
+___ test_recorded_setup_and_final_exit_reason_are_preserved_as_observations ____
+tests/test_weekly_strategy_research.py:152: in test_recorded_setup_and_final_exit_reason_are_preserved_as_observations
+    assert row["setup"]=="PULLBACK" and row["exit_reason"]=="TARGET"
+           ^^^^^^^^^^^^
+E   KeyError: 'setup'
+=========================== short test summary info ============================
+FAILED tests/test_weekly_strategy_research.py::test_recorded_setup_and_final_exit_reason_are_preserved_as_observations
+1 failed, 12 deselected in 0.61s

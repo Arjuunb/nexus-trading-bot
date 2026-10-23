@@ -33,6 +33,9 @@ def main() -> int:
     parser.add_argument("--state-db", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
+    from services.feature_flags import price_action_lab_enabled
+    if not price_action_lab_enabled():
+        raise SystemExit('PRICE_ACTION_LAB_DISABLED')
     if not 20 <= args.seconds <= 1800:
         raise SystemExit("--seconds must be between 20 and 1800")
 

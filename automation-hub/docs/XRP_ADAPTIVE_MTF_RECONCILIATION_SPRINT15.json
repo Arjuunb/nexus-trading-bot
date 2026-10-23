@@ -1,0 +1,383 @@
+{
+  "actual_metrics": {
+    "account_id": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "completed_episodes": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "completed_trades": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "configuration_fingerprint": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "date_range_utc": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "execution_mode": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "fees_usd": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "funding_usd": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "gross_profit_factor": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "gross_realised_pnl_usd": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "instance_id": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "lab_id": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "net_profit_factor": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "net_realised_pnl_usd": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "owner_id": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "partial_exits": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "simulation_session_id": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "source_kind": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "strategy_version": {
+      "status": "UNVERIFIED",
+      "value": null
+    },
+    "win_rate_pct": {
+      "status": "UNVERIFIED",
+      "value": null
+    }
+  },
+  "calculated_at": "2026-10-09T08:17:14.503047+00:00",
+  "claim": {
+    "completed_trades": 22,
+    "configuration_fingerprint": null,
+    "date_range_utc": null,
+    "execution_mode": null,
+    "instance_id": null,
+    "net_realised_pnl_usd": "0.84",
+    "profit_factor": "1.13",
+    "profit_factor_basis": null,
+    "strategy_label": "Adaptive MTF",
+    "symbol": "XRPUSDT",
+    "version": null,
+    "win_rate_pct": "40.9"
+  },
+  "claim_status": "UNVERIFIED",
+  "evidence_completeness_status": "UNKNOWN",
+  "findings": [
+    "No XRP-prefixed symbols occur in any inspected direct symbol/ticker/pair table, independently of strategy aliases.",
+    "The two current development primary financial ledgers contain zero paper_trades, positions and trading_instances; their paper_executions counts are recorded below.",
+    "The two current development journals and decision stores contain zero target evidence; the older journal has no Sprint 1 evidence tables.",
+    "Local development and backup data cannot substantiate a production performance claim. Zero observed local rows do not establish zero production trades.",
+    "The claimed profit-factor basis (gross or net), period and exact owner/account/instance/version/configuration/mode cohort were not supplied."
+  ],
+  "inspection_method": {
+    "current_defaults_used": false,
+    "historical_rows_modified": false,
+    "production_accessed": false,
+    "purpose": "Find any XRP rows before strategy/version attribution, including instance-version strategy_id aliases.",
+    "query_only": true,
+    "read_only": true,
+    "scope_limit": "Only explicit symbol/ticker/pair columns were scanned; arbitrary text or JSON payloads are not independent execution evidence.",
+    "snapshot_scope": "A read transaction per database; no assertion of an atomic cross-store production snapshot.",
+    "sqlite_uri_mode": "ro",
+    "strategy_filter_applied": false,
+    "symbol_predicate": "UPPER(symbol) LIKE 'XRP%' (and equivalent ticker/pair columns where present)"
+  },
+  "missing_required_evidence": [
+    "Authoritative production ledger and journal/decision snapshots or explicitly authorized read-only export for the same cutoff.",
+    "Exact strategy-version/configuration fingerprint, instance/owner/account/session/lab/mode/source cohort and UTC reporting period.",
+    "Complete committed fill/order/position lineage including partial exits, entry risk, original timestamps, execution IDs and parent/continuation links.",
+    "Authoritative booked fees, funding coverage and amounts, gross and net realised P&L with currency and sign conventions.",
+    "Historical configuration/source evidence if it was actually recorded; absence must remain unknown.",
+    "Expected receipt/event counts, export pagination completeness, reconciliation watermark and conflict/missing-event report."
+  ],
+  "primary_inspections": [
+    {
+      "path": "/workspace/nexus-dev-data/decisions.db",
+      "source_classification": "development_local",
+      "supporting_counts": {
+        "paper_executions": null,
+        "strategy_episode_legs": null,
+        "strategy_evidence_versions": null
+      },
+      "tables": [
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "core_v2_shadow_decisions",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "decisions",
+          "total_rows": 0
+        }
+      ]
+    },
+    {
+      "path": "/workspace/nexus-dev-data/journal.db",
+      "source_classification": "development_local",
+      "supporting_counts": {
+        "paper_executions": null,
+        "strategy_episode_legs": null,
+        "strategy_evidence_versions": null
+      },
+      "tables": [
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "trade_decision_journal",
+          "total_rows": 0
+        }
+      ]
+    },
+    {
+      "path": "/workspace/nexus-dev-data/ledger.db",
+      "source_classification": "development_local",
+      "supporting_counts": {
+        "paper_executions": 0,
+        "strategy_episode_legs": null,
+        "strategy_evidence_versions": null
+      },
+      "tables": [
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "bot_logs",
+          "total_rows": 3
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "paper_trades",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "positions",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "trade_memories",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "trading_instances",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "webhook_events",
+          "total_rows": 0
+        }
+      ]
+    },
+    {
+      "path": "/workspace/nexus-trading-bot/automation-hub/logs/decisions.db",
+      "source_classification": "development_local",
+      "supporting_counts": {
+        "paper_executions": null,
+        "strategy_episode_legs": null,
+        "strategy_evidence_versions": null
+      },
+      "tables": [
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "core_v2_shadow_decisions",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "decisions",
+          "total_rows": 0
+        }
+      ]
+    },
+    {
+      "path": "/workspace/nexus-trading-bot/automation-hub/logs/journal.db",
+      "source_classification": "development_local",
+      "supporting_counts": {
+        "paper_executions": null,
+        "strategy_episode_legs": 0,
+        "strategy_evidence_versions": 0
+      },
+      "tables": [
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "strategy_evidence_events",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "strategy_position_episodes",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "trade_decision_journal",
+          "total_rows": 0
+        }
+      ]
+    },
+    {
+      "path": "/workspace/nexus-trading-bot/automation-hub/logs/ledger.db",
+      "source_classification": "development_local",
+      "supporting_counts": {
+        "paper_executions": 0,
+        "strategy_episode_legs": null,
+        "strategy_evidence_versions": null
+      },
+      "tables": [
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "bot_logs",
+          "total_rows": 232
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "paper_trades",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "positions",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "trade_memories",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "trading_instances",
+          "total_rows": 0
+        },
+        {
+          "all_xrp_symbol_rows": 0,
+          "symbol_columns": [
+            "symbol"
+          ],
+          "table": "webhook_events",
+          "total_rows": 6
+        }
+      ]
+    }
+  ],
+  "production_access_requirements_document": "XRP_ADAPTIVE_MTF_EVIDENCE_ACCESS.md",
+  "report_version": "strategy_intelligence.xrp_reconciliation.sprint15.v1",
+  "requested_strategy_id": "adaptive_trend_pullback",
+  "scan_summary": {
+    "databases": 149,
+    "roots": [
+      {
+        "all_xrp_symbol_rows": 0,
+        "backup_database_count": 14,
+        "classification": "development_local_and_development_backups",
+        "database_count": 29,
+        "direct_symbol_table_count": 83,
+        "root": "/workspace/nexus-dev-data"
+      },
+      {
+        "all_xrp_symbol_rows": 0,
+        "backup_database_count": 105,
+        "classification": "development_local_and_development_backups",
+        "database_count": 120,
+        "direct_symbol_table_count": 352,
+        "root": "/workspace/nexus-trading-bot/automation-hub/logs"
+      }
+    ],
+    "tables_with_any_xrp_symbol": 0,
+    "tables_with_direct_symbol_columns": 435
+  }
+}

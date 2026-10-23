@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "delta_id": "production-integration-si.v1",
+  "status": "INTEGRATION_OF_TWO_REVIEWED_LINES",
+  "production_commit": "215c96cb397ba1a6132c665301c34c4a39a13a6d",
+  "strategy_intelligence_commit": "f9ebd32a3eedf6740c14a3daafb32e981d1d7ce8",
+  "alpha_rules_changed": false,
+  "fill_timing_changed": false,
+  "purpose": "Strategy Intelligence (main line, last frozen by task6-acceptance-read-only.v1) merged onto the production line. Every file and method below differs from the Strategy Intelligence freeze only because it now also carries the production line's own changes. origin=production: byte-identical to the production commit, which is already live. origin=merge: the union of both lines' changes, with no new logic. The production-line changes are recorded as subsequent_approved_deltas in pr6_real_paper_freeze.json. This file is not deployment approval.",
+  "files": {
+    "execution/paper_broker_v2.py": {
+      "prior_sha256": "8653d2026c93673184ca1cb4e8813106e6e67e1e6e1bbe074423f49081060532",
+      "sha256": "e16613df264c5a264f10682879e1f7a7dfba875dcc85faa6a04b23be2803979f",
+      "origin": "merge",
+      "method_updates": {
+        "PaperBrokerV2._fill": {
+          "prior_sha256": "fb2dcc7da0bfe8d65cdd984fed11987ed3ab298f991052c6979c82b7d4cef5c9",
+          "sha256": "63e7e829ef030715ef33d89048428a3654b4d5614c83f5346ef1a8693c7b98ff",
+          "origin": "merge"
+        },
+        "PaperBrokerV2._process_protection": {
+          "prior_sha256": "11b6864b1293621c1513de967c85c79d329e576463835ae61cffca90843236e4",
+          "sha256": "1d8c68d1853c32db7b3eb3a77cf34abd6eef8635f160394561ceed9e97ca5975",
+          "origin": "production"
+        },
+        "PaperBrokerV2._schema": {
+          "prior_sha256": "0c20a5c62cd3785197578a4370edff6de5250e5ca25cb438fb2764ca0eea0754",
+          "sha256": "94ac21721f4d25d2c26dcdbe880e4e91b4275a084cfbe7a53ab1e594b2fd8faa",
+          "origin": "production"
+        },
+        "PaperBrokerV2.close_position_at_mark": {
+          "prior_sha256": "772c4eb6c6f1502212bd26497abe14c2cee21d94ea2f1be39c583c767332621a",
+          "sha256": "96635831a8e840daeb373590a9e17d7b7c50ca7437f3a8901d164bd27c652180",
+          "origin": "production"
+        },
+        "PaperBrokerV2.process_candle": {
+          "prior_sha256": "2ef0476a565d7aa305b89bcfdddf0d06d0e68a887ce90f505ffa052fde5fbed8",
+          "sha256": "cbf398c0970975a548d0d800f7c6db7bafceff5bd800310db7b7274fdcfa6cc7",
+          "origin": "production"
+        },
+        "PaperBrokerV2.process_mark": {
+          "prior_sha256": "5bfd0afc49f85bf61f7084aea28d45ac8f63fd172eabb379af74c07759a57d51",
+          "sha256": "f575278a96ef075bb91fff9c1d8733a9ba4bcdf9979b5cd2a654c5ba65fddeec",
+          "origin": "production"
+        },
+        "PaperBrokerV2.process_tick": {
+          "prior_sha256": "e19aef0bd430afbb89e6d4f1b48e50ab21947df3447310527aa6f48090b34e2c",
+          "sha256": "caca435d98580c710afbb35ceea2c1e65ac073ba2aa58388d3dcb810e3093090",
+          "origin": "merge"
+        },
+        "PaperBrokerV2.restore_state": {
+          "prior_sha256": "9d83461683249d08bd66946bdd06f5750bc7091da07e2c3a639900c66b304c3a",
+          "sha256": "976489c5c2927d8495a1390aac139434c7f660a94092645f4bf51f91c2f23cab",
+          "origin": "merge"
+        },
+        "PaperBrokerV2.submit": {
+          "prior_sha256": "e7376f9e0c5549319f2f5020450e3e0c1229f031e6981b16bb4b73c93d57136e",
+          "sha256": "684ed83117af023596c263d45a65a0113ff17a9660fedb93756365458564d913",
+          "origin": "merge"
+        }
+      },
+      "added_methods": {
+        "PaperBrokerV2._position_provenance": {
+          "sha256": "296364b2c6da80a24c2d582547d1514dd00a446da7121de38ab75294dffa5fc3",
+          "origin": "production"
+        },
+        "PaperBrokerV2._rollback_failed_event": {
+          "sha256": "df82a92882dc62936f5814c4b65952fe04a2cab853e6223d3f8ace9dc199073b",
+          "origin": "production"
+        }
+      }
+    },
+    "services/native_price_action.py": {
+      "prior_sha256": "0dc6f9e9add733e142e5231191c656ec6b591272eadd77d74d12e49b7d1a5787",
+      "sha256": "5307ce702564b0739673a093d0a24478ad49ae24391f02e16fa39c0c0ae70339",
+      "origin": "production",
+      "method_updates": {
+        "NativePriceActionEngine._detect_events": {
+          "prior_sha256": "33ae5660b6e45fe342282676cfb122b6805ac28c0e0abb95874ea13944fc5bb5",
+          "sha256": "c40b6fadfee08cfd88939366fc39bd2c7dc790e7c525e9ab0927e71d03e3a9f6",
+          "origin": "production"
+        },
+        "NativePriceActionEngine._evaluate_strategies": {
+          "prior_sha256": "bf1c71917e00337cfd1d4ab08157ef3cf4db3e41c374c51f9d78f7e0df738372",
+          "sha256": "feab725afb4a7d099625aa7c6cbb90c0a29f030d0db622e1c250f07acbea26f5",
+          "origin": "production"
+        }
+      },
+      "added_methods": {}
+    },
+    "services/native_smc.py": {
+      "prior_sha256": "fa7114e598f5bef20231c7708d04e3439ff6f14bb7a4c7a9d10de5ec09bdfe23",
+      "sha256": "47c2b7e28fee15e3366ea5434092f13c99cb50cbf718e56a35becaf715c8c36d",
+      "origin": "production",
+      "method_updates": {
+        "SMCMarketStructureEngine.public_state": {
+          "prior_sha256": "226869815b91876413315780825cd3bfe097a419be2445c8efac0d3e35a0defd",
+          "sha256": "5e11785444b4d950136a0cae83c2680780befdea6e7c2b6dcbbac1d15f76fbb0",
+          "origin": "production"
+        }
+      },
+      "added_methods": {}
+    },
+    "services/native_smc_live_visual.py": {
+      "prior_sha256": "ede9015435bb8c3b2e04615a41c401947acfdceb2dce8b2f0076658d47414c6e",
+      "sha256": "8f241d5740b73aaaff467dae745554d5deea03b6c6b9d94bf2387450b2c21f3b",
+      "origin": "merge",
+      "method_updates": {
+        "reconcile_market_state": {
+          "prior_sha256": "c75e61c8f746d76a068f8b95b81db78a310a2f3d5aedcc08d47da26b2d1f1e74",
+          "sha256": "e76666592175f09f2dffe2f6596c9e179e8d1fd27cc4cfd95562276a6f8339b5",
+          "origin": "production"
+        }
+      },
+      "added_methods": {}
+    },
+    "services/price_action_governance.py": {
+      "prior_sha256": "731f75d60c303e652774e3d10e1c7f2c2979a830efcddcab215666c779fbdfab",
+      "sha256": "582cdaf081e93afc717c55f32997434a08e0a6ceda915751e030404d0697b390",
+      "origin": "merge",
+      "method_updates": {
+        "PriceActionJournalStore._material_projection": {
+          "prior_sha256": "f0f7f25c729d7bf0e42f80a96721ed0049fd53a225ab90357dc99567e2affe73",
+          "sha256": "e6b1bf4917e48e18ad6efb9e64619ff5350e82cfb81a53782fad390f789eda8e",
+          "origin": "production"
+        },
+        "PriceActionJournalStore._record": {
+          "prior_sha256": "4e21d75d05240b3b370b9eb105c008f6c5136484adadd170f1d4ffdc6071ab1b",
+          "sha256": "eb3e4c27607bedd8e0174a2f06e81114a3a1476e6fbee3991e7426781dbfa088",
+          "origin": "production"
+        },
+        "PriceActionJournalStore.capture": {
+          "prior_sha256": "57f39b835d43e9cbf8ecd8e9d4d885a5adcbaf764a420228313ce52fd8c058b3",
+          "sha256": "a39712301d4fa931c850d1d842d57b65bea5153f5a608f81efb54049db2cdeca",
+          "origin": "production"
+        }
+      },
+      "added_methods": {
+        "_transition_key": {
+          "sha256": "7345c64247c330a1a13a9230ccb274a3d9eb9fef3247daddcbb7d2e8cf84d0e6",
+          "origin": "production"
+        }
+      }
+    },
+    "services/price_action_lab.py": {
+      "prior_sha256": "8a6205a8012a2e646b72ab48ba8efc124cf336caeb599b02dda89d7df4572ea2",
+      "sha256": "5d9138ab7fa5681d409bc3544615f57632931ae63c0521d7ed916d3b3b6e2105",
+      "origin": "merge",
+      "method_updates": {
+        "PriceActionPaperAccount.record_evaluation": {
+          "prior_sha256": "617cbad64acda83641716408c59ab50d61945640621225c843f1f77dc2287f32",
+          "sha256": "10b1b3c3b8bb08908711234d90e769421a3bd828543f8f5347eb7411d9e2f02b",
+          "origin": "merge"
+        }
+      },
+      "added_methods": {
+        "_same_instant": {
+          "sha256": "c89b33c76425d58d912d0b65aba54032d95f646374bd2806741e0624d8ce6a13",
+          "origin": "production"
+        }
+      }
+    },
+    "services/price_action_stream.py": {
+      "prior_sha256": "cc4572f9ccea5a37d85358dd8b2ff6b283e14c1b6e855d04454623fea96477a4",
+      "sha256": "2e5c815e1ea4bac5d0f67da29fa1f2b4338b36b5018f7c9d5a806672dfe91c35",
+      "origin": "merge",
+      "method_updates": {
+        "PriceActionPublicStream.__init__": {
+          "prior_sha256": "7b52326d3905e8d7f160b2469869749f818685d3b69f18cb9623e56bac2b1bdb",
+          "sha256": "662c42190de02ca20def029e5b19ac6075dd201b3b1c6502bc65b2e57a1d8f7a",
+          "origin": "merge"
+        },
+        "PriceActionPublicStream._refresh_transport_state": {
+          "prior_sha256": "f918b8f443f735251c2ff05317a09fb22a3efd77ee50939dd78f789d9e50d4eb",
+          "sha256": "9a91064ad43d6b66cc1c7c4f3794021a8446afd6b274fb90fe5374d843887bae",
+          "origin": "production"
+        },
+        "PriceActionPublicStream._stream_channel": {
+          "prior_sha256": "42be44a0346e5a14497f66c6f24f827cdde04d1cb7b6d5f69694827cc96456fb",
+          "sha256": "ccf920e329bc425ac6b847fd1eb2bb2be8a0f5ae485d04863130821a6575c82f",
+          "origin": "production"
+        },
+        "PriceActionPublicStream._stream_forever": {
+          "prior_sha256": "f213a00b2bcb34869c81132f0ad0b96a7a9d0e55d4502fce86bdd7274436a347",
+          "sha256": "a4ed03f8a2779abd84bf3b390ada5fbc49ce1f1b88695c0f33e5cb5cb2941e6f",
+          "origin": "production"
+        },
+        "PriceActionPublicStream.market_url": {
+          "prior_sha256": "c854feb76ed373032b307937e32cfa84b36407ece5298e05bdb8c2c4153d3366",
+          "sha256": "e4f5f1cf4e6c7cd38f7229e1f5150e07c108265a372e24af1e00b7df33d443e1",
+          "origin": "production"
+        },
+        "PriceActionPublicStream.public_url": {
+          "prior_sha256": "ecacd888a9288ccfc6879969c887cb2880cca077fc715e857d714219e0d2d65b",
+          "sha256": "ac8ed7fbd69cc3d49530b0c8c62a622bbbe6b82c6cfac7c7c9a3617a19b67e9d",
+          "origin": "production"
+        },
+        "PriceActionPublicStream.status": {
+          "prior_sha256": "c0f531dd23a72c028fdfa4be38daf181d8133750d1120ba32b29a4e1149643de",
+          "sha256": "3de804759c485f33606906a98d69f7e21595f472d7dbd5ba40bddb827da01316",
+          "origin": "production"
+        }
+      },
+      "added_methods": {
+        "PriceActionPublicStream._consume_control_frame": {
+          "sha256": "d1c554abfe3b5ff52f3257ad6443fcc129da8eb2b519655a8acc4852c3f279f5",
+          "origin": "production"
+        },
+        "PriceActionPublicStream.market_subscriptions": {
+          "sha256": "3e214c161b2e1b4e357f0bea7f61d8ad48df7356633c1769999a124fa8457e24",
+          "origin": "production"
+        },
+        "PriceActionPublicStream.public_subscriptions": {
+          "sha256": "e393f297901c8cd390d016128c5b8d2256e52d10591b0d0bdc83b4701802376c",
+          "origin": "production"
+        }
+      }
+    }
+  }
+}

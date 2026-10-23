@@ -1,5 +1,7 @@
 """Telegram notifier — fail-safe, gated, and the /notifications endpoints."""
 import pytest
+import urllib.error
+import urllib.request
 
 from services.notifier import Notifier
 
@@ -26,17 +28,24 @@ def test_dispatch_respects_event_flags(monkeypatch):
     assert len(sent) == 1
 
 
-def test_send_never_raises_on_bad_host():
-    # unreachable/invalid token -> returns False, never raises
+def test_send_never_raises_on_bad_host(monkeypatch):
+    # Exercise the transport failure locally; never contact Telegram.
+    calls = []
+    def unavailable(*args, **kwargs):
+        calls.append(True)
+        raise urllib.error.URLError("isolated test transport unavailable")
+    monkeypatch.setattr(urllib.request, "urlopen", unavailable)
     assert Notifier("bad", "bad").send("x") is False
+    assert calls == [True]
 
 
 @pytest.fixture()
-def client():
+def client(monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import webhook_api
+    monkeypatch.setattr(webhook_api, "notifier", Notifier("", ""))
     app = FastAPI()
     app.include_router(webhook_api.router)
     yield TestClient(app)
@@ -55,3 +64,4 @@ def test_notifications_endpoints(client):
     # test send (not configured by default) -> sent False, no crash
     t = client.post("/notifications/test", headers={"X-Webhook-Secret": SECRET})
     assert t.status_code == 200 and "sent" in t.json()
+    assert t.json()["sent"] is False

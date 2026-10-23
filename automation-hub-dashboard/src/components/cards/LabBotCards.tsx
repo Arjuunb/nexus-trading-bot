@@ -135,11 +135,9 @@ function LabCard({ title, page, status, error }: {
 }
 
 export default function LabBotCards() {
-  const priceAction = useLive<LabBotStatus>("/research/price-action/bot-status", 4000);
   const smc = useLive<LabBotStatus>("/research/smc/bot-status", 4000);
   return (
     <div className="lab-bot-cards" aria-label="Independent paper lab systems">
-      <LabCard title="Price Action Bot" page="Price Action Lab" status={priceAction.data} error={priceAction.error} />
       <LabCard title="SMC Bot" page="SMC Strategy Lab" status={smc.data} error={smc.error} />
     </div>
   );

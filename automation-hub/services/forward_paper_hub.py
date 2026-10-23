@@ -49,6 +49,7 @@ class _Consumer:
     # inline on the stream's thread, so a notice must do no I/O and take no
     # lock a slow path could hold.
     candle_notice: Callable[[Bar], None] | None = None
+    observation_notice: Callable[[dict], None] | None = None
     pending: OrderedDict = field(default_factory=OrderedDict)
     delivery_lock: threading.Lock = field(default_factory=threading.Lock)
     last_error: str = ""
@@ -374,6 +375,14 @@ class ForwardPaperMarketDataHub:
                 self.rest_loader, bar_sink=on_bar, quote_sink=on_quote,
                 event_sink=on_event,
             )
+        if hasattr(stream,'candle_observation_sink'):
+            def observe(metadata):
+                with self._lock: consumers=list(holder['channel'].consumers.values())
+                for consumer in consumers:
+                    if consumer.observation_notice:
+                        try:consumer.observation_notice(metadata)
+                        except Exception:pass  # observations cannot change original financial delivery
+            stream.candle_observation_sink=observe
         return stream
 
     def _upgrade_channel_to_quotes(self, key: tuple[str, str], channel: _Channel) -> bool:

@@ -141,7 +141,7 @@ test("paper controls POST pause / stop / resume", async ({ page }) => {
 // ── engine start/stop fires the right endpoint ──
 test("engine start button POSTs /engine/start", async ({ page }) => {
   await mockApi(page);           // mock reports engine stopped -> button says "Start Engine"
-  await page.goto("/#/paper-trading");
+  await page.goto("/#/paper-account");
   await page.waitForTimeout(500);
   const [req] = await Promise.all([
     page.waitForRequest((r) => r.url().includes("/engine/start") && r.method() === "POST"),
@@ -156,11 +156,13 @@ test("Safety Center kill switch POSTs stop-all and engine stop", async ({ page }
   await page.goto("/#/safety-center");
   await page.waitForTimeout(500);
   page.once("dialog", (d) => d.accept());   // confirm the kill switch
-  const [stopAll] = await Promise.all([
+  const [stopAll, engineStop] = await Promise.all([
     page.waitForRequest((r) => r.url().includes("/controls/stop-all") && r.method() === "POST"),
+    page.waitForRequest((r) => r.url().includes("/engine/stop") && r.method() === "POST"),
     page.getByRole("button", { name: /Stop Everything/i }).click(),
   ]);
   expect(stopAll).toBeTruthy();
+  expect(engineStop).toBeTruthy();
 });
 
 // ── settings save + change-password validation + logout ──

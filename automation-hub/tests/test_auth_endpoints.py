@@ -79,7 +79,11 @@ def test_the_pending_ticket_is_not_usable_as_a_session_cookie(client, store):
     assert hub_app._verify_session(pending) is None
     client.cookies.clear()
     client.cookies.set(hub_app.COOKIE, pending)
-    assert client.get("/").status_code == 303          # bounced to /login
+    dashboard = "/app" if hub_app._LANDING_READY else "/"
+    denied = client.get(dashboard)
+    assert denied.status_code == 303
+    assert denied.headers["location"] == "/login"
+    assert client.get("/settings").status_code == 401
 
 
 def test_a_valid_code_completes_the_sign_in(client, store):
@@ -88,7 +92,8 @@ def test_a_valid_code_completes_the_sign_in(client, store):
     r = client.post("/auth/two-factor", data={"code": _fresh_code(secret)})
     assert r.status_code == 303 and r.headers["location"] == "/"
     assert hub_app.COOKIE in r.cookies
-    assert client.get("/").status_code == 200
+    dashboard = "/app" if hub_app._LANDING_READY else "/"
+    assert client.get(dashboard).status_code == 200
 
 
 def test_a_wrong_code_does_not_complete_it(client, store):
