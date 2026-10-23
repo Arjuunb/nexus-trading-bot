@@ -227,13 +227,23 @@ class InspectDbTests(unittest.TestCase):
                     errors.append(str(exc))
         t = threading.Thread(target=writer)
         t.start()
+        # Overlap is proven by progress, not by a fixed write count (CI runners vary in speed):
+        # the writer is committing before the inspection starts and keeps committing after it.
+        deadline = time.monotonic() + 10
+        while writes[0] < 5 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        started = writes[0]
         try:
             info = C.inspect_db(self.path, opts(), big_tables=("pa_journal_revisions",))
         finally:
+            deadline = time.monotonic() + 10
+            while writes[0] < started + 5 and time.monotonic() < deadline:
+                time.sleep(0.005)
             stop.set(); t.join()
             app.execute("DELETE FROM pa_activity WHERE id LIKE 'live-%'"); app.commit(); app.close()
         self.assertEqual(errors, [], "the writer must never see busy/locked")
-        self.assertGreater(writes[0], 10)
+        self.assertGreaterEqual(started, 5, "the writer was committing before the inspection began")
+        self.assertGreaterEqual(writes[0], started + 5, "the writer kept committing through and after the inspection")
         self.assertNotIn("error", info["inspection"])
 
     def test_estimates_track_exact_page_accounting(self):
