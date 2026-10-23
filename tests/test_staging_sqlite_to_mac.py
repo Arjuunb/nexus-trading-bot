@@ -212,7 +212,7 @@ def test_complete_guarded_origin_protocol_without_network(native_tools, tmp_path
                       'os.execv(sys.executable,[sys.executable,' + repr(str(harness)) + ','
                       + repr(str(SPEC.origin)) + ',' + repr(str(guard_dir / 'request.json')) + ']+sys.argv[5:])\n')
     bridge.chmod(0o700)
-    target = tmp_path / source.name / 'source.db'; target.parent.mkdir()
+    target = tmp_path / 'replicas' / source.name; target.parent.mkdir()
     subprocess.run([str(native_tools / 'sqlite3_rsync'), 'synthetic@fixture.invalid:' + str(source),
                     str(target), '--ssh', str(bridge), '--exe', '/synthetic/guard'], check=True, timeout=30)
     done = json.loads((guard_dir / 'completed-source.db.json').read_text())
