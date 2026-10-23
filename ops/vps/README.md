@@ -38,6 +38,68 @@ never secrets, balances or detailed evidence.
 | `staging-pa-off-stop` | `check`, `stop` or `verify` | The P1-B stop logic for the PA-off staging API (build `f9ebd32`): confirms the target and that production has its own volume and Supabase project, then stops only the staging API and keeps it stopped after a reboot. The original P1-B script stays pinned to the earlier build |
 | `docker-cleanup` | `plan`, then `apply` | P1-C: remove unused old production app images, keeping the two most recent and every image a container uses, plus the build cache. `apply` removes exactly the list from the last `plan` and refuses if anything changed |
 
+## Read-only checks without approval (environment `vps-check`)
+
+The checks listed in `check-operations.txt` (status, inventory, health and measurement checks that
+change nothing) can run **without** a per-run approval. That happens only when all of these hold:
+
+1. the run is started from `main`, and the operation and argument are on that list
+2. `check-env-guard.py` confirms the GitHub environment `vps-check` may be used **only from `main`**
+3. the run uses the separate **check key**, and the VPS runner then works in check mode: it refuses
+   anything that is not on its own built-in copy of the list (changing that copy means installing a
+   new runner on the server)
+
+Everything else (deploy, stop, start, delete, backup start, cleanup), and any run from another
+branch, still uses environment `vps` and waits for the owner's approval. The workflow summary says
+which of the two applies.
+
+### One-time setup of the check key
+
+On the VPS (one command per box). Connect: `ssh -o ServerAliveInterval=30 ubuntu@<vps-address>`
+
+**1. Download the new runner**
+
+```bash
+sudo curl -fsSL -o /root/nexus-ops-setup/nexus-ops-runner https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/5f28275abff067013178e50d160535df4292c438/ops/vps/nexus-ops-runner
+```
+
+**2. Download the new setup script**
+
+```bash
+sudo curl -fsSL -o /root/nexus-ops-setup/setup-vps-ops.sh https://raw.githubusercontent.com/Arjuunb/nexus-trading-bot/5f28275abff067013178e50d160535df4292c438/ops/vps/setup-vps-ops.sh
+```
+
+**3. Check the runner.** It must say `OK`.
+
+```bash
+echo "42959c9d2ad563c1eed6b573e44c762f63aa572a06def0128b3633a71864d7df  /root/nexus-ops-setup/nexus-ops-runner" | sudo sha256sum -c -
+```
+
+**4. Check the setup script.** It must say `OK`.
+
+```bash
+echo "f8a1907c1eed44274e20b9cdc6c74b9588c9364c79e12ebcdb423303ffacf967  /root/nexus-ops-setup/setup-vps-ops.sh" | sudo sha256sum -c -
+```
+
+**5. Install the runner and add the check key.** The main key keeps working.
+
+```bash
+sudo sh /root/nexus-ops-setup/setup-vps-ops.sh --add-check-key /root/nexus-ops-setup/nexus-ops-runner
+```
+
+It must show `ok: check mode runs a read-only check and refuses a change`, then prints a private
+key. That key goes **only into GitHub, never into a chat**.
+
+In GitHub: **Settings → Environments → New environment**, name `vps-check`, **Configure environment**.
+
+1. Leave **Required reviewers** unticked.
+2. **Deployment branches and tags** → **Selected branches and tags** → **Add deployment branch or
+   tag rule** → `main`. Add nothing else (not `claude/*`).
+3. **Environment secrets**: `VPS_SSH_KEY` = the private key from step 5 (with the BEGIN and END
+   lines); `VPS_HOST` = the same address as in `vps`.
+4. **Environment variables**: `VPS_HOST_KEY` = the `ssh-ed25519 …` line from step 5;
+   `VPS_SSH_PORT` = `22`.
+
 **Off switch** (blocks every run at once): `sudo touch /etc/nexus-ops/disabled`. To switch it back
 on: `sudo rm /etc/nexus-ops/disabled`. **Remove everything** except the logs:
 `sudo sh /root/nexus-ops-setup/setup-vps-ops.sh --remove`
@@ -113,10 +175,13 @@ merged, the first run should be `hello`, to prove the connection works.
 ## Testing
 
 `test/pipeline_test.sh` drives the real path: workflow script → SSH → forced command → sudo →
-runner, against a local OpenSSH server and the P1-B replica containers. Result: 32 passed,
-0 failed (`test/test-output.txt`). The tests cover:
+runner, against a local OpenSSH server and the P1-B replica containers. Result with both keys:
+48 passed, 0 failed (`test/test-output.txt`). `test/check_mode_test.sh` covers the read-only list,
+the runner's built-in copy, check-mode refusals and the environment guard: 51 passed. The tests cover:
 
 - P1-B through the pipeline
 - tampered scripts, shell characters, arbitrary commands, plain login and port forwarding (all refused)
 - the off switch, one-at-a-time locking, a dropped connection, the time limit and the audit trail
 - removing and re-installing (the old key stops working)
+- the check key: read-only checks run; stop, deploy, delete, cleanup and backup start are refused
+  before any script is read; re-installing the main key keeps the check key
