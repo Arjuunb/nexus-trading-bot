@@ -26,6 +26,7 @@ never secrets, balances or detailed evidence.
 | `hello` | — | Read-only: host, disk, memory, container status, last runs |
 | `ops-log` | GitHub run id | Read-only: end of an earlier run's log, including one whose connection dropped |
 | `p1b-stop-staging` | `check`, `stop` or `verify` | The reviewed P1-B script (`validation/p1b-stop-staging/`) |
+| `backup` | `run`, `status`, `check` or `restore-test` | Encrypted off-server backups to Backblaze B2 (`backup/README.md`) |
 
 **Off switch** (blocks every run at once): `sudo touch /etc/nexus-ops/disabled`. To switch it back
 on: `sudo rm /etc/nexus-ops/disabled`. **Remove everything** except the logs:

@@ -1,0 +1,71 @@
+# ops/vps/backup/test/backup_test.sh output, 2026-10-23: Ubuntu 24.04, restic 0.16.4, moto S3 server as the storage, P1-B replica container for the production volume
+== replica production container and volume
+== setup-backup.sh (answers on stdin; storage = local S3 test server)
+PASS  setup exits 0
+PASS  setup prepared the encrypted storage
+PASS  setup never prints the password
+PASS  setup never prints the application key
+PASS  settings readable by root only
+PASS  password file readable by root only
+PASS  setup refuses a different password for existing backups
+PASS  setup refuses a short password
+== first backup while the app keeps writing (hot database excluded from this run)
+      2026-10-23T14:04:33Z backup started
+      databases: 5 copied (1 WAL via SQLite backup, 4 verified copies), 0.25 GiB, 1s
+      uploaded: snapshot 71500c85, 9 files (9 new, 0 changed), 215.9 MiB new data after compression, 1s
+      retention: keeping 7 daily, 4 weekly, 6 monthly
+      DONE: backup stored off-server in 4s
+PASS  backup exits 0
+PASS  all 5 databases copied
+PASS  backup DONE
+PASS  storage address hidden
+PASS  app writer w_wal: no 'database is locked' errors
+PASS  app writer w_wal: slowest commit 21 ms (under 1 s)
+PASS  app writer w_rb: no 'database is locked' errors
+PASS  app writer w_rb: slowest commit 2 ms (under 1 s)
+== the stored backup matches the source
+PASS  database copies stored
+PASS  live database files are never uploaded directly
+PASS  other volume files stored
+PASS  .env stored
+Summary: Restored 34 files/dirs (260.313 MiB) in 0:01
+PASS  static database: same row count after restore
+PASS  static WAL-format copy restored intact
+== status, check, restore-test, second run
+PASS  status counts backups
+PASS  status shows storage used
+PASS  check exits 0
+PASS  check ok
+      Summary: Restored 17 / 10 files/dirs (255.313 MiB / 255.313 MiB) in 0:01
+      restored databases: 5 passed integrity_check, 0 failed, 0.25 GiB
+      settings file (.env): restored; contains HUB_MASTER_KEY, SUPABASE_URL
+      ok: restore test passed in 3s (temporary copy deleted)
+PASS  restore-test exits 0
+PASS  restore-test checks every database
+PASS  restore-test finds the master key
+PASS  restore-test never prints the key value
+PASS  restore folder deleted
+PASS  second backup exits 0
+PASS  second backup is incremental
+== a database that never stops changing is reported, not uploaded raw
+      2026-10-23T14:04:49Z backup started
+      databases: 5 copied (0 WAL via SQLite backup, 5 verified copies), 0.25 GiB, 11s
+      database NOT backed up this time: rollback_hot.db (kept changing during 2 attempts)
+      uploaded: snapshot d97936c5, 9 files (0 new, 5 changed), 0.0 MiB new data after compression, 0s
+      retention: keeping 7 daily, 4 weekly, 6 monthly
+      DONE WITH PROBLEMS: stored, but see the lines above
+PASS  partial backup exits 3
+PASS  hot database reported
+PASS  the other databases still stored
+PASS  hot live file not uploaded directly
+PASS  hot writer never blocked
+== wrong keys: error shown without the storage address
+PASS  a storage error is reported
+PASS  storage address hidden in errors
+PASS  bucket name hidden in errors
+== remove
+PASS  remove reports
+PASS  program and settings removed
+failures: 0
+
+# Also checked: setup-backup.sh in a real terminal (pty): keyID, applicationKey and password are not echoed; systemd-analyze verify accepts nexus-backup.service and nexus-backup.timer; 'OnCalendar=*-*-* 03:17:00 UTC' normalizes as written.
