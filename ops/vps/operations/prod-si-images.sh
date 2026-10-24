@@ -1,9 +1,9 @@
 #!/bin/sh
-# Check and load the scanned Strategy Intelligence API image for PRODUCTION (commit fc8bb09 on
-# codex/guardian-vps-integration: PR #48 plus the release browser harness from PR #49) on the VPS.
+# Check and load the scanned Strategy Intelligence API image for PRODUCTION (commit 14adf5d on
+# codex/guardian-vps-integration: PR #48, plus the release fixes from PRs #49 and #50) on the VPS.
 #
 #   load   1. the uploaded package must have exactly the SHA-256 GitHub recorded for the
-#             unpublished-staging-images artifact of release run 40036107583 (release #15)
+#             unpublished-staging-images artifact of release run 40072349764 (release #16)
 #          2. unpack it into /var/lib/nexus-ops/si-production/packet and check the sealed file list:
 #             every file's size and SHA-256, no extra files, the reviewed commit and source fingerprint
 #          3. read the security reports in the package: 0 HIGH/CRITICAL vulnerabilities, 0 secrets
@@ -25,11 +25,11 @@ case "${1:-}" in load) ;; *) echo "usage: prod-si-images.sh load"; exit 64 ;; es
 exec python3 -I - "$1" <<'PY'
 import gzip, hashlib, io, json, os, re, shutil, subprocess, sys, tarfile, time, zipfile
 
-ZIP = os.environ.get("PROD_SI_TEST_ZIP", "/home/ubuntu/nexus-si-production/unpublished-staging-images-40036107583-1.zip")
-# GitHub's recorded SHA-256 of the artifact zip; filled in from release #15 when it finishes.
-ZIP_SHA256 = os.environ.get("PROD_SI_TEST_ZIP_SHA256", "PENDING_RELEASE_15")
-COMMIT = os.environ.get("PROD_SI_TEST_COMMIT", "fc8bb0992e49cb708661c313db572dbd714e598d")
-SOURCE = os.environ.get("PROD_SI_TEST_SOURCE", "e2ef7cde6136445fe18804ff7cffd2c38509097b32ec8301e5ad376379ff8db2")
+ZIP = os.environ.get("PROD_SI_TEST_ZIP", "/home/ubuntu/nexus-si-production/unpublished-staging-images-40072349764-1.zip")
+# GitHub's recorded SHA-256 of the artifact zip; filled in from release #16 when it finishes.
+ZIP_SHA256 = os.environ.get("PROD_SI_TEST_ZIP_SHA256", "PENDING_RELEASE_16")
+COMMIT = os.environ.get("PROD_SI_TEST_COMMIT", "14adf5d17e6b9fd7d7e587fd99bb633f507b187e")
+SOURCE = os.environ.get("PROD_SI_TEST_SOURCE", "96b52ebb6947e6438e0c8515c344e9c02a6610b718e09f778b6465c56383667d")
 WORK = os.environ.get("PROD_SI_TEST_WORK", "/var/lib/nexus-ops/si-production")
 PACKET = os.path.join(WORK, "packet")
 TAG = "nexus-ci-api:" + COMMIT

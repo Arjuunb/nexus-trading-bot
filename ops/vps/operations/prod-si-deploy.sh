@@ -1,5 +1,5 @@
 #!/bin/sh
-# Deploy Strategy Intelligence (PR #48 and PR #49; image built and scanned from fc8bb09)
+# Deploy Strategy Intelligence (PR #48 plus release fixes #49 and #50; image built and scanned from 14adf5d)
 # to the PRODUCTION app only.
 #
 #   plan      read-only. Checks every gate and shows exactly what would change:
@@ -44,8 +44,8 @@ PROJECT = "nexus-trading-bot"
 WD = os.environ.get("PROD_SI_TEST_WD", "/opt/nexus-trading-bot")
 WORK = os.environ.get("PROD_SI_TEST_WORK", "/var/lib/nexus-ops/si-production")
 BACKUP = os.environ.get("PROD_SI_TEST_BACKUP", "/var/lib/nexus-ops/prod-backup")
-COMMIT = os.environ.get("PROD_SI_TEST_COMMIT", "fc8bb0992e49cb708661c313db572dbd714e598d")
-BRANCH = "codex/guardian-vps-integration"           # fc8bb09 is the merge of PR #49 there
+COMMIT = os.environ.get("PROD_SI_TEST_COMMIT", "14adf5d17e6b9fd7d7e587fd99bb633f507b187e")
+BRANCH = "codex/guardian-vps-integration"           # 14adf5d is the merge of PR #50 there
 FILES = [os.path.join(WD, "compose.yaml"), os.path.join(WD, "compose.override.yaml")]
 # Exact files production was started from (first 16 hex of SHA-256), as listed by prod-inventory
 # on 2026-10-23 (run 40027418155).
