@@ -26,8 +26,8 @@ exec python3 -I - "$1" <<'PY'
 import gzip, hashlib, io, json, os, re, shutil, subprocess, sys, tarfile, time, zipfile
 
 ZIP = os.environ.get("PROD_SI_TEST_ZIP", "/home/ubuntu/nexus-si-production/unpublished-staging-images-40072349764-1.zip")
-# GitHub's recorded SHA-256 of the artifact zip; filled in from release #16 when it finishes.
-ZIP_SHA256 = os.environ.get("PROD_SI_TEST_ZIP_SHA256", "PENDING_RELEASE_16")
+# GitHub's recorded SHA-256 of the artifact zip (artifact 12552009739, release #16, 180,023,259 bytes).
+ZIP_SHA256 = os.environ.get("PROD_SI_TEST_ZIP_SHA256", "06deb0142cf2c3d3c6dc4ee122b7f7c2d7822fccd76fa24656a92ad408cf00f5")
 COMMIT = os.environ.get("PROD_SI_TEST_COMMIT", "14adf5d17e6b9fd7d7e587fd99bb633f507b187e")
 SOURCE = os.environ.get("PROD_SI_TEST_SOURCE", "96b52ebb6947e6438e0c8515c344e9c02a6610b718e09f778b6465c56383667d")
 WORK = os.environ.get("PROD_SI_TEST_WORK", "/var/lib/nexus-ops/si-production")
